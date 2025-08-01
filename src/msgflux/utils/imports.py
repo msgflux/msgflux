@@ -4,26 +4,27 @@ def import_module_from_lib(_import: str, _from: str):
         modules = __import__(_from, fromlist=[_import])
         module = getattr(modules, _import)
         return module
-    except ImportError:
-        raise ImportError(f"Could not import module `{_import}`")
-    except AttributeError:
-        raise AttributeError(f"Module `{_from}` does not have class `{_import}`")
+    except ImportError as e:
+        raise ImportError(f"Could not import module `{_import}`") from e
+    except AttributeError as e:
+        raise AttributeError(f"Module `{_from}` does not have class `{_import}`") from e
     except Exception as e:
-        raise str(e)
+        raise Exception(f"An unexpected error occurred while importing: {e}") from e
 
 
 def import_dependencies(dependencies: list[dict]) -> dict:
     """Import multiple dependencies from different libraries, with optional aliases.
 
     Args:
-        dependencies: 
+        dependencies:
             A list of dictionaries, each with keys:
                 * 'from' (library name)
                 * 'import' (module or function name, or '*' for whole library)
                 * 'as' (optional alias for the module/library)
 
     Returns:
-        A dictionary with the module names (or aliases) as keys and the imported modules as values.
+        A dict with the module names (or aliases) as keys and the imported modules
+        as values.
     """
     for dependency in dependencies:
         lib_name = dependency["from"]

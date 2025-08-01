@@ -11,12 +11,15 @@ def convert_camel_snake_to_title(name: str) -> str:
         name = re.sub(r"(?<!^)([A-Z])", r" \1", name)
     return name.title()
 
+
 def convert_camel_to_snake_case(camel_str) -> str:
     snake_str = re.sub(r"(?<!^)([A-Z])", r"_\1", camel_str).lower()
     return snake_str
 
-def convert_str_to_hash(data: str) -> str:    
+
+def convert_str_to_hash(data: str) -> str:
     return hashlib.sha256(data.encode()).hexdigest()
+
 
 def convert_none_to_string(obj: Any) -> Any:
     """If a NoneType is detected in object, convert to 'None'."""
@@ -28,6 +31,7 @@ def convert_none_to_string(obj: Any) -> Any:
         return "None"
     else:
         return obj
+
 
 def convert_string_to_none(obj: Any) -> Any:
     """If a 'None' is detected in object, convert to None type."""

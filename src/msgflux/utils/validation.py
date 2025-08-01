@@ -1,6 +1,6 @@
 import base64
 import inspect
-from typing import Any, Union, Tuple, Type
+from typing import Any, Tuple, Type, Union
 
 
 def is_subclass_of(obj: Any, cls: Union[Type[Any], Tuple[Type[Any], ...]]) -> bool:
@@ -8,12 +8,11 @@ def is_subclass_of(obj: Any, cls: Union[Type[Any], Tuple[Type[Any], ...]]) -> bo
         return False
     return issubclass(obj, cls)
 
+
 def is_builtin_type(obj: Any):
-    builtin_types = (
-        str, int, float, bool, list, dict, tuple, set,
-        type(None)
-    )
+    builtin_types = (str, int, float, bool, list, dict, tuple, set, type(None))
     return isinstance(obj, builtin_types)
+
 
 def is_base64(string: str):
     try:

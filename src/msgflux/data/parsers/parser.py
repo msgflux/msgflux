@@ -2,9 +2,13 @@ from typing import Any, Dict, Type
 
 from msgflux.data.retrievers.base import BaseRetriever
 from msgflux.data.retrievers.types import (
-    LexicalRetriever,
-    SemanticRetriever,
-    WebRetriever,
+    AnyParser,
+    DocumentParser,
+    EmailParser,
+    MediaParser,
+    PptxParser,
+    WebParser,
+    XlsxParser,
 )
 from msgflux.utils.imports import import_module_from_lib
 
@@ -16,7 +20,7 @@ _SUPPORTED_RETRIEVER_TYPES = [
 
 _LEXICAL_RETRIEVER_PROVIDERS = ["bm25"]
 _SEMANTIC_RETRIEVER_PROVIDERS = []
-_WEB_RETRIEVER_PROVIDERS = []
+_HYBRID_RETRIEVER_PROVIDERS = []
 
 _RETRIEVER_NAMESPACE_TRANSLATOR = {
     "bm25": "BM25",
@@ -26,8 +30,8 @@ _PROVIDERS_BY_RETRIEVER_TYPE = {
     "lexical": _LEXICAL_RETRIEVER_PROVIDERS,
 }
 
-# retorna [data, score, +]
-class Retriever:
+
+class Parser:
     supported_retriever_types = _SUPPORTED_RETRIEVER_TYPES
     providers_by_retriever_type = _PROVIDERS_BY_RETRIEVER_TYPE
 
@@ -44,15 +48,15 @@ class Retriever:
                 f"Provider `{provider}` is not supported for {retriever_type}"
             )
 
-        if len(retriever_type) <= 3:
-            retriever_type = retriever_type.upper()
+        if len(db_type) <= 3:
+            db_type = db_type.upper()
         else:
-            retriever_type = retriever_type.title().replace("_", "")
+            db_type = db_type.title().replace("_", "")
 
         provider_class_name = (
             f"{_RETRIEVER_NAMESPACE_TRANSLATOR[provider]}{retriever_type}"
         )
-        module_name = f"msgflux.data.retrievers.providers.{provider}"
+        module_name = f"msgflux.data.parsers.providers.{provider}"
         return import_module_from_lib(provider_class_name, module_name)
 
     @classmethod
@@ -66,16 +70,12 @@ class Retriever:
     def from_serialized(
         cls, provider: str, retriever_type: str, params: Dict[str, Any]
     ) -> Type[BaseRetriever]:
-        """Creates a retriever instance from serialized parameters
-        without calling __init__.
+        """Creates a retriever instance from serialized parameters without calling __init__.
 
         Args:
-            provider:
-                The retriever provider (e.g., "bm25").
-            retriever_type:
-                The type of model (e.g., "lexical", "semantic").
-            params:
-                Dict containing the serialized retriever parameters.
+            provider: The retriever provider (e.g., "bm25")
+            retriever_type: The type of model (e.g., "lexical", "semantic")
+            params: Dictionary containing the serialized db parameters
 
         Returns:
             An instance of the appropriate retriever class with restored state
@@ -90,11 +90,3 @@ class Retriever:
     @classmethod
     def lexical(cls, provider: str, **kwargs) -> Type[LexicalRetriever]:
         return cls._create_retriever("lexical", provider, **kwargs)
-
-    @classmethod
-    def semantic(cls, provider: str, **kwargs) -> Type[SemanticRetriever]:
-        return cls._create_retriever("semantic", provider, **kwargs)
-
-    @classmethod
-    def web(cls, provider: str, **kwargs) -> Type[WebRetriever]:
-        return cls._create_retriever("web", provider, **kwargs)

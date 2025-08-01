@@ -5,25 +5,28 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import msgspec
+
 try:
     import httpx
     import openai
-    from openai import OpenAI    
+    from openai import OpenAI
     from opentelemetry.instrumentation.openai import OpenAIInstrumentor
-except:
-    raise ImportError("`openai` client is not detected, please install"
-                      "using `pip install msgflux[openai]`")
+except Exception as e:
+    raise ImportError(
+        "`openai` client is not detected, please install"
+        "using `pip install msgflux[openai]`"
+    ) from e
 
 from msgflux.dotdict import dotdict
 from msgflux.exceptions import KeyExhaustedError
 from msgflux.models.base import BaseModel
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
-from msgflux.models.types import (    
+from msgflux.models.types import (
     ChatCompletionModel,
     ImageTextToImageModel,
     ModerationModel,
-    SpeechToTextModel,    
+    SpeechToTextModel,
     TextEmbedderModel,
     TextToImageModel,
     TextToSpeechModel,
@@ -35,13 +38,13 @@ from msgflux.utils.msgspec import struct_to_dict
 from msgflux.utils.tenacity import model_retry
 from msgflux.utils.xml import xml_to_typed_dict
 
-
 OpenAIInstrumentor().instrument()
 
 # support continuing generation by validating the reason
 
+
 class _BaseOpenAI(BaseModel):
-    provider: str = "openai"    
+    provider: str = "openai"
 
     def _initialize(self):
         """Initialize the OpenAI client with empty API key."""
@@ -83,8 +86,7 @@ class _BaseOpenAI(BaseModel):
         """Execute the model with the current API key and handle retries."""
         try:
             return self._execute(**kwargs)
-        except (openai.RateLimitError, openai.APIError) as e:
-            print(e)
+        except (openai.RateLimitError, openai.APIError):
             # Try the next API key
             self._set_next_api_key()
             # Recursively try again with the new key
@@ -112,7 +114,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def __init__(
         self,
         model_id: str,
-        modalities: Optional[List[str]] = ["text"],
+        *,
+        modalities: Optional[List[str]] = None,
         audio: Optional[Dict[str, str]] = None,
         max_tokens: Optional[int] = 8192,
         reasoning_effort: Optional[str] = None,
@@ -120,46 +123,48 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         top_p: Optional[float] = None,
         web_search_options: Optional[Dict[str, Any]] = None,
         base_url: Optional[str] = None,
-        return_reasoning: Optional[bool] = False,        
+        return_reasoning: Optional[bool] = False,
     ):
+        """Args:
+        model_id:
+            Model ID in provider.
+        modalities:
+            Types of output you would like the model to generate.
+            Can be: ["text"], ["audio"] or ["text", "audio"].
+        audio:
+            Audio configurations. Define voice and output format.
+        max_tokens:
+            An upper bound for the number of tokens that can be
+            generated for a completion, including visible output
+            tokens and reasoning tokens.
+        reasoning_effort:
+            Constrains effort on reasoning for reasoning models.
+            Currently supported values are low, medium, and high.
+            Reducing reasoning effort can result in faster responses
+            and fewer tokens used on reasoning in a response.
+            Can be: "low", "medium" or "high".
+        temperature:
+            What sampling temperature to use, between 0 and 2.
+            Higher values like 0.8 will make the output more random,
+            while lower values like 0.2 will make it more focused and
+            deterministic.
+        top_p:
+            An alternative to sampling with temperature, called nucleus
+            sampling, where the model considers the results of the tokens
+            with top_p probability mass. So 0.1 means only the tokens
+            comprising the top 10% probability mass are considered.
+        web_search_options:
+            This tool searches the web for relevant results to use in a response.
+            OpenAI-only.
+        base_url:
+            URL to model provider.
+        return_reasoning:
+            If the model returns the `reasoning` field it will be added
+            along with the response.
         """
-        Args:
-            model_id: 
-                Model ID in provider.
-            modalities:
-                Types of output you would like the model to generate.
-                Can be: ["text"], ["audio"] or ["text", "audio"].
-            audio:
-                Audio configurations. Define voice and output format.
-            max_tokens:
-                An upper bound for the number of tokens that can be 
-                generated for a completion, including visible output 
-                tokens and reasoning tokens.
-            reasoning_effort:
-                Constrains effort on reasoning for reasoning models. 
-                Currently supported values are low, medium, and high. 
-                Reducing reasoning effort can result in faster responses 
-                and fewer tokens used on reasoning in a response.
-                Can be: "low", "medium" or "high".
-            temperature:
-                What sampling temperature to use, between 0 and 2. 
-                Higher values like 0.8 will make the output more random,
-                while lower values like 0.2 will make it more focused and 
-                deterministic.
-            top_p:
-                An alternative to sampling with temperature, called nucleus 
-                sampling, where the model considers the results of the tokens 
-                with top_p probability mass. So 0.1 means only the tokens 
-                comprising the top 10% probability mass are considered.
-            web_search_options:
-                This tool searches the web for relevant results to use in a response.
-                OpenAI-only.
-            base_url:
-                URL to model provider.
-            return_reasoning:
-                If the model returns the `reasoning` field it will be added along with the response.
-        """
-        super().__init__()        
+        if modalities is None:
+            modalities = ["text"]
+        super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {
@@ -167,7 +172,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             "temperature": temperature,
             "top_p": top_p,
             "modalities": modalities,
-            "web_search_options": web_search_options
+            "web_search_options": web_search_options,
         }
         if audio:
             self.sampling_run_params["audio"] = audio
@@ -181,7 +186,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         if self.provider in "openai":
             params["max_completion_tokens"] = params.pop("max_tokens")
             tools = params.get("tools", None)
-            if tools: # OpenAI supports 'strict' mode to tools
+            if tools:  # OpenAI supports 'strict' mode to tools
                 for tool in tools:
                     tool["function"]["strict"] = True
         return params
@@ -189,19 +194,18 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def _execute(self, **kwargs):
         if kwargs.get("tool_schemas"):
             kwargs["parallel_tool_calls"] = True
-        prefilling = kwargs.pop("prefilling")   
+        prefilling = kwargs.pop("prefilling")
         if prefilling:
-            kwargs.get("messages").append(
-                {"role": "assistant", "content": prefilling}
-            )
+            kwargs.get("messages").append({"role": "assistant", "content": prefilling})
         params = {**kwargs, **self.sampling_run_params}
         adapted_params = self._adapt_params(params)
         model_output = self.client.chat.completions.create(
-            model=self.model_id, **adapted_params,
+            model=self.model_id,
+            **adapted_params,
         )
         return model_output
 
-    def _generate(self, **kwargs):
+    def _generate(self, **kwargs): # noqa: C901
         response = ModelResponse()
         metadata = dotdict()
 
@@ -222,50 +226,58 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefix_response_type = ""
         reasoning_content = None
         if (
-            self.return_reasoning is True and
-            hasattr(choice.message, "reasoning_content") and
-            choice.message.reasoning_content is not None
+            self.return_reasoning is True
+            and hasattr(choice.message, "reasoning_content")
+            and choice.message.reasoning_content is not None
         ):
             reasoning_content = choice.message.reasoning_content
-            prefix_response_type = "reasoning_"        
+            prefix_response_type = "reasoning_"
 
-        if choice.message.annotations: # Extra responses (e.g web search references)
-            annotations_content = [item.model_dump() for item in choice.message.annotations]
+        if choice.message.annotations:  # Extra responses (e.g web search references)
+            annotations_content = [
+                item.model_dump() for item in choice.message.annotations
+            ]
             metadata.annotations = annotations_content
 
         if choice.message.tool_calls:
             aggregator = ToolCallAggregator(reasoning_content)
-            response.set_response_type("{}tool_call".format(prefix_response_type))
+            response.set_response_type(f"{prefix_response_type}tool_call")
             for call_index, tool_call in enumerate(choice.message.tool_calls):
-                id = tool_call.id
+                tool_id = tool_call.id
                 name = tool_call.function.name
                 arguments = tool_call.function.arguments
-                aggregator.process(call_index, id, name, arguments)
+                aggregator.process(call_index, tool_id, name, arguments)
             response_content = aggregator
         elif choice.message.content:
             if typed_xml is True:
-                response.set_response_type("{}structured".format(prefix_response_type))
+                response.set_response_type(f"{prefix_response_type}structured")
                 response_content = xml_to_typed_dict(choice.message.content)
-                if generation_schema: # Type validation
+                if generation_schema:  # Type validation
                     encoded_response_content = msgspec.json.encode(response_content)
-                    msgspec.json.decode(encoded_response_content, type=generation_schema)
+                    msgspec.json.decode(
+                        encoded_response_content, type=generation_schema
+                    )
             elif generation_schema is not None:
-                response.set_response_type("{}structured".format(prefix_response_type))
+                response.set_response_type(f"{prefix_response_type}structured")
                 struct = msgspec.json.decode(
                     choice.message.content, type=generation_schema
                 )
                 response_content = struct_to_dict(struct)
             else:
-                response.set_response_type("{}text_generation".format(prefix_response_type))                
+                response.set_response_type(
+                    f"{prefix_response_type}text_generation"
+                )
                 if reasoning_content is not None:
                     response_content = dotdict({"answer": choice.message.content})
                 else:
                     response_content = choice.message.content
         elif choice.message.audio:
-            response_content = dotdict({
-                "id": choice.message.audio.id,
-                "audio": base64.b64decode(choice.message.audio.data),
-            })
+            response_content = dotdict(
+                {
+                    "id": choice.message.audio.id,
+                    "audio": base64.b64decode(choice.message.audio.data),
+                }
+            )
             if choice.message.audio.transcript:
                 response.set_response_type("audio_text_generation")
                 response_content.text = choice.message.audio.transcript
@@ -279,7 +291,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         response.set_metadata(metadata)
         return response
 
-    async def _stream_generate(self, **kwargs):
+    async def _stream_generate(self, **kwargs): # noqa: C901
         aggregator = ToolCallAggregator()
         metadata = dotdict()
 
@@ -290,9 +302,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         for chunk in model_output:
             if chunk.choices:
                 if (
-                    self.return_reasoning is True and
-                    hasattr(chunk.choices[0].delta, "reasoning_content") and
-                    chunk.choices[0].delta.reasoning_content is not None
+                    self.return_reasoning is True
+                    and hasattr(chunk.choices[0].delta, "reasoning_content")
+                    and chunk.choices[0].delta.reasoning_content is not None
                 ):
                     if stream_response.response_type is None:
                         stream_response.set_response_type("reasoning_text_generation")
@@ -308,13 +320,13 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         stream_response.set_response_type("tool_call")
                     tool_call = chunk.choices[0].delta.tool_calls[0]
                     call_index = tool_call.index
-                    id = tool_call.id
+                    tool_id = tool_call.id
                     name = tool_call.function.name
                     arguments = tool_call.function.arguments
-                    aggregator.process(call_index, id, name, arguments)
+                    aggregator.process(call_index, tool_id, name, arguments)
                 elif (
-                    hasattr(chunk.choices[0].delta, "annotations") and
-                    chunk.choices[0].delta.annotations is not None
+                    hasattr(chunk.choices[0].delta, "annotations")
+                    and chunk.choices[0].delta.annotations is not None
                 ):
                     annotations_content = [
                         item.model_dump() for item in chunk.choices[0].delta.annotations
@@ -343,14 +355,15 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         typed_xml: Optional[bool] = False,
     ) -> Union[ModelResponse, ModelStreamResponse]:
-        """
-        Args:
-            messages: 
+        """Args:
+            messages:
                 Conversation history. Can be simple string or list of messages.
             system_prompt:
-                A set of instructions that defines the overarching behavior and role of the model across all interactions.
+                A set of instructions that defines the overarching behavior
+                and role of the model across all interactions.
             prefilling:
-                Forces an initial message from the model. From that message it will continue its response from there.
+                Forces an initial message from the model. From that message
+                it will continue its response from there.
             stream:
                 Whether generation should be in streaming mode.
             generation_schema:
@@ -358,35 +371,35 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             tool_schemas:
                 JSON schema containing available tools.
             tool_choice:
-                By default the model will determine when and how many tools to use. 
+                By default the model will determine when and how many tools to use.
                 You can force specific behavior with the tool_choice parameter.
-                    1. auto: 
-                        (Default) Call zero, one, or multiple functions. tool_choice: "auto"
-                    2. required: 
-                        Call one or more functions. tool_choice: "required"
-                    3. Forced Tool: 
-                        Call exactly one specific tool. 
-                        tool_choice: {"type": "function", "function": {"name": "get_weather"}}
+                    1. auto:
+                        (Default) Call zero, one, or multiple functions.
+                    2. required:
+                        Call one or more functions.
+                    3. Forced Tool:
+                        Call exactly one specific tool e.g:
+                        {"type": "function", "function": {"name": "get_weather"}}
             typed_xml:
                 Converts the model output, which should be typed-XML, into a typed-dict.
 
         Raises:
             ValueError:
                 Raised if `generation_schema` and `stream=True`.
-            ValueError:                
+            ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
-        """        
+        """
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         if isinstance(system_prompt, str):
             messages.insert(0, {"role": "system", "content": system_prompt})
 
-        generation_params = dict(
-            messages=messages,
-            prefilling=prefilling,
-            tool_choice=tool_choice,
-            tools=tool_schemas,            
-        )
+        generation_params = {
+            "messages": messages,
+            "prefilling": prefilling,
+            "tool_choice": tool_choice,
+            "tools": tool_schemas,
+        }
 
         if stream is True:
             if generation_schema is not None:
@@ -394,7 +407,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
             if typed_xml is True:
                 raise ValueError("`typed_xml=True` is not `stream=True` compatible")
-            
+
             stream_response = ModelStreamResponse()
             F.background_task(
                 self._stream_generate,
@@ -407,9 +420,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             return stream_response
         else:
             response = self._generate(
-                **generation_params, 
-                typed_xml=typed_xml, 
-                generation_schema=generation_schema
+                **generation_params,
+                typed_xml=typed_xml,
+                generation_schema=generation_schema,
             )
             return response
 
@@ -424,18 +437,17 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         speed: Optional[float] = 1.0,
         base_url: Optional[str] = None,
     ):
+        """Args:
+        model_id:
+            Model ID in provider.
+        voice:
+            The voice to use when generating the audio.
+        speed:
+            the speed of the generated audio. Select a value
+            from 0.25 to 4.0. 1.0 is the default.
+        base_url:
+            URL to model provider.
         """
-        Args:
-            model_id: 
-                Model ID in provider.
-            voice:
-                The voice to use when generating the audio.
-            speed:
-                the speed of the generated audio. Select a value 
-                from 0.25 to 4.0. 1.0 is the default.
-            base_url:
-                URL to model provider.
-        """        
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
@@ -443,7 +455,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
             "voice": voice,
             "speed": speed,
         }
-        self._initialize()        
+        self._initialize()
         self._get_api_key()
 
     @contextmanager
@@ -453,8 +465,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
                 with self._execute(**kwargs) as result:
                     yield result
                 break
-            except (openai.RateLimitError, openai.APIError) as e:
-                print(e) # TODO
+            except (openai.RateLimitError, openai.APIError):
                 self._set_next_api_key()
             except Exception as e:
                 raise e
@@ -505,23 +516,24 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
 
     @model_retry
     def __call__(
-        self, 
-        data: str, 
-        *, 
-        stream: Optional[bool] = False, 
+        self,
+        data: str,
+        *,
+        stream: Optional[bool] = False,
         prompt: Optional[str] = None,
-        response_format: Optional[Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]] = "opus",
+        response_format: Optional[
+            Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
+        ] = "opus",
     ) -> Union[ModelResponse, ModelStreamResponse]:
-        """
-        Args:
-            data:
-                The text to generate audio for.
-            stream:
-                Whether generation should be in streaming mode.
-            prompt:
-                Control the voice of your generated audio with additional instructions.
-            response_format:
-                The format to audio in.
+        """Args:
+        data:
+            The text to generate audio for.
+        stream:
+            Whether generation should be in streaming mode.
+        prompt:
+            Control the voice of your generated audio with additional instructions.
+        response_format:
+            The format to audio in.
         """
         params = dotdict({"input": data, "response_format": response_format})
         if prompt:
@@ -530,7 +542,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
             stream_response = ModelStreamResponse()
             params.stream_response = stream_response
             F.background_task(self._stream_generate, **params)
-            F.wait_for_event(stream_response.first_chunk_event)          
+            F.wait_for_event(stream_response.first_chunk_event)
             return stream_response
         else:
             response = self._generate(**params)
@@ -550,26 +562,25 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         moderation: Optional[Literal["auto", "low"]] = None,
         base_url: Optional[str] = None,
     ):
-        """
-        Args:
-            model_id:
-                Model ID in provider.
-            size:
-                The size of the generated images.
-            quality:
-                The quality of the image that will be generated.
-            background:
-                Allows to set transparency for the background of the generated image(s).
-            moderation:
-                Control the content-moderation level for images generated.
-            base_url:
-                URL to model provider.
+        """Args:
+        model_id:
+            Model ID in provider.
+        size:
+            The size of the generated images.
+        quality:
+            The quality of the image that will be generated.
+        background:
+            Allows to set transparency for the background of the generated image(s).
+        moderation:
+            Control the content-moderation level for images generated.
+        base_url:
+            URL to model provider.
         """
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {
-            "size": size, 
+            "size": size,
             "quality": quality,
             "background": background,
         }
@@ -593,15 +604,15 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
                     "quality": model_output.quality,
                     "output_format": model_output.output_format,
                     "background": model_output.background,
-                }
-             }
+                },
+            }
         )
         return metadata
 
     def _generate(self, **kwargs):
         response = ModelResponse()
         response.set_response_type("image_generation")
-        
+
         model_output = self._execute_model(**kwargs)
 
         metadata = self._get_metadata(model_output)
@@ -612,10 +623,10 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
                 images.append(item.url)
             if item.b64_json:
                 images.append(item.b64_json)
-        
+
         if len(images) == 1:
             images = images[0]
-        
+
         response.add(images)
         response.set_metadata(metadata)
 
@@ -629,14 +640,13 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         response_format: Optional[Literal["url", "base64"]] = None,
         n: Optional[int] = 1,
     ) -> ModelResponse:
-        """
-        Args:
-            prompt:
-                A text description of the desired image(s).
-            response_format:
-                Format in which images are returned.
-            n:
-                The number of images to generate.                
+        """Args:
+        prompt:
+            A text description of the desired image(s).
+        response_format:
+            Format in which images are returned.
+        n:
+            The number of images to generate.
         """
         generation_params = dotdict(n=n, prompt=prompt)
 
@@ -672,26 +682,25 @@ class OpenAIImageTextToImage(OpenAITextToImage, ImageTextToImageModel):
         self,
         prompt: str,
         image: Union[str, List[str]],
-        *,        
+        *,
         mask: Optional[str] = None,
         response_format: Optional[Literal["url", "base64"]] = None,
-        n: Optional[int] = 1,        
+        n: Optional[int] = 1,
     ) -> ModelResponse:
-        """
-        Args:
-            prompt:
-                A text description of the desired image(s).
-            image:
-                The image(s) to edit. Can be a path, an url or base64 string.
-            mask:
-                An additional image whose fully transparent areas 
-                (e.g. where alpha is zero) indicate where image 
-                should be edited. If there are multiple images provided, 
-                the mask will be applied on the first image.
-            response_format:
-                Format in which images are returned.
-            n:
-                The number of images to generate.                
+        """Args:
+        prompt:
+            A text description of the desired image(s).
+        image:
+            The image(s) to edit. Can be a path, an url or base64 string.
+        mask:
+            An additional image whose fully transparent areas
+            (e.g. where alpha is zero) indicate where image
+            should be edited. If there are multiple images provided,
+            the mask will be applied on the first image.
+        response_format:
+            Format in which images are returned.
+        n:
+            The number of images to generate.
         """
         generation_params = dotdict(prompt=prompt, n=n)
 
@@ -699,7 +708,7 @@ class OpenAIImageTextToImage(OpenAITextToImage, ImageTextToImageModel):
             if response_format == "base64":
                 response_format = "b64_json"
             generation_params.response_format = response_format
-      
+
         inputs = self._prepare_inputs(image, mask)
         response = self._generate(**generation_params, **inputs)
         return response
@@ -713,22 +722,21 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         *,
         model_id: str,
         temperature: Optional[float] = 0.0,
-        base_url: Optional[str] = None,        
+        base_url: Optional[str] = None,
     ):
-        """
-        Args:
-            model_id:
-                Model ID in provider.
-            temperature:
-                The sampling temperature, between 0 and 1.
-            base_url:
-                URL to model provider.
+        """Args:
+        model_id:
+            Model ID in provider.
+        temperature:
+            The sampling temperature, between 0 and 1.
+        base_url:
+            URL to model provider.
         """
         super().__init__()
         self.model_id = model_id
-        self.sampling_params = {"base_url": base_url or self._get_base_url()}        
+        self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {"temperature": temperature}
-        self._initialize()        
+        self._initialize()
         self._get_api_key()
 
     def _execute(self, **kwargs):
@@ -787,7 +795,7 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
                     stream_response.first_chunk_event.set()
             elif event.transcript.text.done:
                 stream_response.add(None)
-                
+
         return stream_response
 
     @model_retry
@@ -801,30 +809,29 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         ] = "text",
         timestamp_granularities: Optional[List[str]] = None,
         prompt: Optional[str] = None,
-        language: Optional[str] = None,        
+        language: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
-        """
-        Args:
-            data:
-                Url, path, base64 to audio.
-            stream:
-                Whether generation should be in streaming mode.
-            response_format:
-                The format of the output, in one of these options: 
-                json, text, srt, verbose_json, or vtt.
-            timestamp_granularities:
-                The timestamp granularities to populate for this 
-                transcription. `response_format` must be set `verbose_json`
-                to use timestamp granularities. Either or both of these 
-                options are supported: word, or segment. Note: There is no 
-                additional latency for segment timestamps, but generating 
-                word timestamps incurs additional latency.
-            prompt:
-                An optional text to guide the model's style or continue a 
-                previous audio segment. The prompt should match the audio language.
-            language:
-                The language of the input audio. Supplying the input language in 
-                ISO-639-1 (e.g. en) format will improve accuracy and latency.        
+        """Args:
+        data:
+            Url, path, base64 to audio.
+        stream:
+            Whether generation should be in streaming mode.
+        response_format:
+            The format of the output, in one of these options:
+            json, text, srt, verbose_json, or vtt.
+        timestamp_granularities:
+            The timestamp granularities to populate for this
+            transcription. `response_format` must be set `verbose_json`
+            to use timestamp granularities. Either or both of these
+            options are supported: word, or segment. Note: There is no
+            additional latency for segment timestamps, but generating
+            word timestamps incurs additional latency.
+        prompt:
+            An optional text to guide the model's style or continue a
+            previous audio segment. The prompt should match the audio language.
+        language:
+            The language of the input audio. Supplying the input language in
+            ISO-639-1 (e.g. en) format will improve accuracy and latency.
         """
         if isinstance(data, str):
             data = encode_data_to_bytes(data)
@@ -842,12 +849,12 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
             F.background_task(self._stream_generate, **params)
             F.wait_for_event(stream_response.first_chunk_event)
             return stream_response
-        else:                
+        else:
             response = self._generate(**params)
             return response
 
 
-class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel): 
+class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
     """OpenAI Text Embedder."""
 
     def __init__(
@@ -857,25 +864,26 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         dimensions: Optional[int] = None,
         base_url: Optional[str] = None,
     ):
-        """
-        Args:
-            model_id:
-                Model ID in provider.
-            dimensions:
-                The number of dimensions the resulting output embeddings should have.
-            base_url:
-                URL to model provider.
+        """Args:
+        model_id:
+            Model ID in provider.
+        dimensions:
+            The number of dimensions the resulting output embeddings should have.
+        base_url:
+            URL to model provider.
         """
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {"dimensions": dimensions}
-        self._initialize()        
+        self._initialize()
         self._get_api_key()
 
     def _execute(self, **kwargs):
         model_output = self.client.embeddings.create(
-            model=self.model_id, **kwargs, **self.sampling_run_params,
+            model=self.model_id,
+            **kwargs,
+            **self.sampling_run_params,
         )
         return model_output
 
@@ -894,16 +902,15 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         self,
         data: Union[str, List[str]],
     ):
-        """
-        Args:
-            data: 
-                Input text to embed.
+        """Args:
+        data:
+            Input text to embed.
         """
         response = self._generate(input=data)
         return response
 
 
-class OpenAIModeration(_BaseOpenAI, ModerationModel): 
+class OpenAIModeration(_BaseOpenAI, ModerationModel):
     """OpenAI Moderation."""
 
     def __init__(
@@ -912,22 +919,22 @@ class OpenAIModeration(_BaseOpenAI, ModerationModel):
         model_id: str,
         base_url: Optional[str] = None,
     ):
-        """
-        Args:
-            model_id:
-                Model ID in provider.
-            base_url:
-                URL to model provider.
+        """Args:
+        model_id:
+            Model ID in provider.
+        base_url:
+            URL to model provider.
         """
         super().__init__()
         self.model_id = model_id
-        self.sampling_params = {"base_url": base_url or self._get_base_url()}        
+        self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self._initialize()
         self._get_api_key()
 
     def _execute(self, **kwargs):
         model_output = self.client.moderations.create(
-            model=self.model_id, **kwargs,
+            model=self.model_id,
+            **kwargs,
         )
         return model_output
 
@@ -945,12 +952,11 @@ class OpenAIModeration(_BaseOpenAI, ModerationModel):
         self,
         data: Union[str, List[Dict[str, Any]]],
     ) -> ModelResponse:
-        """
-        Args:
-            data:
-                Input (or inputs) to classify. Can be a single string, 
-                an array of strings, or an array of multi-modal input
-                objects similar to other models.
+        """Args:
+        data:
+            Input (or inputs) to classify. Can be a single string,
+            an array of strings, or an array of multi-modal input
+            objects similar to other models.
         """
         response = self._generate(input=data)
         return response

@@ -1,26 +1,26 @@
 from functools import partial
 from typing import Any, Dict, List, Optional, Union
 
+from msgflux.data.databases.types import VectorDB
+from msgflux.data.retrievers.types import (
+    LexicalRetriever,
+    SemanticRetriever,
+    WebRetriever,
+)
 from msgflux.dotdict import dotdict
 from msgflux.message import Message
-from msgflux.data.databases.types import VectorDB
+from msgflux.models.gateway import ModelGateway
 from msgflux.models.types import (
     AudioEmbedderModel,
     ImageEmbedderModel,
     TextEmbedderModel,
 )
-from msgflux.data.retrievers.types import (
-    LexicalRetriever,
-    SemanticRetriever,
-    WebRetriever
-)
-from msgflux.models.gateway import ModelGateway
 from msgflux.nn import functional as F
 from msgflux.nn.modules.module import Module
 
-
 _RETRIVERS = Union[WebRetriever, LexicalRetriever, SemanticRetriever, VectorDB]
 _MODELS = Union[AudioEmbedderModel, ImageEmbedderModel, TextEmbedderModel, ModelGateway]
+
 
 class Retriever(Module):
     """Retriever is a Module type that uses information retrivers."""
@@ -29,7 +29,7 @@ class Retriever(Module):
         self,
         name: str,
         retriever: _RETRIVERS,
-        *,        
+        *,
         model: Optional[_MODELS] = None,
         task_inputs: Optional[Union[str, Dict[str, str]]] = None,
         response_mode: Optional[str] = "plain_response",
@@ -39,33 +39,32 @@ class Retriever(Module):
         return_score: Optional[bool] = False,
         dict_key: Optional[str] = None,
     ):
-        """
-        Args:
-            name: 
-                Designer name in snake case format.
-            retriever:
-                Retriever client.
-            model:
-                An embedding model.
-            task_inputs:
-                Fields of the Message object that will be the input to the task.                
-            response_mode: 
-                What the response should be.
-                * `plain_response` (default): Returns the final agent response directly.
-                * other: Write on field in Message object.                
-            response_template:
-                A Jinja template to format response.
-            top_k:
-                Maximum return of similar points.
-            threshold:
-                Retriever threshold.
-            return_score:
-                If True, return similarity score.
-            dict_key:
-                Help to extract a value from task_inputs if dict.
-                e.g.:
-                    self.dict_key='name'
-                    [{'name': 'clark', 'age': 27}]
+        """Args:
+        name:
+            Designer name in snake case format.
+        retriever:
+            Retriever client.
+        model:
+            An embedding model.
+        task_inputs:
+            Fields of the Message object that will be the input to the task.
+        response_mode:
+            What the response should be.
+            * `plain_response` (default): Returns the final agent response directly.
+            * other: Write on field in Message object.
+        response_template:
+            A Jinja template to format response.
+        top_k:
+            Maximum return of similar points.
+        threshold:
+            Retriever threshold.
+        return_score:
+            If True, return similarity score.
+        dict_key:
+            Help to extract a value from task_inputs if dict.
+            e.g.:
+                self.dict_key='name'
+                [{'name': 'clark', 'age': 27}].
         """
         super().__init__()
         self.set_name(name)
@@ -89,11 +88,11 @@ class Retriever(Module):
 
     def _execute_retriever(
         self, queries: List[str], model_preference: Optional[str] = None
-    ) -> List[Dict[str, Any]]:            
+    ) -> List[Dict[str, Any]]:
         queries_embed = None
         if self.model:
             queries_embed = self._execute_model(queries, model_preference)
-    
+
         retriever_execution_params = self._prepare_retriever_execution(
             queries_embed or queries
         )
@@ -117,11 +116,13 @@ class Retriever(Module):
     def _prepare_retriever_execution(
         self, queries: List[Union[str, List[float]]]
     ) -> Dict[str, Any]:
-        retriever_execution_params = dotdict({
-            "queries": queries,
-            "top_k": self.top_k,            
-            "return_score": self.return_score,
-        })
+        retriever_execution_params = dotdict(
+            {
+                "queries": queries,
+                "top_k": self.top_k,
+                "return_score": self.return_score,
+            }
+        )
         if self.threshold:
             retriever_execution_params.threshold = self.threshold
         return retriever_execution_params
@@ -143,9 +144,10 @@ class Retriever(Module):
             )
             distributed_params = list(map(prepare_execution, queries))
             to_send = [self.model] * len(distributed_params)
-            responses = F.scatter_gather(to_send, kwargs_list=distributed_params)            
+            responses = F.scatter_gather(to_send, kwargs_list=distributed_params)
             raw_resposes = [
-                self._extract_raw_response(model_response) for model_response in responses
+                self._extract_raw_response(model_response)
+                for model_response in responses
             ]
             return raw_resposes
 
@@ -155,10 +157,10 @@ class Retriever(Module):
         self, queries: List[str], model_preference: Optional[str] = None
     ) -> Dict[str, Union[str, List[str]]]:
         if len(queries) == 1:
-            queries = queries[0]        
+            queries = queries[0]
         model_execution_params = dotdict({"data": queries})
         if isinstance(self.model, ModelGateway) and model_preference is not None:
-            model_execution_params.model_preference = model_preference        
+            model_execution_params.model_preference = model_preference
         return model_execution_params
 
     def _prepare_task(
@@ -177,12 +179,9 @@ class Retriever(Module):
 
         model_preference = kwargs.pop("model_preference", None)
         if model_preference is None and isinstance(message, Message):
-            model_preference = self.get_model_preference_from_message(message)        
+            model_preference = self.get_model_preference_from_message(message)
 
-        return dotdict({
-            "queries": queries,
-            "model_preference": model_preference
-        })
+        return dotdict({"queries": queries, "model_preference": model_preference})
 
     def _process_list_of_dict_inputs(self, queries: List[Dict[str, Any]]) -> List[str]:
         """Extract the query value from a dict."""
@@ -204,13 +203,15 @@ class Retriever(Module):
             raise TypeError(
                 "`retriever` requires `HybridRetriever`, `LexicalRetriever`, "
                 f"`SemanticRetriever` or `VectorDB` instance given `{type(retriever)}`"
-            )        
+            )
 
     def _set_model(self, model: Optional[_MODELS] = None):
-        if "embedder" in model.model_type or model == None:
+        if "embedder" in model.model_type or model is None:
             self.register_buffer("model", model)
         else:
-            raise TypeError(f"`model` requires be `embedder` model, given `{type(model)}`")
+            raise TypeError(
+                f"`model` requires be `embedder` model, given `{type(model)}`"
+            )
 
     def _set_threshold(self, threshold: Optional[float] = None):
         if isinstance(threshold, float):
@@ -220,14 +221,17 @@ class Retriever(Module):
         elif threshold is None:
             self.register_buffer("threshold", threshold)
         else:
-            raise TypeError(f"`threshold` requires a float or None given `{type(threshold)}`")
+            raise TypeError(
+                f"`threshold` requires a float or None given `{type(threshold)}`"
+            )
 
-    def _set_return_score(self, return_score: Optional[bool] = False):
+    def _set_return_score(self, return_score: Optional[bool] = False): # noqa: FBT001, FBT002
         if isinstance(return_score, bool):
             self.register_buffer("return_score", return_score)
         else:
-            raise TypeError("`threshold` requires a `bool` or None"
-                            f" given `{type(return_score)}`")
+            raise TypeError(
+                f"`threshold` requires a `bool` or None given `{type(return_score)}`"
+            )
 
     def _set_top_k(self, top_k: Optional[int] = 4):
         if isinstance(top_k, int):
@@ -235,11 +239,12 @@ class Retriever(Module):
                 raise ValueError(f"`top_k` requires be >= 1 given `{top_k}`")
             self.register_buffer("top_k", top_k)
         else:
-            raise TypeError(f"`top_k` requires a int given `{type(top_k)}`")            
+            raise TypeError(f"`top_k` requires a int given `{type(top_k)}`")
 
     def _set_dict_key(self, dict_key: Optional[str] = None):
         if isinstance(dict_key, str) or dict_key is None:
             self.register_buffer("dict_key", dict_key)
         else:
-            raise TypeError("`dict_key` need be a `str` or None"
-                            f" given `{type(dict_key)}`")
+            raise TypeError(
+                f"`dict_key` need be a `str` or None given `{type(dict_key)}`"
+            )

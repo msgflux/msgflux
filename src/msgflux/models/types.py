@@ -12,6 +12,7 @@ class ModerationModel:
 
 # Classifiers
 
+
 class AudioClassifierModel:
     model_type = "audio_classifier"
 
@@ -73,10 +74,6 @@ class TextToMusicModel:
 # Image Gen
 
 
-class ImageTextToImageModel:
-    model_type = "image_text_to_image"
-
-
 class TextToImageModel:
     model_type = "text_to_image"
 
@@ -119,16 +116,17 @@ class VideoTextToTextModel:
 # Video Gen
 
 
-class ImageTextToVideoModel: #VideoGenModel
+class ImageTextToVideoModel:  # VideoGenModel
     model_type = "image_text_to_video"
 
 
-class TextToVideoModel: #VideoGenModel
+class TextToVideoModel:  # VideoGenModel
     model_type = "text_to_video"
 
 
-class VideoTextToVideoModel: #VideoGenModel
+class VideoTextToVideoModel:  # VideoGenModel
     model_type = "video_text_to_video"
+
 
 # 3D
 

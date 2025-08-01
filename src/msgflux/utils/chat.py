@@ -1,28 +1,27 @@
 import copy
-import os
 import re
-import requests
-import tempfile
-from uuid import uuid4
 from typing import (
     Any,
     Dict,
-    Literal,
     List,
+    Literal,
     Optional,
-    Union,
     Tuple,
+    Union,
     get_origin,
 )
+
 from jinja2 import Template
+
 from msgflux.logger import logger
 from msgflux.utils.inspect import get_mime_type
 from msgflux.utils.xml import apply_xml_tags
 
 
 class ChatML:
-    """Manage messages in ChatML format"""
-    def __init__(self, messages: List[Dict[str, Any]] = None):
+    """Manage messages in ChatML format."""
+
+    def __init__(self, messages: Optional[List[Dict[str, Any]]] = None):
         """Inicializa o gerenciador com um histórico opcional."""
         self.history = messages if messages is not None else []
 
@@ -46,7 +45,6 @@ class ChatML:
             )
         message = {"role": role, "content": content}
         self.history.append(message)
-        return
 
     def extend_history(self, messages):
         """Add a list of messages to the history."""
@@ -57,25 +55,26 @@ class ChatML:
 
     def clear(self):
         self.history = []
-        return
 
-def format_examples(examples: List[Union[Tuple[str, str], Tuple[str, str, str]]]) -> str:
-    """
-    Formats a list of examples into XML-style string format.
-    
+
+def format_examples(
+    examples: List[Union[Tuple[str, str], Tuple[str, str, str]]],
+) -> str:
+    """Formats a list of examples into XML-style string format.
+
     Each example in the list should be a tuple containing input and output strings,
     with an optional title as the third element. The function generates sequential IDs
     for each example starting from 1.
-    
+
     Args:
         examples: A list of tuples where each tuple contains:
             - Input string (required)
             - Output string (required)
             - Title string (optional)
-    
+
     Returns:
         A formatted XML-style string containing all examples.
-    
+
     Example:
         >>> examples = [
         ...     ("What is your name?", "My name is GPT-3.5.", "Introduction"),
@@ -86,14 +85,14 @@ def format_examples(examples: List[Union[Tuple[str, str], Tuple[str, str, str]]]
         <input>What is your name?</input>
         <output>My name is GPT-3.5.</output>
         </example>
-        
+
         <example id=2>
         <input>What day is today?</input>
         <output>Today is Tuesday.</output>
         </example>
     """
     result = []
-    
+
     for i, example in enumerate(examples, start=1):
         if len(example) == 3:
             input_text, output_text, title = example
@@ -101,92 +100,21 @@ def format_examples(examples: List[Union[Tuple[str, str], Tuple[str, str, str]]]
         else:
             input_text, output_text = example
             result.append(f"<example id={i}>")
-        
+
         result.append(apply_xml_tags("input", input_text))
         result.append(apply_xml_tags("output", output_text))
         result.append("</example>\n")
-    
+
     return "\n".join(result)
 
-def format_available_members(members: List[Dict[str, str]], title: Optional[str] = None) -> str:
-    """
-    Generates an XML structure for a list of members, mapping module names to their descriptions.
-
-    Args:
-        members: 
-            A list of dictionaries, each containing `name` and `description` keys.
-        title: 
-            A title in members.
-
-    Returns:
-        str: A string containing the XML structure with module names and descriptions.
-
-    Example:
-        members = [
-            {"name": "Authentication", "description": "Handles user login and session management."},
-        ]
-        xml = format_available_members(members)
-        print(xml)
-        <members>
-        <member id=1 name="Authentication">
-        <description>
-        Handles user login and session management.
-        </description>
-        </member>
-        </members>
-    """
-    id = output_id = "members"
-    sub_id = "member"
-    members_content = ""
-
-    for i, module in enumerate(members, start=1):
-        description_xml = apply_xml_tags("description", module["description"])
-        module_xml = apply_xml_tags(
-            f'{sub_id} id={i} name="{module["name"]}"', 
-            description_xml, 
-            output_id=sub_id
-        )
-        members_content += f"{module_xml}\n"
-
-    if title:
-        id += f' title="{title}"'
-
-    return apply_xml_tags(id, members_content.strip(), output_id)
-
-def format_member_responses(responses: List[Dict[str, str]], iteration: Optional[int] = None) -> str:
-    """
-    Generates an XML structure for a list of members, mapping module names to their descriptions.
-
-    Args:
-        members: 
-            A list of dictionaries, each containing `member`, `description` and `result` keys.
-        iteration: 
-            Iteration of these responses.
-
-    Returns:
-        str: A string containing the XML structure with member responses.
-    """
-    id = output_id = "responses"
-    sub_id = "response"
-    response_content = ""
-
-    for i, response in enumerate(responses, start=1):
-        member_content = ""
-        for k, v in response.items():
-            row = apply_xml_tags(k, v)
-            member_content += f"{row}\n"
-        block = apply_xml_tags(f"{sub_id} id={i}", member_content.strip(), sub_id)
-        response_content += block + "\n"
-    if iteration:
-        id += f" iteration={iteration}"
-    return apply_xml_tags(id, response_content.strip(), output_id)
 
 def adapt_struct_schema_to_json_schema(
     original_schema: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Convert a Msgspec.Struct in Json Schema ChatCompletion-like"""
+    """Convert a Msgspec.Struct in Json Schema ChatCompletion-like."""
+
     def resolve_ref(ref: str, defs: Dict) -> Dict:
-        """Resolves a reference `$ref` using the dictionary `$defs`"""
+        """Resolves a reference `$ref` using the dictionary `$defs`."""
         ref_key = ref.split("/")[-1]
         return defs.get(ref_key, {})
 
@@ -232,9 +160,9 @@ def adapt_struct_schema_to_json_schema(
 
     return adapted_schema
 
+
 def chatml_to_steps_format(
-    model_state: List[Dict[str, Any]],
-    response: Union[str, Dict[str, Any]]
+    model_state: List[Dict[str, Any]], response: Union[str, Dict[str, Any]]
 ) -> Dict[str, Any]:
     steps = []
     pending_tool_calls = {}
@@ -253,7 +181,7 @@ def chatml_to_steps_format(
                     "id": tool_call["id"],
                     "name": tool_call["function"]["name"],
                     "arguments": tool_call["function"]["arguments"],
-                    "results": None, # To be updated when the answer is found
+                    "results": None,  # To be updated when the answer is found
                 }
                 # Add each function call separately
                 steps.append({"tool_call": fn_call_entry})
@@ -271,9 +199,9 @@ def chatml_to_steps_format(
 
     return steps
 
+
 def clean_docstring(docstring: str) -> str:
-    """
-    Cleans the docstring by removing the Args section.
+    """Cleans the docstring by removing the Args section.
 
     Args:
         docstring: Complete docstring to clean
@@ -289,9 +217,9 @@ def clean_docstring(docstring: str) -> str:
 
     return cleaned
 
+
 def parse_docstring_args(docstring: str) -> Dict[str, str]:
-    """
-    Extracts parameter descriptions from the Args section of the docstring.
+    """Extracts parameter descriptions from the Args section of the docstring.
 
     Args:
         docstring: Complete docstring of the function/class
@@ -318,8 +246,8 @@ def parse_docstring_args(docstring: str) -> Dict[str, str]:
     current_param = None
     current_desc = []
 
-    for line in lines:
-        line = line.strip()
+    for raw_line in lines:
+        line = raw_line.strip()
         # Find a new parameter
         param_match = re.match(r"(\w+)\s*\((.*?)\):\s*(.+)", line)
 
@@ -341,9 +269,9 @@ def parse_docstring_args(docstring: str) -> Dict[str, str]:
 
     return param_descriptions
 
+
 def generate_json_schema(cls: type) -> Dict[str, Any]:
-    """
-    Generates a JSON schema for a class based on its characteristics.
+    """Generates a JSON schema for a class based on its characteristics.
 
     Args:
         cls: The class to generate the schema for
@@ -361,7 +289,6 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
     required = []
 
     for param, type_hint in annotations.items():
-
         if param == "return":
             continue
 
@@ -376,7 +303,7 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
             prop_schema["description"] = param_descriptions[param]
 
         # Mark as required
-        if not get_origin(type_hint) is Union:
+        if get_origin(type_hint) is not Union:
             required.append(param)
 
         properties[param] = prop_schema
@@ -388,68 +315,49 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
             "type": "object",
             "properties": properties,
             "required": required,
-            'additionalProperties': False,
+            "additionalProperties": False,
         },
         "strict": True,
     }
 
     return json_schema
 
+
 def generate_tool_json_schema(cls: type) -> Dict[str, Any]:
     tool = generate_json_schema(cls)
-    tool_json_schema = {
-        "type": "function",
-        "function": tool
-    }
+    tool_json_schema = {"type": "function", "function": tool}
     return tool_json_schema
+
 
 # TODO: needs improvement to write encoded json
 # TODO virar jinja template
 def get_react_tools_prompt_format(tool_schemas):
     template = Template("""
-    You are a function calling AI model. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools:
+    You are a function calling AI model. You may call one or more functions
+    to assist with the user query. Don't make assumptions about what values
+    to plug into functions. Here are the available tools:
 
 
     {%- for tool in tools %}
         {{- '<tool>' + tool['function']['name'] + '\n' }}
         {%- for argument in tool['function']['parameters']['properties'] %}
-            {{- argument + ': ' + tool['function']['parameters']['properties'][argument]['description'] + '\n' }}
+            {{- argument + ': ' + tool['function']['parameters']
+                        ['properties'][argument]['description'] + '\n' }}
         {%- endfor %}
         {{- '\n</tool>' }}
     {%- endif %}
 
-    For each function call return a encoded json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
-    """)    
+    For each function call return a encoded json object with function name
+    and arguments within <tool_call></tool_call> XML tags as follows:
+    """)
     react_tools = template.render(tools=tool_schemas)
     return react_tools
 
-def download_file(url: str) -> str:
-    """ Download a webfile and returns the path """
-    try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
 
-        filename = os.path.basename(urlparse(url).path)
-        if not filename:
-            filename = f"downloaded_file_{str(uuid4())}"
-
-        temp_dir = tempfile.gettempdir()
-        file_path = os.path.join(temp_dir, filename)
-
-        with open(file_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-
-        return file_path
-
-    except requests.exceptions.RequestException as e:
-        logger.error(str(e))
-        return None
-
-def adapt_messages_for_vllm_audio(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Adapts a list of messages from ChatML format, converting audio parts of type 
+def adapt_messages_for_vllm_audio(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Adapts a list of messages from ChatML format, converting audio parts of type
     'input_audio' (OpenAI style) to type 'audio_url' with Data URI (vLLM style).
 
     Args:
@@ -478,24 +386,32 @@ def adapt_messages_for_vllm_audio(messages: List[Dict[str, Any]]) -> List[Dict[s
                         audio_format = input_audio_data.get("format")
 
                         # If you have the base64 data and format, convert
-                        if base64_data and isinstance(base64_data, str) and audio_format:
+                        if (
+                            base64_data
+                            and isinstance(base64_data, str)
+                            and audio_format
+                        ):
                             mime_type = get_mime_type(audio_format)
                             data_uri = f"data:{mime_type};base64,{base64_data}"
 
                             # Create the new structure of the audio part
                             vllm_audio_part = {
                                 "type": "audio_url",
-                                "audio_url": {"url": data_uri}
+                                "audio_url": {"url": data_uri},
                             }
                             processed_content.append(vllm_audio_part)
                         else:
-                            logger.warning("Warning: Skipping malformed 'input_audio' part "
-                                           "at index {i}: {part}")
+                            logger.warning(
+                                "Warning: Skipping malformed 'input_audio' part "
+                                "at index {i}: {part}"
+                            )
                             processed_content.append(part)
                     else:
                         # Keep the original part if 'input_audio' is not a dict
-                        logger.warnning("Warning: Skipping malformed 'input_audio' part "
-                              f"(not a dict) at index {i}: {part}")
+                        logger.warnning(
+                            "Warning: Skipping malformed 'input_audio' part "
+                            f"(not a dict) at index {i}: {part}"
+                        )
                         processed_content.append(part)
 
                 else:

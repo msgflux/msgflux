@@ -1,17 +1,19 @@
 from os import getenv
+
 try:
     import httpx
-except:
-    raise ImportError("`httpx` is not detected, please install"
-                      "using `pip install msgflux[httpx]`")
+except Exception as e:
+    raise ImportError(
+        "`httpx` is not detected, please installusing `pip install msgflux[httpx]`"
+    ) from e
 from msgflux.envs import envs
-from msgflux.logger import logger
 from msgflux.models.base import BaseModel
 from msgflux.utils.tenacity import model_retry
 
 
 class HTTPXModelClient(BaseModel):
     """HTTPX interface for routes not supported by the OpenAI client."""
+
     headers = {"accept": "application/json", "Content-Type": "application/json"}
 
     def _initialize(self):
@@ -19,9 +21,9 @@ class HTTPXModelClient(BaseModel):
         self.current_key_index = 0
         timeout = getenv("OPENAI_TIMEOUT", None)
         self.client = httpx.Client(
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100),
+            limits=httpx.Limits(max_connections=2000, max_keepalive_connections=100),
             timeout=timeout,
-            transport=httpx.HTTPTransport(retries=envs.httpx_max_retries)
+            transport=httpx.HTTPTransport(retries=envs.httpx_max_retries),
         )
 
     @model_retry
@@ -32,7 +34,9 @@ class HTTPXModelClient(BaseModel):
         url = self.sampling_params["base_url"] + self.url_path
         headers = self.headers
         if hasattr(self, "_api_key"):
-           headers["Authorization"] = f"Bearer {self._api_key[0]}" # Not rotate for now
+            headers["Authorization"] = (
+                f"Bearer {self._api_key[0]}"  # Not rotate for now
+            )
         response = self.client.post(url, headers=headers, json=params)
         response.raise_for_status()
         model_output = response.json()

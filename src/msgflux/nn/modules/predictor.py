@@ -9,8 +9,7 @@ from msgflux.nn.modules.module import Module
 
 
 class Predictor(Module):
-    """
-    Predictor is a generic Module type that uses Classifier, Regressors, 
+    """Predictor is a generic Module type that uses Classifier, Regressors,
     Detectors and Segmenters to generate insights above data.
     """
 
@@ -19,32 +18,31 @@ class Predictor(Module):
         name: str,
         model: Union[BaseModel, ModelGateway],
         *,
-        task_inputs: Optional[str] = None,      
+        task_inputs: Optional[str] = None,
         response_mode: Optional[str] = "plain_response",
         response_template: Optional[str] = None,
         model_preference: Optional[str] = None,
         execution_kwargs: Optional[Dict[str, Any]] = None,
     ):
+        """Args:
+        name:
+            Predictor name in snake case format.
+        model:
+            Predictor Model client.
+        task_inputs:
+            Fields of the Message object that will be the input to the task.
+        response_mode:
+            What the response should be.
+            * `plain_response` (default): Returns the final agent response directly.
+            * other: Write on field in Message object.
+        response_template:
+            A Jinja template to format response.
+        model_preference:
+            Fields of the Message object that will be the model preference.
+            This is only valid if the model is of type ModelGateway.
+        execution_kwargs:
+            Extra kwargs to model execution.
         """
-        Args:
-            name: 
-                Predictor name in snake case format.
-            model: 
-                Predictor Model client.
-            task_inputs:
-                Fields of the Message object that will be the input to the task.
-            response_mode: 
-                What the response should be.
-                * `plain_response` (default): Returns the final agent response directly.
-                * other: Write on field in Message object.
-            response_template:
-                A Jinja template to format response.
-            model_preference:
-                Fields of the Message object that will be the model preference.
-                This is only valid if the model is of type ModelGateway.                
-            execution_kwargs:
-                Extra kwargs to model execution.                              
-        """        
         super().__init__()
         self.set_name(name)
         self._set_model(model)
@@ -52,7 +50,7 @@ class Predictor(Module):
         self._set_model_preference(model_preference)
         self._set_response_mode(response_mode)
         self._set_response_template(response_template)
-        self._set_task_inputs(task_inputs)     
+        self._set_task_inputs(task_inputs)
 
     def forward(self, message: Union[Any, Message], **kwargs) -> Any:
         inputs = self._prepare_task(message, **kwargs)
@@ -73,8 +71,8 @@ class Predictor(Module):
         model_execution_params = dotdict(self.execution_kwargs or {})
         model_execution_params.data = data
         if model_preference:
-            model_execution_params.model_preference = model_preference        
-        return model_execution_params        
+            model_execution_params.model_preference = model_preference
+        return model_execution_params
 
     def _process_model_response(
         self, model_response: ModelResponse, message: Union[Any, Message]
@@ -88,9 +86,7 @@ class Predictor(Module):
                 f"Unsupported model response type `{model_response.response_type}`"
             )
 
-    def _prepare_task(
-        self, message: Union[Any, Message], **kwargs
-    ) -> Dict[str, Any]:
+    def _prepare_task(self, message: Union[Any, Message], **kwargs) -> Dict[str, Any]:
         inputs = dotdict()
 
         if isinstance(message, Message):
@@ -113,4 +109,6 @@ class Predictor(Module):
         if isinstance(model, (BaseModel, ModelGateway)):
             self.register_buffer("model", model)
         else:
-            raise TypeError(f"`model` need be a `BaseModel` model, given `{type(model)}`")
+            raise TypeError(
+                f"`model` need be a `BaseModel` model, given `{type(model)}`"
+            )

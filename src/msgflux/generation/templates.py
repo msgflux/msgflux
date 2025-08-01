@@ -3,9 +3,10 @@ class PromptSpec:
     INSTRUCTIONS = "How you should do"
     EXAMPLES = "Samples of what to do"
     EXPECTED_OUTPUT = "Describes what the response should be like"
-    #TASK_TEMPLATE = ""
+    # TASK_TEMPLATE = ""
 
-SYSTEM_PROMPT_TEMPLATE =  """
+
+SYSTEM_PROMPT_TEMPLATE = """
 {% if system_message or instructions or expected_output or examples or team_members or system_extra_message %}
 <developer_note>
 {% if system_message %}{{ system_message }}
@@ -30,10 +31,10 @@ The current date is: {{ current_date }}
 {% endif %}
 </developer_note>
 {% endif %}
-"""
+""" # noqa: E501
 
 
-TYPED_XML_TEMPLATE =  """
+TYPED_XML_TEMPLATE = """
 {% if instructions %}{{ instructions }}{% endif %}
 
 You SHOULD write your response in a structured manner using XML tags.
@@ -75,7 +76,7 @@ Example of how you can write your response in XML:
 Here is a JSON-schema that you SHOULD use to guide you in generating your response using XML tags:
 {{ json_schema }}
 {% endif %}
-"""
+""" # noqa: E501
 
 SIGNATURE_DEFAULT_SYSTEM_MESSAGE = """
 Your goal is to provide accurate, helpful, and well-reasoned responses.
@@ -84,4 +85,4 @@ Think step-by-step to formulate your answer. Where appropriate, briefly explain 
 Structure your response clearly and concisely using dicts, lists, or other formatting.
 Strive for factual accuracy.
 Be helpful and informative, focusing on directly answering the user's prompt.
-""".strip()
+""".strip() # noqa: E501

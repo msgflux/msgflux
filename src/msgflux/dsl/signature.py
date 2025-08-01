@@ -5,9 +5,9 @@ from typing import (
     List,
     Optional,
     Set,
-    Union,
     Tuple,
     Type,
+    Union,
     get_args,
     get_origin,
     get_type_hints,
@@ -15,18 +15,20 @@ from typing import (
 
 import msgspec
 
-from msgflux.generation.reasoning.cot import ChainOfThoughts, COT_SYSTEM_MESSAGE
-from msgflux.generation.reasoning.react import ReAct, REACT_SYSTEM_MESSAGE
-from msgflux.generation.reasoning.self_consistency import SelfConsistency, SELF_CONSISTENCY_SYSTEM_MESSAGE
-from msgflux.generation.reasoning.tot import TreeOfThoughts, TOT_SYSTEM_MESSAGE
+from msgflux.generation.reasoning.cot import COT_SYSTEM_MESSAGE, ChainOfThoughts
+from msgflux.generation.reasoning.react import REACT_SYSTEM_MESSAGE, ReAct
+from msgflux.generation.reasoning.self_consistency import (
+    SELF_CONSISTENCY_SYSTEM_MESSAGE,
+    SelfConsistency,
+)
+from msgflux.generation.reasoning.tot import TOT_SYSTEM_MESSAGE, TreeOfThoughts
 from msgflux.utils.xml import apply_xml_tags, dict_to_typed_xml
-
 
 SIGNATURE_SYSTEM_MESSAGES = {
     ChainOfThoughts: COT_SYSTEM_MESSAGE,
     ReAct: REACT_SYSTEM_MESSAGE,
     SelfConsistency: SELF_CONSISTENCY_SYSTEM_MESSAGE,
-    TreeOfThoughts: TOT_SYSTEM_MESSAGE
+    TreeOfThoughts: TOT_SYSTEM_MESSAGE,
 }
 
 
@@ -43,31 +45,33 @@ class Field:
 
 
 class InputField(Field):
-    """
-    Represents an input field in a model signature.
+    """Represents an input field in a model signature.
 
-    Attributes:
-        desc: A description of the input field. Defaults to an empty string.
-        ex: Input parameter example.
+    Args:
+        desc:
+            A description of the input field. Defaults to an empty string.
+        ex:
+            Input parameter example.
     """
 
 
 class OutputField(Field):
-    """
-    Represents an output field in a model signature.
+    """Represents an output field in a model signature.
 
-    Attributes:
-        desc: A description of the output field. Defaults to an empty string.
-        ex: Output parameter example.
+    Args:
+        desc:
+            A description of the output field. Defaults to an empty string.
+        ex:
+            Output parameter example.
     """
-        
+
 
 class _SignatureMeta(type):
-    """
-    Metaclass to process input and output fields in a model signature.
+    """Metaclass to process input and output fields in a model signature.
 
-    This metaclass collects all `InputField` and `OutputField` instances defined in a class
-    and stores them in `_inputs` and `_outputs` dictionaries, respectively.
+    This metaclass collects all `InputField` and `OutputField` instances
+    defined in a class and stores them in `_inputs` and `_outputs`
+    dictionaries, respectively.
     """
 
     def __new__(cls, name, bases, dct):
@@ -86,14 +90,13 @@ class _SignatureMeta(type):
 
 
 class Signature(metaclass=_SignatureMeta):
-    """
-    Base class for model signatures.
+    """Base class for model signatures.
 
     This class provides functionality to define and inspect input and output fields
     of a model. It uses the `_SignatureMeta` metaclass to automatically collect
     `InputField` and `OutputField` instances.
 
-    Example:
+    !!! example:
         ```python
         class CheckCitationFaithfulness(Signature):
             \"\"\"Verify that the text is based on the provided context.\"\"\"
@@ -107,26 +110,35 @@ class Signature(metaclass=_SignatureMeta):
 
         # Get the class docstring
         print(CheckCitationFaithfulness.get_instructions())
-        # Output: "Verify that the text is based on the provided context."
+        # Output:
+        "Verify that the text is based on the provided context."
 
         # Get the signature in string format
         print(CheckCitationFaithfulness.get_str_signature())
-        # Output: "context: str, text: str -> faithfulness: bool, evidence: dict[str, list[str]]"
+        # Output:
+        "context: str, text: str -> faithfulness: bool, evidence: dict[str, list[str]]"
 
         # Get input descriptions
         print(CheckCitationFaithfulness.get_input_descriptions())
-        # Output: [('context', 'str', 'Facts here are assumed to be true', None), ('text', 'str', '', None)]
+        # Output:
+        [
+           ('context', 'str', 'Facts here are assumed to be true', None),
+           ('text', 'str', '', None)
+        ]
 
         # Get output descriptions
         print(CheckCitationFaithfulness.get_output_descriptions())
-        # Output: [('faithfulness', 'bool', '', "True"), ('evidence', 'dict[str, list[str]]', 'Supporting evidence for claims', None)]
+        # Output:
+        # [
+        #   ('faithfulness', 'bool', '', "True"),
+        #   ('evidence', 'dict[str, list[str]]', 'Supporting evidence for claims', None)
+        # ]
         ```
     """
 
     @classmethod
     def _type_to_str(cls, type_obj: Any) -> str:
-        """
-        Converts a type object to a readable string representation.
+        """Converts a type object to a readable string representation.
 
         Args:
             type_obj: The type object to convert.
@@ -155,8 +167,7 @@ class Signature(metaclass=_SignatureMeta):
 
     @classmethod
     def _get_inputs(cls) -> Dict[str, str]:
-        """
-        Retrieves the input fields with their names and types.
+        """Retrieves the input fields with their names and types.
 
         Returns:
             A dictionary mapping input field names to their types.
@@ -166,8 +177,7 @@ class Signature(metaclass=_SignatureMeta):
 
     @classmethod
     def _get_outputs(cls) -> Dict[str, str]:
-        """
-        Retrieves the output fields with their names and types.
+        """Retrieves the output fields with their names and types.
 
         Returns:
             A dictionary mapping output field names to their types.
@@ -177,8 +187,7 @@ class Signature(metaclass=_SignatureMeta):
 
     @classmethod
     def get_str_signature(cls) -> str:
-        """
-        Returns the signature of the parameters in string format.
+        """Returns the signature of the parameters in string format.
 
         Returns:
             A string representation of the input and output fields.
@@ -186,38 +195,40 @@ class Signature(metaclass=_SignatureMeta):
         inputs = [f"{key}: {typ}" for key, typ in cls._get_inputs().items()]
         outputs = [f"{key}: {typ}" for key, typ in cls._get_outputs().items()]
         return ", ".join(inputs) + " -> " + ", ".join(outputs)
+
     # TODO: tem bugs no parser quando usa optional
 
     @classmethod
     def get_input_descriptions(cls) -> List[Tuple[str, str, str]]:
-        """
-        Returns the descriptions and types of the input parameters.
+        """Returns the descriptions and types of the input parameters.
 
         Returns:
             A list of tuples containing the input field name,
             type, and description.
         """
         inputs = cls._get_inputs()
-        return [(key, typ, cls._inputs[key].desc, cls._inputs[key].ex) 
-                for key, typ in inputs.items()]
+        return [
+            (key, typ, cls._inputs[key].desc, cls._inputs[key].ex)
+            for key, typ in inputs.items()
+        ]
 
     @classmethod
     def get_output_descriptions(cls) -> List[Tuple[str, str, str]]:
-        """
-        Returns the descriptions and types of the output parameters.
+        """Returns the descriptions and types of the output parameters.
 
         Returns:
             A list of tuples containing the output field name,
             type, and description.
         """
         outputs = cls._get_outputs()
-        return [(key, typ, cls._outputs[key].desc, cls._outputs[key].ex) 
-                for key, typ in outputs.items()]
+        return [
+            (key, typ, cls._outputs[key].desc, cls._outputs[key].ex)
+            for key, typ in outputs.items()
+        ]
 
     @classmethod
     def get_instructions(cls) -> Optional[str]:
-        """
-        Returns the class docstring.
+        """Returns the class docstring.
 
         Returns:
             The docstring of the class, or `None` if no docstring is present.
@@ -226,8 +237,7 @@ class Signature(metaclass=_SignatureMeta):
 
     @classmethod
     def get_input_examples(cls) -> Dict[str, Optional[str]]:
-        """
-        Returns a mapping of input field names to their examples.
+        """Returns a mapping of input field names to their examples.
 
         Returns:
             A dictionary where keys are input field names and values are
@@ -238,8 +248,7 @@ class Signature(metaclass=_SignatureMeta):
 
     @classmethod
     def get_output_examples(cls) -> Dict[str, Optional[str]]:
-        """
-        Returns a mapping of output field names to their examples.
+        """Returns a mapping of output field names to their examples.
 
         Returns:
             A dictionary where keys are output field names and values are
@@ -249,22 +258,23 @@ class Signature(metaclass=_SignatureMeta):
         return {key: field.ex for key, field in cls._outputs.items()}
 
 
-def _parse_example_str(example_str: str, target_type: Type) -> Any:
-    """
-    Attempts to parse an example string into the target Python type.
+def _parse_example_str(example_str: str, target_type: Type) -> Any: # noqa: C901
+    """Attempts to parse an example string into the target Python type.
     Uses ast.literal_eval for safety and to handle Python literals.
     """
     origin_type = get_origin(target_type)
-    
+
     # Trata 'None' literal -> None Python
     if example_str.strip().lower() == "none":
         # Checks if the target type allows None (Optional)
         is_optional = origin_type is Union and type(None) in get_args(target_type)
         if target_type is type(None) or is_optional:
-             return None
+            return None
         else:
-             raise ValueError(f"Received string `None` but target type `{target_type}` "
-                              " is not None or Optional.")
+            raise ValueError(
+                f"Received string `None` but target type `{target_type}` "
+                " is not None or Optional."
+            )
 
     # Analyze based on destination type
     if target_type is str:
@@ -284,37 +294,53 @@ def _parse_example_str(example_str: str, target_type: Type) -> Any:
     elif origin_type in (list, dict, tuple, set, List, Dict, Tuple, Set):
         try:
             parsed_value = ast.literal_eval(example_str)
-            expected_type = list if origin_type in (list, List) else \
-                            dict if origin_type in (dict, Dict) else \
-                            tuple if origin_type in (tuple, Tuple) else \
-                            set if origin_type in (set, Set) else None
-            
+            expected_type = (
+                list
+                if origin_type in (list, List)
+                else dict
+                if origin_type in (dict, Dict)
+                else tuple
+                if origin_type in (tuple, Tuple)
+                else set
+                if origin_type in (set, Set)
+                else None
+            )
+
             if expected_type and not isinstance(parsed_value, expected_type):
-                 raise TypeError(f"Parsed value `{parsed_value}` is not of "
-                                 "expected type {expected_type} for {target_type}")
-                 
+                raise TypeError(
+                    f"Parsed value `{parsed_value}` is not of "
+                    "expected type {expected_type} for {target_type}"
+                )
+
             return parsed_value
         except (ValueError, SyntaxError, TypeError, MemoryError) as e:
-            raise ValueError(f"Failed to parse `{example_str}` as {target_type} using ast.literal_eval: {e}") from e
+            raise ValueError(
+                f"Failed to parse `{example_str}` as {target_type} "
+                f"using ast.literal_eval: {e}"
+            ) from e
     else:
         try:
-            # It might be useful if the type is, for example, Optional[int] and the example is "123"
+            # It might be useful if the type is, for example, Optional[int]
+            # and the example is "123"
             return ast.literal_eval(example_str)
-        except (ValueError, SyntaxError, TypeError, MemoryError):
-             raise ValueError(f"Unsupported type `{target_type}` for automatic parsing of example string '{example_str}'")
+        except (ValueError, SyntaxError, TypeError, MemoryError) as e:
+            raise ValueError(
+                f"Unsupported type `{target_type}` for automatic parsing "
+                f"of example string `{example_str}`"
+            ) from e
 
 
 def get_examples_from_signature(
-    signature_cls: Type[Signature],
-    xml_format: Optional[bool] = False
+    signature_cls: Type[Signature], *, xml_format: Optional[bool] = False
 ) -> Optional[Tuple[Dict[str, str], str]]:
-    """
-    Processes examples of a Signature class, returning a dict for inputs
+    """Processes examples of a Signature class, returning a dict for inputs
     and a JSON string or XML string for outputs, only if all examples are present.
 
     Args:
-        signature_cls: The Signature class (which inherits from Signature) to process.
-        xml_format: If True, outputs are returned as typed XML; otherwise, as JSON.
+        signature_cls:
+            The Signature class (which inherits from Signature) to process.
+        xml_format:
+            If True, outputs are returned as typed XML; otherwise, as JSON.
 
     Returns:
         A tuple containing:
@@ -345,33 +371,43 @@ def get_examples_from_signature(
         for name, _, _, example_str in output_descs:
             target_type = type_hints.get(name)
             if target_type is None:
-                raise ValueError(f"Type hint not found for output field `{name}` in {signature_cls.__name__}")
-            
+                raise ValueError(
+                    f"Type hint not found for output field `{name}` in "
+                    f"{signature_cls.__name__}"
+                )
+
             # Parse the example string to the correct type
             parsed_value = _parse_example_str(example_str, target_type)
             output_parsed_dict[name] = parsed_value
 
     except (ValueError, TypeError) as e:
-        raise ValueError(f"Error parsing output examples for {signature_cls.__name__}: {e}") from e
+        raise ValueError(
+            f"Error parsing output examples for {signature_cls.__name__}: {e}"
+        ) from e
 
     # 3. Encode the parsed output dictionary to JSON or XML based on xml_format
     if xml_format:
         try:
             output_string = dict_to_typed_xml(output_parsed_dict)
         except Exception as e:
-            raise ValueError(f"Error converting outputs to XML in {signature_cls.__name__}: {e}") from e
+            raise ValueError(
+                f"Error converting outputs to XML in {signature_cls.__name__}: {e}"
+            ) from e
     else:
         try:
             output_string = msgspec.json.encode(output_parsed_dict)
         except TypeError as e:
-            raise TypeError(f"Error encoding parsed outputs to JSON in {signature_cls.__name__}: {e}") from e
+            raise TypeError(
+                "Error encoding parsed outputs to JSON in "
+                f"{signature_cls.__name__}: {e}"
+            ) from e
 
     return input_examples_dict, output_string
 
 
 def get_expected_output_from_signature(
     inputs_desc: List[Tuple[str, str, str, Union[str, None]]],
-    outputs_desc: List[Tuple[str, str, str, Union[str, None]]]
+    outputs_desc: List[Tuple[str, str, str, Union[str, None]]],
 ) -> str:
     expected_output = "Your task inputs are:\n\n"
     for i, input_desc in enumerate(inputs_desc, 1):
@@ -383,14 +419,14 @@ def get_expected_output_from_signature(
     for i, output_desc in enumerate(outputs_desc, 1):
         part = f"{i}. `{output_desc[0]}` ({output_desc[1]})"
         if len(output_desc) == 3 and output_desc[2] is not None:
-            part += f": {output_desc[2]}" 
+            part += f": {output_desc[2]}"
         expected_output += f"{part}\n"
     expected_output += "\nBe consise in choosing your answers."
     return expected_output
 
 
 def get_task_template_from_signature(
-    inputs_desc: List[Tuple[str, str, str, Union[str, None]]]
+    inputs_desc: List[Tuple[str, str, str, Union[str, None]]],
 ) -> str:
     task_template = ""
     for input_desc in inputs_desc:

@@ -1,7 +1,7 @@
 import functools
 import inspect
 import weakref
-from collections import namedtuple, OrderedDict
+from collections import OrderedDict, namedtuple
 from typing import (
     Any,
     Callable,
@@ -15,6 +15,7 @@ from typing import (
     TypeVar,
     Union,
 )
+
 import msgspec
 from code2mermaid import code_to_mermaid
 from jinja2 import Template
@@ -23,33 +24,33 @@ from opentelemetry import trace
 
 from msgflux.dotdict import dotdict
 from msgflux.envs import envs
-from msgflux.exceptions import UnsafeModelResponse, UnsafeUserInput
+from msgflux.exceptions import UnsafeModelResponseError, UnsafeUserInputError
 from msgflux.logger import logger
 from msgflux.message import Message
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.parameter import Parameter
+from msgflux.telemetry.span import spans
 from msgflux.utils.convert import convert_camel_snake_to_title
 from msgflux.utils.encode import encode_data_to_base64
 from msgflux.utils.hooks import RemovableHandle
 from msgflux.utils.mermaid import plot_mermaid
 from msgflux.utils.msgspec import StructFactory
 from msgflux.utils.validation import is_base64, is_builtin_type, is_subclass_of
-from msgflux.telemetry.span import spans
-
 
 __all__ = [
-    "register_module_forward_pre_hook",
-    "register_module_forward_hook",
+    "Module",
     "register_module_buffer_registration_hook",
+    "register_module_forward_hook",
+    "register_module_forward_pre_hook",
     "register_module_module_registration_hook",
     "register_module_parameter_registration_hook",
-    "Module",
 ]
 
-msgflux_DESERIALIZABLE_CLS: Dict[str, Type] = {
-    "model": Model
+MSGFLUX_DESERIALIZABLE_CLS: Dict[str, Type] = {
+    "model": Model,
+    "model_gateway": ModelGateway
 }
 
 
@@ -58,7 +59,8 @@ T = TypeVar("T", bound="Module")
 # TODO para serializar basta verificar se o obj tem msgflux_type
 # isso resolve em vez de ficar add manualmente quais são
 
-class _IncompatibleKeys( # TODO tirar. tirar nao porra. tem que ficar
+
+class _IncompatibleKeys(  # TODO tirar. tirar nao porra. tem que ficar
     namedtuple("IncompatibleKeys", ["missing_keys", "unexpected_keys"]),
 ):
     def __repr__(self):
@@ -68,22 +70,23 @@ class _IncompatibleKeys( # TODO tirar. tirar nao porra. tem que ficar
 
     __str__ = __repr__
 
-def _addindent(s_, numSpaces):
+
+def _addindent(s_, num_spaces: int):
     s = s_.split("\n")
     # don't do anything for single-line stuff
     if len(s) == 1:
         return s_
     first = s.pop(0)
-    s = [(numSpaces * " ") + line for line in s]
+    s = [(num_spaces * " ") + line for line in s]
     s = "\n".join(s)
     s = first + "\n" + s
     return s
 
 
-def get_callable_name(callable: Callable) -> str:
+def get_callable_name(callable: Callable) -> str: # noqa: A002
     if isinstance(callable, Module):
         return callable.get_module_name()
-    elif inspect.isfunction(callable):    
+    elif inspect.isfunction(callable):
         return callable.__name__
     else:
         return callable.__class__.__name__
@@ -94,6 +97,7 @@ r"""This tracks hooks common to all modules that are executed immediately before
 _global_buffer_registration_hooks: Dict[int, Callable] = OrderedDict()
 _global_module_registration_hooks: Dict[int, Callable] = OrderedDict()
 _global_parameter_registration_hooks: Dict[int, Callable] = OrderedDict()
+
 
 class _WrappedHook:
     def __init__(self, hook: Callable, module: Optional["Module"] = None):
@@ -141,28 +145,26 @@ _global_forward_hooks: Dict[int, Callable] = OrderedDict()
 _global_forward_hooks_always_called: Dict[int, bool] = OrderedDict()
 _global_forward_hooks_with_kwargs: Dict[int, bool] = OrderedDict()
 
-_EXTRA_STATE_KEY_SUFFIX = "_extra_state"
 
 def register_module_buffer_registration_hook(
     hook: Callable[..., None],
 ) -> RemovableHandle:
-    r"""Register a buffer registration hook common to all modules.
+    """Register a buffer registration hook common to all modules.
 
-    .. warning ::
+    !!! warning
 
         This adds global state to the `nn.Module` module
 
-    The hook will be called every time :func:`register_buffer` is invoked.
-    It should have the following signature::
+    The hook will be called every time `register_buffer` is invoked.
+    It should have the following signature:
 
         hook(module, name, buffer) -> None or new buffer
 
     The hook can modify the input or return a single modified value in the hook.
 
     Returns:
-        :class:`msgflux.nn.utils.hooks.RemovableHandle`:
-            a handle that can be used to remove the added hook by calling
-            ``handle.remove()``
+        msgflux.nn.utils.hooks.RemovableHandle: A handle that can be used
+        to remove the added hook by calling ``handle.remove()``
     """
     handle = RemovableHandle(_global_buffer_registration_hooks)
     _global_buffer_registration_hooks[handle.id] = hook
@@ -172,13 +174,13 @@ def register_module_buffer_registration_hook(
 def register_module_module_registration_hook(
     hook: Callable[..., None],
 ) -> RemovableHandle:
-    r"""Register a module registration hook common to all modules.
+    """Register a module registration hook common to all modules.
 
-    .. warning ::
+    !!! warning
 
         This adds global state to the `nn.Module` module
 
-    The hook will be called every time :func:`register_module` is invoked.
+    The hook will be called every time `register_module` is invoked.
     It should have the following signature::
 
         hook(module, name, submodule) -> None or new submodule
@@ -186,9 +188,8 @@ def register_module_module_registration_hook(
     The hook can modify the input or return a single modified value in the hook.
 
     Returns:
-        :class:`msgflux.nn.utils.hooks.RemovableHandle`:
-            a handle that can be used to remove the added hook by calling
-            ``handle.remove()``
+        msgflux.nn.utils.hooks.RemovableHandle: A handle that can be used
+        to remove the added hook by calling ``handle.remove()``
     """
     handle = RemovableHandle(_global_module_registration_hooks)
     _global_module_registration_hooks[handle.id] = hook
@@ -198,9 +199,9 @@ def register_module_module_registration_hook(
 def register_module_parameter_registration_hook(
     hook: Callable[..., None],
 ) -> RemovableHandle:
-    r"""Register a parameter registration hook common to all modules.
+    """Register a parameter registration hook common to all modules.
 
-    .. warning ::
+    !!! warning
 
         This adds global state to the `nn.Module` module
 
@@ -212,9 +213,8 @@ def register_module_parameter_registration_hook(
     The hook can modify the input or return a single modified value in the hook.
 
     Returns:
-        :class:`msgflux.nn.utils.hooks.RemovableHandle`:
-            a handle that can be used to remove the added hook by calling
-            ``handle.remove()``
+        msgflux.nn.utils.hooks.RemovableHandle: A handle that can be used to remove
+        the added hook by calling ``handle.remove()``.
     """
     handle = RemovableHandle(_global_parameter_registration_hooks)
     _global_parameter_registration_hooks[handle.id] = hook
@@ -222,9 +222,9 @@ def register_module_parameter_registration_hook(
 
 
 def register_module_forward_pre_hook(hook: Callable[..., None]) -> RemovableHandle:
-    r"""Register a forward pre-hook common to all modules.
+    """Register a forward pre-hook common to all modules.
 
-    .. warning ::
+    !!! warning
 
         This adds global state to the `nn.module` module
         and it is only intended for debugging/profiling purposes.
@@ -259,9 +259,9 @@ def register_module_forward_hook(
     with_kwargs: bool = False,
     always_call: bool = False,
 ) -> RemovableHandle:
-    r"""Register a global forward hook for all the modules.
+    """Register a global forward hook for all the modules.
 
-    .. warning ::
+    !!! warning
 
         This adds global state to the `nn.module` module
         and it is only intended for debugging/profiling purposes.
@@ -277,9 +277,11 @@ def register_module_forward_hook(
     it will not have effect on forward since this is called after
     :func:`forward` is called.
 
-    Parameters:
-        hook (Callable): The user defined hook to be registered.
-        always_call (bool): If ``True`` the ``hook`` will be run regardless of
+    Args:
+        hook:
+            The user defined hook to be registered.
+        always_call:
+            If ``True`` the ``hook`` will be run regardless of
             whether an exception is raised while calling the Module.
             Default: ``False``
     Returns:
@@ -301,12 +303,13 @@ def register_module_forward_hook(
     return handle
 
 
-def _forward_unimplemented(self, *input: Any) -> None:
-    r"""Define the computation performed at every call.
+def _forward_unimplemented(self, *inputs: Any) -> None:
+    """Define the computation performed at every call.
 
     Should be overridden by all subclasses.
 
-    .. note::
+    !!! note
+
         Although the recipe for forward pass needs to be defined within
         this function, one should call the :class:`Module` instance afterwards
         instead of this since the former takes care of running the
@@ -316,12 +319,11 @@ def _forward_unimplemented(self, *input: Any) -> None:
         f"Module [{type(self).__name__}] is missing the required `forward` function"
     )
 
+
 class Module:
-
-    training: bool # TODO mover para Agent
-
+    training: bool
     _version: int = 1
-    r"""This allows better BC support for :meth:`load_state_dict`. In
+    """This allows better BC support for :meth:`load_state_dict`. In
     :meth:`state_dict`, the version number will be saved as in the attribute
     `_metadata` of the returned state dict, and thus pickled. `_metadata` is a
     dictionary with keys that follow the naming convention of state dict. See
@@ -331,41 +333,32 @@ class Module:
     be bumped, and the module's `_load_from_state_dict` method can compare the
     version number and do appropriate changes if the state dict is from before
     the change."""
-
     _parameters: Dict[str, Optional[Parameter]] = OrderedDict()
-    _buffers: Dict[str, Optional[Any]] = OrderedDict() # ANTES Buffer
+    _buffers: Dict[str, Optional[Any]] = OrderedDict()
     _modules: Dict[str, Optional["Module"]] = OrderedDict()
-    _is_full_backward_hook: Optional[bool]
     _forward_hooks: Dict[int, Callable]
-    # Marks whether the corresponding _forward_hooks accept kwargs or not.
-    # As JIT does not support Set[int], this dict is used as a set, where all
-    # hooks represented in this dict accept kwargs.
     _forward_hooks_with_kwargs: Dict[int, bool]
-    # forward hooks that should always be called even if an exception is raised
     _forward_hooks_always_called: Dict[int, bool]
     _forward_pre_hooks: Dict[int, Callable]
-    # Marks whether the corresponding _forward_hooks accept kwargs or not.
-    # As JIT does not support Set[int], this dict is used as a set, where all
-    # hooks represented in this dict accept kwargs.
     _forward_pre_hooks_with_kwargs: Dict[int, bool]
-    _state_dict_hooks: Dict[int, Callable]
-    _load_state_dict_pre_hooks: Dict[int, Callable]
-    _state_dict_pre_hooks: Dict[int, Callable]
     _load_state_dict_post_hooks: Dict[int, Callable]
-    call_super_init: bool = False    
+    _load_state_dict_pre_hooks: Dict[int, Callable]
+    _state_dict_hooks: Dict[int, Callable]
+    _state_dict_pre_hooks: Dict[int, Callable]
+    call_super_init: bool = False
 
     def __init__(self, *args, **kwargs) -> None:
         # Backward compatibility: no args used to be allowed when call_super_init=False
         if self.call_super_init is False and bool(kwargs):
             raise TypeError(
-                f"{type(self).__name__}.__init__() got an unexpected keyword argument `{next(iter(kwargs))}`"
-                ""
+                f"{type(self).__name__}.__init__() got an unexpected "
+                f"keyword argument `{next(iter(kwargs))}`"
             )
 
         if self.call_super_init is False and bool(args):
             raise TypeError(
-                f"{type(self).__name__}.__init__() takes 1 positional argument but {len(args) + 1} were"
-                " given"
+                f"{type(self).__name__}.__init__() takes 1 positional "
+                f"argument but {len(args) + 1} were"
             )
 
         """
@@ -377,7 +370,7 @@ class Module:
         super().__setattr__("training", True)
         super().__setattr__("_parameters", {})
         super().__setattr__("_buffers", {})
-        super().__setattr__("_non_persistent_buffers_set", set()) # ?
+        super().__setattr__("_non_persistent_buffers_set", set())  # ?
         super().__setattr__("_forward_pre_hooks", OrderedDict())
         super().__setattr__("_forward_hooks", OrderedDict())
         super().__setattr__("_forward_hooks_always_called", OrderedDict())
@@ -386,7 +379,7 @@ class Module:
         super().__setattr__("_load_state_dict_pre_hooks", OrderedDict())
         super().__setattr__("_load_state_dict_post_hooks", OrderedDict())
         super().__setattr__("_modules", {})
-        super().__setattr__("_spans", spans)        
+        super().__setattr__("_spans", spans)
 
         if self.call_super_init:
             super().__init__(*args, **kwargs)
@@ -396,10 +389,11 @@ class Module:
     # msgflux funcs
 
     def _get_mermaid(
-        self, 
-        title: Optional[str] = None, 
+        self,
+        title: Optional[str] = None,
         orientation: Optional[str] = "TD",
-        remove_self: Optional[bool] = True
+        *,
+        remove_self: Optional[bool] = True,
     ) -> str:
         mermaid = code_to_mermaid(
             inspect.getsource(self.forward),
@@ -410,26 +404,27 @@ class Module:
         return mermaid
 
     def plot(
-        self, 
-        title: Optional[str] = None, 
+        self,
+        title: Optional[str] = None,
         orientation: Optional[str] = "TD",
-        remove_self: Optional[bool] = True
+        *,
+        remove_self: Optional[bool] = True,
     ) -> Mermaid:
-        """
-        Generates and renders a Mermaid diagram of the `forward` method.
+        """Generates and renders a Mermaid diagram of the `forward` method.
 
         This method extracts the source code of the `forward` method and converts
-        it into a Mermaid diagram for visualization. Optionally, it can clean up 
+        it into a Mermaid diagram for visualization. Optionally, it can clean up
         the code by removing references to `self` to produce a cleaner diagram.
 
         Args:
             title:
                 Title to display at the top of the Mermaid diagram.
             orientation:
-                Diagram orientation. Options include "TD" (top-down), "LR" (left-right), etc.
-            remove_self: 
-                Whether to remove references to `self` from the code before generating
-                the diagram. Useful for cleaner output.
+                Diagram orientation. Options include "TD" (top-down),
+                "LR" (left-right), etc.
+            remove_self:
+                Whether to remove references to `self` from the code before
+                generating the diagram. Useful for cleaner output.
 
         Returns:
             The rendered Mermaid diagram.
@@ -438,7 +433,7 @@ class Module:
         return plot_mermaid(mermaid)
 
     def _get_content_from_or_input(self, path: str, message: Message) -> Any:
-        """Returns the first valid content from OR input"""
+        """Returns the first valid content from OR input."""
         content = None
         for single_path in path:
             content = message.get(single_path)
@@ -446,28 +441,30 @@ class Module:
                 break
         return content
 
-    def _get_content_from_message(self, path, message):
+    def _get_content_from_message(self, path: str, message: Message):
         content = None
         if isinstance(message, Message):
             if isinstance(path, tuple): # OR inputs
                 content = self._get_content_from_or_input(path, message)
             else:
-                content = message.get(path)        
+                content = message.get(path)
         return content
 
     def _extract_message_values(
-        self, 
-        paths: Union[str, List[str], Dict[str, str]], 
-        message: Message
+        self, paths: Union[str, List[str], Dict[str, str]], message: Message
     ) -> Optional[Union[str, Dict[str, Any], List[Any], None]]:
-        """Process inputs based on their type (str, dict, list) by extracting content from the message."""
+        """Process inputs based on their type (str, dict, list)
+        by extracting content from the message.
+        """
         if isinstance(paths, str):
             return self._get_content_from_message(paths, message)
         elif isinstance(paths, dict):
-            return dotdict({
-                key: self._get_content_from_message(path, message)
-                for key, path in paths.items()
-            })
+            return dotdict(
+                {
+                    key: self._get_content_from_message(path, message)
+                    for key, path in paths.items()
+                }
+            )
         elif isinstance(paths, list):
             return [
                 self._get_content_from_message(path, message)
@@ -476,9 +473,10 @@ class Module:
             ]
         return None
 
-    def _prepare_data_uri(self, source: str, force_encode: bool = False) -> Optional[str]:
-        """
-        Prepares a data string (URL or Data URI base64).
+    def _prepare_data_uri(
+        self, source: str, force_encode: Optional[bool] = False # noqa: FBT001, FBT002
+    ) -> Optional[str]:
+        """Prepares a data string (URL or Data URI base64).
         If force_encode=True, always tries to download and encode URL.
         Otherwise, keeps the URL if it is HTTP and not base64.
         Returns None in case of encoding/download error.
@@ -494,8 +492,8 @@ class Module:
         is_url = source.startswith("http")
 
         if is_url and not force_encode:
-             # Keep the URL as is if you don't force the encoding
-             return source
+            # Keep the URL as is if you don't force the encoding
+            return source
 
         # Need to encode (either local or force_encode=True for URL)
         try:
@@ -508,20 +506,22 @@ class Module:
         return self._format_template(content, self.task_template)
 
     def _format_response_template(self, content: str) -> str:
-        return self._format_template(content, self.response_template)    
+        return self._format_template(content, self.response_template)
 
-    def _format_template(self, content: Union[str, Dict[str, Any]], raw_template: str) -> str:
+    def _format_template(
+        self, content: Union[str, Dict[str, Any]], raw_template: str
+    ) -> str:
         if isinstance(content, str):
             # Convert jinja to string format template
             template = raw_template.replace("{{ }}", "{}").replace("{{}}", "{}")
             return template.format(content)
         elif isinstance(content, dict):
             template = Template(raw_template)
-            rendered = template.render(content) 
+            rendered = template.render(content)
             rendered = rendered.strip()
             return rendered
         else:
-            raise ValueError("Unsupported content type for template formatting")    
+            raise ValueError("Unsupported content type for template formatting")
 
     def set_name(self, name: str):
         if isinstance(name, str):
@@ -531,22 +531,25 @@ class Module:
                 raise ValueError("`name` requires a string not empty")
         else:
             raise TypeError(f"`name` need be a `str` given {type(name)}")
-            
+
     def _set_annotations(self, annotations: Dict[str, type]):
         if isinstance(annotations, dict):
             super().__setattr__("annotations", annotations)
         else:
             raise TypeError(f"`annotations` need be a `dict` given {type(annotations)}")
 
-    def _set_task_template(self, task_template: Optional[str] = None):        
+    def _set_task_template(self, task_template: Optional[str] = None):
         if isinstance(task_template, str) or task_template is None:
             if isinstance(task_template, str) and task_template == "":
-                raise ValueError("`task_template` requires a string not empty "
-                                 f"given {task_template}")
+                raise ValueError(
+                    f"`task_template` requires a string not empty given {task_template}"
+                )
             self.register_buffer("task_template", task_template)
         else:
-            raise TypeError("`task_template` requires a string or None "
-                            f"given `{type(template)}`")
+            raise TypeError(
+                "`task_template` requires a string or None"
+                f"given `{type(task_template)}`"
+            )
 
     def _set_response_template(self, response_template: Optional[str] = None):
         if isinstance(response_template, str) or response_template is None:
@@ -554,17 +557,20 @@ class Module:
                 raise ValueError("`response_template` cannot be an empty str")
             self.register_buffer("response_template", response_template)
         else:
-            raise TypeError("`response_template` requires a string or None "
-                            f"given `{type(response_template)}`")
+            raise TypeError(
+                "`response_template` requires a string or None "
+                f"given `{type(response_template)}`"
+            )
 
     def _set_response_mode(self, response_mode: str):
         if isinstance(response_mode, str):
-            if response_mode is "":
+            if response_mode == "":
                 raise ValueError("`response_mode` requires a not empty string")
             self.register_buffer("response_mode", response_mode)
         else:
-            raise TypeError("`response_mode` requires a string "
-                            f"given `{type(response_mode)}`")
+            raise TypeError(
+                f"`response_mode` requires a string given `{type(response_mode)}`"
+            )
 
     def _set_prompt(self, prompt: Optional[str] = None):
         if isinstance(prompt, str) or prompt is None:
@@ -572,7 +578,7 @@ class Module:
         else:
             raise TypeError(f"`prompt` need be a str or None given `{type(prompt)}`")
 
-    def _set_stream(self, stream: bool):
+    def _set_stream(self, stream: bool): # noqa: FBT001
         if isinstance(stream, bool):
             self.register_buffer("stream", stream)
         else:
@@ -584,9 +590,14 @@ class Module:
                 execution_kwargs = dotdict(execution_kwargs)
             self.register_buffer("execution_kwargs", execution_kwargs)
         else:
-            raise TypeError(f"`execution_kwargs` need be a dict or None given `{type(stream)}`")
-        
-    def _extract_raw_response(self, model_response: Union[ModelResponse, ModelStreamResponse]) -> Any:
+            raise TypeError(
+                "`execution_kwargs` need be a dict or None "
+                f"given `{type(execution_kwargs)}`"
+            )
+
+    def _extract_raw_response(
+        self, model_response: Union[ModelResponse, ModelStreamResponse]
+    ) -> Any:
         if isinstance(model_response, ModelResponse):
             return model_response.consume()
         elif isinstance(model_response, ModelStreamResponse):
@@ -595,10 +606,8 @@ class Module:
             raise ValueError(f"Unsupported `model_response={type(model_response)}`")
 
     def _prepare_response(self, raw_response: Any, message: Any) -> Any:
-        if (
-            not isinstance(raw_response, ModelStreamResponse)
-            or
-            (hasattr(self, "response_template") and self.response_template is not None)
+        if not isinstance(raw_response, ModelStreamResponse) or (
+            hasattr(self, "response_template") and self.response_template is not None
         ):
             response = self._format_response_template(raw_response)
         else:
@@ -616,81 +625,98 @@ class Module:
                 "For non-Message objects is required `response_mode=='plain_response'`"
             )
 
-    def _set_task_inputs(self, task_inputs: Optional[Union[str, Dict[str, str], Tuple[str, ...]]] = None):
+    def _set_task_inputs(
+        self, task_inputs: Optional[Union[str, Dict[str, str], Tuple[str, ...]]] = None
+    ):
         # TODO: suporte para lista de inputs ["outputs.text1", "outputs.text2"]
         if isinstance(task_inputs, (str, dict, tuple)) or task_inputs is None:
             if isinstance(task_inputs, str) and task_inputs == "":
-                raise ValueError("`task_inputs` requires a string not empty " 
-                                 f"given `{task_inputs}`")
+                raise ValueError(
+                    f"`task_inputs` requires a string not empty given `{task_inputs}`"
+                )
             if isinstance(task_inputs, (dict, tuple)) and not task_inputs:
-                raise ValueError("`task_inputs` requires a dict or tuple not empty "
-                                 f"given `{task_inputs}`")                   
+                raise ValueError(
+                    "`task_inputs` requires a dict or tuple not empty "
+                    f"given `{task_inputs}`"
+                )
             self.register_buffer("task_inputs", task_inputs)
         else:
-            raise TypeError("`task_inputs` requires a string, dict or None, "
-                            f"given `{type(task_inputs)}`")
+            raise TypeError(
+                "`task_inputs` requires a string, dict or None, "
+                f"given `{type(task_inputs)}`"
+            )
 
     def _set_task_multimodal_inputs(
-        self, 
-        task_multimodal_inputs: Optional[Dict[str, List[str]]] = None
-    ):        
+        self, task_multimodal_inputs: Optional[Dict[str, List[str]]] = None
+    ):
         # TODO permitir passar em vez de uma lista passar so um valor se for unico
         if isinstance(task_multimodal_inputs, dict) or task_multimodal_inputs is None:
             if not task_multimodal_inputs and task_multimodal_inputs is not None:
-                raise ValueError("`task_multimodal_inputs` requires a dict not empty"
-                                 f"given `{task_multimodal_inputs}`")
+                raise ValueError(
+                    "`task_multimodal_inputs` requires a dict not empty"
+                    f"given `{task_multimodal_inputs}`"
+                )
             self.register_buffer("task_multimodal_inputs", task_multimodal_inputs)
         else:
-            raise TypeError("`task_multimodal_inputs` requires a dict "
-                            f"given `{type(task_multimodal_inputs)}`")
+            raise TypeError(
+                "`task_multimodal_inputs` requires a dict "
+                f"given `{type(task_multimodal_inputs)}`"
+            )
 
     def _set_model_preference(self, model_preference: Optional[str] = None):
         if isinstance(model_preference, str) or model_preference is None:
             self.register_buffer("model_preference", model_preference)
         else:
-            raise TypeError("`model_preference` need be a string or None, "
-                            f"given `{type(model_preference)}`")
+            raise TypeError(
+                "`model_preference` need be a string or None, "
+                f"given `{type(model_preference)}`"
+            )
 
     def _set_input_guardrail(self, input_guardrail: Optional[Callable] = None):
         if isinstance(input_guardrail, Callable) or input_guardrail is None:
-            if ((inspect.isclass(input_guardrail) and hasattr(input_guardrail, "serialize"))
-                or
-                None
-            ):
+            if (
+                inspect.isclass(input_guardrail)
+                and hasattr(input_guardrail, "serialize")
+            ) or None:
                 self.register_buffer("input_guardrail", input_guardrail)
             elif isinstance(input_guardrail, self.__class__):
                 self.input_guardrail = input_guardrail
             else:
                 super().__setattr__("input_guardrail", input_guardrail)
         else:
-            raise TypeError("`input_guardrail` need be a callable or None, "
-                            f"given `{type(input_guardrail)}`")
+            raise TypeError(
+                "`input_guardrail` need be a callable or None, "
+                f"given `{type(input_guardrail)}`"
+            )
 
     def _set_output_guardrail(self, output_guardrail: Optional[Callable] = None):
         if isinstance(output_guardrail, Callable) or output_guardrail is None:
-            if ((inspect.isclass(output_guardrail) and hasattr(output_guardrail, "serialize"))
-                or
-                None
-            ):
+            if (
+                inspect.isclass(output_guardrail)
+                and hasattr(output_guardrail, "serialize")
+            ) or None:
                 self.register_buffer("output_guardrail", output_guardrail)
             elif isinstance(output_guardrail, self.__class__):
                 self.output_guardrail = output_guardrail
             else:
                 super().__setattr__("output_guardrail", output_guardrail)
         else:
-            raise TypeError("`output_guardrail` need be a callable or None, "
-                            f"given `{type(output_guardrail)}`")
+            raise TypeError(
+                "`output_guardrail` need be a callable or None, "
+                f"given `{type(output_guardrail)}`"
+            )
 
     def _execute_input_guardrail(self, model_execution_params: Dict[str, Any]):
-        guardrail_params = self._prepare_input_guardrail_execution(model_execution_params)
+        guardrail_params = self._prepare_input_guardrail_execution(
+            model_execution_params
+        )
         guardrail_response = self.input_guardrail(guardrail_params)
 
         if isinstance(guardrail_response, ModelResponse):
             guardrail_response = self._extract_raw_response(guardrail_response)
 
         if not guardrail_response["safe"]:
-            raise UnsafeUserInput()
-        return
+            raise UnsafeUserInputError()
 
     def _execute_output_guardrail(self, model_response: Dict[str, Any]):
         guardrail_params = self._prepare_output_guardrail_execution(model_response)
@@ -700,20 +726,17 @@ class Module:
             guardrail_response = self._extract_raw_response(guardrail_response)
 
         if not guardrail_response["safe"]:
-            raise UnsafeModelResponse()# TODO
-        return
+            raise UnsafeModelResponseError()  # TODO
 
-    def get_model_preference_from_message(self, message: Message) -> Optional[str]: 
+    def get_model_preference_from_message(self, message: Message) -> Optional[str]:
         if isinstance(message, Message) and isinstance(self.model_preference, str):
             return message.get(self.model_preference)
         else:
             return None
 
-    # TODO ambos os casos eu devo poder por em tool library pra acessar esse buffer
-    # por meio de um get_annotation ou get description
     def set_description(self, description: Optional[str] = None):
         if isinstance(description, str) or description is None:
-            self.register_buffer("description", description) # TODO de __doc__ para description
+            self.register_buffer("description", description)
         else:
             raise ValueError("`description` requires a string not empty")
 
@@ -721,32 +744,26 @@ class Module:
         module_name = getattr(self, "name", None)
         if module_name is None:
             module_name = self._get_name()
-        else:
-            module_name = module_name
         return module_name
 
     def get_module_description(self):
         module_description = getattr(self, "description", None)
         if module_description is None:
             module_description = self.__class__.__doc__
-        else:
-            module_description = module_description
         return module_description
 
     def get_module_annotations(self):
         module_annotations = getattr(self, "annotations", None)
         if module_annotations is None:
             module_annotations = self.__class__.__annotations__
-        else:
-            module_annotations = module_annotations
-        return module_annotations    
+        return module_annotations
 
     # msgflux END
 
     def register_buffer(self, name: str, data: Any) -> None:
         # TODO: muito trabalho pra ajeitar a docstring
         # mudei de tensor para data
-        r"""Add a buffer to the module.
+        """Add a buffer to the module.
 
         This is typically used to register a buffer that should not to be
         considered a model parameter. For example, BatchNorm's ``running_mean``
@@ -760,19 +777,13 @@ class Module:
         Buffers can be accessed as attributes using given names.
 
         Args:
-            name (str): name of the buffer. The buffer can be accessed
+            name:
+                Name of the buffer. The buffer can be accessed
                 from this module using the given name
-            tensor (Tensor or None): buffer to be registered. If ``None``, then operations
-                that run on buffers, such as :attr:`cuda`, are ignored. If ``None``,
-                the buffer is **not** included in the module's :attr:`state_dict`.
-            persistent (bool): whether the buffer is part of this module's
-                :attr:`state_dict`.
-
+            data:
+                buffer to be registered.
         Example::
-
-            >>> # xdoctest: +SKIP("undefined vars") TODO
-            >>> self.register_buffer('running_mean', torch.zeros(num_features))
-
+            >>> self.register_buffer("name", "agent")
         """
         if "_buffers" not in self.__dict__:
             raise AttributeError("cannot assign buffer before Module.__init__() call")
@@ -782,21 +793,17 @@ class Module:
             raise KeyError("buffer name can't contain '.'")
         elif name == "":
             raise KeyError("buffer name can't be empty string")
-        #elif hasattr(self, name) and name not in self._buffers:
-        #    raise KeyError(f"attribute '{name}' already exists")
-        #elif data is None:
-        #    raise KeyError("buffer data can't be None")
         else:
             for hook in _global_buffer_registration_hooks.values():
                 output = hook(self, name, data)
                 if output is not None:
                     data = output
-            
+
             self._buffers[name] = data
             self._non_persistent_buffers_set.discard(name)
 
     def register_parameter(self, name: str, param: Parameter) -> None:
-        r"""Add a parameter to the module.
+        """Add a parameter to the module.
 
         The parameter can be accessed as an attribute using given name.
 
@@ -814,9 +821,7 @@ class Module:
             )
 
         elif not isinstance(name, str):
-            raise TypeError(
-                f"parameter name should be a string. Got {type(name)}"
-            )
+            raise TypeError(f"parameter name should be a string. Got {type(name)}")
         elif "." in name:
             raise KeyError("parameter name can't contain '.'")
         elif name == "":
@@ -838,7 +843,7 @@ class Module:
             self._parameters[name] = param
 
     def add_module(self, name: str, module: "Module") -> None:
-        r"""Add a child module to the current module.
+        """Add a child module to the current module.
 
         The module can be accessed as an attribute using the given name.
 
@@ -864,11 +869,12 @@ class Module:
         self._modules[name] = module
 
     def register_module(self, name: str, module: "Module") -> None:
-        r"""Alias for :func:`add_module`."""
+        """Alias for :func:`add_module`."""
         self.add_module(name, module)
 
     def get_submodule(self, target: str) -> "Module":
-        """Return the submodule given by ``target`` if it exists, otherwise throw an error.
+        """Return the submodule given by ``target``
+        if it exists, otherwise throw an error.
 
         For example, let's say you have an ``nn.Module`` ``A`` that
         looks like this:
@@ -922,19 +928,18 @@ class Module:
         for item in atoms:
             if not hasattr(mod, item):
                 raise AttributeError(
-                    mod._get_name() + " has no " "attribute `" + item + "`"
+                    mod._get_name() + " has no attribute `" + item + "`"
                 )
 
             mod = getattr(mod, item)
 
             if not isinstance(mod, Module):
-                raise AttributeError("`" + item + "` is not " "an nn.Module")
+                raise AttributeError("`" + item + "` is not an nn.Module")
 
         return mod
 
     def set_submodule(self, target: str, module: "Module") -> None:
-        """
-        Set the submodule given by ``target`` if it exists, otherwise throw an error.
+        """Set the submodule given by ``target`` if it exists, otherwise throw an error.
 
         For example, let's say you have an ``nn.Module`` ``A`` that
         looks like this:
@@ -992,7 +997,8 @@ class Module:
         setattr(mod, name, module)
 
     def get_parameter(self, target: str) -> "Parameter":
-        """Return the parameter given by ``target`` if it exists, otherwise throw an error.
+        """Return the parameter given by ``target``if
+        it exists, otherwise throw an error.
 
         See the docstring for ``get_submodule`` for a more detailed
         explanation of this method's functionality as well as how to
@@ -1013,17 +1019,17 @@ class Module:
         """
         module_path, _, param_name = target.rpartition(".")
 
-        mod: Module = self.get_submodule(module_path)        
+        mod: Module = self.get_submodule(module_path)
 
         if not hasattr(mod, param_name):
             raise AttributeError(
                 mod._get_name() + " has no attribute `" + param_name + "`"
             )
 
-        param: Parameter = getattr(mod, param_name)        
+        param: Parameter = getattr(mod, param_name)
 
         if not isinstance(param, Parameter):
-            raise AttributeError("`" + param_name + "` is not an " "nn.Parameter")
+            raise AttributeError("`" + param_name + "` is not an nn.Parameter")
 
         return param
 
@@ -1049,7 +1055,7 @@ class Module:
         """
         module_path, _, buffer_name = target.rpartition(".")
 
-        mod: Module = self.get_submodule(module_path)        
+        mod: Module = self.get_submodule(module_path)
 
         if not hasattr(mod, buffer_name):
             raise AttributeError(
@@ -1129,14 +1135,16 @@ class Module:
         prepend: bool = False,
         always_call: bool = False,
     ) -> RemovableHandle:
-        r"""Register a forward hook on the module.
+        """Register a forward hook on the module.
 
-        The hook will be called every time after :func:`forward` has computed an output.
-        The hook receives both positional arguments (`args`), keyword arguments (`kwargs`),
-        and the output of the forward call. The hook can modify `args`, `kwargs`, and the output.
-        It should have the following signature::
+        The hook will be called every time after :func:`forward`
+        has computed an output. The hook receives both positional
+        arguments (`args`), keyword arguments (`kwargs`), and the
+        output of the forward call. The hook can modify `args`,
+        `kwargs`, and the output. It should have the following signature::
 
-            hook(module, args, kwargs, output) -> None, modified_output, or (modified_args, modified_kwargs, modified_output)
+            hook(module, args, kwargs, output) -> None, modified_output,
+            or (modified_args, modified_kwargs, modified_output)
 
         Args:
             hook (Callable): The user defined hook to be registered.
@@ -1172,18 +1180,19 @@ class Module:
     def _call_impl(self, *args, **kwargs):
         if not (self._forward_hooks or self._forward_pre_hooks):
             return self._call(*args, **kwargs)
-        
+
         for hook in self._forward_pre_hooks.values():
             hook_result = hook(self, args, kwargs)
             if hook_result is not None:
                 if isinstance(hook_result, tuple) and len(hook_result) == 2:
                     args, kwargs = hook_result
                 else:
-                    raise RuntimeError("forward pre-hook must return None or "
-                                    "a tuple of (args, kwargs)")
-        
+                    raise RuntimeError(
+                        "forward pre-hook must return None or a tuple of (args, kwargs)"
+                    )
+
         result = self._call(*args, **kwargs)
-        
+
         for hook in self._forward_hooks.values():
             hook_result = hook(self, args, kwargs, result)
             if hook_result is not None:
@@ -1195,18 +1204,15 @@ class Module:
         # Search for a Message in args and kwargs
         message = next(
             (arg for arg in args if isinstance(arg, Message)),
-            next(
-                (v for v in kwargs.values() if isinstance(v, Message)),
-                None
-            )
+            next((v for v in kwargs.values() if isinstance(v, Message)), None),
         )
-    
+
         if message is not None:
             # Check if this module has already processed the message
             # If it is True, skip the module
             if envs.state_checkpoint and message.in_msg(self.name):
                 return message
-        
+
         module_name = self.get_module_name()
         module_name_title = convert_camel_snake_to_title(module_name)
 
@@ -1219,31 +1225,33 @@ class Module:
         current_span = trace.get_current_span()
         # If there is no active span or it is not recording, this is the root module
         if current_span is None or not current_span.is_recording():
-            with self._spans.init_flow(module_name_title, message, encoded_state_dict) as span:
+            with self._spans.init_flow(
+                module_name_title, message, encoded_state_dict
+            ):
                 module_output = self.forward(*args, **kwargs)
         else:
-            with self._spans.init_module(module_name_title) as span:
+            with self._spans.init_module(module_name_title):
                 module_output = self.forward(*args, **kwargs)
         return module_output
 
     __call__: Callable[..., Any] = _call_impl
 
     async def acall(self, *args, **kwargs):
-        """ Async interface to __call__ """
+        """Async interface to __call__."""
         return self.__call__(*args, **kwargs)
 
     def __getstate__(self):
         state = self.__dict__.copy()
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: Dict[str, Any]):
         self.__dict__.update(state)
 
         # Support loading old checkpoints that don't have the following attrs:
         if "_forward_pre_hooks" not in self.__dict__:
             self._forward_pre_hooks = OrderedDict()
         if "_forward_hooks_always_called" not in self.__dict__:
-            self._forward_hooks_always_called = OrderedDict()            
+            self._forward_hooks_always_called = OrderedDict()
         if "_state_dict_hooks" not in self.__dict__:
             self._state_dict_hooks = OrderedDict()
         if "_state_dict_pre_hooks" not in self.__dict__:
@@ -1272,7 +1280,7 @@ class Module:
             f"`{type(self).__name__}` object has no attribute `{name}`"
         )
 
-    def __setattr__(self, name: str, value: Union[Any, "Module"]) -> None:
+    def __setattr__(self, name: str, value: Union[Any, "Module"]) -> None: # noqa: C901
         def remove_from(*dicts_or_sets):
             for d in dicts_or_sets:
                 if name in d:
@@ -1331,15 +1339,9 @@ class Module:
                         value = output
                 modules[name] = value
             else:
-                #buffers = self.__dict__.get("_buffers")
-                #if buffers is not None and name in buffers:
-                #    self.register_buffer(name, value) # TODO
-                #else:
                 super().__setattr__(name, value)
 
-    # NOVA ANALISE
-
-    def __delattr__(self, name):
+    def __delattr__(self, name: str):
         if name in self._parameters:
             del self._parameters[name]
         elif name in self._buffers:
@@ -1350,8 +1352,8 @@ class Module:
         else:
             super().__delattr__(name)
 
-    def _register_state_dict_hook(self, hook):
-        r"""Register a post-hook for the :meth:`~msgflux.nn.Module.state_dict` method.
+    def _register_state_dict_hook(self, hook: Callable):
+        """Register a post-hook for the :meth:`~msgflux.nn.Module.state_dict` method.
 
         It should have the following signature::
             hook(module, state_dict, prefix, local_metadata) -> None or state_dict
@@ -1362,63 +1364,54 @@ class Module:
         """
         if getattr(hook, "_from_public_api", False):
             raise RuntimeError(
-                "Cannot register the same function as the state dict post hook that was "
-                "previously registered via register_state_dict_post_hook"
+                "Cannot register the same function as the state dict post"
+                "hook that was previously registered via "
+                "register_state_dict_post_hook"
             )
         handle = RemovableHandle(self._state_dict_hooks)
         self._state_dict_hooks[handle.id] = hook
         return handle
 
-    def register_state_dict_post_hook(self, hook):
-        r"""Register a post-hook for the :meth:`~msgflux.nn.Module.state_dict` method.
+    def register_state_dict_post_hook(self, hook: Callable):
+        """Register a post-hook for the :meth:`~msgflux.nn.Module.state_dict` method.
 
         It should have the following signature::
             hook(module, state_dict, prefix, local_metadata) -> None
 
         The registered hooks can modify the ``state_dict`` inplace.
         """
-        # In _register_state_dict_hook there was a bug described in
-        # https://github.com/pytorch/pytorch/issues/117437 where the return value
-        # was only respected for the root module but not child submodules.
-        # We fix this in this public version by only allowing inplace modifications on
-        # the state_dict by the hook. However, since hooks registered via both these
-        # APIs will be added to `_state_dict_hooks` and the type of `_state_dict_hooks`
-        # cannot be changed due to many dependencies on it, we mark a hook
-        # as being registered via the public API by setting `_from_public_api` on it.
-        # In the implementation of `state_dict`, if the callable does not have this
-        # flag, the old behavior of respecting the return value will be preserved
-        # for the root module, otherwise, we ensure that the hook returns None.
         hook._from_public_api = True
         handle = RemovableHandle(self._state_dict_hooks)
         self._state_dict_hooks[handle.id] = hook
         return handle
 
-    def register_state_dict_pre_hook(self, hook):
-        r"""Register a pre-hook for the :meth:`~msgflux.nn.Module.state_dict` method.
+    def register_state_dict_pre_hook(self, hook: Callable):
+        """Register a pre-hook for the :meth:`~msgflux.nn.Module.state_dict`
+        method.
 
         It should have the following signature::
             hook(module, prefix, keep_vars) -> None
 
-        The registered hooks can be used to perform pre-processing before the ``state_dict``
-        call is made.
+        The registered hooks can be used to perform pre-processing
+        before the ``state_dict`` call is made.
         """
         handle = RemovableHandle(self._state_dict_pre_hooks)
         self._state_dict_pre_hooks[handle.id] = hook
         return handle
 
-    def _get_serializable_value(self, obj):
-        """ Get serializable value from an object """
+    def _get_serializable_value(self, obj: object):
+        """Get serializable value from an object."""
         if is_builtin_type(obj):
             return obj
         elif is_subclass_of(obj, msgspec.Struct):
             return msgspec.json.schema(obj)
         elif hasattr(obj, "serialize"):
             return obj.serialize()
-        else:            
-            return None # Fallback
+        else:
+            return None  # Fallback
 
-    def _save_to_state_dict(self, destination, prefix):
-        """ Save parameters and buffers to state dict """
+    def _save_to_state_dict(self, destination: str, prefix: str):
+        """Save parameters and buffers to state dict."""
         # Save parameters (only the data string)
         for name, param in self._parameters.items():
             if param is not None:
@@ -1429,18 +1422,15 @@ class Module:
             destination[prefix + name] = self._get_serializable_value(buf)
 
     def state_dict(
-        self, 
-        destination: Optional[Dict[str, Any]] = None, 
-        prefix: Optional[str] = ""
+        self, destination: Optional[Dict[str, Any]] = None, prefix: Optional[str] = ""
     ):
-        """
-        Returns a dictionary containing module's state.
-        
+        """Returns a dictionary containing module's state.
+
         Args:
-            destination: 
+            destination:
                 If provided, the state will be updated into
                 the given dict. Default: None
-            prefix: 
+            prefix:
                 Prefix added to parameter and buffer names.
                 Default: ""
         """
@@ -1453,22 +1443,21 @@ class Module:
         # Save states from child modules
         for name, module in self._modules.items():
             if module is not None:
-                module.state_dict(
-                    destination=destination,
-                    prefix=prefix + name + '.'
-                )
+                module.state_dict(destination=destination, prefix=prefix + name + ".")
 
         return destination
 
-    def _register_load_state_dict_pre_hook(self, hook, with_module=False):
-        r"""See :meth:`~msgflux.nn.Module.register_load_state_dict_pre_hook` for details.
+    def _register_load_state_dict_pre_hook(
+        self, hook: Callable, *, with_module: Optional[bool] = False
+    ):
+        """See :meth:`~msgflux.nn.Module.register_load_state_dict_pre_hook` for details.
 
         A subtle difference is that if ``with_module`` is set to ``False``, then the
         hook will not take the ``module`` as the first argument whereas
         :meth:`~msgflux.nn.Module.register_load_state_dict_pre_hook` always takes the
         ``module`` as the first argument.
 
-        Arguments:
+        Args:
             hook (Callable): Callable hook that will be invoked before
                 loading the state dict.
             with_module (bool, optional): Whether or not to pass the module
@@ -1480,20 +1469,24 @@ class Module:
         )
         return handle
 
-    def register_load_state_dict_pre_hook(self, hook):
-        r"""Register a pre-hook to be run before module's :meth:`~nn.Module.load_state_dict` is called.
+    def register_load_state_dict_pre_hook(self, hook: Callable):
+        """Register a pre-hook to be run before module's
+        :meth:`~nn.Module.load_state_dict` is called.
 
         It should have the following signature::
-            hook(module, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs) -> None  # noqa: B950
+            hook(module, state_dict, prefix, local_metadata, strict,
+            missing_keys, unexpected_keys, error_msgs) -> None  # noqa: B950
 
-        Arguments:
-            hook (Callable): Callable hook that will be invoked before
+        Args:
+            hook:
+                Callable hook that will be invoked before
                 loading the state dict.
         """
         return self._register_load_state_dict_pre_hook(hook, with_module=True)
 
-    def register_load_state_dict_post_hook(self, hook):
-        r"""Register a post-hook to be run after module's :meth:`~nn.Module.load_state_dict` is called.
+    def register_load_state_dict_post_hook(self, hook: Callable):
+        """Register a post-hook to be run after module's
+        :meth:`~nn.Module.load_state_dict` is called.
 
         It should have the following signature::
             hook(module, incompatible_keys) -> None
@@ -1521,9 +1514,10 @@ class Module:
         self._load_state_dict_post_hooks[handle.id] = hook
         return handle
 
-    def _load_from_state_dict(self, state_dict: Dict[str, Any], prefix: Optional[str] = "") -> None:
-        """
-        Loads the module state from a state dict.
+    def _load_from_state_dict( # noqa: C901
+        self, state_dict: Dict[str, Any], prefix: Optional[str] = ""
+    ) -> None:
+        """Loads the module state from a state dict.
 
         Args:
             state_dict: Dictionary containing the state
@@ -1534,7 +1528,7 @@ class Module:
             if param is not None:
                 key = prefix + name
                 if key in state_dict:
-                    self._parameters[name].copy_to_data(state_dict[key])                    
+                    self._parameters[name].copy_to_data(state_dict[key])
 
         # Load buffers
         for name, _ in self._buffers.items():
@@ -1544,15 +1538,16 @@ class Module:
                 # Check if it is a msgflux serializable class
                 if isinstance(data, dict) and "msgflux_type" in data:
                     msgflux_type = data.pop("msgflux_type")
-                    if msgflux_type in msgflux_DESERIALIZABLE_CLS:
-                        cls = msgflux_DESERIALIZABLE_CLS[msgflux_type]
+                    if msgflux_type in MSGFLUX_DESERIALIZABLE_CLS:
+                        # TODO not recreate if same type
+                        cls = MSGFLUX_DESERIALIZABLE_CLS[msgflux_type]
                         instance = cls.from_serialized(**data)
                         self._buffers[name] = instance
                     elif msgflux_type == "generation_schema":
                         state = data.pop("state")
                         generation_schema = StructFactory.from_schema(state)
                         self._buffers[name] = generation_schema
-                else: # Otherwise, load the value directly
+                else:  # Otherwise, load the value directly
                     self._buffers[name] = data
 
         # Load submodules recursively
@@ -1560,29 +1555,35 @@ class Module:
             if module is not None:
                 module_prefix = prefix + name + "."
                 module_dict = {
-                    k.replace(module_prefix, ""): v 
-                    for k, v in state_dict.items() 
+                    k.replace(module_prefix, ""): v
+                    for k, v in state_dict.items()
                     if k.startswith(module_prefix)
                 }
                 if module_dict:
                     module._load_from_state_dict(module_dict)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """
-        Loads the state of the module and its submodules.
+        """Loads the state of the module and its submodules.
 
         Args:
             state_dict: Dictionary containing the complete state
         """
         if not isinstance(state_dict, dict):
-            raise TypeError(f"`state_dict` to be dict, given {type(state_dict).__name__}")
-            
+            raise TypeError(
+                f"`state_dict` to be dict, given {type(state_dict).__name__}"
+            )
+
         self._load_from_state_dict(state_dict)
 
-    def _named_members( # ok?
-        self, get_members_fn, prefix="", recurse=True, remove_duplicate=True
+    def _named_members(  # ok?
+        self,
+        get_members_fn,
+        prefix: Optional[str] = "",
+        *,
+        recurse: Optional[bool] = True,
+        remove_duplicate: Optional[bool] = True,
     ):
-        r"""Help yield various names + members of modules."""
+        """Help yield various names + members of modules."""
         memo = set()
         modules = (
             self.named_modules(prefix=prefix, remove_duplicate=remove_duplicate)
@@ -1599,7 +1600,7 @@ class Module:
                 name = module_prefix + ("." if module_prefix else "") + k
                 yield name, v
 
-    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
+    def parameters(self, *, recurse: Optional[bool] = True) -> Iterator[Parameter]:
         """Return an iterator over module parameters.
 
         This is typically passed to an optimizer.
@@ -1612,7 +1613,7 @@ class Module:
         Returns:
             Parameter: module parameter
 
-        !!! example 
+        !!! example
             # TODO
             ```python
             for param in model.parameters():
@@ -1625,10 +1626,10 @@ class Module:
             yield param
 
     def named_parameters(
-        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
+        self, prefix: str = "", *, recurse: bool = True, remove_duplicate: bool = True
     ) -> Iterator[Tuple[str, Parameter]]:
         # TODO: docstring
-        r"""Return an iterator over module parameters, yielding both the name of the 
+        """Return an iterator over module parameters, yielding both the name of the
             parameter as well as the parameter itself.
 
         Args:
@@ -1658,7 +1659,7 @@ class Module:
         )
         yield from gen
 
-    def buffers(self, recurse: bool = True) -> Iterator[Any]: # TODO doc
+    def buffers(self, *, recurse: Optional[bool] = True) -> Iterator[Any]:  # TODO doc
         """Return an iterator over module buffers.
 
         Args:
@@ -1682,20 +1683,28 @@ class Module:
             yield buf
 
     def named_buffers(
-        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
-    ) -> Iterator[Tuple[str, Any]]: # TODO docstring
-        r"""Return an iterator over module buffers, yielding both the name of the 
+        self,
+        prefix: Optional[str] = "",
+        *,
+        recurse: Optional[bool] = True,
+        remove_duplicate: Optional[bool] = True
+    ) -> Iterator[Tuple[str, Any]]:  # TODO docstring
+        """Return an iterator over module buffers, yielding both the name of the
             buffer as well as the buffer itself.
 
         Args:
-            prefix (str): prefix to prepend to all buffer names.
-            recurse (bool, optional): if True, then yields buffers of this module
+            prefix:
+                Prefix to prepend to all buffer names.
+            recurse:
+                If True, then yields buffers of this module
                 and all submodules. Otherwise, yields only buffers that
                 are direct members of this module. Defaults to True.
-            remove_duplicate (bool, optional): whether to remove the duplicated buffers in the result. Defaults to True.
+            remove_duplicat:
+                Whether to remove the duplicated buffers in the result.
+                Defaults to True.
 
         Yields:
-            (str, torch.Tensor): Tuple containing the name and buffer
+            Tuple containing the name and buffer
 
         Example::
 
@@ -1714,16 +1723,16 @@ class Module:
         yield from gen
 
     def children(self) -> Iterator["Module"]:
-        r"""Return an iterator over immediate children modules.
+        """Return an iterator over immediate children modules.
 
         Yields:
             Module: a child module
         """
-        for _name, module in self.named_children():
+        for _, module in self.named_children():
             yield module
 
     def named_children(self) -> Iterator[Tuple[str, "Module"]]:
-        r"""Return an iterator over immediate children modules, yielding 
+        """Return an iterator over immediate children modules, yielding
             both the name of the module as well as the module itself.
 
         Yields:
@@ -1743,8 +1752,8 @@ class Module:
                 memo.add(module)
                 yield name, module
 
-    def modules(self) -> Iterator["Module"]: # TODO DOC
-        r"""Return an iterator over all modules in the network.
+    def modules(self) -> Iterator["Module"]:  # TODO DOC
+        """Return an iterator over all modules in the network.
 
         Yields:
             Module: a module in the network
@@ -1773,37 +1782,28 @@ class Module:
     def named_modules(
         self,
         memo: Optional[Set["Module"]] = None,
-        prefix: str = "",
-        remove_duplicate: bool = True,
-    ):
-        r"""Return an iterator over all modules in the network, yielding both the name of the module as well as the module itself.
+        prefix: Optional[str] = "",
+        *,
+        remove_duplicate: Optional[bool] = True,
+    ) -> Iterator[Tuple[str, "Module"]]:
+        """Return an iterator over all modules in the network, yielding
+        both the name of the module as well as the module itself.
 
         Args:
-            memo: a memo to store the set of modules already added to the result
-            prefix: a prefix that will be added to the name of the module
-            remove_duplicate: whether to remove the duplicated module instances in the result
-                or not
+            memo:
+                A memo to store the set of modules already added to the result.
+            prefix:
+                A prefix that will be added to the name of the module.
+            remove_duplicate:
+                Whether to remove the duplicated module instances in the result
+                or not.
 
         Yields:
-            (str, Module): Tuple of name and module
+            Tuple of name and module
 
         Note:
             Duplicate modules are returned only once. In the following
             example, ``l`` will be returned only once.
-
-        Example::
-
-            >>> l = nn.Linear(2, 2)
-            >>> net = nn.Sequential(l, l)
-            >>> for idx, m in enumerate(net.named_modules()):
-            ...     print(idx, '->', m)
-
-            0 -> ('', Sequential(
-              (0): Linear(in_features=2, out_features=2, bias=True)
-              (1): Linear(in_features=2, out_features=2, bias=True)
-            ))
-            1 -> ('0', Linear(in_features=2, out_features=2, bias=True))
-
         """
         if memo is None:
             memo = set()
@@ -1819,20 +1819,20 @@ class Module:
                     memo, submodule_prefix, remove_duplicate
                 )
 
-    def train(self: T, mode: bool = True) -> T:
-        r"""Set the module in training mode.
+    def train(self: T, *, mode: Optional[bool] = True) -> T:
+        """Set the module in training mode.
 
         This has an effect only on certain modules. See the documentation of
         particular modules for details of their behaviors in training/evaluation
-        mode, i.e., whether they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
-        etc.
+        mode.
 
         Args:
-            mode (bool): whether to set training mode (``True``) or evaluation
-                         mode (``False``). Default: ``True``.
+            mode:
+                Whether to set training mode (``True``) or evaluation
+                mode (``False``). Default: ``True``.
 
         Returns:
-            Module: self
+            Self.
         """
         if not isinstance(mode, bool):
             raise ValueError("training mode is expected to be boolean")
@@ -1842,12 +1842,11 @@ class Module:
         return self
 
     def eval(self: T) -> T:
-        r"""Set the module in evaluation mode.
+        """Set the module in evaluation mode.
 
         This has an effect only on certain modules. See the documentation of
         particular modules for details of their behaviors in training/evaluation
-        mode, i.e. whether they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
-        etc.
+        mode, i.e. whether they are affected.
 
         This is equivalent with :meth:`self.train(False) <msgflux.nn.Module.train>`.
 
@@ -1855,12 +1854,12 @@ class Module:
         `.eval()` and several similar mechanisms that may be confused with it.
 
         Returns:
-            Module: self
+            Self.
         """
         return self.train(False)
 
-    def requires_pgrad_(self: T, requires_pgrad: bool = True) -> T: # TODO mudar
-        r"""Change if autograd should record operations on parameters in this module.
+    def requires_grad_(self: T, *, requires_pgrad: Optional[bool] = True) -> T:
+        """Change if autograd should record operations on parameters in this module.
 
         This method sets the parameters' :attr:`requires_grad` attributes
         in-place.
@@ -1872,18 +1871,21 @@ class Module:
         `.requires_grad_()` and several similar mechanisms that may be confused with it.
 
         Args:
-            requires_grad (bool): whether autograd should record operations on
-                                  parameters in this module. Default: ``True``.
+            requires_grad:
+                Whether autograd should record operations on
+                parameters in this module.
 
         Returns:
             Module: self
         """
         for p in self.parameters():
-            p.requires_pgrad_(requires_pgrad)
+            p.requires_grad_(requires_pgrad)
         return self
 
-    def zero_pgrad(self, set_to_none: bool = True) -> None: # TODO isso é interessante mas vai mudar
-        r"""Reset gradients of all model parameters.
+    def zero_pgrad(
+        self, *, set_to_none: Optional[bool] = True
+    ) -> None:  # TODO isso é interessante mas vai mudar
+        """Reset gradients of all model parameters.
 
         See similar function under :class:`msgflux.optim.Optimizer` for more context.
 
@@ -1895,7 +1897,7 @@ class Module:
             if p.pgrad is not None:
                 if set_to_none:
                     p.pgrad = None
-                else: # TODO revisar abaixo
+                else:  # TODO revisar abaixo
                     if p.pgrad.grad_fn is not None:
                         p.pgrad.detach_()
                     else:
@@ -1906,7 +1908,7 @@ class Module:
         return self.__class__.__name__
 
     def extra_repr(self) -> str:
-        r"""Return the extra representation of the module.
+        """Return the extra representation of the module.
 
         To print customized extra information, you should re-implement
         this method in your own modules. Both single-line and multi-line

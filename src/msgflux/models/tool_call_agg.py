@@ -1,15 +1,15 @@
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Union
+
 import msgspec
 
 
 class ToolCallAggregator:
-    
     def __init__(self, reasoning: Optional[str] = None):
         self.reasoning = reasoning
         self.tool_calls = OrderedDict()
 
-    def process(self, call_index: int, id: str, name: str, arguments: str):
+    def process(self, call_index: int, tool_id: str, name: str, arguments: str):
         """Add tool call.
 
         In stream mode, the tool call arguments are generated each new chunk.
@@ -17,7 +17,7 @@ class ToolCallAggregator:
         Args:
             call_index: Call index in tool call sequence
             arguments: Tool call argument
-            id: Call id
+            tool_id: Call id
             name: Tool name
         """
         # If call_index exists, add arguments
@@ -25,14 +25,14 @@ class ToolCallAggregator:
             current_call = self.tool_calls[call_index]
             current_call["arguments"] += arguments
             # If name and id are not filled in, update
-            if not current_call["id"] and id:
-                current_call["id"] = id
+            if not current_call["id"] and tool_id:
+                current_call["id"] = tool_id
             if not current_call["name"] and name:
                 current_call["name"] = name
         else:
             # Init a new function call
             self.tool_calls[call_index] = {
-                "id": id or None,  # Can be filled in later
+                "id": tool_id or None,  # Can be filled in later
                 "name": name,
                 "arguments": arguments,
             }
@@ -54,9 +54,9 @@ class ToolCallAggregator:
             tool_results:
                 Dictionary where the key is the tool id and the value is the result.
         """
-        for id, result in tool_results.items():
+        for tool_id, result in tool_results.items():
             for call in self.tool_calls.values():
-                if call["id"] == id:
+                if call["id"] == tool_id:
                     call["result"] = result
 
     def get_messages(self) -> List[Dict[str, Any]]:
@@ -87,7 +87,6 @@ class ToolCallAggregator:
                 )
 
         if self.reasoning is not None:
-            messages.insert(0, {"role": "assistant", "content": self.reasoning})            
+            messages.insert(0, {"role": "assistant", "content": self.reasoning})
 
         return messages
-    

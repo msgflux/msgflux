@@ -1,4 +1,5 @@
-from typing import Any, Callable, Dict, Literal, Optional, Union
+from typing import Callable, Dict, Literal, Optional, Union
+
 from msgflux.dotdict import dotdict
 from msgflux.message import Message
 from msgflux.models.gateway import ModelGateway
@@ -15,30 +16,31 @@ class Speaker(Module):
         name: str,
         model: Union[TextToSpeechModel, ModelGateway],
         *,
-        input_guardrail: Optional[Callable] = None,        
+        input_guardrail: Optional[Callable] = None,
         stream: Optional[bool] = False,
         task_inputs: Optional[str] = None,
         response_mode: Optional[str] = "plain_response",
-        response_format: Optional[Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]] = "opus",
+        response_format: Optional[
+            Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
+        ] = "opus",
         prompt: Optional[str] = None,
     ):
-        """
-        Args:
-            name: 
-                Transcriber name in snake case format.
-            model: 
-                Transcriber Model client.
-            task_multimodal_inputs: 
-                Fields of the Message object that will be the multimodal input 
-                to the task.
-            response_mode: 
-                What the response should be.
-                * `plain_response` (default): Returns the final agent response directly.
-                * other: Write on field in Message object.
-            response_format:
-                The format to audio in.
-            prompt:
-                Useful for instructing the model to follow some speak generation pattern.
+        """Args:
+        name:
+            Transcriber name in snake case format.
+        model:
+            Transcriber Model client.
+        task_multimodal_inputs:
+            Fields of the Message object that will be the multimodal input
+            to the task.
+        response_mode:
+            What the response should be.
+            * `plain_response` (default): Returns the final agent response directly.
+            * other: Write on field in Message object.
+        response_format:
+            The format to audio in.
+        prompt:
+            Useful for instructing the model to follow some speak generation pattern.
         """
         super().__init__()
         self.set_name(name)
@@ -63,18 +65,20 @@ class Speaker(Module):
     ) -> Union[ModelResponse, ModelStreamResponse]:
         model_execution_params = self._prepare_model_execution(data, model_preference)
         if self.input_guardrail is not None:
-            self._execute_input_guardrail(model_execution_params)        
+            self._execute_input_guardrail(model_execution_params)
         model_response = self.model(**model_execution_params)
         return model_response
 
     def _prepare_model_execution(
         self, data: str, model_preference: Optional[str] = None
     ) -> Dict[str, Union[str, bool]]:
-        model_execution_params = dotdict({
-            "data": data,
-            "response_format": self.response_format,
-            "prompt": self.prompt,
-        })
+        model_execution_params = dotdict(
+            {
+                "data": data,
+                "response_format": self.response_format,
+                "prompt": self.prompt,
+            }
+        )
         if self.stream:
             model_execution_params.stream = self.stream
         if isinstance(self.model, ModelGateway) and model_preference is not None:
@@ -88,9 +92,9 @@ class Speaker(Module):
         return guardrail_params
 
     def _process_model_response(
-        self, 
-        model_response: Union[ModelResponse, ModelStreamResponse], 
-        message: Union[str, Message]
+        self,
+        model_response: Union[ModelResponse, ModelStreamResponse],
+        message: Union[str, Message],
     ) -> Union[bytes, Message, ModelStreamResponse]:
         if model_response.response_type == "audio_generation":
             raw_response = self._extract_raw_response(model_response)
@@ -115,16 +119,15 @@ class Speaker(Module):
         if model_preference is None and isinstance(message, Message):
             model_preference = self.get_model_preference_from_message(message)
 
-        return {
-            "data": data,
-            "model_preference": model_preference
-        }
+        return {"data": data, "model_preference": model_preference}
 
     def _set_model(self, model: Union[TextToSpeechModel, ModelGateway]):
         if model.model_type == "text_to_speech":
             self.register_buffer("model", model)
         else:
-            raise TypeError(f"`model` need be a `text_to_speech` model, given `{type(model)}`")
+            raise TypeError(
+                f"`model` need be a `text_to_speech` model, given `{type(model)}`"
+            )
 
     def _set_response_format(self, response_format: str):
         supported_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
@@ -135,6 +138,8 @@ class Speaker(Module):
                 raise ValueError(
                     f"`response_format` can be `{supported_formats}` "
                     f"given `{response_format}"
-                )    
+                )
         else:
-            raise TypeError(f"`response_format` need be a str or given `{type(response_format)}")               
+            raise TypeError(
+                f"`response_format` need be a str or given `{type(response_format)}"
+            )

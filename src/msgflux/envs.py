@@ -1,5 +1,6 @@
 import os
 from typing import Any, Literal
+
 from msgspec_ext import BaseSettings, SettingsConfigDict
 
 
@@ -27,18 +28,18 @@ class EnvironmentVariables(BaseSettings):
         env_file=".msgflux_env",
         env_prefix="msgflux_",
     )
-    
+
     # Max objects in cache to functions
     # max_lru_cache: int = 16
-    
+
     # If set to False, msgflux will not print logs
     # If set to True, msgflux will print logs
     verbose: bool = False
 
     # Logging configuration
     # If set to False, msgflux will not configure logging
-    # If set to True, msgflux will configure logging using 
-    #    the default configuration or the configuration 
+    # If set to True, msgflux will configure logging using
+    #    the default configuration or the configuration
     #    file specified by msgflux_LOGGING_CONFIG_PATH
     configure_logging: bool = True
     logging_config_path: str = None
@@ -52,13 +53,13 @@ class EnvironmentVariables(BaseSettings):
 
     # if set, msgflux_LOGGING_PREFIX will be prepended to all log messages
     logging_prefix: str = "msgflux_"
-    
+
     # Trace function calls
     # If set to True, msgflux will trace function calls. Useful for debugging
     trace_function: bool = False
 
     # if set, msgflux will track executions in nn modules using OTel
-    telemetry_requires_trace: bool = False 
+    telemetry_requires_trace: bool = False
 
     # OTLP endpoint
     telemetry_otlp_endpoint: str = "http://localhost.com:4321"
@@ -102,5 +103,6 @@ class EnvironmentVariables(BaseSettings):
 
     # HTTPX max retries
     httpx_max_retries: int = 5
+
 
 envs = EnvironmentVariables()

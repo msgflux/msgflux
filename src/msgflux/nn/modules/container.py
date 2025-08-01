@@ -1,5 +1,6 @@
 import operator
-from collections import abc as container_abcs, OrderedDict
+from collections import OrderedDict
+from collections import abc as container_abcs
 from itertools import chain, islice
 from typing import (
     Any,
@@ -8,18 +9,19 @@ from typing import (
     Iterator,
     Mapping,
     Optional,
-    Union,
     Tuple,
     TypeVar,
+    Union,
 )
+
 from typing_extensions import Self
+
 from msgflux.nn.modules.module import Module, _addindent
 
-
 __all__ = [
-    "ModuleDict",    
+    "ModuleDict",
     "ModuleList",
-    "Sequential",    
+    "Sequential",
 ]
 
 T = TypeVar("T", bound=Module)
@@ -54,7 +56,7 @@ class Sequential(Module):
             def __init__(self):
                 super().__init__()
                 self.register_buffer("response", "Hi, let's talk?")
-            
+
             def forward(self, msg: str):
                 return msg + self.response
 
@@ -62,7 +64,7 @@ class Sequential(Module):
             def __init__(self):
                 super().__init__()
                 self.register_buffer("response", "Hi, call 190")
-            
+
             def forward(self, msg: str):
                 return msg + self.response
 
@@ -71,7 +73,7 @@ class Sequential(Module):
         # **ExpertSales** will be used as the input to the first
         # **ExpertSupport**; Finally, the output of
         # **ExpertSupport** will be the experts response.
-        experts = nn.Sequential(ExpertSales(), ExpertSupport())        
+        experts = nn.Sequential(ExpertSales(), ExpertSupport())
         experts("I need help with my tv.")
 
         # Using Sequential with OrderedDict. This is functionally the
@@ -83,6 +85,7 @@ class Sequential(Module):
         experts_dict("I need help with my tv.")
         ```
     """
+
     _modules: Dict[str, Module] = OrderedDict()
 
     def __init__(self, *args: Union[Module, OrderedDict[str, Module]]):
@@ -98,15 +101,15 @@ class Sequential(Module):
         modules_iter = iter(self._modules.values())
         first_module = next(modules_iter)
         output = first_module(*args, **kwargs)
-        
+
         for module in modules_iter:
             output = module(output)
-        
+
         return output
 
     def _get_mermaid(
         self,
-        title: Optional[str] = None,  # TODO
+        title: Optional[str] = None,
         orientation: Optional[str] = "TD",
     ) -> str:
         mermaid_code = [
@@ -126,9 +129,12 @@ class Sequential(Module):
             f"flowchart {orientation}",
         ]
 
+        if title:
+            mermaid_code.insert(0, f"%% Title: {title}")
+
         mermaid_code.append("subgraph PARAMETERS")
         mermaid_code.append("direction LR")
-        mermaid_code.append(f"param_msg([**msg**])")
+        mermaid_code.append("param_msg([**msg**])")
         mermaid_code.append("end")
 
         first_node = None
@@ -160,7 +166,7 @@ class Sequential(Module):
             mermaid_code.append(f"class node_{i} default;")
         mermaid_code.append("class node_return terminal;")
 
-        mermaid_code.append(f"class param_msg parameter;")
+        mermaid_code.append("class param_msg parameter;")
 
         return "\n".join(mermaid_code)
 
@@ -208,7 +214,7 @@ class Sequential(Module):
         else:
             raise ValueError(
                 "add operator supports only objects "
-                f"of Sequential class, but {str(type(other))} is given."
+                f"of Sequential class, but {type(other)!s} is given."
             )
 
     def pop(self, key: Union[int, slice]) -> Module:
@@ -225,7 +231,7 @@ class Sequential(Module):
         else:
             raise ValueError(
                 "add operator supports only objects "
-                f"of Sequential class, but {str(type(other))} is given."
+                f"of Sequential class, but {type(other)!s} is given."
             )
 
     def __dir__(self):
@@ -275,11 +281,10 @@ class ModuleList(Module):
     _modules: Dict[str, Module]
 
     def __init__(self, modules: Optional[Iterable[Module]] = None) -> None:
-        """
-        Args:
+        """Args:
             modules (iterable, optional):
                 An iterable of modules to add.
-        
+
         !!! example
 
             ```python
@@ -288,7 +293,7 @@ class ModuleList(Module):
                 def __init__(self):
                     super().__init__()
                     self.register_buffer("response", "Hi, let's talk?")
-                
+
                 def forward(self, msg: str):
                     return msg + self.response
 
@@ -296,7 +301,7 @@ class ModuleList(Module):
                 def __init__(self):
                     super().__init__()
                     self.register_buffer("response", "Hi, call 190")
-                
+
                 def forward(self, msg: str):
                     return msg + self.response
 
@@ -313,14 +318,14 @@ class ModuleList(Module):
 
             expert = Expert()
             expert("I need help with my tv.")
-            ```        
+            ```
         """
         super().__init__()
         if modules is not None:
             self += modules
 
     def _get_abs_string_index(self, idx):
-        """ Get the absolute index for the list of modules """
+        """Get the absolute index for the list of modules."""
         idx = operator.index(idx)
         if not (-len(self) <= idx < len(self)):
             raise IndexError(f"index {idx} is out of range")
@@ -344,13 +349,14 @@ class ModuleList(Module):
                 delattr(self, str(k))
         else:
             delattr(self, self._get_abs_string_index(idx))
-        # To preserve numbering, self._modules is being reconstructed with modules after deletion
+        # To preserve numbering, self._modules is being
+        # reconstructed with modules after deletion
         str_indices = [str(i) for i in range(len(self._modules))]
         self._modules = OrderedDict(list(zip(str_indices, self._modules.values())))
 
     def __len__(self) -> int:
         return len(self._modules)
- 
+
     def __iter__(self) -> Iterator[Module]:
         return iter(self._modules.values())
 
@@ -364,7 +370,9 @@ class ModuleList(Module):
         return combined
 
     def __repr__(self):
-        """Return a custom repr for ModuleList that compresses repeated module representations."""
+        """Return a custom repr for ModuleList that compresses
+        repeated module representations.
+        """
         list_of_reprs = [repr(item) for item in self]
         if len(list_of_reprs) == 0:
             return self._get_name() + "()"
@@ -465,10 +473,9 @@ class ModuleDict(Module, container_abcs.Mapping):
     _modules: Dict[str, Module]  # type: ignore[assignment]
 
     def __init__(self, modules: Optional[Mapping[str, Module]] = None) -> None:
-        """
-        Args:
+        """Args:
             modules (iterable, optional): a mapping (dictionary) of (string: module)
-                or an iterable of key-value pairs of type (string, module)
+                or an iterable of key-value pairs of type (string, module).
 
         !!! example
             ```python
@@ -479,7 +486,7 @@ class ModuleDict(Module, container_abcs.Mapping):
                 def __init__(self):
                     super().__init__()
                     self.register_buffer("response", "Hi, let's talk?")
-                
+
                 def forward(self, msg: str):
                     return msg + self.response
 
@@ -487,7 +494,7 @@ class ModuleDict(Module, container_abcs.Mapping):
                 def __init__(self):
                     super().__init__()
                     self.register_buffer("response", "Hi, call 190")
-                
+
                 def forward(self, msg: str):
                     return msg + self.response
 
@@ -536,7 +543,7 @@ class ModuleDict(Module, container_abcs.Mapping):
     def clear(self) -> None:
         """Remove all items from the ModuleDict."""
         self._modules.clear()
-    
+
     def pop(self, key: str) -> Module:
         """Remove key from the ModuleDict and return its module.
 
@@ -561,16 +568,17 @@ class ModuleDict(Module, container_abcs.Mapping):
         return self._modules.values()
 
     def update(self, modules: Mapping[str, Module]) -> None:
-        """Update the class **msgflux.nn.ModuleDict** with 
+        """Update the class **msgflux.nn.ModuleDict** with
         key-value pairs from a mapping, overwriting existing keys.
 
         !!! note
 
             If `modules` is an `OrderedDict`, a `msgflux.nn.ModuleDict`, or
-            an iterable of key-value pairs, the order of new elements in it is preserved.
+            an iterable of key-value pairs, the order of new elements in
+            it is preserved.
 
         Args:
-            modules: 
+            modules:
                 A mapping (dictionary) from string to `msgflux.nn.Module`,
                 or an iterable of key-value pairs of type (string, `msgflux.nn.Module`).
         """
@@ -596,22 +604,28 @@ class ModuleDict(Module, container_abcs.Mapping):
                         "ModuleDict update sequence element "
                         "#" + str(j) + " has length " + str(len(m)) + "; 2 is required"
                     )
-                # modules can be Mapping (what it's typed at), or a list: [(name1, module1), (name2, module2)]
-                # that's too cumbersome to type correctly with overloads, so we add an ignore here
+                # modules can be Mapping (what it's typed at),
+                # or a list: [(name1, module1), (name2, module2)]
+                # that's too cumbersome to type correctly with overloads,
+                # so we add an ignore here
                 self[m[0]] = m[1]  # type: ignore[assignment]islice
 
     def get(self, key: str, default: Optional[Module] = None) -> Optional[Module]:
-        """Return the module for the given key if it exists, else return the default value.
+        """Return the module for the given key if it exists,
+        else return the default value.
 
         Args:
-            key (str): The key to look up in the ModuleDict.
-            default (Module, optional): The value to return if the key is not found. Defaults to None.
+            key:
+                The key to look up in the ModuleDict.
+            default:
+                The value to return if the key is not found. Defaults to None.
 
         Returns:
-            Module or None. The module associated with the key, or the default value if the key is not found.
+            The module associated with the key, or the default
+            value if the key is not found.
         """
         return self._modules.get(key, default)
-    
+
     def set(self, key: str, module: Module) -> None:
         """Set a single key-value pair in the ModuleDict.
 
@@ -622,7 +636,8 @@ class ModuleDict(Module, container_abcs.Mapping):
                 The module to associate with the key.
 
         !!! note
-            This method registers the module using `add_module` to ensure proper registration
-            and preserves the order of insertion, consistent with `ModuleDict` behavior.
+            This method registers the module using `add_module` to ensure
+            proper registration and preserves the order of insertion,
+            consistent with `ModuleDict` behavior.
         """
         self.add_module(key, module)

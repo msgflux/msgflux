@@ -1,18 +1,20 @@
 from os import getenv
 from typing import Any, Dict
+
 from msgflux.models.providers.openai import OpenAIChatCompletion, OpenAITextEmbedder
 
 
 class _BaseOllama:
     """Configurations to use Ollama models."""
+
     provider: str = "ollama"
 
     def _get_base_url(self):
         base_url = getenv("OLLAMA_BASE_URL")
         if base_url is None:
             raise ValueError("Please set `OLLAMA_BASE_URL`")
-        return base_url  
-    
+        return base_url
+
     def _get_api_key(self):
         """Load API keys from environment variable."""
         keys = getenv("OLAMA_API_KEY", "ollama")
@@ -29,6 +31,7 @@ class OllamaChatCompletion(OpenAIChatCompletion, _BaseOllama):
         if response_format:
             params["extra_body"] = {"guided_json": response_format}
         return params
+
 
 class OllamaTextEmbedder(OpenAITextEmbedder, _BaseOllama):
     """Ollama Text Embedder."""

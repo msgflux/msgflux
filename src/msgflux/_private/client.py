@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict
+
 from msgflux._private.core import Core
 
 
 class BaseClient(ABC, Core):
-    """
-    BaseClient is an abstract base class that defines the interface and common behavior
+    """BaseClient is an abstract base class that defines the interface and common behavior
     for client classes in the msgflux system.
 
     This class inherits from `Core` to leverage its state management capabilities and
@@ -28,8 +28,7 @@ class BaseClient(ABC, Core):
 
     @abstractmethod
     def __call__(self):
-        """
-        Execute the client's main functionality. This method must be implemented by subclasses.
+        """Execute the client's main functionality. This method must be implemented by subclasses.
 
         This method defines the primary behavior of the client and is called when the instance
         is invoked as a function.
@@ -40,12 +39,11 @@ class BaseClient(ABC, Core):
         raise NotImplementedError
 
     async def acall(self, *args, **kwargs):
-        """ Async interface to __call__ """
+        """Async interface to __call__."""
         return self.__call__(*args, **kwargs)
 
     def serialize(self) -> Dict[str, Any]:
-        """
-        Serialize the client instance into a dictionary.
+        """Serialize the client instance into a dictionary.
 
         This method prepares the client's state for serialization by removing unnecessary
         attributes and including additional metadata such as the client type and provider.
@@ -54,7 +52,7 @@ class BaseClient(ABC, Core):
             Dict[str, Any]: A dictionary containing the serialized state of the client,
             including metadata and the client's internal state.
         """
-        state =  self.__getstate__()
+        state = self.__getstate__()
         if hasattr(self, "to_ignore"):
             for key in self.to_ignore:
                 state.pop(key, None)
@@ -65,12 +63,11 @@ class BaseClient(ABC, Core):
             instance_type = self.instance_type()
             data.update(instance_type)
         data["state"] = state
-        return data     
+        return data
 
     @classmethod
     def from_serialized(cls, state: Dict[str, Any]):
-        """
-        Deserialize a client instance from a dictionary.
+        """Deserialize a client instance from a dictionary.
 
         This method creates a new instance of the client and restores its state from the
         provided dictionary. It also ensures that the client is properly initialized
@@ -86,6 +83,6 @@ class BaseClient(ABC, Core):
             state.pop("msgflux_type")
         instance = cls()
         instance.__setstate__(state)
-        if hasattr(instance, "_initialize"):        
+        if hasattr(instance, "_initialize"):
             instance._initialize()
         return instance

@@ -1,9 +1,10 @@
 from os import getenv
 from typing import Any, Dict
+
 from msgflux.models.providers.openai import (
     OpenAIChatCompletation,
     OpenAITextEmbedder,
-    OpenAITextToSpeech
+    OpenAITextToSpeech,
 )
 
 
@@ -14,8 +15,8 @@ class _BaseTogether:
         base_url = getenv("TOGETHER_BASE_URL", "https://api.together.xyz/v1")
         if base_url is None:
             raise ValueError("Please set `TOGETHER_BASE_URL`")
-        return base_url  
-    
+        return base_url
+
     def _get_api_key(self):
         keys = getenv("TOGETHER_API_KEY")
         self._api_key = [key.strip() for key in keys.split(",")]
@@ -30,16 +31,19 @@ class TogetherChatCompletation(OpenAIChatCompletation, _BaseTogether):
         response_format = params.pop("response_format", None)
         if response_format:
             params["response_format"] = {
-                "type": "json_object", "schema": response_format
+                "type": "json_object",
+                "schema": response_format,
             }
         tools = params.get("tools", None)
-        if tools: # Together supports 'strict' mode to tools
+        if tools:  # Together supports 'strict' mode to tools
             for tool in tools:
                 tool["function"]["strict"] = True
         return params
 
+
 class TogetherTextEmbedder(OpenAITextEmbedder, _BaseTogether):
     """Together Text Embedder."""
+
 
 class TogetherTextToSpeech(OpenAITextToSpeech, _BaseTogether):
     """Together Text to Speech."""

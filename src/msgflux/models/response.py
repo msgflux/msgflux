@@ -3,7 +3,6 @@ from typing import Any, AsyncGenerator, Literal, Union
 
 
 class _BaseResponse:
-
     def set_metadata(self, metadata: Any):
         self.metadata = metadata
 
@@ -11,8 +10,9 @@ class _BaseResponse:
         if isinstance(response_type, str):
             self.response_type = response_type
         else:
-            raise TypeError("`response_type` requires str"
-                            f"given `{type(response_type)}`")
+            raise TypeError(
+                f"`response_type` requires strgiven `{type(response_type)}`"
+            )
 
 
 class ModelResponse(_BaseResponse):
@@ -34,12 +34,12 @@ class ModelResponse(_BaseResponse):
         "text_classification",
         "text_embedding",
         "text_generation",
-        "text_reranked"
+        "text_reranked",
     ]
 
     def __init__(self):
         self.data = None
-        self.metadata = None        
+        self.metadata = None
         self.response_type = None
 
     def add(self, data: Any):

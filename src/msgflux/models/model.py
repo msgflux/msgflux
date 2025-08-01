@@ -1,4 +1,5 @@
 from typing import Any, Dict, Type
+
 from msgflux.models.base import BaseModel
 from msgflux.models.types import (
     ChatCompletionModel,
@@ -15,7 +16,6 @@ from msgflux.models.types import (
 )
 from msgflux.utils.imports import import_module_from_lib
 
-
 _SUPPORTED_MODEL_TYPES = [
     "chat_completion",
     "image_classfier",
@@ -26,8 +26,8 @@ _SUPPORTED_MODEL_TYPES = [
     "text_classifier",
     "text_embedder",
     "text_reranker",
-    "text_to_image",    
-    "text_to_speech",    
+    "text_to_image",
+    "text_to_speech",
 ]
 
 _MODEL_NAMESPACE_TRANSLATOR = {
@@ -37,13 +37,17 @@ _MODEL_NAMESPACE_TRANSLATOR = {
     "openrouter": "OpenRouter",
     "sambanova": "SambaNova",
     "timm": "TIMM",
-    "together": "Together",    
+    "together": "Together",
     "vllm": "VLLM",
-} 
+}
 
 _CHAT_COMPLETION_PROVIDERS = [
-    "ollama", "openai", "openrouter", 
-    "sambanova", "together", "vllm"
+    "ollama",
+    "openai",
+    "openrouter",
+    "sambanova",
+    "together",
+    "vllm",
 ]
 _IMAGE_CLASSIFIER_PROVIDERS = ["jinaai"]
 _IMAGE_EMBEDDER_PROVIDERS = ["jinaai"]
@@ -62,7 +66,7 @@ _PROVIDERS_BY_MODEL_TYPE = {
     "image_classifier": _IMAGE_CLASSIFIER_PROVIDERS,
     "image_embedder": _IMAGE_EMBEDDER_PROVIDERS,
     "image_text_to_image": _IMAGE_TEXT_TO_IMAGE_PROVIDERS,
-    "moderation":_MODERATION_PROVIDERS,
+    "moderation": _MODERATION_PROVIDERS,
     "speech_to_text": _SPEECH_TO_TEXT_PROVIDERS,
     "text_classifier": _TEXT_CLASSIFIER_PROVIDERS,
     "text_embedder": _TEXT_EMBEDDER_PROVIDERS,
@@ -85,7 +89,7 @@ class Model:
     def _get_model_class(cls, model_type: str, provider: str) -> Type[BaseModel]:
         if model_type not in cls.supported_model_types:
             raise ValueError(f"Model type `{model_type}` is not supported")
-            
+
         providers = cls.providers_by_model_type[model_type]
         if provider not in providers:
             raise ValueError(f"Provider `{provider}` is not supported for {model_type}")
@@ -100,21 +104,24 @@ class Model:
         return import_module_from_lib(provider_class_name, module_name)
 
     @classmethod
-    def _create_model(cls, model_type: str, model_path: str, **kwargs) -> Type[BaseModel]:
+    def _create_model(
+        cls, model_type: str, model_path: str, **kwargs
+    ) -> Type[BaseModel]:
         provider, model_id = cls._model_path_parser(model_path)
         model_cls = cls._get_model_class(model_type, provider)
         return model_cls(model_id=model_id, **kwargs)
 
     @classmethod
-    def from_serialized(cls, provider: str, model_type: str, state: Dict[str, Any]) -> Type[BaseModel]:
-        """
-        Creates a model instance from serialized parameters without calling __init__.
-        
+    def from_serialized(
+        cls, provider: str, model_type: str, state: Dict[str, Any]
+    ) -> Type[BaseModel]:
+        """Creates a model instance from serialized parameters without calling __init__.
+
         Args:
             provider: The model provider (e.g., "openai", "google")
             model_type: The type of model (e.g., "chat_completation", "text_embedder")
             state: Dictionary containing the serialized model parameters
-            
+
         Returns:
             An instance of the appropriate model class with restored state
         """
@@ -138,7 +145,9 @@ class Model:
         return cls._create_model("image_embedder", model_path, **kwargs)
 
     @classmethod
-    def image_text_to_image(cls, model_path: str, **kwargs) -> Type[ImageTextToImageModel]:
+    def image_text_to_image(
+        cls, model_path: str, **kwargs
+    ) -> Type[ImageTextToImageModel]:
         return cls._create_model("image_text_to_image", model_path, **kwargs)
 
     @classmethod

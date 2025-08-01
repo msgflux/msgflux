@@ -3,16 +3,23 @@ import asyncio
 import concurrent.futures
 from concurrent.futures import Future
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
 from msgflux._private.executor import Executor
 from msgflux.dotdict import dotdict
 from msgflux.logger import logger
 from msgflux.nn.modules.module import get_callable_name
 from msgflux.telemetry.span import instrument
 
-
-__all__ = ["map_gather", "scatter_gather", "bcast_gather",
-           "wait_for", "wait_for_event", "background_task",
-           "msg_scatter_gather", "msg_bcast_gather"]
+__all__ = [
+    "background_task",
+    "bcast_gather",
+    "map_gather",
+    "msg_bcast_gather",
+    "msg_scatter_gather",
+    "scatter_gather",
+    "wait_for",
+    "wait_for_event",
+]
 
 
 @instrument("msgflux.nn.F.map_gather")
@@ -23,31 +30,31 @@ def map_gather(
     kwargs_list: Optional[List[Dict[str, Any]]] = None,
     timeout: Optional[float] = None,
 ) -> Tuple[Any, ...]:
-    """
-    Applies the `to_send` function to each set of arguments in `args_list` 
+    """Applies the `to_send` function to each set of arguments in `args_list`
     and `kwargs_list` using Executor and collects the results.
 
     Args:
-        to_send: 
+        to_send:
             The callable function to be applied.
         args_list:
-            Each tuple contains the positional argumentsvfor the corresponding callable 
-            in `to_send`. If `None`, no positional arguments are passed unless specified 
+            Each tuple contains the positional argumentsvfor the corresponding callable
+            in `to_send`. If `None`, no positional arguments are passed unless specified
             individually by an item in `kwargs_list`.
         kwargs_list:
-            Each dictionary contains the named arguments for the corresponding callable 
-            in `to_send`. If `None`, no named arguments are passed unless specified 
+            Each dictionary contains the named arguments for the corresponding callable
+            in `to_send`. If `None`, no named arguments are passed unless specified
             individually by an item in `args_list`.
         timeout:
             Maximum time (in seconds) to wait for responses.
+
     Returns:
         A tuple containing the results of each call to the `f` function. If a call
         fails or times out, the corresponding result will be `None`.
 
     Raises:
-        TypeError: 
+        TypeError:
             If `f` is not callable.
-        ValueError: 
+        ValueError:
             If `args_list` is not a non-empty list or if `kwargs_list`
             (if provided) is not the same length as `args_list`.
 
@@ -57,7 +64,7 @@ def map_gather(
         print(results)  # (3, 7, 11)
 
         def multiply(x, y=2): return x * y
-        results = F.map_gather(multiply, args_list=[(1,), (3,), (5,)], 
+        results = F.map_gather(multiply, args_list=[(1,), (3,), (5,)],
                             kwargs_list=[{'y': 3}, {'y': 4}, {'y': 5}])
         print(results)  # (3, 12, 25)
 
@@ -72,7 +79,9 @@ def map_gather(
 
     if kwargs_list is not None:
         if not isinstance(kwargs_list, list) or len(kwargs_list) != len(args_list):
-            raise ValueError("`kwargs_list` must be a list with the same length as `args_list`")
+            raise ValueError(
+                "`kwargs_list` must be a list with the same length as `args_list`"
+            )
 
     executor = Executor.get_instance()
     futures = []
@@ -84,9 +93,9 @@ def map_gather(
 
     concurrent.futures.wait(futures, timeout=timeout)
     responses: List[Any] = []
-    for FUTURE in futures:
+    for future in futures:
         try:
-            responses.append(FUTURE.result())
+            responses.append(future.result())
         except Exception as e:
             logger.error(str(e))
             responses.append(None)
@@ -101,33 +110,35 @@ def scatter_gather(
     *,
     timeout: Optional[float] = None,
 ) -> Tuple[Any, ...]:
-    """
-    Sends different sets of arguments/kwargs to a list of modules (callables)
+    """Sends different sets of arguments/kwargs to a list of modules
     and collects the responses.
 
-    Each callable in `to_send` receives the positional arguments of the corresponding `tuple`
-    in `args_list` and the named arguments of the corresponding `dict` in `kwargs_list`.
-    If `args_list` or `kwargs_list` are not provided (or are `None`), the corresponding callables
-    will be called without positional or named arguments, respectively,
-    unless an empty list (`[]`) or empty tuple (`()`) is provided for a specific item.
+    Each callable in `to_send` receives the positional arguments of
+    the corresponding `tuple` in `args_list` and the named arguments
+    of the corresponding `dict` in `kwargs_list`. If `args_list` or
+    `kwargs_list` are not provided (or are `None`), the corresponding
+    callables will be called without positional or named arguments,
+    respectively, unless an empty list (`[]`) or empty tuple (`()`)
+    is provided for a specific item.
 
     Args:
-        to_send: 
+        to_send:
             List of callable objects (e.g. functions or `Module` instances).
         args_list:
-            Each tuple contains the positional argumentsvfor the corresponding callable 
-            in `to_send`. If `None`, no positional arguments are passed unless specified 
+            Each tuple contains the positional argumentsvfor the corresponding callable
+            in `to_send`. If `None`, no positional arguments are passed unless specified
             individually by an item in `kwargs_list`.
         kwargs_list:
-            Each dictionary contains the named arguments for the corresponding callable 
-            in `to_send`. If `None`, no named arguments are passed unless specified 
+            Each dictionary contains the named arguments for the corresponding callable
+            in `to_send`. If `None`, no named arguments are passed unless specified
             individually by an item in `args_list`.
         timeout:
             Maximum time (in seconds) to wait for responses.
 
     Returns:
-        Tuple containing the responses for each callable. If an error or timeout occurs for a 
-        specific callable, its corresponding response in the tuple will be `None`.
+        Tuple containing the responses for each callable. If an error or
+        timeout occurs for a specific callable, its corresponding response
+        in the tuple will be `None`.
 
     Raises:
         TypeError:
@@ -152,7 +163,8 @@ def scatter_gather(
         results = F.scatter_gather(callables, args_list=args, kwargs_list=kwargs)
         print(results) # (3, 9, 30)
 
-        # Example 3: Using only kwargs_list (useful if functions have defaults or don't need positional args)
+        # Example 3: Using only kwargs_list (useful if functions have
+        # defaults or don't need positional args)
         def greet(name="World"): return f"Hello, {name}"
         def farewell(person_name): return f"Goodbye, {person_name}"
         funcs = [greet, greet, farewell]
@@ -169,12 +181,12 @@ def scatter_gather(
         args = args_list[i] if args_list and i < len(args_list) else ()
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
         futures.append(executor.submit(f, *args, **kwargs))
-    
+
     concurrent.futures.wait(futures, timeout=timeout)
     responses: List[Any] = []
-    for FUTURE in futures:
+    for future in futures:
         try:
-            responses.append(FUTURE.result())
+            responses.append(future.result())
         except Exception as e:
             logger.error(str(e))
             responses.append(None)
@@ -186,19 +198,18 @@ def msg_scatter_gather(
     to_send: List[Callable],
     messages: List[dotdict],
     *,
-    prefix: Optional[str] = None,    
+    prefix: Optional[str] = None,
     timeout: Optional[float] = None,
 ) -> Tuple[dotdict, ...]:
-    """
-    Scatter a list of messages to a list of modules and gather the responses.
+    """Scatter a list of messages to a list of modules and gather the responses.
 
-    Each message in `messages` is sent to the corresponding callable in `to_send`, 
-    and the responses are stored in the field specified by `prefix` in the 
+    Each message in `messages` is sent to the corresponding callable in `to_send`,
+    and the responses are stored in the field specified by `prefix` in the
     respective message. Includes exception handling and optional timeout.
 
     Args:
         to_send:
-            List of callable objects (e.g. functions or `Module` instances).    
+            List of callable objects (e.g. functions or `Module` instances).
         messages:
             List of `msgflux.dotdict` instances to be distributed.
         prefix:
@@ -210,34 +221,35 @@ def msg_scatter_gather(
         Tuple containing the messages updated with the responses.
 
     Raises:
-        TypeError: 
+        TypeError:
             If `messages` is not a list of `dotdict`, `to_send` is not a list
             of callables, or `prefix` is not a string.
     """
     if not messages or not all(isinstance(msg, dotdict) for msg in messages):
-        raise TypeError("`messages` must be a non-empty list of `msgflux.dotdict` instances")
+        raise TypeError(
+            "`messages` must be a non-empty list of `msgflux.dotdict` instances"
+        )
 
     if not to_send or not all(isinstance(f, Callable) for f in to_send):
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
     if len(messages) != len(to_send):
-        raise ValueError(f"The size of `messages` ({len(messages)}) "
-                        f"must be equal to that of `to_send`: ({len(to_send)})")
+        raise ValueError(
+            f"The size of `messages` ({len(messages)}) "
+            f"must be equal to that of `to_send`: ({len(to_send)})"
+        )
 
     executor = Executor.get_instance()
-    futures = [
-        executor.submit(f, msg)
-        for f, msg in zip(to_send, messages)
-    ]
-    
+    futures = [executor.submit(f, msg) for f, msg in zip(to_send, messages)]
+
     concurrent.futures.wait(futures, timeout=timeout)
-    for f, message, FUTURE in zip(to_send, messages, futures):
+    for f, message, future in zip(to_send, messages, futures):
         f_name = get_callable_name(f)
         msg_prefix = ""
         if prefix is not None:
-            msg_prefix = f"{prefix}."        
+            msg_prefix = f"{prefix}."
         try:
-            message.set(f"{msg_prefix}{f_name}", FUTURE.result())
+            message.set(f"{msg_prefix}{f_name}", future.result())
         except Exception as e:
             logger.error(f"Error in scattered task for `{f_name}`: {e}")
             message.set(f"{msg_prefix}{f_name}", None)
@@ -246,25 +258,25 @@ def msg_scatter_gather(
 
 @instrument("msgflux.nn.F.bcast_gather")
 def bcast_gather(
-    to_send: List[Callable],
-    *args,
-    timeout: Optional[float] = None,
-    **kwargs
+    to_send: List[Callable], *args, timeout: Optional[float] = None, **kwargs
 ) -> Tuple[Any, ...]:
-    """
-    Broadcasts arguments to multiple callables and gathers the responses.
+    """Broadcasts arguments to multiple callables and gathers the responses.
 
     Args:
-        to_send: List of callable objects (e.g. functions or `Module` instances).    
-        *args: Positional arguments.
-        timeout: Maximum time (in seconds) to wait for responses.
-        **kwargs: Named arguments.
+        to_send:
+            List of callable objects (e.g. functions or `Module` instances).
+        *args:
+            Positional arguments.
+        timeout:
+            Maximum time (in seconds) to wait for responses.
+        **kwargs:
+            Named arguments.
 
     Returns:
         Tuple containing the responses.
 
     Raises:
-        TypeError: 
+        TypeError:
             If `to_send` is not a list of callables.
 
     Examples:
@@ -272,9 +284,9 @@ def bcast_gather(
         def cube(x): return x * x * x
         def fail(x): raise ValueError("Intentional error")
 
-        # Example 1: 
+        # Example 1:
         results = F.bcast_gather([square, cube], 3)
-        print(results)  # (9, 27)        
+        print(results)  # (9, 27)
 
         # Example 2: Simulate error
         results = F.bcast_gather([square, fail, cube], 2)
@@ -282,19 +294,19 @@ def bcast_gather(
 
         # Example 3: Timeout
         results = F.bcast_gather([square, cube], 4, timeout=0.01)
-        print(results) # (16, 64)         
+        print(results) # (16, 64)
     """
     if not to_send or not all(isinstance(f, Callable) for f in to_send):
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
     executor = Executor.get_instance()
     futures = [executor.submit(f, *args, **kwargs) for f in to_send]
-    
+
     concurrent.futures.wait(futures, timeout=timeout)
     responses: List[Any] = []
-    for FUTURE in futures:
+    for future in futures:
         try:
-            responses.append(FUTURE.result())
+            responses.append(future.result())
         except Exception as e:
             logger.error(str(e))
             responses.append(None)
@@ -309,16 +321,15 @@ def msg_bcast_gather(
     *,
     timeout: Optional[float] = None,
 ) -> dotdict:
-    """
-    Broadcasts a single message to multiple modules and gathers the responses.
+    """Broadcasts a single message to multiple modules and gathers the responses.
 
-    The given message is sent to each callable in `to_send`, and the responses are collected
-    in the field specified by `prefix`, using the module name as the key. Includes
-    exception handling and optional timeout to prevent crashes.
+    The given message is sent to each callable in `to_send`, and the responses
+    are collected in the field specified by `prefix`, using the module name as
+    the key. Includes exception handling and optional timeout to prevent crashes.
 
     Args:
         to_send:
-            List of callable objects (e.g. functions or `Module` instances).    
+            List of callable objects (e.g. functions or `Module` instances).
         message:
             Instance of `msgflux.dotdict` to broadcast.
         prefix:
@@ -330,7 +341,7 @@ def msg_bcast_gather(
         The original message with the module responses added.
 
     Raises:
-        TypeError: 
+        TypeError:
             If `message` is not an instance of `dotdict`, `to_send` is not a list
             of callables.
     """
@@ -343,13 +354,13 @@ def msg_bcast_gather(
     futures = [executor.submit(f, message) for f in to_send]
 
     concurrent.futures.wait(futures, timeout=timeout)
-    for f, FUTURE in zip(to_send, futures):
+    for f, future in zip(to_send, futures):
         f_name = get_callable_name(f)
         msg_prefix = ""
         if prefix is not None:
             msg_prefix = f"{prefix}."
         try:
-            message.set(f"{msg_prefix}{f_name}", FUTURE.result())
+            message.set(f"{msg_prefix}{f_name}", future.result())
         except Exception as e:
             logger.error(f"Error in scattered task for `{f_name}`: {e}")
             message.set(f"{msg_prefix}{f_name}", None)
@@ -357,21 +368,26 @@ def msg_bcast_gather(
 
 
 @instrument("msgflux.nn.F.wait_for")
-def wait_for(to_send: Callable, *args, timeout: Optional[float] = None, **kwargs) -> Any:
-    """
-    Wait for a callable execution.
+def wait_for(
+    to_send: Callable, *args, timeout: Optional[float] = None, **kwargs
+) -> Any:
+    """Wait for a callable execution.
 
     Args:
-        to_send: A callable object (e.g. functions or `Module` instances).    
-        *args: Positional arguments.
-        timeout: Maximum time (in seconds) to wait for responses.
-        **kwargs: Named arguments.
+        to_send:
+            A callable object (e.g. functions or `Module` instances).
+        *args:
+            Positional arguments.
+        timeout:
+            Maximum time (in seconds) to wait for responses.
+        **kwargs:
+            Named arguments.
 
     Returns:
         Callable responses.
 
     Raises:
-        TypeError: 
+        TypeError:
             If `to_send` is not a callable.
 
     Examples:
@@ -387,8 +403,8 @@ def wait_for(to_send: Callable, *args, timeout: Optional[float] = None, **kwargs
 
     executor = Executor.get_instance()
     future = executor.submit(to_send, *args, **kwargs)
-    concurrent.futures.wait([future], timeout=timeout)    
-    try:        
+    concurrent.futures.wait([future], timeout=timeout)
+    try:
         return future.result()
     except Exception as e:
         logger.error(str(e))
@@ -397,8 +413,7 @@ def wait_for(to_send: Callable, *args, timeout: Optional[float] = None, **kwargs
 
 @instrument("msgflux.nn.F.wait_for_event")
 def wait_for_event(event: asyncio.Event) -> None:
-    """
-    Waits synchronously for an asyncio.Event to be set.
+    """Waits synchronously for an asyncio.Event to be set.
 
     This function will block until event.set() is called elsewhere.
 
@@ -420,19 +435,17 @@ def wait_for_event(event: asyncio.Event) -> None:
 
 
 @instrument("msgflux.nn.F.background_task")
-def background_task(
-    to_send: Callable,
-    *args,
-    **kwargs
-) -> None:
-    """
-    Executes a task in the background asynchronously without blocking, using the AsyncExecutorPool.
-    This function is "fire-and-forget".
+def background_task(to_send: Callable, *args, **kwargs) -> None:
+    """Executes a task in the background asynchronously without blocking,
+    using the AsyncExecutorPool. This function is "fire-and-forget".
 
     Args:
-        to_send: Callable object (function, async function, or module with .acall() method).
-        *args: Positional arguments.
-        **kwargs: Named arguments.
+        to_send:
+            Callable object (function, async function, or module with .acall() method).
+        *args:
+            Positional arguments.
+        **kwargs:
+            Named arguments.
 
     Raises:
         TypeError: If `to_send` is not a callable.
@@ -455,7 +468,7 @@ def background_task(
         # Example 3 (with error):
         def failing_task():
             raise ValueError("This task failed!")
-        F.background_task(failing_task)  # Error will be logged        
+        F.background_task(failing_task)  # Error will be logged
     """
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")
@@ -465,7 +478,7 @@ def background_task(
         try:
             future.result()
         except Exception as e:
-            logger.error(f"Background task error: {str(e)}", exc_info=True)
+            logger.error(f"Background task error: {e!s}", exc_info=True)
 
     executor = Executor.get_instance()
     future = executor.submit(to_send, *args, **kwargs)

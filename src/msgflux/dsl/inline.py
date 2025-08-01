@@ -1,31 +1,36 @@
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+
 from msgflux.dotdict import dotdict
 from msgflux.nn import functional as F
 
 
 class InlineDSL:
-    """
-    Parses and executes a mini domain-specific language (DSL) for 
+    """Parses and executes a mini domain-specific language (DSL) for
     defining workflow pipelines over modules.
 
     Supported Node Types:
 
     1. Module Node:
-        Syntax: 
+        Syntax:
             `"module_name"`
         Description:
             A single module that processes the message.
-        Example:
+
+    !!! example
+
             `"a"`
 
     2. Parallel Node:
         Syntax:
             `"[module1, module2, ...]"`
         Description:
-            Executes multiple modules in parallel using broadcast and gather. 
-            The same input message is passed to all modules, and their results are merged.
-        Example:
+            Executes multiple modules in parallel using broadcast and gather.
+            The same input message is passed to all modules, and their results
+            are merged.
+
+    !!! example
+
             `"[feat_a, feat_b]"`
 
     3. Conditional Node:
@@ -34,7 +39,7 @@ class InlineDSL:
         Description:
             Conditionally executes a branch of modules depending on the evaluation
             of the condition against the `message`.
-            The condition must follow the format `key_path operator value`, 
+            The condition must follow the format `key_path operator value`,
             e.g., `output.agent == "xpto"`.
             The `true_branch` and `false_branch` are comma-separated module names.
             Supports logic operators:
@@ -44,7 +49,8 @@ class InlineDSL:
             None verification
                 * is None: user.name is None
                 * is not None: user.name is not None
-        Example:
+        !!! example
+
             `"{output.agent == 'xpto'?a,b}"`
             Executes `a` if the condition is true, `b` otherwise.
 
@@ -54,87 +60,89 @@ class InlineDSL:
         Description:
             Executes a block of actions repeatedly while the condition is true.
             The condition follows the same format as conditional nodes.
-            Actions can be any valid DSL expression (sequential, parallel, conditional, nested while loops).
-        Example:
+            Actions can be any valid DSL expression (sequential, parallel,
+            conditional, nested while loops).
+
+    !!! example
+
             `"@{counter < 10}: increment;"`
             `"@{active}: [monitor, logger] -> report;"`
 
     5. Arrow Separator (`->`):
         Description:
             Defines the sequence of operations in the pipeline.
-        Example:
+
+    !!! example
+
             `"prep -> [feat_a, feat_b] -> combine"`
     """
+
     def __init__(self, max_iterations: int = 1000):
         self.max_iterations = max_iterations  # Safety limit to prevent infinite loops
         self.patterns = {
             "arrow": r"\s*->\s*",
             "parallel": r"\[(.*?)\]",
             "conditional": r"\{(.*?)\?(.*?)(?:,(.*?))?\}",
-            "while_loop": r"@\{(.*?)\}:\s*((?:[^;]|(?:->|\[.*?\]|\{.*?\}|@\{.*?\}:\s*.*?;))+);",
+            "while_loop": r"@\{(.*?)\}:\s*((?:[^;]|(?:->|\[.*?\]|\{.*?\}|@\{.*?\}:\s*.*?;))+);", # noqa: E501
             "identifier": r"[a-zA-Z_][a-zA-Z0-9_]*",
-            "comparison": r"([a-zA-Z0-9_.]+)\s*(==|!=|<=|>=|<|>|is not|is)\s*(.*)"
+            "comparison": r"([a-zA-Z0-9_.]+)\s*(==|!=|<=|>=|<|>|is not|is)\s*(.*)",
         }
 
     def parse(self, expression: str) -> List[Dict[str, Any]]:
         """Parse DSL expression into a list of steps."""
         steps = []
         remaining = expression.strip()
-        
+
         while remaining:
             # Try to match while loop first (since it's more complex)
             while_match = re.match(self.patterns["while_loop"], remaining)
             if while_match:
                 condition = while_match.group(1).strip()
                 actions = while_match.group(2).strip()
-                
-                steps.append({
-                    "type": "while",
-                    "condition": condition,
-                    "actions": actions
-                })
-                
+
+                steps.append(
+                    {"type": "while", "condition": condition, "actions": actions}
+                )
+
                 # Remove the matched while loop from remaining string
-                remaining = remaining[while_match.end():].strip()
-                
+                remaining = remaining[while_match.end() :].strip()
+
                 # Check if there's an arrow after the while loop
                 if remaining.startswith("->"):
                     remaining = remaining[2:].strip()
                 continue
-            
+
             # Split by arrow for other patterns
             arrow_split = re.split(self.patterns["arrow"], remaining, maxsplit=1)
             part = arrow_split[0].strip()
             remaining = arrow_split[1].strip() if len(arrow_split) > 1 else ""
-            
+
             if not part:
                 continue
 
             conditional_match = re.match(self.patterns["conditional"], part)
             if conditional_match:
                 condition, true_branch, false_branch = conditional_match.groups()
-                steps.append({
-                    "type": "conditional",
-                    "condition": condition.strip(),
-                    "true_branch": self._parse_branch(true_branch),
-                    "false_branch": self._parse_branch(false_branch) if false_branch else []
-                })
+                steps.append(
+                    {
+                        "type": "conditional",
+                        "condition": condition.strip(),
+                        "true_branch": self._parse_branch(true_branch),
+                        "false_branch": self._parse_branch(false_branch)
+                        if false_branch
+                        else [],
+                    }
+                )
                 continue
 
             parallel_match = re.match(self.patterns["parallel"], part)
             if parallel_match:
                 modules = [m.strip() for m in parallel_match.group(1).split(",")]
-                steps.append({
-                    "type": "parallel",
-                    "modules": modules
-                })
+                steps.append({"type": "parallel", "modules": modules})
                 continue
 
             if re.match(self.patterns["identifier"], part):
-                steps.append({
-                    "type": "module",
-                    "module": part
-                })
+                steps.append({"type": "module", "module": part})
             else:
                 raise ValueError(f"Invalid DSL syntax or unknown module: {part}")
 
@@ -149,10 +157,11 @@ class InlineDSL:
 
     def _tokenize_condition(self, condition: str) -> List[str]:
         """Tokenize condition string into logical components."""
-        condition = condition.strip() # Remove black spaces
+        condition = condition.strip()  # Remove black spaces
 
-        # Pattern for tokenization that captures logical operators, parentheses and expressions
-        token_pattern = r"(\|\||&|!|\(|\)|[^&|!()]+)"
+        # Pattern for tokenization that captures logical operators
+        # parentheses and expressions
+        token_pattern = r"(\|\||&|!|\(|\)|[^&|!()]+)" # noqa: S105
         tokens = re.findall(token_pattern, condition)
 
         # Removes empty tokens and trim
@@ -206,21 +215,22 @@ class InlineDSL:
                 return expr, index
             else:
                 raise ValueError("Missing closing parenthesis")
+        # This should be a comparison expression
+        elif index < len(tokens):
+            comparison_expr = tokens[index]
+            index += 1
+            return ("COMPARISON", comparison_expr), index
         else:
-            # This should be a comparison expression
-            if index < len(tokens):
-                comparison_expr = tokens[index]
-                index += 1
-                return ("COMPARISON", comparison_expr), index
-            else:
-                raise ValueError("Expected comparison expression")
+            raise ValueError("Expected comparison expression")
 
-    def _evaluate_comparison(self, comparison_str: str, message: dotdict) -> bool:
+    def _evaluate_comparison(self, comparison_str: str, message: dotdict) -> bool: # noqa: C901
         """Evaluate a single comparison expression."""
         match = re.match(self.patterns["comparison"], comparison_str.strip())
         if not match:
-            raise ValueError(f"Invalid condition format: {comparison_str}. "
-                             "Expected key_path operator value.")
+            raise ValueError(
+                f"Invalid condition format: {comparison_str}. "
+                "Expected key_path operator value."
+            )
 
         key_path, operator, expected_value_str = match.groups()
 
@@ -235,8 +245,10 @@ class InlineDSL:
                 else:  # is not
                     return actual_value is not None
             else:
-                raise ValueError(f"`is` and `is not` operators only "
-                                 "support `None` or `null` comparisons")
+                raise ValueError(
+                    "`is` and `is not` operators only "
+                    "support `None` or `null` comparisons"
+                )
 
         # Remove quotes from the expected value and attempt
         # to convert to the appropriate type
@@ -259,7 +271,8 @@ class InlineDSL:
 
             # Try to convert the actual value also to the same type for comparison
             if actual_value is None:
-                # If the value does not exist in the message, we cannot compare numerically
+                # If the value does not exist in the message
+                # we cannot compare numerically
                 return False
 
             # Handle boolean conversion for actual value
@@ -274,7 +287,8 @@ class InlineDSL:
         except (ValueError, TypeError):
             # If conversion fails, treat as string
             expected_value = expected_value_str
-            # Ensures the current value is a string for consistent comparison if not None
+            # Ensures the current value is a string for consistent
+            # comparison if not None
             actual_value = str(actual_value) if actual_value is not None else None
 
         # Performs comparison based on the operator
@@ -331,27 +345,42 @@ class InlineDSL:
         # Evaluate the tree
         return self._evaluate_logical_tree(tree, message)
 
-    def _execute_while_loop(self, condition: str, actions: str, modules: Mapping[str, Callable], message: dotdict) -> dotdict:
+    def _execute_while_loop(
+        self,
+        condition: str,
+        actions: str,
+        modules: Mapping[str, Callable],
+        message: dotdict,
+    ) -> dotdict:
         """Execute a while loop with the given condition and actions."""
         iterations = 0
         current_message = message
-        
+
         while self._evaluate_condition(condition, current_message):
             if iterations >= self.max_iterations:
-                raise RuntimeError(f"While loop exceeded maximum iterations ({self.max_iterations}). "
-                                   f"Possible infinite loop detected. Condition: {condition}")
-            
+                raise RuntimeError(
+                    f"While loop exceeded maximum iterations ({self.max_iterations}). "
+                    f"Possible infinite loop detected. Condition: {condition}"
+                )
+
             # Parse and execute the actions as a sub-pipeline
             actions_steps = self.parse(actions)
-            current_message = self._execute_steps(actions_steps, modules, current_message)
+            current_message = self._execute_steps(
+                actions_steps, modules, current_message
+            )
             iterations += 1
-        
+
         return current_message
 
-    def _execute_steps(self, steps: List[Dict[str, Any]], modules: Mapping[str, Callable], message: dotdict) -> dotdict:
+    def _execute_steps( # noqa: C901
+        self,
+        steps: List[Dict[str, Any]],
+        modules: Mapping[str, Callable],
+        message: dotdict,
+    ) -> dotdict:
         """Execute a list of steps."""
         current_message = message
-        
+
         for step in steps:
             if step["type"] == "module":
                 module = modules.get(step["module"])
@@ -364,35 +393,45 @@ class InlineDSL:
                 for mod_name in step["modules"]:
                     module = modules.get(mod_name)
                     if not module:
-                        raise ValueError(f"Module {mod_name} not found for parallel execution.")
+                        raise ValueError(
+                            f"Module {mod_name} not found for parallel execution."
+                        )
                     parallel_modules.append(module)
 
                 if not parallel_modules:
-                    raise ValueError(f"No valid modules found for parallel execution in {step['modules']}.")
+                    raise ValueError(
+                        "No valid modules found for parallel execution "
+                        f"in {step['modules']}."
+                    )
 
                 current_message = F.msg_bcast_gather(parallel_modules, current_message)
 
             elif step["type"] == "conditional":
-                condition_result = self._evaluate_condition(step["condition"], current_message)
-                branch = step["true_branch"] if condition_result else step["false_branch"]
+                condition_result = self._evaluate_condition(
+                    step["condition"], current_message
+                )
+                branch = (
+                    step["true_branch"] if condition_result else step["false_branch"]
+                )
 
                 for module_name in branch:
                     module = modules.get(module_name)
                     if not module:
-                        raise ValueError(f"Module `{module_name}` not found in conditional branch.")
+                        raise ValueError(
+                            f"Module `{module_name}` not found in conditional branch."
+                        )
                     current_message = module(current_message)
 
             elif step["type"] == "while":
                 current_message = self._execute_while_loop(
-                    step["condition"], 
-                    step["actions"], 
-                    modules, 
-                    current_message
+                    step["condition"], step["actions"], modules, current_message
                 )
 
         return current_message
 
-    def __call__(self, expression: str, modules: Mapping[str, Callable], message: dotdict) -> dotdict:
+    def __call__(
+        self, expression: str, modules: Mapping[str, Callable], message: dotdict
+    ) -> dotdict:
         """Execute the DSL pipeline."""
         steps = self.parse(expression)
         return self._execute_steps(steps, modules, message)
@@ -401,37 +440,47 @@ class InlineDSL:
 def inline(
     expression: str, modules: Mapping[str, Callable], message: dotdict
 ) -> dotdict:
-    """
-    Executes a workflow defined in DSL expression over a given `message`.
+    """Executes a workflow defined in DSL expression over a given `message`.
 
     Args:
         expression:
-            A string describing the execution pipeline using a Domain-Specific Language (DSL).
-            
+            A string describing the execution pipeline using a
+            Domain-Specific Language (DSL).
+
             The DSL supports:
-            
+
             **Sequential execution**:
                 Use `->` to define a linear pipeline.
-                Example: `"prep -> transform -> output"`
-            
+                !!! example
+
+                    `"prep -> transform -> output"`
+
             **Parallel execution**:
                 Use square brackets `[...]` to group modules that run in parallel.
-                Example: `"prep -> [feat_a, feat_b] -> combine"`
-            
+                !!! example
+
+                    `"prep -> [feat_a, feat_b] -> combine"`
+
             **Conditional execution**:
-                Use curly braces with a ternary-like structure: `{condition ? then_module, else_module}`.
-                Example: `"{user.age > 18 ? adult_module, child_module}"`
-            
+                Use curly braces with a ternary-like structure:
+                `{condition ? then_module, else_module}`.
+                !!! example
+
+                    `"{user.age > 18 ? adult_module, child_module}"`
+
             **While loops**:
-                Use `@{condition}: actions;` to execute actions repeatedly while condition is true.
-                Example: `"@{counter < 10}: increment;"`
-            
+                Use `@{condition}: actions;` to execute actions repeatedly
+                while condition is true.
+                !!! example
+
+                    `"@{counter < 10}: increment;"`
+
             **Logical operations in conditions**:
                 - **AND**: `cond1 & cond2`
                 - **OR**: `cond1 || cond2`
                 - **NOT**: `!cond`
                 Example: `"{user.is_active & !user.is_banned ? allow, deny}"`
-            
+
             **None checking in conditions**:
                 - `is None`: Example: `user.name is None`
                 - `is not None`: Example: `user.name is not None`
@@ -444,7 +493,7 @@ def inline(
 
         message:
             The input message (dotdict) to be passed through the pipeline.
-    
+
     Returns:
         The resulting `message` after executing the defined workflow.
 
@@ -454,12 +503,13 @@ def inline(
         TypeError:
             If message is not a `msgflux.dotdict` instance.
         TypeError:
-            If modules is not a Mapping.     
+            If modules is not a Mapping.
         ValueError:
-            If a module is not found, if the DSL syntax is invalid, 
+            If a module is not found, if the DSL syntax is invalid,
             or if a condition cannot be parsed.
         RuntimeError:
-            If a while loop exceeds the maximum iteration limit (prevents infinite loops).
+            If a while loop exceeds the maximum iteration limit
+            (prevents infinite loops).
 
     Examples:
         from msgflux import dotdict, inline
@@ -488,7 +538,7 @@ def inline(
         def final(msg: dotdict) -> dotdict:
             print(f"Executing final, current msg: {msg}")
             msg['final'] = 'done'
-            return msg            
+            return msg
 
         my_modules = {
             "prep": prep,
@@ -498,14 +548,14 @@ def inline(
             "final": final
         }
         input_msg = dotdict()
-        
+
         # Example with while loop
         result = inline(
             "prep -> @{counter < 5}: increment; -> final",
             modules=my_modules,
             message=input_msg
         )
-        
+
         # Example with nested while loop and other constructs
         result = inline(
             "prep -> @{counter < 3}: increment -> [feat_a, feat_b]; -> final",
@@ -516,9 +566,9 @@ def inline(
     if not isinstance(expression, str):
         raise TypeError("`expression` must be a str")
     if not isinstance(message, dotdict):
-        raise TypeError("`message` must be an instance of `msgflux.dotdict`") 
+        raise TypeError("`message` must be an instance of `msgflux.dotdict`")
     if not isinstance(modules, Mapping):
-        raise TypeError("`modules` must be a `Mapping`")     
+        raise TypeError("`modules` must be a `Mapping`")
     dsl = InlineDSL()
     message = dsl(expression, modules, message)
     return message

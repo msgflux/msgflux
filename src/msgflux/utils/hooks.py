@@ -2,7 +2,6 @@ import weakref
 from collections import OrderedDict
 from typing import Any, Tuple
 
-
 __all__ = ["RemovableHandle"]
 
 
@@ -13,13 +12,12 @@ class RemovableHandle:
     next_id: int = 0
 
     def __init__(self, hooks_dict: Any, *, extra_dict: Any = None) -> None:
-        """
-        Args:
-            hooks_dict: 
-                A dictionary of hooks, indexed by hook `id`.
-            extra_dict:
-                An additional dictionary or list of dictionaries whose keys 
-                will be deleted when the same keys are removed from `hooks_dict`.
+        """Args:
+        hooks_dict:
+            A dictionary of hooks, indexed by hook `id`.
+        extra_dict:
+            An additional dictionary or list of dictionaries whose keys
+            will be deleted when the same keys are removed from `hooks_dict`.
         """
         self.hooks_dict_ref = weakref.ref(hooks_dict)
         self.id = RemovableHandle.next_id
@@ -45,7 +43,11 @@ class RemovableHandle:
         if self.extra_dict_ref is None:
             return (self.hooks_dict_ref(), self.id)
         else:
-            return (self.hooks_dict_ref(), self.id, tuple(ref() for ref in self.extra_dict_ref))
+            return (
+                self.hooks_dict_ref(),
+                self.id,
+                tuple(ref() for ref in self.extra_dict_ref),
+            )
 
     def __setstate__(self, state) -> None:
         if state[0] is None:
@@ -64,5 +66,5 @@ class RemovableHandle:
     def __enter__(self) -> "RemovableHandle":
         return self
 
-    def __exit__(self, type: Any, value: Any, tb: Any) -> None:
+    def __exit__(self, dtype: Any, value: Any, tb: Any) -> None:
         self.remove()

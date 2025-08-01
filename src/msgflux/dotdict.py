@@ -1,13 +1,13 @@
 from typing import Any, Dict, Optional
+
 import msgspec
 
 
-class dotdict(dict):
-    """
-    A dictionary with dot access and nested path support.
+class dotdict(dict): # noqa: N801
+    """A dictionary with dot access and nested path support.
 
     dotdict allows you to access and modify values as attributes (e.g., `obj.key`)
-    and also allows reading and writing nested paths using strings with dot separators 
+    and also allows reading and writing nested paths using strings with dot separators
     (e.g., `obj.get("user.profile.name")`).
 
     Main features:
@@ -22,10 +22,13 @@ class dotdict(dict):
     """
 
     def __init__(
-        self, data: Optional[Dict[str, Any]] = None, *, frozen: Optional[bool] = False, **kwargs
+        self,
+        data: Optional[Dict[str, Any]] = None,
+        *,
+        frozen: Optional[bool] = False,
+        **kwargs,
     ):
-        """
-        Initializes an instance of dotdict.
+        """Initializes an instance of dotdict.
 
         Args:
             data:
@@ -39,7 +42,7 @@ class dotdict(dict):
             d = dotdict({"user": {"name": "Maria"}}, frozen=False)
             print(d.user.name)
             >> Maria
-        """        
+        """
         data = data or {}
         self._frozen = frozen
         super().__init__()
@@ -49,8 +52,10 @@ class dotdict(dict):
     def __getattr__(self, attr: str):
         try:
             return self[attr]
-        except KeyError:
-            raise AttributeError(f"`dotdict` object has no attribute '{attr}'")
+        except KeyError as e:
+            raise AttributeError(
+                f"`dotdict` object has no attribute '{attr}'"
+            ) from e
 
     def __setattr__(self, key: str, value: Any):
         if key.startswith("_"):
@@ -70,8 +75,10 @@ class dotdict(dict):
             raise AttributeError("Cannot delete from frozen dotdict")
         try:
             del self[key]
-        except KeyError:
-            raise AttributeError(f"`dotdict` object has no attribute '{key}'")
+        except KeyError as e:
+            raise AttributeError(
+                f"`dotdict` object has no attribute `{key}`"
+            ) from e
 
     def _wrap(self, value: Any):
         if isinstance(value, dict):
@@ -81,20 +88,29 @@ class dotdict(dict):
         return value
 
     def get(self, path: str, default: Any = None) -> Any:
-        """Access nested values via dot path, e.g. get('user.profile.age')."""
+        """Access nested values via dot path.
+
+        !!! example:
+            get('user.profile.age').
+        """
         keys = path.split(".")
         current = self
         try:
             for key in keys:
                 if isinstance(current, list):
-                    key = int(key)
+                    key = int(key) # noqa: PLW2901
                 current = current[key]
             return current
         except (KeyError, IndexError, ValueError, TypeError):
             return default
 
     def set(self, path: str, value: Any):
-        """Set nested value via dot path, e.g. set('user.profile.age', 31)."""
+        """Set nested value via dot path.
+
+        !!! example
+
+            set('user.profile.age', 31).
+        """
         if self._frozen:
             raise AttributeError("Cannot modify frozen dotdict")
 
@@ -102,23 +118,28 @@ class dotdict(dict):
         current = self
         for i, key in enumerate(keys):
             if isinstance(current, list):
-                key = int(key)
+                key = int(key) # noqa: PLW2901
 
             if i == len(keys) - 1:
                 if isinstance(current, list):
-                    key = int(key)
-                    current[key] = self._wrap(value)
+                    key_i = int(key)
+                    current[key_i] = self._wrap(value)
                 else:
                     current[key] = self._wrap(value)
                 return
 
             if isinstance(current, list):
-                key = int(key)
-                if key >= len(current) or not isinstance(current[key], (dict, dotdict)):
-                    current[key] = dotdict()
-                current = current[key]
+                key_i = int(key)
+                if (
+                    key_i >= len(current)
+                    or not isinstance(current[key_i], (dict, dotdict))
+                ):
+                    current[key_i] = dotdict()
+                current = current[key_i]
             else:
-                if key not in current or not isinstance(current[key], (dict, dotdict, list)):
+                if key not in current or not isinstance(
+                    current[key], (dict, dotdict, list)
+                ):
                     current[key] = dotdict()
                 current = current[key]
 
@@ -127,11 +148,13 @@ class dotdict(dict):
         if self._frozen:
             raise AttributeError("Cannot modify frozen DotDict")
 
-        # Collects all key–value pairs
+        # Collects all key-value pairs
         other = {}
         if args:
             if len(args) > 1:
-                raise TypeError(f"update expected at most 1 arguments, given `{len(args)}`")
+                raise TypeError(
+                    f"update expected at most 1 arguments, given `{len(args)}`"
+                )
             other.update(args[0])
         other.update(kwargs)
 
@@ -140,8 +163,13 @@ class dotdict(dict):
             if isinstance(key, str) and "." in key:
                 self.set(key, value)
 
-            # Value is dict and there is already a dotdict on that key? Merge recursively
-            elif isinstance(value, dict) and key in self and isinstance(self[key], dotdict):
+            # Value is dict and there is already a dotdict on that key?
+            # Merge recursively
+            elif (
+                isinstance(value, dict)
+                and key in self
+                and isinstance(self[key], dotdict)
+            ):
                 self[key].update(value)
 
             # General case: normal assignment (call __setitem__ e wrap)
@@ -155,14 +183,15 @@ class dotdict(dict):
             elif isinstance(value, list):
                 return [unwrap(item) for item in value]
             return value
+
         return unwrap(self)
 
     def to_json(self) -> bytes:
-        """Returns a encoded-JSON"""
+        """Returns a encoded-JSON."""
         return msgspec.json.encode(self.to_dict())
 
     def __repr__(self):
-        attrs_str = "\n".join(f"   '{k}': {repr(v)}" for k, v in self.to_dict().items())
+        attrs_str = "\n".join(f"   '{k}': {v!r}" for k, v in self.to_dict().items())
         return f"{self.__class__.__name__}({{\n{attrs_str}\n}})"
 
     def __str__(self):

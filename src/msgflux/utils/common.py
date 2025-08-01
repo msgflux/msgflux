@@ -1,10 +1,9 @@
-from typing import Any, Literal, Optional, Set, Union, Tuple
-
+from typing import Any, Literal, Optional, Set, Tuple, Union
 
 type_mapping = {
-    "str": str,       
+    "str": str,
     "string": str,
-    "int": int,    
+    "int": int,
     "integer": int,
     "float": float,
     "number": float,
@@ -21,5 +20,5 @@ type_mapping = {
     "optional": Optional,
     "union": Union,
     "tuple": Tuple,
-    "set": Set    
+    "set": Set,
 }

@@ -2,7 +2,9 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
+
 import uvloop
+
 from msgflux.envs import envs
 
 
@@ -24,12 +26,12 @@ class AsyncWorker:
 
 
 class Executor:
-    """
-    Async pool to manage the execution of synchronous and asynchronous code.
+    """Async pool to manage the execution of synchronous and asynchronous code.
     Executor distributes tasks among a ThreadPool or among Async Workers.
-    """    
+    """
+
     _instance = None
-    _lock = threading.Lock()    
+    _lock = threading.Lock()
 
     def __init__(self):
         self.num_threads = envs.executor_num_threads
@@ -48,8 +50,7 @@ class Executor:
         return cls._instance
 
     def submit(self, f: Callable, *args, **kwargs):
-        """
-        Submits a task to the appropriate pool based on the function type.
+        """Submits a task to the appropriate pool based on the function type.
         Returns a Future to track the result.
         """
         if hasattr(f, "acall"):

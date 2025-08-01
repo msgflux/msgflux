@@ -9,10 +9,10 @@ from msgflux.nn.modules.transcriber import Transcriber
 __all__ = [
     "Agent",
     "Module",
-    "ModuleDict",    
+    "ModuleDict",
     "ModuleList",
     "Retriever",
-    "Sequential",    
+    "Sequential",
     "Speaker",
     "ToolBase",
     "ToolLibrary",
@@ -20,4 +20,5 @@ __all__ = [
 ]
 
 # Please keep this list sorted
-assert __all__ == sorted(__all__)
+if __all__ != sorted(__all__):
+    raise RuntimeError("__all__ must be sorted")

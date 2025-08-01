@@ -32,6 +32,7 @@ classifiers = [
 ]
 dependencies = [
     "code2mermaid>=0.3.0",
+    "defusedxml>=0.7.1",
     "jinja2>=3.1.6",
     "mermaid-py>=0.8.0",
     "msgspec-ext>=0.1.0",
@@ -104,19 +105,33 @@ select = [
 ]
 ignore = [
   "D100",    # Allow missing docstring in top level module
+  "D101",    # Allow missing docstring in public class
+  "D102",    # Allow missing docstring in public method  
+  "D103",    # Allow missing docstring in public functions
   "D104",    # Allow missing docstring in public package
   "D105",    # Allow missing docstring in magic method
+  "D107",    # Allow missing docstring in `__init__`
   "D203",    # Allow docstring directly below class definition (as enforced by D211)
+  "D205",    # Allow docstring multiline without blank space
   "D213",    # Allow multi-line-summary on first line of docstring (as enforced by D212)
   "D401",    # Allow non imperative mood in docstring
   "D413",    # Allow no new line at end of docstring.
+  "D417",    # Allow missing argument description  
   "EM101",   # Allow `raise ValueError(msg)`
   "EM102",   # Allow f strings in `raise` statements
   "FBT003",  # Allow boolean positional values in function calls, like `dict.get(... True)`
-  "TID252",  # Allow relative imports
-  "UP007",   # Allow `from typing import Optional` instead of `X | None`
-  "UP035",   # Allow `from typing import Sequence` instead of `Sequence[X]`
+  "PLR0911", # Allow many returns
+  "PLR0912", # Allow many branches
   "PLR0913",
+  "PLR0915", # Allow many statements
+  "PLR2004", # Allow magic values to constants  
+  "N812",    # Allow Lowerscae imports as non-lowercase
+  "N817",    # Allow CamelCase imports that are aliased as acronyms.
+  "TID252",  # Allow relative imports
+  "RUF012",  # Allow mutable class attributes should not be annotated
+  "UP006",   # Allow List instead list to type hyint  
+  "UP007",   # Allow `from typing import Optional` instead of `X | None`  
+  "UP035",   # Allow `from typing import Sequence` instead of `Sequence[X]`
 ]
 unfixable = ["F401"]
 
