@@ -1,7 +1,8 @@
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from typing import Any, Dict, Optional
 
-from defusedxml import ElementTree as ET
+import defusedxml.ElementTree as defused_ET
 from defusedxml import minidom
 
 from msgflux.dotdict import dotdict
@@ -22,7 +23,7 @@ def apply_xml_tags(tag_id: str, content: str, output_id: Optional[str] = None) -
     return f"<{tag_id}>\n{content}\n</{output_id}>"
 
 
-def _xml_to_typed_value(element) -> Any:
+def _xml_to_typed_value(element: ET.Element) -> Any:
     """Convert an XML element to a Python value based on type."""
     dtype_attr = element.attrib.get(
         "dtype", "str"
@@ -75,7 +76,7 @@ def xml_to_typed_dict(
     """
     # Add root in xml string
     typed_xml = apply_xml_tags("root", typed_xml)
-    root = ET.fromstring(typed_xml)
+    root = defused_ET.fromstring(typed_xml)
     tag_count = defaultdict(int)
     temp_result = defaultdict(list)
 
@@ -140,3 +141,56 @@ def dict_to_typed_xml(data: Dict[str, Any]) -> str:
 
     # Combine all parts with newlines
     return "\n".join(pretty_xml_parts)
+
+def build_compact_field_xml(parent, name, schema, required_fields=None):
+    dtype_map = {
+        "object": "dict",
+        "array": "list",
+        "string": "str",
+        "number": "float",
+        "integer": "int",
+        "boolean": "bool"
+    }
+    dtype = dtype_map.get(schema.get("type"), schema.get("type", "any"))
+    required = str(name in (required_fields or [])).lower()
+
+    field_el = ET.SubElement(parent, "field", {
+        "name": name,
+        "dtype": dtype,
+        "required": required
+    })
+    if "description" in schema:
+        field_el.set("description", schema["description"])
+
+    if schema.get("type") == "object" and "properties" in schema:
+        for sub_name, sub_schema in schema["properties"].items():
+            build_compact_field_xml(
+                field_el, sub_name, sub_schema, schema.get("required", [])
+            )
+
+    elif schema.get("type") == "array" and "items" in schema:
+        build_compact_field_xml(
+            field_el, f"{name}_item", schema["items"],
+            schema.get("items", {}).get("required", [])
+        )
+
+def json_schema_to_xml_schema(json_schema: Dict[str, Any]) -> str:
+    """Converts a JSON-schema object to XML-schema."""
+    root_name = json_schema["json_schema"]["name"]
+    root_schema = json_schema["json_schema"]["schema"]
+
+    root_el = ET.Element(root_name)
+    for prop_name, prop_schema in root_schema.get("properties", {}).items():
+        build_compact_field_xml(
+            root_el, prop_name, prop_schema, root_schema.get("required", [])
+        )
+
+    xml_str = ET.tostring(root_el, encoding="unicode")
+
+    try:
+        defused_ET.fromstring(xml_str)
+        pretty_str = minidom.parseString(xml_str).toprettyxml(indent="  ")
+    except Exception: # Fallback
+        pretty_str = minidom.parseString(xml_str).toprettyxml(indent="  ")
+
+    return "\n".join(pretty_str.split("\n")[1:])  # remove XML head

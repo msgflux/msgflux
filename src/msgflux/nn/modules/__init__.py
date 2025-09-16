@@ -1,5 +1,6 @@
 from msgflux.nn.modules.agent import Agent
 from msgflux.nn.modules.container import ModuleDict, ModuleList, Sequential
+from msgflux.nn.modules.mediamaker import MediaMaker
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.retriever import Retriever
 from msgflux.nn.modules.speaker import Speaker
@@ -8,6 +9,7 @@ from msgflux.nn.modules.transcriber import Transcriber
 
 __all__ = [
     "Agent",
+    "MediaMaker",
     "Module",
     "ModuleDict",
     "ModuleList",

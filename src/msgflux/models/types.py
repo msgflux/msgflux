@@ -71,6 +71,10 @@ class TextToMusicModel:
     model_type = "text_to_music"
 
 
+class VideoTextToAudioModel:
+    model_type = "video_text_to_audio"
+
+
 # Image Gen
 
 

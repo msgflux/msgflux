@@ -1,4 +1,5 @@
 import copy
+import inspect
 import re
 from typing import (
     Any,
@@ -6,44 +7,165 @@ from typing import (
     List,
     Literal,
     Optional,
-    Tuple,
     Union,
+    Type,
+    get_args,
     get_origin,
 )
 
-from jinja2 import Template
+import msgspec
 
+from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.logger import logger
 from msgflux.utils.inspect import get_mime_type
-from msgflux.utils.xml import apply_xml_tags
+from msgflux.utils.msgspec import msgspec_dumps
+from msgflux.utils.validation import is_subclass_of
+
+
+class ChatBlockMeta(type):
+    def __call__(
+        cls,
+        role: str,
+        content: str,
+        media: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        role = role.lower()
+        role_map = {
+            "user": cls.user,
+            "assist": cls.assist,
+            "system": cls.system
+        }
+        if role not in role_map:
+            raise ValueError(
+                f"Invalid role `{role}`. Use {', '.join(role_map)}")
+        if role == "user":
+            return role_map[role](content, media)
+        return role_map[role](content)
+
+
+class ChatBlock(metaclass=ChatBlockMeta):    
+    @classmethod
+    def user(
+        cls, 
+        content: Union[str, List[Dict[str, Any]]],
+        media: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        if media is None:
+            return {"role": "user", "content": content}
+        content_list = []
+        if content:
+            content_list.append({"type": "text", "text": content})
+        if isinstance(media, list):
+            content_list.extend(media)
+        else:
+            content_list.append(media)
+        return {"role": "user", "content": content_list}
+    
+    @classmethod
+    def assist(cls, content: Any) -> Dict[str, str]:
+        if not isinstance(content, str):
+            content = msgspec_dumps(content)
+        return {"role": "assistant", "content": content}
+    
+    @classmethod
+    def system(cls, content: str) -> Dict[str, str]:
+        return {"role": "system", "content": content}
+    
+    @staticmethod
+    def tool_call(id: str, name: str, arguments: str) -> Dict[str, str]:
+        return {
+            "id": id,            
+            "type": "function",
+            "function": {"name": name, "arguments": arguments}
+        }
+    
+    @classmethod
+    def assist_tool_calls(cls, tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return {"role": "assistant", "tool_calls": tool_calls}
+
+    @classmethod
+    def tool(cls, tool_call_id: str, content: str) -> Dict[str, Any]:
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content
+        }
+
+    @staticmethod
+    def text(text: str) ->  Dict[str, str]:
+        return {"type": "text", "text": text}
+
+    @staticmethod
+    def image(
+        url: Union[str, List[str]]
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        if isinstance(url, list):
+            return [{
+                "type": "image_url",
+                "image_url": {"url": u}
+            } for u in url]
+        return {
+            "type": "image_url",
+            "image_url": {"url": url}
+        }
+
+    @staticmethod
+    def video(
+        url: Union[str, List[str]]
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        if isinstance(url, list):
+            return [{
+                "type": "video_url",
+                "video_url": {"url": u}
+            } for u in url]
+        return {
+            "type": "video_url",
+            "video_url": {"url": url}
+        }
+
+    @staticmethod
+    def audio(data: str, format: str) -> Dict[str, str]:
+        return {
+            "type": "input_audio",
+            "input_audio": {"data": data, "format": format}
+        }
+    
+    @staticmethod
+    def file(filename: str, file_data: str) -> Dict[str, str]:
+        return {
+            "type": "file",
+            "file": {"filename": filename, "file_data": file_data}
+        }
 
 
 class ChatML:
     """Manage messages in ChatML format."""
 
     def __init__(self, messages: Optional[List[Dict[str, Any]]] = None):
-        """Inicializa o gerenciador com um histórico opcional."""
         self.history = messages if messages is not None else []
 
-    def add_user_message(self, content: Union[str, Dict[str, Any]]):
+    def add_user_message(
+        self, 
+        content: Union[str, Dict[str, Any]],
+        media: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None
+    ):
         """Adds a message with role `user`."""
-        self._add_message("user", content)
+        if isinstance(content, dict):
+            self._add_message(content)
+        self._add_message(ChatBlock.user(content, media))
 
     def add_assist_message(self, content: Union[str, Dict[str, Any]]):
         """Adds a message with role `assistant`."""
-        self._add_message("assistant", content)
+        if isinstance(content, dict):
+            self._add_message(content)
+        self._add_message(ChatBlock.assist(content))
 
-    def add_tool_message(self, content: Union[str, Dict[str, Any]]):
-        """Adds a message with role `tool`."""
-        self._add_message("tool", content)
+    #def add_tool_message(self, content: Union[str, Dict[str, Any]]):
+    #    """Adds a message with role `tool`."""
+    #    self._add_message("tool", content) TODO
 
-    def _add_message(self, role: str, content: Union[str, Dict[str, Any]]):
+    def _add_message(self, message: Dict[str, Any]):
         """Internal method to add message to history."""
-        if role not in ["user", "assistant", "tool"]:
-            raise ValueError(
-                f"Role must be `user`, `assistant` or `tool` given `{role}`"
-            )
-        message = {"role": role, "content": content}
         self.history.append(message)
 
     def extend_history(self, messages):
@@ -57,110 +179,124 @@ class ChatML:
         self.history = []
 
 
-def format_examples(
-    examples: List[Union[Tuple[str, str], Tuple[str, str, str]]],
-) -> str:
-    """Formats a list of examples into XML-style string format.
-
-    Each example in the list should be a tuple containing input and output strings,
-    with an optional title as the third element. The function generates sequential IDs
-    for each example starting from 1.
-
-    Args:
-        examples: A list of tuples where each tuple contains:
-            - Input string (required)
-            - Output string (required)
-            - Title string (optional)
-
-    Returns:
-        A formatted XML-style string containing all examples.
-
-    Example:
-        >>> examples = [
-        ...     ("What is your name?", "My name is GPT-3.5.", "Introduction"),
-        ...     ("What day is today?", "Today is Tuesday."),
-        ... ]
-        >>> print(format_examples(examples))
-        <example id=1 title="Introduction">
-        <input>What is your name?</input>
-        <output>My name is GPT-3.5.</output>
-        </example>
-
-        <example id=2>
-        <input>What day is today?</input>
-        <output>Today is Tuesday.</output>
-        </example>
-    """
-    result = []
-
-    for i, example in enumerate(examples, start=1):
-        if len(example) == 3:
-            input_text, output_text, title = example
-            result.append(f'<example id={i} title="{title}">')
-        else:
-            input_text, output_text = example
-            result.append(f"<example id={i}>")
-
-        result.append(apply_xml_tags("input", input_text))
-        result.append(apply_xml_tags("output", output_text))
-        result.append("</example>\n")
-
-    return "\n".join(result)
-
-
-def adapt_struct_schema_to_json_schema(
-    original_schema: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Convert a Msgspec.Struct in Json Schema ChatCompletion-like."""
-
-    def resolve_ref(ref: str, defs: Dict) -> Dict:
-        """Resolves a reference `$ref` using the dictionary `$defs`."""
-        ref_key = ref.split("/")[-1]
-        return defs.get(ref_key, {})
-
-    root_ref = original_schema.get("$ref", "")
-    defs = original_schema.get("$defs", {})
-
-    root_schema = resolve_ref(root_ref, defs)
-
-    def deep_resolve_and_enforce_properties(schema: Dict) -> Dict:
-        if "$ref" in schema:
-            schema = resolve_ref(schema["$ref"], defs)
-
-        # Enforce additionalProperties: false for all object types
-        if schema.get("type") == "object":
-            schema["additionalProperties"] = False
-
-        if "properties" in schema:
-            schema["properties"] = {
-                k: deep_resolve_and_enforce_properties(v)
-                for k, v in schema["properties"].items()
+complex_arguments_schema = {
+    "anyOf": [
+        {
+            "type": "object",
+            # 'additionalProperties' agora define o schema para os VALORES
+            "additionalProperties": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "integer"},
+                    {"type": "number"},
+                    {"type": "boolean"},
+                    {
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "integer"},
+                                {"type": "number"}
+                            ]
+                        }
+                    }
+                ]
             }
+        },
+        {"type": "null"}
+    ]
+}
 
-        if "items" in schema:
-            schema["items"] = deep_resolve_and_enforce_properties(schema["items"])
+def response_format_from_msgspec_struct(
+    struct_class: Type[msgspec.Struct],
+) -> Dict[str, Any]:
+    """Converts a msgspec.Struct to OpenAI's response_format format."""
+    def _dereference_schema(schema_node: Any, definitions: Dict[str, Any]) -> Any:
+        """Helper function to replace references '$ref'."""
+        if isinstance(schema_node, dict):
+            if '$ref' in schema_node:
+                ref_name = schema_node['$ref'].split('/')[-1]
+                return _dereference_schema(definitions[ref_name], definitions)
+            else:
+                return {key: _dereference_schema(value, definitions) for key, value in schema_node.items()}
+        elif isinstance(schema_node, list):
+            return [_dereference_schema(item, definitions) for item in schema_node]
+        return schema_node
 
-        return schema
+    def _add_additional_properties_false(schema_node: Any) -> None:
+        """
+        Recursively traverses the schema and adds
+        'additionalProperties': False to all objects that have properties.
+        Modifies the schema_node "in-place" (directly on the object).
+        """        
+        if isinstance(schema_node, dict):
+            
+            if schema_node.get("type") == "object":
+                schema_node["additionalProperties"] = False
+            for value in schema_node.values():
+                _add_additional_properties_false(value)
+        elif isinstance(schema_node, list):
+            for item in schema_node:
+                _add_additional_properties_false(item)
 
-    resolved_schema = deep_resolve_and_enforce_properties(root_schema)
+    def _ensure_all_properties_are_required(schema_node: Any) -> None:
+        """It traverses the schema and, for each object, ensures that
+        all of its properties are listed under 'required'.
+        """        
+        if isinstance(schema_node, dict):
+            if schema_node.get("type") == "object" and "properties" in schema_node:
+                all_property_keys = list(schema_node["properties"].keys())
+                schema_node["required"] = sorted(all_property_keys)
+            for value in schema_node.values():
+                _ensure_all_properties_are_required(value)
+        elif isinstance(schema_node, list):
+            for item in schema_node:
+                _ensure_all_properties_are_required(item)
 
-    adapted_schema = {
+    def _find_and_patch_property(
+        schema_node: Any, prop_name: str, patch_schema: Dict[str, Any]
+    ):
+        """Recursively finds a property by name and replaces its schema."""
+        if isinstance(schema_node, dict):
+            if "properties" in schema_node and prop_name in schema_node["properties"]:
+                schema_node["properties"][prop_name] = patch_schema
+
+            # Continue the recursive search
+            for value in schema_node.values():
+                _find_and_patch_property(value, prop_name, patch_schema)
+                
+        elif isinstance(schema_node, list):
+            for item in schema_node:
+                _find_and_patch_property(item, prop_name, patch_schema)
+
+    msgspec_schema = msgspec.json.schema(struct_class)
+    definitions = msgspec_schema.get("$defs", {})
+    root_ref = msgspec_schema.get("$ref")
+    root_name = root_ref.split("/")[-1]
+    root_definition = definitions.get(root_name)
+    inlined_schema = _dereference_schema(root_definition, definitions)
+    _add_additional_properties_false(inlined_schema)
+    _ensure_all_properties_are_required(inlined_schema)
+
+    if is_subclass_of(struct_class, ToolFlowControl):
+        # Hack: LM providers NOT support `Any` type. ToolFlowControl needs receive
+        # arguments, msgspec not render complex types as a long Union.
+        # Force a complex type in `arguments`.
+        _find_and_patch_property(inlined_schema, "arguments", complex_arguments_schema)
+
+    inlined_schema.pop("title", None)
+    response_format = {
         "type": "json_schema",
         "json_schema": {
-            "name": root_schema.get("title", "response").lower(),
-            "schema": {
-                "type": resolved_schema.get("type", "object"),
-                "properties": resolved_schema["properties"],
-                "required": resolved_schema.get("required", []),
-                "additionalProperties": False,
-            },
-            "strict": False,
-        },
+            "name": struct_class.__name__.lower(),
+            "schema": inlined_schema,
+            "strict": True
+        }
     }
+    return response_format
 
-    return adapted_schema
 
-
+# TODO tirar e deixar como um tutorial
 def chatml_to_steps_format(
     model_state: List[Dict[str, Any]], response: Union[str, Dict[str, Any]]
 ) -> Dict[str, Any]:
@@ -217,9 +353,14 @@ def clean_docstring(docstring: str) -> str:
 
     return cleaned
 
-
 def parse_docstring_args(docstring: str) -> Dict[str, str]:
     """Extracts parameter descriptions from the Args section of the docstring.
+
+    Supports: 
+        - name: 
+            multi-line description... 
+        - name: single-line description 
+        - name (type): description
 
     Args:
         docstring: Complete docstring of the function/class
@@ -227,54 +368,86 @@ def parse_docstring_args(docstring: str) -> Dict[str, str]:
     Returns:
         Dictionary with parameter descriptions
     """
+    # Remove identation
+    docstring = inspect.cleandoc(docstring)
+
     if not docstring:
         return {}
 
-    # Find the Args section
-    args_match = re.search(
-        r"Args:\s*(.*?)(?:\n\n|\n[A-Za-z]+:|\Z)", docstring, re.DOTALL
-    )
-    if not args_match:
+    lines = docstring.splitlines()
+    
+    # find beginning of Args section:
+    start = None
+    for i, ln in enumerate(lines):
+        if re.match(r'^\s*Args:\s*$', ln):
+            start = i + 1
+            break
+        # also accepts "Args: text" on the same line (e.g. "Args: param: desc")
+        if re.match(r"^\s*Args:\s+\S", ln):
+            # takes the text after "Args:" and treats it as the first lines
+            rest = ln.split("Args:", 1)[1].rstrip()
+            lines[i] = rest
+            start = i
+            break
+
+    if start is None:
         return {}
 
-    # Extract parameter descriptions
-    args_text = args_match.group(1).strip()
-    param_descriptions = {}
-
-    # Process line by line to avoid capturing descriptions of other parameters
-    lines = args_text.split("\n")
+    param_descriptions: Dict[str, str] = {}
     current_param = None
-    current_desc = []
+    current_desc_lines = []
 
-    for raw_line in lines:
-        line = raw_line.strip()
-        # Find a new parameter
-        param_match = re.match(r"(\w+)\s*\((.*?)\):\s*(.+)", line)
+    # RegEx for parameter definition line:
+    # capture: name, optional type, optional inline description
+    param_def_re = re.compile(r"^\s{0,4}([A-Za-z_]\w*)(?:\s*\(([^)]*)\))?\s*:\s*(.*)$")
 
-        if param_match:
-            # Save description of previous parameter if exists
+    # header_re identifies the next section (e.g., Returns:, Raises:, Examples:)
+    # without indentation
+    header_re = re.compile(r"^[A-Za-z][A-Za-z0-9 _]*:\s*$")
+
+    for ln in lines[start:]:
+        # if we find a header without indentation -> end of Args section
+        if header_re.match(ln) and not ln.startswith(" "):
+            break
+
+        # try to match a parameter definition line
+        m = param_def_re.match(ln)
+        if m:
+            # record previous parameter
             if current_param:
-                param_descriptions[current_param] = " ".join(current_desc).strip()
+                param_descriptions[current_param] = " ".join(
+                    p.strip() for p in current_desc_lines if p.strip()
+                ).strip()
 
-            # Start new parameter
-            current_param = param_match.group(1)
-            current_desc = [param_match.group(3)]
-        elif current_param and line:
-            # Continue description of current parameter
-            current_desc.append(line)
+            current_param = m.group(1)
+            inline_desc = m.group(3) or ""
+            current_desc_lines = []
+            if inline_desc:
+                current_desc_lines.append(inline_desc.strip())
+            # next lines (indented) will be part of the description
+            continue
 
-    # Save last description
+        # indented or continuation lines (start with space) are part of the description
+        if current_param and (ln.startswith(" ") or ln.strip() == ""):
+            # removes only 4 spaces of common indentation
+            # (keeps relative sub-indentation)
+            current_desc_lines.append(ln.strip())
+            continue
+
+    # save last param if exists
     if current_param:
-        param_descriptions[current_param] = " ".join(current_desc).strip()
+        param_descriptions[current_param] = " ".join(
+            p.strip() for p in current_desc_lines if p.strip()
+        ).strip()
 
     return param_descriptions
-
 
 def generate_json_schema(cls: type) -> Dict[str, Any]:
     """Generates a JSON schema for a class based on its characteristics.
 
     Args:
-        cls: The class to generate the schema for
+        cls:
+            The class to generate the schema for
 
     Returns:
         JSON schema for the class
@@ -294,15 +467,15 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
 
         prop_schema = {"type": "string"}  # Default as string
 
-        # Check if enum is defined
-        if hasattr(type_hint, "__args__") and type_hint.__origin__ is Literal:
-            prop_schema["enum"] = list(type_hint.__args__)
+        # Check if enum is defined via typing.Literal
+        if get_origin(type_hint) is Literal:
+            prop_schema["enum"] = list(get_args(type_hint))
 
         # Add parameter description if available
         if param in param_descriptions:
             prop_schema["description"] = param_descriptions[param]
 
-        # Mark as required
+        # Mark as required unless Union (i.e., Optional) or default present in annotations structure
         if get_origin(type_hint) is not Union:
             required.append(param)
 
@@ -322,37 +495,10 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
 
     return json_schema
 
-
 def generate_tool_json_schema(cls: type) -> Dict[str, Any]:
     tool = generate_json_schema(cls)
     tool_json_schema = {"type": "function", "function": tool}
     return tool_json_schema
-
-
-# TODO: needs improvement to write encoded json
-# TODO virar jinja template
-def get_react_tools_prompt_format(tool_schemas):
-    template = Template("""
-    You are a function calling AI model. You may call one or more functions
-    to assist with the user query. Don't make assumptions about what values
-    to plug into functions. Here are the available tools:
-
-
-    {%- for tool in tools %}
-        {{- '<tool>' + tool['function']['name'] + '\n' }}
-        {%- for argument in tool['function']['parameters']['properties'] %}
-            {{- argument + ': ' + tool['function']['parameters']
-                        ['properties'][argument]['description'] + '\n' }}
-        {%- endfor %}
-        {{- '\n</tool>' }}
-    {%- endif %}
-
-    For each function call return a encoded json object with function name
-    and arguments within <tool_call></tool_call> XML tags as follows:
-    """)
-    react_tools = template.render(tools=tool_schemas)
-    return react_tools
-
 
 def adapt_messages_for_vllm_audio(
     messages: List[Dict[str, Any]],
@@ -402,14 +548,14 @@ def adapt_messages_for_vllm_audio(
                             processed_content.append(vllm_audio_part)
                         else:
                             logger.warning(
-                                "Warning: Skipping malformed 'input_audio' part "
-                                "at index {i}: {part}"
+                                "Skipping malformed `input_audio` part "
+                                f"at index {i}: {part}"
                             )
                             processed_content.append(part)
                     else:
-                        # Keep the original part if 'input_audio' is not a dict
+                        # Keep the original part if `input_audio` is not a dict
                         logger.warnning(
-                            "Warning: Skipping malformed 'input_audio' part "
+                            "Skipping malformed `input_audio` part "
                             f"(not a dict) at index {i}: {part}"
                         )
                         processed_content.append(part)

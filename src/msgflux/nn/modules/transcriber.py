@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 from msgflux.dotdict import dotdict
 from msgflux.message import Message
@@ -6,7 +6,6 @@ from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import SpeechToTextModel
 from msgflux.nn.modules.module import Module
-from msgflux.utils.encode import encode_data_to_bytes
 
 
 class Transcriber(Module):
@@ -18,7 +17,7 @@ class Transcriber(Module):
         model: Union[SpeechToTextModel, ModelGateway],
         *,
         stream: Optional[bool] = False,
-        task_multimodal_inputs: Optional[Dict[str, str]] = None,
+        task_multimodal_inputs: Optional[Union[str, Dict[str, str]]] = None,
         response_mode: Optional[str] = "plain_response",
         response_template: Optional[str] = None,
         language: Optional[str] = None,
@@ -35,6 +34,10 @@ class Transcriber(Module):
         task_multimodal_inputs:
             Fields of the Message object that will be the multimodal input
             to the task.
+            !!! example.
+
+                task_multimodal_inputs="audio.user" # direct path
+                task_multimodal_inputs={"audio": "audio.user"} # dict-based path
         response_mode:
             What the response should be.
             * `plain_response` (default): Returns the final agent response directly.
@@ -58,7 +61,7 @@ class Transcriber(Module):
             generation pattern.
         model_preference:
             Field of the Message object that will be the model preference.
-            This is only valid if the model is of type ModelGateway.            
+            This is only valid if the model is of type ModelGateway.
         """
         super().__init__()
         self.set_name(name)
@@ -140,13 +143,23 @@ class Transcriber(Module):
         else:
             audio_content = message
 
-        if isinstance(audio_content, (str, bytes)):
-            return message
-        elif isinstance(audio_content, dict):
-            audio_content = audio_content.get("audio")
+        if isinstance(audio_content, dict):
+            audio = audio_content.get("audio", None)
+            if audio:
+                audio_content = audio
+            else:
+                raise ValueError(
+                    "`task_multimodal_inputs` path based-on dict requires "
+                    f"an `audio` key given {audio_content}"
+                )
 
-        data = encode_data_to_bytes(audio_content)
-        return data
+        return audio_content
+
+    def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
+        """Debug model input parameters."""
+        inputs = self._prepare_task(*args, **kwargs)
+        model_execution_params = self._prepare_model_execution(**inputs)
+        return model_execution_params
 
     def _set_model(self, model: Union[SpeechToTextModel, ModelGateway]):
         if model.model_type == "speech_to_text":

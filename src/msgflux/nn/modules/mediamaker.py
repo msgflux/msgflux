@@ -1,44 +1,43 @@
-from typing import Any, Callable, Dict, Literal, Optional, Union
+from typing import Any, Callable, Dict, Literal, Mapping, Optional, Union
 
 from msgflux.dotdict import dotdict
 from msgflux.message import Message
 from msgflux.models.base import BaseModel
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse
-from msgflux.models.types import (
+from msgflux.models.types import (    
     ImageTextTo3DModel,
     ImageTextToImageModel,
-    ImageTo3DModel,
-    ImageToImageModel,
     TextTo3DModel,
     TextToImageModel,
     TextToVideoModel,
+    VideoTextToAudioModel,
     VideoTextToVideoModel,
 )
 from msgflux.nn.modules.module import Module
 
-VISION_GEN_MODEL_TYPES = Union[
+
+MEDIA_MODEL_TYPES = Union[
     ModelGateway,
     ImageTextTo3DModel,
     ImageTextToImageModel,
-    ImageTo3DModel,
-    ImageToImageModel,
     TextTo3DModel,
     TextToImageModel,
     TextToVideoModel,
+    VideoTextToAudioModel,
     VideoTextToVideoModel,
 ]
 
 
-class Designer(Module):
-    """Designer is a Module type that uses Vision generative
+class MediaMaker(Module):
+    """MediaMaker is a Module type that uses generative
     models to create content.
     """
 
     def __init__(
         self,
         name: str,
-        model: VISION_GEN_MODEL_TYPES,
+        model: MEDIA_MODEL_TYPES,
         *,
         input_guardrail: Optional[Callable] = None,
         output_guardrail: Optional[Callable] = None,
@@ -229,12 +228,18 @@ class Designer(Module):
 
         return content
 
+    def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
+        """Debug model input parameters."""
+        inputs = self._prepare_task(*args, **kwargs)
+        model_execution_params = self._prepare_model_execution(**inputs)
+        return model_execution_params
+
     def _set_model(self, model: Union[BaseModel, ModelGateway]):
-        if isinstance(model, tuple(VISION_GEN_MODEL_TYPES)):
+        if isinstance(model, tuple(MEDIA_MODEL_TYPES)):
             self.register_buffer("model", model)
         else:
             raise TypeError(
-                f"`model` need be a `{VISION_GEN_MODEL_TYPES!s}` "
+                f"`model` need be a `{MEDIA_MODEL_TYPES!s}` "
                 f"model, given `{type(model)}`"
             )
 

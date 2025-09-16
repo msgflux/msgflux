@@ -2,6 +2,7 @@ from os import getenv
 from typing import Any, Dict
 
 from msgflux.models.providers.openai import OpenAIChatCompletion
+from msgflux.models.registry import register_model
 
 
 class _BaseSambaNova:
@@ -23,7 +24,8 @@ class _BaseSambaNova:
             raise ValueError("No valid API keys found")
 
 
-class SambaNovaChatCompletion(OpenAIChatCompletion, _BaseSambaNova):
+@register_model
+class SambaNovaChatCompletion(_BaseSambaNova, OpenAIChatCompletion):
     """SambaNova Chat Completion."""
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:

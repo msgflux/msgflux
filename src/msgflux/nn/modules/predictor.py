@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 from msgflux.dotdict import dotdict
 from msgflux.message import Message
@@ -104,6 +104,12 @@ class Predictor(Module):
             inputs.model_preference = model_preference
 
         return inputs
+
+    def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
+        """Debug model input parameters."""
+        inputs = self._prepare_task(*args, **kwargs)
+        model_execution_params = self._prepare_model_execution(**inputs)
+        return model_execution_params
 
     def _set_model(self, model: Union[BaseModel, ModelGateway]):
         if isinstance(model, (BaseModel, ModelGateway)):

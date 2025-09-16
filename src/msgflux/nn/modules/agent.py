@@ -1,47 +1,37 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from uuid import uuid4
+from typing import (
+    Any, Callable, List, Mapping, Optional, Union, Tuple, Type, cast
+)
 
 import msgspec
 
 from msgflux.dotdict import dotdict
 from msgflux.dsl.signature import (
-    SIGNATURE_SYSTEM_MESSAGES,
-    Signature,
-    get_examples_from_signature,
-    get_expected_output_from_signature,
-    get_task_template_from_signature,
+    Signature, SignatureFactory, SIGNATURE_DEFAULT_SYSTEM_MESSAGE
 )
-from msgflux.generation.reasoning.react import ReAct
+from msgflux.dsl.typed_parsers.registry import typed_parser_registry
+from msgflux.examples import Example, ExampleCollection
+from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.generation.templates import (
-    SIGNATURE_DEFAULT_SYSTEM_MESSAGE,
-    SYSTEM_PROMPT_TEMPLATE,
-    TYPED_XML_TEMPLATE,
-    PromptSpec,
+    PromptSpec, EXPECTED_OUTPUTS_TEMPLATE, SYSTEM_PROMPT_TEMPLATE
 )
-from msgflux.logger import logger
 from msgflux.message import Message
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import ChatCompletionModel
 from msgflux.nn.modules.module import Module
-from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
 from msgflux.telemetry.span import instrument_agent_prepare_model_execution
-from msgflux.utils.chat import (
-    adapt_struct_schema_to_json_schema,
-    format_examples,
-    get_react_tools_prompt_format,
-)
+from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
+from msgflux.utils.console import cprint
 from msgflux.utils.inspect import get_filename, get_mime_type
-from msgflux.utils.msgspec import StructFactory
-from msgflux.utils.tool import ToolFlowControl
+from msgflux.utils.msgspec import StructFactory, is_optional_field, msgspec_dumps
 from msgflux.utils.validation import is_subclass_of
 from msgflux.utils.xml import apply_xml_tags
-
-# it is possible to continue generating a model. Just resend to it what it
-# wrote and then it will continue from there
-# the system can change the response to the stream if x condition is met. nein
+from msgflux.tools.formatter import format_tools_from_schemas
 
 
 class Agent(Module):
@@ -60,6 +50,7 @@ class Agent(Module):
         "text_generation",
         "audio_generation",
         "audio_text_generation",
+        "tool_responses"
     ]
 
     def __init__(
@@ -70,14 +61,14 @@ class Agent(Module):
         system_message: Optional[str] = None,
         instructions: Optional[str] = None,
         expected_output: Optional[str] = None,
-        examples: Optional[str] = None,
+        examples: Optional[Union[str, List[Union[Example, Mapping[str, Any]]]]] = None,
         system_extra_message: Optional[str] = None,
         include_date: Optional[bool] = False,
         stream: Optional[bool] = False,
         input_guardrail: Optional[Callable] = None,
         output_guardrail: Optional[Callable] = None,
-        task_inputs: Optional[Union[str, Dict[str, str]]] = None,
-        task_multimodal_inputs: Optional[Dict[str, List[str]]] = None,
+        task_inputs: Optional[Union[str, Mapping[str, str]]] = None,
+        task_multimodal_inputs: Optional[Mapping[str, List[str]]] = None,
         task_messages: Optional[str] = None,
         task_template: Optional[str] = None,
         context_inputs: Optional[Union[str, List[str]]] = None,
@@ -86,20 +77,18 @@ class Agent(Module):
         model_preference: Optional[str] = None,
         prefilling: Optional[str] = None,
         generation_schema: Optional[msgspec.Struct] = None,
-        typed_xml: Optional[bool] = False,
+        typed_parser: Optional[str] = None,
         response_mode: Optional[str] = "plain_response",
         tools: Optional[List[Callable]] = None,
         tool_choice: Optional[str] = None,
         injected_kwargs: Optional[str] = None,
         response_template: Optional[str] = None,
-        fixed_messages: Optional[List[Dict[str, Any]]] = None,
+        fixed_messages: Optional[List[Mapping[str, Any]]] = None,
         signature: Optional[Union[str, Signature]] = None,
         return_model_state: Optional[bool] = False,
-        # verbose: Optional[bool] = False,
+        verbose: Optional[bool] = False,
         description: Optional[str] = None,
-        system_prompt_template: Optional[str] = SYSTEM_PROMPT_TEMPLATE,
-        typed_xml_template: Optional[str] = TYPED_XML_TEMPLATE,
-        _annotations: Optional[Dict[str, type]] = None,
+        annotations: Optional[Mapping[str, type]] = None,
     ):
         """Args:
         name:
@@ -113,7 +102,7 @@ class Agent(Module):
         expected_output:
             What the response should be like.
         examples:
-            Examples of inputs, plans and outputs.
+            Examples of inputs, reasoning and outputs.
         system_extra_message:
             An extra message in system prompt.
         include_date:
@@ -127,8 +116,12 @@ class Agent(Module):
         task_inputs:
             Field of the Message object that will be the input to the task.
         task_multimodal_inputs:
-            Field of the Message object that will be the multimodal input
-            to the task.
+            Map datatype (image, file, audio) to field of the Message object.
+            !!! example
+                # single audio
+                task_multimodal_inputs={"audio": "audio.user"}
+                # multi image
+                task_multimodal_inputs={"image": ["images.user", "image.mask"]}
         task_messages:
             Field of the Message object that will be a list of chats in
             ChatML format.
@@ -148,8 +141,9 @@ class Agent(Module):
             will continue its response from there.
         generation_schema:
             Schema that defines how the output should be structured.
-        typed_xml:
-            Converts the model output, which should be typed-XML, into a typed-dict.
+        typed_parser:
+            Converts the model raw output into a typed-dict. Supported parser:
+            `typed_xml`.
         response_mode:
             What the response should be.
             * `plain_response` (default): Returns the final agent response directly.
@@ -175,20 +169,19 @@ class Agent(Module):
             A DSPy-based signature. A signature creates a task_template,
             a generation_schema, instructions and examples (both if passed).
             Can be combined with standard generation_schemas like `ReAct` and
-            `ChainOfThought`. Can also be combined with `typed_xml`.
+            `ChainOfThought`. Can also be combined with `typed_parser`.
         return_model_state:
             If True, returns a dictionary containing model_state and response.
+        verbose:
+            If True, prints the model output and tool calls and their responses
+            to the console.
         description:
             The Agent description. It's useful when using an agent-as-a-tool.
-        system_prompt_template:
-            A Jinja template to format system prompt.
-        typed_xml_template:
-            A Jinja template to inject instructions to use xml to dict.
-        _annotations
+        annotations
             Define the input and output annotations to use the agent-as-a-function.
         """
-        if _annotations is None:
-            _annotations = {"message": Union[str, Dict[str, str]], "return": str}
+        if annotations is None:
+            annotations = {"message": str, "return": str}
         super().__init__()
 
         if stream is True:
@@ -201,35 +194,32 @@ class Agent(Module):
             if response_template is not None:
                 raise ValueError("`response_template` is not `stream=True` compatible")
 
-            if typed_xml is True:
-                raise ValueError("`typed_xml=True` is not `stream=True` compatible")
-
-        self._set_typed_xml_template(typed_xml_template)
+            if typed_parser is not None:
+                raise ValueError("`typed_parser` is not `stream=True` compatible")
 
         if signature is not None:
-            signature_params = dotdict(
-                {
+            signature_params = dotdict({
                     "signature": signature,
+                    "examples": examples,
                     "instructions": instructions,
                     "system_message": system_message,
-                    "typed_xml": typed_xml,
-                }
-            )
+                    "typed_parser": typed_parser,
+            })
             if generation_schema is not None:
                 signature_params.generation_schema = generation_schema
             self._set_signature(**signature_params)
         else:
+            self._set_typed_parser(typed_parser)            
             self._set_examples(examples)
-            self._set_expected_output(expected_output)
             self._set_generation_schema(generation_schema)
+            self._set_expected_output(expected_output)            
             self._set_instructions(instructions)
             self._set_system_message(system_message)
-            self._set_task_template(task_template)
-            self._set_typed_xml(typed_xml)
+            self._set_task_template(task_template)            
 
         self.set_name(name)
         self.set_description(description)
-        self._set_annotations(_annotations)
+        self.set_annotations(annotations)
         self._set_context_cache(context_cache)
         self._set_context_inputs(context_inputs)
         self._set_context_inputs_template(context_inputs_template)
@@ -242,7 +232,6 @@ class Agent(Module):
         self._set_prefilling(prefilling)
         self._set_system_extra_message(system_extra_message)
         self._set_include_date(include_date)
-        self._set_system_prompt_template(system_prompt_template)
         self._set_response_mode(response_mode)
         self._set_return_model_state(return_model_state)
         self._set_stream(stream)
@@ -252,10 +241,11 @@ class Agent(Module):
         self._set_injected_kwargs(injected_kwargs)
         self._set_tool_choice(tool_choice)
         self._set_tools(tools)
+        self._set_verbose(verbose)
 
     def forward(
-        self, message: Union[str, Dict[str, Any], Message], **kwargs
-    ) -> Union[str, Dict[str, None], ModelStreamResponse, Message]:
+        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs
+    ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         inputs = self._prepare_task(message, **kwargs)
         model_response = self._execute_model(prefilling=self.prefilling, **inputs)
         response = self._process_model_response(message, model_response, **inputs)
@@ -263,10 +253,10 @@ class Agent(Module):
 
     def _execute_model(
         self,
-        model_state: List[Dict[str, Any]],
+        model_state: List[Mapping[str, Any]],
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
-        injected_kwargs: Optional[Dict[str, Any]] = None,
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         if injected_kwargs is None:
             injected_kwargs = {}
@@ -275,17 +265,19 @@ class Agent(Module):
         )
         if self.input_guardrail:
             self._execute_input_guardrail(model_execution_params)
+        if self.verbose:
+            cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
         model_response = self.model(**model_execution_params)
         return model_response
 
     @instrument_agent_prepare_model_execution
     def _prepare_model_execution(
         self,
-        model_state: List[Dict[str, Any]],
+        model_state: List[Mapping[str, Any]],
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
-        injected_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Mapping[str, Any]:
         if injected_kwargs is None:
             injected_kwargs = {}
         agent_state = []
@@ -301,13 +293,14 @@ class Agent(Module):
         if not tool_schemas:
             tool_schemas = None
 
-        if is_subclass_of(self.generation_schema, ReAct) and tool_schemas:
-            react_tools = get_react_tools_prompt_format(tool_schemas)
-            if system_prompt:  # TODO: template to react tools
-                system_prompt += "\n\n" + react_tools
+        if is_subclass_of(self.generation_schema, ToolFlowControl) and tool_schemas:
+            tools_template = self.generation_schema.tools_template
+            flow_control_tools = format_tools_from_schemas(tools_template, tool_schemas)
+            if system_prompt:
+                system_prompt = flow_control_tools + "\n\n" + system_prompt
             else:
-                system_prompt = react_tools
-            tool_schemas = None  # Disable tool_schemas to react controlflow preference
+                system_prompt = flow_control_tools
+            tool_schemas = None  # Disable tool_schemas to controlflow preference
 
         model_execution_params = dotdict(
             {
@@ -318,7 +311,7 @@ class Agent(Module):
                 "tool_schemas": tool_schemas,
                 "tool_choice": self.tool_choice,
                 "generation_schema": self.generation_schema,
-                "typed_xml": self.typed_xml,
+                "typed_parser": self.typed_parser,
             }
         )
 
@@ -328,14 +321,14 @@ class Agent(Module):
         return model_execution_params
 
     def _prepare_input_guardrail_execution(
-        self, model_execution_params: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, model_execution_params: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
         model_state = model_execution_params.get("model_state")
         last_message = model_state[-1]
         if isinstance(last_message.get("content"), list):
             if last_message.get("content")[0]["type"] == "image_url":
                 data = [last_message]
-            else:  # audio, file
+            else: # audio, file
                 data = last_message.get("content")[-1]  # text input
         else:
             data = last_message.get("content")
@@ -344,12 +337,12 @@ class Agent(Module):
 
     def _process_model_response(
         self,
-        message: Union[str, Dict[str, str], Message],
+        message: Union[str, Mapping[str, str], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        model_state: List[Dict[str, Any]],
+        model_state: List[Mapping[str, Any]],
         model_preference: Optional[str] = None,
-        injected_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Union[str, Dict[str, str], Message, ModelStreamResponse]:
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Union[str, Mapping[str, str], Message, ModelStreamResponse]:
         if injected_kwargs is None:
             injected_kwargs = {}
         if "tool_call" in model_response.response_type:
@@ -361,13 +354,16 @@ class Agent(Module):
                 model_response, model_state, model_preference, injected_kwargs
             )
 
-        raw_response = self._extract_raw_response(model_response)
-
-        response_type = model_response.response_type
+        if isinstance(model_response, (ModelResponse, ModelStreamResponse)):        
+            raw_response = self._extract_raw_response(model_response)
+            response_type = model_response.response_type
+        else:  # returns tool result as response or tool call as response
+            raw_response = model_response
+            response_type = "tool_responses"
 
         if response_type in self._supported_outputs:
             response = self._prepare_response(
-                raw_response, response_type, model_state, message
+                raw_response, response_type, model_state, message, injected_kwargs
             )
             return response
         else:
@@ -376,47 +372,60 @@ class Agent(Module):
     def _process_tool_flow_control_response(
         self,
         model_response: Union[ModelResponse, ModelStreamResponse],
-        model_state: Dict[str, Any],
+        model_state: Mapping[str, Any],
         model_preference: Optional[str] = None,
-        injected_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Union[str, Dict[str, Any], ModelStreamResponse], Dict[str, Any]]:
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """Handle the fields returned by `ReAct`. If the fields are different,
         you must rewrite this function.
         """
         if injected_kwargs is None:
             injected_kwargs = {}
+
         while True:
             raw_response = self._extract_raw_response(model_response)
 
-            if raw_response.current_step:
-                actions = raw_response.current_step.actions
+            if getattr(raw_response, "final_answer", None):
+                return model_response, model_state
+
+            if getattr(raw_response, "current_step", None):
+                step = raw_response.current_step
+                actions = step.actions
+                reasoning = step.thought
+
+                if self.verbose:
+                    repr = f"[{self.name}][tool_calls_reasoning] {reasoning}"
+                    cprint(repr, bc="br2", ls="b")
+
+                for act in actions:
+                    act.id = str(uuid4())  # Add tool_id                
+
                 tool_callings = [(act.id, act.name, act.arguments) for act in actions]
-                tool_execution_result = self._process_tool_call(
+                tool_results = self._process_tool_call(
                     tool_callings, model_state, injected_kwargs
                 )
 
-                if tool_execution_result.return_directly:
-                    return tool_execution_result.responses, model_state
+                if tool_results.return_directly:    
+                    tool_calls = tool_results.to_dict().pop("return_directly")
+                    tool_calls["reasoning"] = reasoning                    
+                    tool_responses = dotdict({"tool_responses": tool_calls})
+                    # TODO converter tool calls em tool call msgs
+                    return tool_responses, model_state
 
-                for act in actions:
-                    act.result = tool_execution_result[[act.id]]
+                for act in actions:  # Add results
+                    result = tool_results.get_by_id(act.id).result
+                    error = tool_results.get_by_id(act.id).error
+                    act.result = result or error
 
-                if model_state[-1]["role"] == "assistant":
-                    last_react_msg = model_state[-1]["content"]
+                # Compact steps history
+                if model_state and model_state[-1].get("role") == "assistant":
+                    last_react_msg = model_state[-1].get("content")
                     react_state = msgspec.json.decode(last_react_msg)
                     react_state.append(raw_response)
-                    react_state_encoded = msgspec.json.encode(react_state)
-                    model_state[-1] = react_state_encoded
+                    model_state[-1] = ChatBlock.assist(react_state)
                 else:
-                    react_state = []
-                    react_state.append(raw_response)
-                    react_state_encoded = msgspec.json.encode(react_state)
-                    model_state.append(
-                        [{"role": "assistant", "content": react_state_encoded}]
-                    )
-
-            elif raw_response.final_answer:
-                return model_response, model_state
+                    react_state = [raw_response]
+                    model_state.append(ChatBlock.assist(react_state))
 
             model_response = self._execute_model(
                 model_state=model_state,
@@ -426,11 +435,11 @@ class Agent(Module):
     def _process_tool_call_response(
         self,
         model_response: Union[ModelResponse, ModelStreamResponse],
-        model_state: Optional[Dict[str, Any]],
+        model_state: Optional[Mapping[str, Any]],
         model_preference: Optional[str] = None,
-        injected_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Union[str, Dict[str, Any], ModelStreamResponse], Dict[str, Any]]:
-        """ToolCall example: [{'role': 'assistant', 'tool_calls': [{'id': 'call_1YL',
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+        """ToolCall example: [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
         'type': 'function', 'function': {'arguments': '{"order_id":"order_12345"}',
         'name': 'get_delivery_date'}}]}, {'role': 'tool', 'tool_call_id': 'call_HA',
         'content': '2024-10-15'}].
@@ -440,14 +449,30 @@ class Agent(Module):
         while True:
             if model_response.response_type == "tool_call":
                 raw_response = self._extract_raw_response(model_response)
+                reasoning = raw_response.reasoning
+             
+                if self.verbose:                    
+                    if reasoning:
+                        repr = f"[{self.name}][tool_calls_reasoning] {reasoning}"
+                        cprint(repr, bc="br2", ls="b")
+
                 tool_callings = raw_response.get_calls()
-                tool_execution_result = self._process_tool_call(
+                tool_results = self._process_tool_call(
                     tool_callings, model_state, injected_kwargs
                 )
-                if tool_execution_result.return_directly:
-                    return tool_execution_result.responses, model_state
 
-                raw_response.insert_results(tool_execution_result.responses)
+                if tool_results.return_directly:    
+                    tool_calls = tool_results.to_dict()
+                    tool_calls.pop("return_directly")
+                    tool_calls["reasoning"] = reasoning
+                    tool_responses = dotdict({"tool_responses": tool_calls})
+                    return tool_responses, model_state
+
+                id_results = {
+                    call.id: call.result or call.error
+                    for call in tool_results.tool_calls
+                }
+                raw_response.insert_results(id_results)
                 tool_responses_message = raw_response.get_messages()
                 model_state.extend(tool_responses_message)
             else:
@@ -460,41 +485,62 @@ class Agent(Module):
 
     def _process_tool_call(
         self,
-        tool_callings: Dict[str, Any],
-        model_state: List[Dict[str, Any]],
-        injected_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, str]:
+        tool_callings: Mapping[str, Any],
+        model_state: List[Mapping[str, Any]],
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> ToolResponses:
+        if self.verbose:       
+            for call in tool_callings:
+                repr = f"[{self.name}][tool_call] {call[1]}: {call[2]}"
+                cprint(repr, bc="br2", ls="b")   
         if injected_kwargs is None:
-            injected_kwargs = {}
-        tool_execution_result = self.tool_library(
+            injected_kwargs = {}            
+        tool_results = self.tool_library(
             tool_callings=tool_callings,
             model_state=model_state,
             injected_kwargs=injected_kwargs,
         )
-        return tool_execution_result
+        if self.verbose:
+            repr = f"[{self.name}][tool_responses]"
+            if tool_results.return_directly:
+                repr += " return directly"
+            cprint(repr, bc="br1", ls="b")
+            for call in tool_results.tool_calls:
+                result = call.result or call.error or ""
+                repr = f"[{self.name}][tool_response] {call.name}: {result}"
+                cprint(repr, ls="b")
+        return tool_results
 
     def _prepare_response(
         self,
-        raw_response: Union[str, Dict[str, Any], ModelStreamResponse],
+        raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
         response_type: str,
-        model_state: List[Dict[str, Any]],
-        message: Union[str, Dict[str, Any], Message],
-    ) -> Union[str, Dict[str, Any], ModelStreamResponse]:
+        model_state: List[Mapping[str, Any]],
+        message: Union[str, Mapping[str, Any], Message],
+        injected_kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Union[str, Mapping[str, Any], ModelStreamResponse]:
         formated_response = None
-        if not isinstance(raw_response, ModelStreamResponse):
+        if not isinstance(raw_response, ModelStreamResponse):          
             if "text_generation" in response_type or "structured" in response_type:
+                if self.verbose:
+                    cprint(f"[{self.name}][response] {raw_response}", bc="y", ls="b")                  
                 if self.output_guardrail:
                     self._execute_output_guardrail(raw_response)
                 if self.response_template:
+                    if isinstance(raw_response, dict) and injected_kwargs is not None:
+                        raw_response.update(injected_kwargs)
                     formated_response = self._format_response_template(raw_response)
-        response = agent_response = formated_response or raw_response
+        response = formated_response or raw_response
         if self.return_model_state:
-            response = dotdict({"response": agent_response, "model_state": model_state})
+            if response_type == "tool_responses":
+                response.model_state = model_state
+            else:
+                response = dotdict({"response": response, "model_state": model_state})
         return self._define_response_mode(response, message)
 
     def _prepare_output_guardrail_execution(
-        self, model_response: Union[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, model_response: Union[str, Mapping[str, Any]]
+    ) -> Mapping[str, Any]:
         if isinstance(model_response, str):
             data = model_response
         else:
@@ -503,12 +549,11 @@ class Agent(Module):
         return guardrail_params
 
     def _prepare_task(
-        self, message: Union[str, Message, Dict[str, str]], **kwargs
-    ) -> Dict[str, Any]:
+        self, message: Union[str, Message, Mapping[str, str]], **kwargs
+    ) -> Mapping[str, Any]:
         """Prepare model input in ChatML format and execution params."""
-        injected_kwargs = kwargs.pop(
-            "injected_kwargs", {}
-        )  # Runtime params to templates
+        # Runtime params to templates
+        injected_kwargs = kwargs.pop("injected_kwargs", {})
         if (
             not injected_kwargs
             and isinstance(message, Message)
@@ -533,8 +578,8 @@ class Agent(Module):
         if content is None and task_messages is None:
             raise ValueError("No data was detected to make the model input")
 
-        if content is not None:
-            chat_content = [{"role": "user", "content": content}]
+        if content is not None:            
+            chat_content = [ChatBlock.user(content)]
             if task_messages is None:
                 model_state = chat_content
             else:
@@ -554,8 +599,8 @@ class Agent(Module):
         }
 
     def _process_task_inputs(
-        self, message: Union[str, Message, Dict[str, str]], **kwargs
-    ) -> Union[str, Dict[str, Any]]:
+        self, message: Union[str, Message, Mapping[str, str]], **kwargs
+    ) -> Optional[Union[str, Mapping[str, Any]]]:
         content = ""
 
         context_content = self._context_manager(message, **kwargs)
@@ -568,10 +613,7 @@ class Agent(Module):
             task_inputs = message
 
         if task_inputs is None and self.task_template is None:
-            raise AttributeError(
-                "When using a `Message` in `nn.Agent` it is necessary to "
-                "have configured `task_inputs` or `task_template`"
-            )
+            return None
 
         if self.task_template:
             if task_inputs:
@@ -584,6 +626,8 @@ class Agent(Module):
         else:
             task_content = task_inputs
 
+        # TODO: if dict AND no template, converte to string 
+
         if kwargs.get("injected_kwargs", None):
             task_content = self._format_template(
                 kwargs["injected_kwargs"], task_content
@@ -591,16 +635,16 @@ class Agent(Module):
 
         task_content = apply_xml_tags("task", task_content)
         content += task_content
-        content = content.strip()  # Remove whitespace
+        content = content.strip() # Remove whitespace
 
         multimodal_content = self._process_task_multimodal_inputs(message, **kwargs)
-        if multimodal_content:
-            multimodal_content.append({"type": "text", "text": content})
+        if multimodal_content:            
+            multimodal_content.append(ChatBlock.text(content))
             return multimodal_content
         return content
 
     def _context_manager( # noqa: C901
-        self, message: Union[str, Message, Dict[str, str]], **kwargs
+        self, message: Union[str, Message, Mapping[str, str]], **kwargs
     ) -> Optional[str]:
         """Mount context."""
         context_content = ""
@@ -639,8 +683,8 @@ class Agent(Module):
         return None
 
     def _process_task_multimodal_inputs(
-        self, message: Union[str, Message, Dict[str, str]], **kwargs
-    ) -> Optional[List[Dict[str, Any]]]:
+        self, message: Union[str, Message, Mapping[str, str]], **kwargs
+    ) -> Optional[List[Mapping[str, Any]]]:
         """Processes multimodal inputs (image, audio, file) via kwargs or message.
         Returns a list of multimodal content in ChatML format.
         """
@@ -658,6 +702,7 @@ class Agent(Module):
 
         content = []
 
+        # TODO: video
         formatters = {
             "image": self._format_image_input,
             "audio": self._format_audio_input,
@@ -667,21 +712,16 @@ class Agent(Module):
         for media_type, formatter in formatters.items():
             media_sources = multimodal_paths.get(media_type, [])
             if not isinstance(media_sources, list):
-                logger.warning(
-                    f"Expected list for multimodal config key `{media_type}`, "
-                    f"got `{type(media_sources)}`"
-                )
-                continue
-
+                media_sources = [media_sources]
             for media_source in media_sources:
-                if media_source:
+                if media_source is not None:
                     formatted_input = formatter(media_source)
                     if formatted_input:
                         content.append(formatted_input)
 
         return content
 
-    def _format_image_input(self, image_source: str) -> Optional[Dict[str, Any]]:
+    def _format_image_input(self, image_source: str) -> Optional[Mapping[str, Any]]:
         """Formats the image input for the model."""
         encoded_image = self._prepare_data_uri(image_source, force_encode=False)
 
@@ -689,15 +729,15 @@ class Agent(Module):
             return None
 
         if not encoded_image.startswith("http"):
-            mime_type = get_mime_type(
-                image_source
-            )  # Try to guess from the original source
+            # Try to guess from the original source
+            mime_type = get_mime_type(image_source)
             if not mime_type.startswith("image/"):
                 mime_type = "image/jpeg"  # Fallback
-            encoded_image = f"data:{mime_type};base64,{encoded_image}"
-        return {"type": "image_url", "image_url": {"url": encoded_image}}
+            encoded_image = f"data:{mime_type};base64,{encoded_image}"        
 
-    def _format_audio_input(self, audio_source: str) -> Optional[Dict[str, Any]]:
+        return ChatBlock.image(encoded_image)
+
+    def _format_audio_input(self, audio_source: str) -> Optional[Mapping[str, Any]]:
         """Formats the audio input for the model."""
         base64_audio = self._prepare_data_uri(audio_source, force_encode=True)
 
@@ -714,15 +754,13 @@ class Agent(Module):
             mime_type = f"audio/{audio_format_for_uri}"
 
         # Use suffix like 'format' if available, otherwise extract from mime type
-        format_key = (
+        audio_format = (
             audio_format_suffix if audio_format_suffix else mime_type.split("/")[-1]
-        )
-        return {
-            "type": "input_audio",
-            "input_audio": {"data": base64_audio, "format": format_key},
-        }
+        )        
 
-    def _format_file_input(self, file_source: str) -> Optional[Dict[str, Any]]:
+        return ChatBlock.audio(base64_audio, audio_format)
+
+    def _format_file_input(self, file_source: str) -> Optional[Mapping[str, Any]]:
         """Formats the file input for the model."""
         base64_file = self._prepare_data_uri(file_source, force_encode=True)
 
@@ -739,10 +777,15 @@ class Agent(Module):
 
         file_data_uri = f"data:{mime_type};base64,{base64_file}"
 
-        return {
-            "type": "file",
-            "file": {"filename": filename, "file_data": file_data_uri},
-        }
+        return ChatBlock.file(filename, file_data_uri)
+
+    def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
+        """Debug model input parameters."""
+        inputs = self._prepare_task(*args, **kwargs)
+        model_execution_params = self._prepare_model_execution(
+            prefilling=self.prefilling, **inputs
+        )
+        return model_execution_params
 
     def _set_context_inputs(
         self, context_inputs: Optional[Union[str, List[str]]] = None
@@ -797,7 +840,7 @@ class Agent(Module):
         self.tool_library = ToolLibrary(self.get_module_name(), tools or [])
 
     def _set_fixed_messages(
-        self, fixed_messages: Optional[List[Dict[str, Any]]] = None
+        self, fixed_messages: Optional[List[Mapping[str, Any]]] = None
     ):
         if (
             isinstance(fixed_messages, list)
@@ -814,8 +857,9 @@ class Agent(Module):
         self, generation_schema: Optional[msgspec.Struct] = None
     ):
         if (
+            generation_schema is None 
+            or
             is_subclass_of(generation_schema, msgspec.Struct)
-            or generation_schema is None
         ):
             self.register_buffer("generation_schema", generation_schema)
         else:
@@ -848,6 +892,15 @@ class Agent(Module):
 
     def _set_system_message(self, system_message: Optional[str] = None):
         if isinstance(system_message, str) or system_message is None:
+            if (
+                hasattr(self.generation_schema, "system_message")
+                and 
+                self.generation_schema.system_message is not None
+            ):
+                if system_message is None:
+                    system_message = self.generation_schema.system_message
+                else:
+                    system_message = self.generation_schema.system_message + system_message
             self.system_message = Parameter(system_message, PromptSpec.SYSTEM_MESSAGE)
         else:
             raise TypeError(
@@ -865,6 +918,11 @@ class Agent(Module):
 
     def _set_instructions(self, instructions: Optional[str] = None):
         if isinstance(instructions, str) or instructions is None:
+            typed_parser_cls = typed_parser_registry.get(self.typed_parser, None)
+            if typed_parser_cls is not None:
+                instructions = self._format_template(
+                    {"instructions": instructions}, typed_parser_cls.template
+                )
             self.instructions = Parameter(instructions, PromptSpec.INSTRUCTIONS)
         else:
             raise TypeError(
@@ -872,22 +930,45 @@ class Agent(Module):
             )
 
     def _set_expected_output(self, expected_output: Optional[str] = None):
-        if isinstance(expected_output, str) or expected_output is None:
+        if isinstance(expected_output, str) or expected_output is None: # TODO
+            expected_output_temp = ""
+            if expected_output:
+               expected_output_temp += expected_output
+            typed_parser_cls = typed_parser_registry.get(self.typed_parser, None)
+            if typed_parser_cls is not None:  # Schema as expected output
+                response_format = response_format_from_msgspec_struct(
+                    self.generation_schema
+                )
+                schema = typed_parser_cls.schema_from_response_format(response_format)
+                content = {"expected_outputs": schema}
+                rendered = self._format_template(content, EXPECTED_OUTPUTS_TEMPLATE)
+                expected_output_temp += rendered
             self.expected_output = Parameter(
-                expected_output, PromptSpec.EXPECTED_OUTPUT
-            )
+                expected_output_temp or None, PromptSpec.EXPECTED_OUTPUT
+            )            
         else:
             raise TypeError(
                 "`expected_output` requires a string or None "
                 f"given `{type(expected_output)}`"
             )
 
-    def _set_examples(self, examples: Optional[str] = None):
-        if isinstance(examples, str) or examples is None:
+    def _set_examples(
+        self,
+        examples: Optional[Union[str, List[Union[Example, Mapping[str, Any]]]]] = None
+    ):
+        if isinstance(examples, (str, list)) or examples is None:
+            if isinstance(examples, list):
+                typed_parser_cls = typed_parser_registry.get(self.typed_parser, None)
+                collection = ExampleCollection(examples)
+                if typed_parser_cls is not None:
+                    T = typed_parser_cls.repr_from_dict
+                else:
+                    T = msgspec_dumps
+                examples = collection.get_formatted(T, T)
             self.examples = Parameter(examples, PromptSpec.EXAMPLES)
         else:
             raise TypeError(
-                f"`examples` requires a string or None given `{type(examples)}`"
+                f"`examples` requires a List[Example] or None given `{type(examples)}`"
             )
 
     def _set_return_model_state(
@@ -910,15 +991,6 @@ class Agent(Module):
                 f"given `{type(task_messages)}`"
             )
 
-    def _set_system_prompt_template(self, system_prompt_template: Optional[str] = None):
-        if isinstance(system_prompt_template, str) or system_prompt_template is None:
-            self.register_buffer("system_prompt_template", system_prompt_template)
-        else:
-            raise TypeError(
-                "`system_prompt_template` requires a string given "
-                f"`{type(system_prompt_template)}`"
-            )
-
     def _set_system_extra_message(self, system_extra_message: Optional[str] = None):
         if isinstance(system_extra_message, str) or system_extra_message is None:
             self.register_buffer("system_extra_message", system_extra_message)
@@ -937,121 +1009,108 @@ class Agent(Module):
                 f"given `{type(injected_kwargs)}`"
             )
 
-    def _set_typed_xml_template(self, typed_xml_template: str):
-        if isinstance(typed_xml_template, str):
-            self.register_buffer("typed_xml_template", typed_xml_template)
-        else:
-            raise TypeError(
-                "`typed_xml_template` requires a string "
-                f"given `{type(typed_xml_template)}`"
-            )
-
-    def _set_typed_xml(self, typed_xml: Optional[bool] = False): # noqa: FBT001, FBT002
-        if isinstance(typed_xml, bool):
-            if typed_xml:
-                json_schema = None
-                if self.generation_schema:
-                    schema = msgspec.json.schema(self.generation_schema)
-                    json_schema = adapt_struct_schema_to_json_schema(schema)
-                template_inputs = {
-                    "instructions": self.instructions.data,
-                    "json_schema": json_schema,
-                }
-                xml_instructions = self._format_template(
-                    template_inputs, self.typed_xml_template
+    def _set_typed_parser(self, typed_parser: Optional[str] = None):
+        if isinstance(typed_parser, str) or typed_parser is None:
+            if (
+                isinstance(typed_parser, str)
+                and 
+                typed_parser not in typed_parser_registry
+            ):
+                raise ValueError(
+                    f"`typed_parser` supports only `{typed_parser_registry.keys()}`"
+                    f" given `{typed_parser}`"
                 )
-                self._set_instructions(xml_instructions)
-            self.register_buffer("typed_xml", typed_xml)
+            self.register_buffer("typed_parser", typed_parser)
         else:
-            raise TypeError(f"`typed_xml` requires a bool given `{type(typed_xml)}`")
+            raise TypeError(f"`typed_parser` requires a str given `{type(typed_parser)}`")
 
     def _set_signature(
         self,
         *,
         signature: Optional[Union[str, Signature]] = None,
+        examples: Optional[List[Example]] = None,
         generation_schema: Optional[msgspec.Struct] = None,
         instructions: Optional[str] = None,
         system_message: Optional[str] = None,
-        typed_xml: Optional[bool] = False,
+        typed_parser: Optional[str] = None,
     ):
         if signature is not None:
-            examples = None
 
-            # Get system message
-            schema_system_message = SIGNATURE_SYSTEM_MESSAGES.get(
-                generation_schema, SIGNATURE_DEFAULT_SYSTEM_MESSAGE
-            )
-            self._set_system_message(system_message or schema_system_message)
+            typed_parser_cls = typed_parser_registry.get(typed_parser, None)
+
+            examples = examples or []
+            output_descriptions = None
+            signature_instructions = None
 
             if isinstance(signature, str):
                 input_str_signature, output_str_signature = signature.split("->")
-                inputs_desc = StructFactory._parse_annotations(input_str_signature)
-                outputs_desc = StructFactory._parse_annotations(output_str_signature)
-
+                inputs_info = StructFactory._parse_annotations(input_str_signature)
+                outputs_info = StructFactory._parse_annotations(output_str_signature)
             elif issubclass(signature, Signature):
-                # Get instructions
-                instructions = signature.get_instructions()
-
-                # Get examples from signature
-                examples = get_examples_from_signature(signature)
-
-                # Descriptions
-                inputs_desc = signature.get_input_descriptions()
-                outputs_desc = signature.get_output_descriptions()
-                output_str_signature = signature.get_str_signature().split("->")[-1]
-
+                output_str_signature = signature.get_str_signature().split("->")[-1]                
+                inputs_info = signature.get_inputs_info()
+                outputs_info = signature.get_outputs_info()
+                output_descriptions = signature.get_output_descriptions()
+                signature_instructions = signature.get_instructions()
+                signature_examples = SignatureFactory.get_examples_from_signature(
+                    signature
+                )
+                if signature_examples:
+                    examples.extend(signature_examples)
             else:
                 raise TypeError(
                     "`signature` requires a string, `Signature` or None "
                     f"given `{type(signature)}`"
                 )
 
-            # Create task template
-            task_template = get_task_template_from_signature(inputs_desc)
+            # typed_parser
+            self._set_typed_parser(typed_parser)
+
+            # task template
+            task_template = SignatureFactory.get_task_template_from_signature(
+                inputs_info
+            )
             self._set_task_template(task_template)
 
-            # Set instructions
-            self._set_instructions(instructions)
+            # instructions
+            self._set_instructions(instructions or signature_instructions)
 
-            # Create generation schema
-            output_struct = StructFactory.from_signature(
-                output_str_signature, "Outputs"
+            # generation schema
+            signature_output_struct = StructFactory.from_signature(
+                output_str_signature, "Outputs", output_descriptions
             )
+            fused_output_struct = None
             if generation_schema is not None:
-                output_struct = generation_schema[output_struct]  # Insert as an TypeVar
+                signature_as_type = cast(Type[msgspec.Struct], signature_output_struct)
+                if is_optional_field(generation_schema, "final_answer"):
+                    signature_as_type = Optional[signature_output_struct] # type: ignore
+                class Output(generation_schema):  
+                    final_answer: signature_as_type # type: ignore
+                fused_output_struct = Output                
+            self._set_generation_schema(fused_output_struct or signature_output_struct)
 
-                class Output(
-                    output_struct, msgspec.Struct
-                ):  # Convert typing._GenericAlias to Struct
-                    pass
+            # system message
+            if (
+                system_message is None
+                and
+                hasattr(generation_schema, "system_message")
+                and
+                generation_schema.system_message is None
+            ):
+                system_message = SIGNATURE_DEFAULT_SYSTEM_MESSAGE
+            self._set_system_message(system_message)
 
-                output_struct = Output
-            self._set_generation_schema(output_struct)
-
-            # Create expected outputs
-            expected_output = get_expected_output_from_signature(
-                inputs_desc, outputs_desc
-            )
-            if typed_xml is False:
-                expected_output += "\nWrite an encoded JSON."
+            # expected output
+            expected_output = SignatureFactory.get_expected_output_from_signature(
+                inputs_info, outputs_info, typed_parser_cls
+            )   
             self._set_expected_output(expected_output)
 
-            # Create examples
-            if examples is not None:
-                input_examples_dict, output_json_string = examples
-                input_examples_string = self._format_task_template(
-                    input_examples_dict, typed_xml
-                )
-                examples = format_examples(
-                    [(input_examples_string, output_json_string)]
-                )
+            # examples
             self._set_examples(examples)
 
-            # Set xml output
-            self._set_typed_xml(typed_xml)
-
     def _get_system_prompt(
-        self, injected_kwargs: Optional[Dict[str, Any]] = None
+        self, injected_kwargs: Optional[Mapping[str, Any]] = None
     ) -> str:
         """Render the system prompt using the Jinja template.
         Returns an empty string if no segments are provided.
@@ -1069,7 +1128,7 @@ class Agent(Module):
             template_inputs["current_date"] = now.strftime("%m/%d/%Y")
 
         system_prompt = self._format_template(
-            template_inputs, self.system_prompt_template
+            template_inputs, SYSTEM_PROMPT_TEMPLATE
         )
 
         if injected_kwargs:  # Runtime inputs to system template

@@ -1,19 +1,21 @@
 import math
 from collections import Counter
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
-from msgflux.data.retrievers.base import BaseRetriever
-from msgflux.data.retrievers.response import RetrieverResult
+from msgflux.data.retrievers.base import BaseLexical, BaseRetriever
+from msgflux.data.retrievers.registry import register_retriever
 from msgflux.data.retrievers.types import LexicalRetriever
+from msgflux.dotdict import dotdict
 from msgflux.nn import functional as F
 
 
-class BM25LexicalRetriever(BaseRetriever, LexicalRetriever):
+@register_retriever
+class BM25LexicalRetriever(BaseLexical, BaseRetriever, LexicalRetriever):
     """Okapi BM25 - Best Matching 25 Lexical Retriever."""
 
     provider = "bm25"
 
-    def __init__(self, k1: Optional[float] = 1.5, b: Optional[float] = 0.75):
+    def __init__(self, *, k1: Optional[float] = 1.5, b: Optional[float] = 0.75):
         """Args:
         k1:
             Tuning parameter for term frequency.
@@ -26,7 +28,7 @@ class BM25LexicalRetriever(BaseRetriever, LexicalRetriever):
 
     def _initialize(self):
         self.avg_doc_length = 0
-        self.documents = []
+        self.documents: List[str] = []
         self.doc_lengths = []
         self.idf = {}
         self.term_document_matrix = {}
@@ -142,9 +144,9 @@ class BM25LexicalRetriever(BaseRetriever, LexicalRetriever):
             # Returns the K best results
             results = []
             for doc_id, score in filtered_doc_scores[:top_k]:
-                result = {"data": self.documents[doc_id]}
+                result = dotdict({"data": self.documents[doc_id]})
                 if return_score:
-                    result["score"] = score
+                    result.score = score
                 results.append(result)
 
             return results
@@ -183,14 +185,3 @@ class BM25LexicalRetriever(BaseRetriever, LexicalRetriever):
             "median_score": median_score,
             "std_score": std_score,
         }
-
-    def __call__(
-        self,
-        queries: Union[str, List[str]],
-        top_k: Optional[int] = 5,
-        threshold: Optional[float] = 0.0,
-        return_score: Optional[bool] = False,
-    ) -> List[List[RetrieverResult]]:
-        if isinstance(queries, str):
-            queries = [queries]
-        return self._search(queries, top_k, threshold, return_score)

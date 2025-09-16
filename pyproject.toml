@@ -31,16 +31,12 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Information Analysis"
 ]
 dependencies = [
-    "code2mermaid>=0.3.0",
-    "defusedxml>=0.7.1",
     "jinja2>=3.1.6",
-    "mermaid-py>=0.8.0",
     "msgspec-ext>=0.1.0",
     "opentelemetry-api>=1.35.0",
     "opentelemetry-exporter-otlp>=1.35.0",
     "opentelemetry-sdk>=1.35.0",
     "tenacity>=8.2.3",
-    "tomli-w>=1.2.0",
     "typing-extensions>=4.14.1",
     "uvloop>=0.21.0",
 ]
@@ -68,6 +64,13 @@ openai = [
 ]
 httpx = [
     "httpx>=0.28.1",
+]
+xml = [
+    "defusedxml>=0.7.1",
+]
+plot = [
+    "code2mermaid>=0.3.0",
+    "mermaid-py>=0.8.0",
 ]
 
 [tool.ruff]

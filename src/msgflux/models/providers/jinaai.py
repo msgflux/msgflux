@@ -2,6 +2,7 @@ from os import getenv
 from typing import List, Optional, Union
 
 from msgflux.models.httpx import HTTPXModelClient
+from msgflux.models.registry import register_model
 from msgflux.models.response import ModelResponse
 from msgflux.models.types import (
     ImageClassifierModel,
@@ -31,7 +32,7 @@ class _BaseJinaAI:
         if not self._api_key:
             raise ValueError("No valid API keys found")
 
-
+@register_model
 class JinaAITextReranker(_BaseJinaAI, HTTPXModelClient, TextRerankerModel):
     """JinaAI Text Reranker."""
 
@@ -66,7 +67,7 @@ class JinaAITextReranker(_BaseJinaAI, HTTPXModelClient, TextRerankerModel):
         response = self._generate(query=query, documents=documents)
         return response
 
-
+@register_model
 class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
     """JinaAI Text Embedder."""
 
@@ -121,7 +122,7 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
         response = self._generate(input=inputs)
         return response
 
-
+@register_model
 class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
     """JinaAI Image Embedder."""
 
@@ -154,7 +155,7 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
         response = self._generate(input=inputs)
         return response
 
-
+@register_model
 class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
     """JinaAI Text Classifier."""
 
@@ -195,7 +196,7 @@ class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
         response = self._generate(input=inputs)
         return response
 
-
+@register_model
 class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
     """JinaAI Image Classifier."""
 

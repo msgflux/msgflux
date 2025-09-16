@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Literal, Optional, Union
+from typing import Any, Callable, Dict, Literal, Mapping, Optional, Union
 
 from msgflux.dotdict import dotdict
 from msgflux.message import Message
@@ -120,6 +120,12 @@ class Speaker(Module):
             model_preference = self.get_model_preference_from_message(message)
 
         return {"data": data, "model_preference": model_preference}
+
+    def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
+        """Debug model input parameters."""
+        inputs = self._prepare_task(*args, **kwargs)
+        model_execution_params = self._prepare_model_execution(**inputs)
+        return model_execution_params
 
     def _set_model(self, model: Union[TextToSpeechModel, ModelGateway]):
         if model.model_type == "text_to_speech":

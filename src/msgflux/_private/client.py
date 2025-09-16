@@ -1,7 +1,9 @@
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
 from msgflux._private.core import Core
+from msgflux._private.executor import Executor
 
 
 class BaseClient(ABC, Core):
@@ -40,7 +42,11 @@ class BaseClient(ABC, Core):
 
     async def acall(self, *args, **kwargs):
         """Async interface to __call__."""
-        return self.__call__(*args, **kwargs)
+        executor = Executor.get_instance()
+        future = executor.submit(self.__call__, *args, **kwargs)
+        done, _ = await asyncio.wait([future])
+        response = await done[0]
+        return response
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize the client instance into a dictionary.

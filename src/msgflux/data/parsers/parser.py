@@ -1,92 +1,74 @@
-from typing import Any, Dict, Type
+from typing import Any, Mapping, Type
 
-from msgflux.data.retrievers.base import BaseRetriever
-from msgflux.data.retrievers.types import (
-    AnyParser,
-    DocumentParser,
-    EmailParser,
-    MediaParser,
+from msgflux.data.parsers.base import BaseParser
+from msgflux.data.parsers.registry import parser_registry
+from msgflux.data.parsers.types import (
+    PdfParser,
     PptxParser,
-    WebParser,
     XlsxParser,
 )
-from msgflux.utils.imports import import_module_from_lib
-
-_SUPPORTED_RETRIEVER_TYPES = [
-    # "hybrid"
-    "lexical",
-    # "semantic",
-]
-
-_LEXICAL_RETRIEVER_PROVIDERS = ["bm25"]
-_SEMANTIC_RETRIEVER_PROVIDERS = []
-_HYBRID_RETRIEVER_PROVIDERS = []
-
-_RETRIEVER_NAMESPACE_TRANSLATOR = {
-    "bm25": "BM25",
-}
-
-_PROVIDERS_BY_RETRIEVER_TYPE = {
-    "lexical": _LEXICAL_RETRIEVER_PROVIDERS,
-}
 
 
 class Parser:
-    supported_retriever_types = _SUPPORTED_RETRIEVER_TYPES
-    providers_by_retriever_type = _PROVIDERS_BY_RETRIEVER_TYPE
 
     @classmethod
-    def _get_retriever_class(
-        cls, retriever_type: str, provider: str
-    ) -> Type[BaseRetriever]:
-        if retriever_type not in cls.providers_by_retriever_type:
-            raise ValueError(f"Retriever type `{retriever_type}` is not supported")
+    def providers(cls):
+        return {k: list(v.keys()) for k, v in parser_registry.items()}
 
-        providers = cls.providers_by_retriever_type[retriever_type]
-        if provider not in providers:
+    @classmethod
+    def parser_types(cls):
+        return list(parser_registry.keys())
+
+    @classmethod
+    def _get_parser_class(cls, parser_type: str, provider: str) -> Type[BaseDB]:
+        if parser_type not in parser_registry:
+            raise ValueError(f"Parser type `{parser_type}` is not supported")
+        if provider not in parser_registry[parser_type]:
             raise ValueError(
-                f"Provider `{provider}` is not supported for {retriever_type}"
+                f"Provider `{provider}` not registered for type `{parser_type}`"
             )
-
-        if len(db_type) <= 3:
-            db_type = db_type.upper()
-        else:
-            db_type = db_type.title().replace("_", "")
-
-        provider_class_name = (
-            f"{_RETRIEVER_NAMESPACE_TRANSLATOR[provider]}{retriever_type}"
-        )
-        module_name = f"msgflux.data.parsers.providers.{provider}"
-        return import_module_from_lib(provider_class_name, module_name)
+        parser_cls = parser_registry[parser_type][provider]
+        return parser_cls
 
     @classmethod
-    def _create_retriever(
-        cls, retriever_type: str, provider: str, **kwargs
-    ) -> Type[BaseRetriever]:
-        retriever_cls = cls._get_retriever_class(retriever_type, provider)
-        return retriever_cls(**kwargs)
+    def _create_parser(
+        cls, parser_type: str, provider: str, **kwargs
+    ) -> Type[BaseParser]:
+        parser_cls = cls._get_parser_class(parser_type, provider)
+        return parser_cls(**kwargs)
 
     @classmethod
     def from_serialized(
-        cls, provider: str, retriever_type: str, params: Dict[str, Any]
-    ) -> Type[BaseRetriever]:
-        """Creates a retriever instance from serialized parameters without calling __init__.
+        cls, provider: str, parser_type: str, params: Mapping[str, Any]
+    ) -> Type[BaseParser]:
+        """Creates a parser instance from serialized parameters.
 
         Args:
-            provider: The retriever provider (e.g., "bm25")
-            retriever_type: The type of model (e.g., "lexical", "semantic")
-            params: Dictionary containing the serialized db parameters
+            provider:
+                The parser provider (e.g., "pypdf").
+            parser_type:
+                The type of parser (e.g., "pdf", "pptx").
+            params:
+                Dictionary containing the serialized parser parameters.
 
         Returns:
-            An instance of the appropriate retriever class with restored state
+            An instance of the appropriate parser class with restored state.
         """
-        retriever_cls = cls._get_retriever_class(retriever_type, provider)
+        parser_cls = cls._get_parser_class(retriever_type, provider)
         # Create instance without calling __init__
-        instance = object.__new__(retriever_cls)
+        instance = object.__new__(parser_cls)
         # Restore the instance state
         instance.from_serialized(params)
         return instance
 
     @classmethod
-    def lexical(cls, provider: str, **kwargs) -> Type[LexicalRetriever]:
-        return cls._create_retriever("lexical", provider, **kwargs)
+    def pdf(cls, provider: str, **kwargs) -> PdfParser:
+        return cls._create_parser("pdf", provider, **kwargs)
+
+    @classmethod
+    def pptx(cls, provider: str, **kwargs) -> PptxParser:
+        return cls._create_parser("pptx", provider, **kwargs)
+
+    @classmethod
+    def xlsx(cls, provider: str, **kwargs) -> XlsxParser:
+        return cls._create_parser("xlsx", provider, **kwargs)

@@ -1,198 +1,102 @@
-import math
-from collections import Counter
-from typing import Dict, List, Optional, Union
-
-from gevent.pool import Pool
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 try:
+    import numpy as np
     from rank_bm25 import BM25Okapi
-except:
-    raise ImportError("pip install rank_bm25")  # TODO
-from msgflux.data.retrievers.base import BaseRetriever
+except ImportError:
+    BM25Okapi = None
+    np = None
+
+from msgflux.data.retrievers.base import BaseLexical, BaseRetriever
+from msgflux.data.retrievers.registry import register_retriever
 from msgflux.data.retrievers.types import LexicalRetriever
+from msgflux.dotdict import dotdict
+from msgflux.nn import functional as F
 
 
-class RankBM25LexicalRetriever(BaseRetriever, LexicalRetriever):
-    """Rank Okapi BM25 - Best Matching 25.
+#@register_retriever
+class RankBM25LexicalRetriever(BaseLexical, BaseRetriever, LexicalRetriever):
+    """Rank Okapi BM25 - Best Matching 25 Lexical Retriever."""
 
-    Args:
-        k1: Tuning parameter for term frequency (default 1.5)
-        b: Tuning parameter for document length (default 0.75)
-        max_workers: Maximum number of workers for parallel queries
-            (default: None, uses the number of CPUs)
-    """
+    provider = "rank_bm25"
 
-    def __init__(
-        self,
-        k1: Optional[float] = 1.5,
-        b: Optional[float] = 0.75,
-        max_workers: Optional[int] = None,
-    ):
-        self.b = b
+    def __init__(self, *, k1: Optional[float] = 1.5, b: Optional[float] = 0.75):
+        """Args:
+        k1:
+            Tuning parameter for term frequency.
+        b:
+            Tuning parameter for document length.
+        """
+        if BM25Okapi is None:
+            raise ImportError(
+                "`rank_bm25` client is not available. "
+                "Install with `pip install rank_bm25`."
+            )
         self.k1 = k1
-        self.max_workers = max_workers
+        self.b = b
         self._initialize()
 
     def _initialize(self):
-        self.avg_doc_length = 0
-        self.documents = []
-        self.doc_lengths = []
-        self.idf = {}
-        self.term_document_matrix = {}
+        self.documents: List[str] = []
+        self.tokenized_corpus: List[List[str]] = []
+        self.bm25: Optional[BM25Okapi] = None
 
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text into words."""
         return text.lower().split()
 
     def add(self, documents: List[str]):
-        start_index = len(self.documents)
+        """Add documents to the BM25 index."""
         self.documents.extend(documents)
+        self.tokenized_corpus.extend(self._tokenize(doc) for doc in documents)
+        self.bm25 = BM25Okapi(self.tokenized_corpus, k1=self.k1, b=self.b)
 
-        new_doc_lengths = [len(self._tokenize(doc)) for doc in documents]
-        self.doc_lengths.extend(new_doc_lengths)
+    def _search_single(self, query: str) -> List[Mapping[str, Any]]:
+        tokenized_query = self._tokenize(query)
+        scores = self.bm25.get_scores(tokenized_query)
 
-        self.avg_doc_length = sum(self.doc_lengths) / len(self.doc_lengths)
-
-        # Update inverted index and IDF
-        for doc_id in range(start_index, len(self.documents)):
-            tokens = self._tokenize(self.documents[doc_id])
-            token_counts = Counter(tokens)
-
-            for token, freq in token_counts.items():
-                if token not in self.term_document_matrix:
-                    self.term_document_matrix[token] = []
-                self.term_document_matrix[token].append((doc_id, freq))
-
-        # Calculate IDF for all terms
-        total_docs = len(self.documents)
-        self.idf = {
-            term: math.log(
-                1 + (total_docs - len(doc_list) + 0.5) / (len(doc_list) + 0.5)
-            )
-            for term, doc_list in self.term_document_matrix.items()
-        }
-
-    def _calculate_bm25_score(self, query, doc_id):
-        """Calculates the BM25 score for a specific document.
-
-        Args:
-            query: list of query tokens
-            doc_id: ID of the document to be scored
-
-        Returns:
-            BM25 score for the document
-        """
-        score = 0.0
-        doc_length = self.doc_lengths[doc_id]
-
-        for term in set(query):
-            if term not in self.term_document_matrix:
-                continue
-
-            # Find the frequency of the term in the document
-            term_freq = next(
-                (
-                    freq
-                    for did, freq in self.term_document_matrix[term]
-                    if did == doc_id
-                ),
-                0,
-            )
-
-            # BM25 score calculation
-            idf = self.idf.get(term, 0)
-            numerator = term_freq * (self.k1 + 1)
-            denominator = term_freq + self.k1 * (
-                1 - self.b + self.b * (doc_length / self.avg_doc_length)
-            )
-
-            score += idf * (numerator / denominator)
-
-        return score
-
-    def _search(self, queries, top_k, threshold, return_score):
-        """Finds the top_k most similar documents for multiple queries.
-
-        Args:
-            queries: query string or list of strings
-            top_k: number of results to return
-            threshold: minimum score to include a document in the results
-            return_score: if True, returns the score along with the document
-
-        Returns:
-            List of results for each query
-        """
-        pool = Pool(size=self.max_workers)
-
-        def process_query(query):
-            query_tokens = self._tokenize(query)
-
-            # Calculate scores for all documents
-            doc_scores = [
-                (doc_id, self._calculate_bm25_score(query_tokens, doc_id))
-                for doc_id in range(len(self.documents))
-            ]
-
-            # Filter documents by threshold
-            filtered_doc_scores = [
-                (doc_id, score) for doc_id, score in doc_scores if score >= threshold
-            ]
-
-            # Sort documents by score in descending order
-            filtered_doc_scores.sort(key=lambda x: x[1], reverse=True)
-
-            # Returns the K best results
-            results = []
-            for doc_id, score in filtered_doc_scores[:top_k]:
-                result = {"data": self.documents[doc_id]}
-                if return_score:
-                    result["score"] = score
-                results.append(result)
-
-            return results
-
-        results = pool.map(process_query, queries)
-        return results
-
-    def __call__(
-        self,
-        queries: Union[str, List[str]],
-        top_k: Optional[int] = 5,
-        threshold: Optional[float] = 0.0,
-        return_score: Optional[bool] = False,
-    ):
-        if isinstance(queries, str):
-            queries = [queries]
-        return self._search(queries, top_k, threshold, return_score)
-
-    def get_score_statistics(self, query: str) -> Dict[str, float]:
-        if not self.documents:
-            return None
-
-        query_tokens = self._tokenize(query)
-
-        doc_scores = [
-            self._calculate_bm25_score(query_tokens, doc_id)
-            for doc_id in range(len(self.documents))
+        # Filtra por threshold
+        filtered_doc_scores = [
+            (doc_id, score)
+            for doc_id, score in enumerate(scores)
+            if score >= threshold
         ]
 
-        mean_score = sum(doc_scores) / len(doc_scores)
+        # Order by score
+        filtered_doc_scores.sort(key=lambda x: x[1], reverse=True)
 
-        sorted_scores = sorted(doc_scores)
-        n = len(sorted_scores)
-        if n % 2 == 0:
-            median_score = (sorted_scores[n // 2 - 1] + sorted_scores[n // 2]) / 2
-        else:
-            median_score = sorted_scores[n // 2]
+        # Select top_k
+        results = []
+        for doc_id, score in filtered_doc_scores[:top_k]:
+            result = dotdict({"data": self.documents[doc_id]})
+            if return_score:
+                result.score = float(score)
+            results.append(result)
+        return results
 
-        mean = mean_score
-        variance = sum((x - mean) ** 2 for x in doc_scores) / len(doc_scores)
-        std_score = math.sqrt(variance)
+    def _search(
+        self, queries: List[str], top_k: int, threshold: float, return_score: bool
+    ) -> List[List[Mapping[str, Any]]]:
+        if not self.bm25:
+            return [[] for _ in queries]
+        results = list(F.map_gather(self._search_single, args_list=queries))
+        return results
+
+    def get_score_statistics(self, query: str) -> Dict[str, float]:
+        if not self.bm25:
+            return None
+
+        tokenized_query = self._tokenize(query)
+        scores = np.array(self.bm25.get_scores(tokenized_query), dtype=np.float64)
+
+        mean_score = np.mean(scores)
+        median_score = np.median(scores)
+        std_score = np.std(scores)  # já calcula a raiz
 
         return {
-            "min_score": min(doc_scores),
-            "max_score": max(doc_scores),
-            "mean_score": mean_score,
-            "median_score": median_score,
-            "std_score": std_score,
+            "min_score": float(np.min(scores)),
+            "max_score": float(np.max(scores)),
+            "mean_score": float(mean_score),
+            "median_score": float(median_score),
+            "std_score": float(std_score),
         }

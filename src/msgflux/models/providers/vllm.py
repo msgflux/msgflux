@@ -8,6 +8,7 @@ from msgflux.models.providers.openai import (
     OpenAISpeechToText,
     OpenAITextEmbedder,
 )
+from msgflux.models.registry import register_model
 from msgflux.models.response import ModelResponse
 from msgflux.models.types import TextClassifierModel
 from msgflux.utils.tenacity import model_retry
@@ -19,7 +20,7 @@ class _BaseVLLM:
     provider: str = "vllm"
 
     def _get_base_url(self):
-        base_url = getenv("VLLM_BASE_URL")
+        base_url = getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
         if base_url is None:
             raise ValueError("Please set `VLLM_BASE_URL`")
         return base_url
@@ -31,33 +32,41 @@ class _BaseVLLM:
         if not self._api_key:
             raise ValueError("No valid API keys found")
 
-
-class VLLMChatCompletion(OpenAIChatCompletion, _BaseVLLM):
+@register_model
+class VLLMChatCompletion(_BaseVLLM, OpenAIChatCompletion):
     """vLLM Chat Completion."""
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         response_format = params.pop("response_format", None)
-        if response_format:
-            params["extra_body"] = {"guided_json": response_format}
-        return params
+        extra_body = params.get("extra_body", {})
 
+        if response_format is not None:
+            extra_body["guided_json"] = response_format
+
+        if self.enable_thinking is not None:
+            extra_body["chat_template_kwargs"] = {
+                "enable_thinking": self.enable_thinking
+            }
+
+        params["extra_body"] = extra_body
+        return params
 
 # TODO: moderation based on ChatCompletion
 # llama guard prompt models
 
-
+@register_model
 class VLLMTextEmbedder(OpenAITextEmbedder, _BaseVLLM):
     """vLLM Text Embedder."""
 
-
+@register_model
 class VLLMSpeechToText(OpenAISpeechToText, _BaseVLLM):
     """vLLM Speech to Text."""
 
-
+@register_model
 class VLLMTextReranker(JinaAITextReranker, _BaseVLLM):
     """vLLM Text Reranker."""
 
-
+@register_model
 class VLLMTextClassifier(_BaseVLLM, HTTPXModelClient, TextClassifierModel):
     """vLLM Text Score."""
 

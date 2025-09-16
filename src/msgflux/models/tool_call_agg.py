@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import msgspec
 
+from msgflux.utils.chat import ChatBlock
+from msgflux.utils.msgspec import msgspec_dumps
 
 class ToolCallAggregator:
     def __init__(self, reasoning: Optional[str] = None):
@@ -66,27 +68,19 @@ class ToolCallAggregator:
         """
         # First message: function calls
         tool_calls = [
-            {
-                "id": call["id"],
-                "type": "function",
-                "function": {"arguments": call["arguments"], "name": call["name"]},
-            }
+            ChatBlock.tool_call(call["id"], call["name"], call["arguments"])
             for call in self.tool_calls.values()
-        ]
-        messages = [{"role": "assistant", "tool_calls": tool_calls}]
+        ]        
+        messages = [ChatBlock.assist_tool_calls(tool_calls)]
 
         # Adding the results of function calls as separate messages
         for call in self.tool_calls.values():
             if call["result"] is not None:
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call["id"],
-                        "content": call["result"],
-                    }
-                )
+                if not isinstance(call["result"], str): # convert to str
+                    call["result"] = msgspec_dumps(call["result"])
+                messages.append(ChatBlock.tool(call["id"], call["result"]))
 
-        if self.reasoning is not None:
-            messages.insert(0, {"role": "assistant", "content": self.reasoning})
+        if self.reasoning is not None:            
+            messages.insert(0, ChatBlock.assist(self.reasoning))
 
         return messages

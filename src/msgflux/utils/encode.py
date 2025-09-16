@@ -68,38 +68,61 @@ def encode_to_io_object(input_data: Union[bytes, str]) -> io.IOBase:
         f"Given: {type(input_data)}"
     )
 
-
 def encode_data_to_bytes(
     input_data: Union[bytes, str], *, filename: Optional[str] = "image.png"
 ) -> io.BytesIO:
     """Converts input to a BytesIO object and sets a name for MIME-type detection.
-    Supports: URLs, base64, local files and raw bytes.
+
+    Supports:
+    - Bytes
+    - File paths
+    - URLs (http/https)
+    - Base64-encoded strings
+
+    Args:
+        input_data:
+            Raw bytes or string (URL, base64 or file path).
+        filename:
+            Optional filename used to set the .name attribute in fallback cases.
+
+    Returns:
+        A BytesIO object with `.name` attribute set.
+
+    Raises:
+        ValueError: If the input string cannot be resolved to a valid source.
     """
+    filename = None
     if isinstance(input_data, bytes):
         data = input_data
+
     elif isinstance(input_data, str):
-        if input_data.startswith(("http://", "https://")):
+        # 1. Check if it's a valid local file path
+        if os.path.isfile(input_data):
+            with open(input_data, "rb") as f:
+                data = f.read()
+            filename = os.path.basename(input_data)
+
+        # 2. Check if it's a URL
+        elif input_data.startswith(("http://", "https://")):
             response = requests.get(input_data, timeout=300)
             response.raise_for_status()
             data = response.content
-            # Infer filename from URL if possible
             filename = os.path.basename(response.url) or filename
+
+        # 3. Try to decode base64
         else:
-            try:  # Try base64
+            try:
                 data = base64.b64decode(input_data)
-            except (base64.binascii.Error, ValueError):
-                # Fallback to file path
-                if os.path.isfile(input_data):
-                    with open(input_data, "rb") as f:
-                        data = f.read()
-                    filename = os.path.basename(input_data)
-                else:
-                    raise ValueError(f"Invalid string input: {input_data}") # noqa: B904
+            except (base64.binascii.Error, ValueError) as e:
+                raise ValueError(
+                    "Invalid string input (not a valid path, URL, or base64): "
+                    f"{input_data}"
+                ) from e
 
     else:
         raise ValueError(f"Invalid input type: {type(input_data)}")
 
-    # Wrap in BytesIO and set the .name attribute for MIME detection
     buffer = io.BytesIO(data)
-    buffer.name = filename
+    if filename:
+        buffer.name = filename
     return buffer

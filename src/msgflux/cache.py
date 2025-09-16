@@ -1,7 +1,7 @@
 from functools import wraps
 from typing import Optional
 
-from msgflux.data.databases.base import BaseDB
+from msgflux.data.dbs.base import BaseDB
 from msgflux.message import Message
 from msgflux.models.types import TextEmbedderModel
 

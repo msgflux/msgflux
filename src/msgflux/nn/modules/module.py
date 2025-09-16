@@ -1,5 +1,7 @@
+import asyncio
 import functools
 import inspect
+import re
 import weakref
 from collections import OrderedDict, namedtuple
 from typing import (
@@ -17,11 +19,14 @@ from typing import (
 )
 
 import msgspec
-from code2mermaid import code_to_mermaid
+try:
+    from code2mermaid import code_to_mermaid
+except ImportError:
+    code_to_mermaid = None
 from jinja2 import Template
-from mermaid import Mermaid
 from opentelemetry import trace
 
+from msgflux._private.executor import Executor
 from msgflux.dotdict import dotdict
 from msgflux.envs import envs
 from msgflux.exceptions import UnsafeModelResponseError, UnsafeUserInputError
@@ -395,6 +400,11 @@ class Module:
         *,
         remove_self: Optional[bool] = True,
     ) -> str:
+        if code_to_mermaid is None:
+            raise ImportError(
+                "`mermaid` client is not available. "
+                "Install with `pip install msgflux[plot]`."
+            )
         mermaid = code_to_mermaid(
             inspect.getsource(self.forward),
             remove_self=remove_self,
@@ -409,7 +419,7 @@ class Module:
         orientation: Optional[str] = "TD",
         *,
         remove_self: Optional[bool] = True,
-    ) -> Mermaid:
+    ) -> "Mermaid":
         """Generates and renders a Mermaid diagram of the `forward` method.
 
         This method extracts the source code of the `forward` method and converts
@@ -514,14 +524,14 @@ class Module:
         if isinstance(content, str):
             # Convert jinja to string format template
             template = raw_template.replace("{{ }}", "{}").replace("{{}}", "{}")
-            return template.format(content)
+            rendered = template.format(content)
         elif isinstance(content, dict):
             template = Template(raw_template)
             rendered = template.render(content)
-            rendered = rendered.strip()
-            return rendered
         else:
             raise ValueError("Unsupported content type for template formatting")
+        rendered = re.sub(r"\n{3,}", "\n\n", rendered).strip()
+        return rendered        
 
     def set_name(self, name: str):
         if isinstance(name, str):
@@ -532,7 +542,7 @@ class Module:
         else:
             raise TypeError(f"`name` need be a `str` given {type(name)}")
 
-    def _set_annotations(self, annotations: Dict[str, type]):
+    def set_annotations(self, annotations: Dict[str, type]):
         if isinstance(annotations, dict):
             super().__setattr__("annotations", annotations)
         else:
@@ -595,6 +605,12 @@ class Module:
                 f"given `{type(execution_kwargs)}`"
             )
 
+    def _set_verbose(self, verbose: bool): # noqa: FBT001
+        if isinstance(verbose, bool):
+            super().__setattr__("verbose", verbose)
+        else:
+            raise TypeError(f"`verbose` need be a `bool` given {type(verbose)}")
+
     def _extract_raw_response(
         self, model_response: Union[ModelResponse, ModelStreamResponse]
     ) -> Any:
@@ -606,7 +622,7 @@ class Module:
             raise ValueError(f"Unsupported `model_response={type(model_response)}`")
 
     def _prepare_response(self, raw_response: Any, message: Any) -> Any:
-        if not isinstance(raw_response, ModelStreamResponse) or (
+        if not isinstance(raw_response, ModelStreamResponse) and (
             hasattr(self, "response_template") and self.response_template is not None
         ):
             response = self._format_response_template(raw_response)
@@ -1238,7 +1254,11 @@ class Module:
 
     async def acall(self, *args, **kwargs):
         """Async interface to __call__."""
-        return self.__call__(*args, **kwargs)
+        executor = Executor.get_instance()
+        future = executor.submit(self.__call__, *args, **kwargs)
+        done, _ = await asyncio.wait([future])
+        response = await done[0]
+        return response
 
     def __getstate__(self):
         state = self.__dict__.copy()

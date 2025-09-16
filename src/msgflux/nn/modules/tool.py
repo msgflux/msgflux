@@ -1,4 +1,5 @@
 import inspect
+from dataclasses import asdict, dataclass, field
 from functools import partial
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
@@ -14,6 +15,38 @@ from msgflux.utils.convert import convert_camel_to_snake_case
 from msgflux.utils.tenacity import tool_retry
 
 
+@dataclass
+class ToolCall:
+    """Represents the execution of a single tool call."""
+    id: str
+    name: str
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    result: Optional[Any] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class ToolResponses:
+    """Represents the execution of tool calls."""
+    return_directly: bool
+    tool_calls: List[ToolCall] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def to_json(self) -> bytes:
+        """Returns a encoded-JSON."""
+        return msgspec.json.encode(self.to_dict())
+
+    def get_by_id(self, tool_id: str) -> Optional[ToolCall]:
+        """Retrieve a tool_call by tool id."""
+        return next((r for r in self.tool_calls if r.id == tool_id), None)
+
+    def get_by_name(self, tool_name: str) -> Optional[ToolCall]:
+        """Retrieve a tool_call by tool name."""
+        return next((r for r in self.tool_calls if r.name == tool_name), None)
+
+
 class ToolBase(Module):
     """Tool is Module type that provide a json schema to tools."""
 
@@ -23,7 +56,7 @@ class ToolBase(Module):
 
 def _convert_module_to_nn_tool(impl: Callable) -> ToolBase: # noqa: C901
     """Convert a callable in nn.Tool."""
-    tool_config = impl.__dict__.get("tool_config", {})
+    tool_config = impl.__dict__.get("tool_config", dotdict())
 
     # Case 1: Uninitialized or initialized class
     if inspect.isclass(impl) or callable(impl):
@@ -33,13 +66,14 @@ def _convert_module_to_nn_tool(impl: Callable) -> ToolBase: # noqa: C901
                 " is necessary implement a `def __call__`"
             )
 
-        if hasattr(impl, "docstring") and impl.docstring is not None:
-            doc = impl.docstring
-        elif hasattr(impl, "__doc__") and impl.__doc__ is not None:
-            doc = impl.__doc__
-        elif hasattr(impl.__call__, "__doc__") and impl.__call__.__doc__ is not None:
-            doc = impl.__call__.__doc__
-        else:
+        doc = (
+            getattr(impl, "description", None)
+            or
+            getattr(impl, "__doc__", None)
+            or
+            getattr(impl.__call__, "__doc__", None)            
+        )
+        if doc is None:
             raise NotImplementedError(
                 "To transform a class into a `nn.Tool` "
                 "it is necessary to implement a docstring. "
@@ -47,20 +81,22 @@ def _convert_module_to_nn_tool(impl: Callable) -> ToolBase: # noqa: C901
                 "a docstring in the class or in `def __call__`"
             )
 
-        if hasattr(impl, "annotations"):
-            annotations = impl.annotations
-        elif hasattr(impl, "__annotations__"):
-            annotations = impl.__annotations__
-        elif hasattr(impl.__call__, "__annotations__"):
-            annotations = impl.__call__.__annotations__
-        else:
+        annotations = (
+            getattr(impl, "annotations", None)
+            or
+            getattr(impl, "__annotations__", None)
+            or
+            getattr(impl.__call__, "__annotations__", None)            
+        )
+        if annotations is None:        
             raise NotImplementedError(
                 "To transform a class in `nn.Tool` is necessary "
                 "to implement annotations of types hint in "
                 "`self.annotations`, `self.__annotations__` or in `def __call__`"
             )
 
-        name = convert_camel_to_snake_case(impl.__name__)
+        raw_name = (getattr(impl, "name", None) or getattr(impl, "__name__", None))
+        name = convert_camel_to_snake_case(raw_name)
 
         if inspect.isclass(impl):
             impl = impl()  # Initialized
@@ -91,10 +127,11 @@ def _convert_module_to_nn_tool(impl: Callable) -> ToolBase: # noqa: C901
             "The given object is not a callable function, class, or instance"
         )
 
-    if tool_config.handoff:
+    if tool_config.get("handoff", False):
         name = "transfer_to_" + name
+        annotations = {}  # pass only the model state
 
-    if tool_config.background:
+    if tool_config.get("background"):
         doc = "This tool will run in the background. \n" + doc
 
     class Tool(ToolBase):
@@ -102,7 +139,7 @@ def _convert_module_to_nn_tool(impl: Callable) -> ToolBase: # noqa: C901
             super().__init__()
             self.set_name(name)
             self.set_description(doc)
-            self._set_annotations(annotations)
+            self.set_annotations(annotations)
             self.register_buffer("tool_config", tool_config)
             self.impl = impl  # Not a buffer for now
 
@@ -151,7 +188,7 @@ class ToolLibrary(Module):
                 )
             self.special_library.append(tool)
         else:
-            name = tool.name if isinstance(tool, ToolBase) else tool.__name__
+            name = (getattr(tool, "name", None) or getattr(tool, "__name__", None))
             if name in self.library.keys():
                 raise ValueError(f"The tool name `{name}` is already in tool library")
             if not isinstance(tool, ToolBase):
@@ -186,12 +223,12 @@ class ToolLibrary(Module):
         return [self.library[tool_name].get_json_schema() for tool_name in self.library]
 
     @instrument_tool_library_call
-    def forward( # noqa: C901
+    def forward(  # noqa: C901
         self,
         tool_callings: List[Tuple[str, str, Any]],
         model_state: Optional[List[Dict[str, Any]]] = None,
         injected_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> ToolResponses:
         """Executes tool calls with logic for `handoff`, `return_direct`.
 
         Args:
@@ -206,33 +243,39 @@ class ToolLibrary(Module):
                 Extra kwargs to be used in tools.
 
         Returns:
-            A dict containing `return_directly` and `responses`.
-            Where responses will be a mapping from `tool_name` to
-            `tool_response` if `return_directly=True` or `tool_id`
-            to `tool_response` if `return_directly=False`.
+            ToolResponses:
+                Structured object containing all tool call results.
         """
         if injected_kwargs is None:
             injected_kwargs = {}
+
         prepared_calls = []
         call_metadata = []
-        responses = {}
+        tool_calls: List[ToolCall] = []
         return_directly = True if tool_callings else False
 
         for tool_id, tool_name, tool_params in tool_callings:
             if tool_name not in self.library:
-                responses[tool_id] = f"Error: Tool `{tool_name}` not found."
-                return_directly = False  # Errors should always be returned to the model
+                tool_calls.append(
+                    ToolCall(
+                        id=tool_id,
+                        name=tool_name,
+                        parameters=tool_params,
+                        error=f"Error: Tool `{tool_name}` not found."
+                    )
+                )
+                return_directly = False
                 continue
 
             tool = self.library[tool_name]
-            config = self.tool_configs.get(tool_name)
+            config = self.tool_configs.get(tool_name, {})
 
             inject_kwargs = config.get("inject_kwargs", False)
             if inject_kwargs is not False:
                 if not injected_kwargs:
                     raise ValueError(
-                        f"The tool `{tool_name}` expect injected parameters "
-                        f"(`{inject_kwargs}`), but no one were provided."
+                        f"The tool `{tool_name}` expects injected parameters "
+                        f"(`{inject_kwargs}`), but none were provided."
                     )
                 if isinstance(inject_kwargs, list):
                     for key in inject_kwargs:
@@ -247,45 +290,56 @@ class ToolLibrary(Module):
 
             if config.get("background", False):
                 return_directly = False
-                background_tool_params = tool_params or {}
-                F.background_task(tool, **background_tool_params)
-                result = f"""The `{tool_name}` tool was started in the background.
-                This tool will not generate a return"""
-                responses[tool_id] = result
+                F.background_task(tool, **(tool_params or {}))
+                tool_calls.append(
+                    ToolCall(
+                        id=tool_id,
+                        name=tool_name,
+                        parameters=tool_params,
+                        result=f"""The `{tool_name}` tool was started in the background.
+                        This tool will not generate a return"""
+                    )
+                )
                 continue
 
-            if config.get("call_as_response", False):  # Return direct
-                responses[tool_name] = {
-                    "tool_name": tool_name,
-                    "parameters": tool_params,
-                }
+            if config.get("call_as_response", False):  # return function call as response
+                tool_calls.append(
+                    ToolCall(
+                        id=tool_id,
+                        name=tool_name,
+                        parameters=tool_params,
+                        result=None  # intentionally left None
+                    )
+                )
                 return_directly = True
                 continue
 
             if config.get("handoff", False):  # Add model_state
-                tool_params.task_messages = model_state  # Will ALWAYS have 'message'
+                tool_params["task_messages"] = model_state
+                tool_params["message"] = None
 
             if not config.get("return_direct", False):
-                return_directly = False  # Disable direct return
+                return_directly = False
 
             if tool_params:
                 prepared_calls.append(partial(tool, **tool_params))
             else:
-                prepared_calls.append(partial(tool, None))  # No params
+                prepared_calls.append(partial(tool, None))
 
             call_metadata.append(
-                dotdict({"id": tool_id, "name": tool_name, "config": config})
+                dotdict({"id": tool_id, "name": tool_name, "config": config, "params": tool_params})
             )
 
-        if prepared_calls:
+        if prepared_calls:                     
             results = F.scatter_gather(prepared_calls)
             for meta, result in zip(call_metadata, results):
-                if return_directly:  # tool_name -> result
-                    responses[meta.name] = result
-                else:  # tool_id -> result
-                    encoded_result = None
-                    if not isinstance(result, str):
-                        encoded_result = msgspec.json.encode(result).decode("utf-8")
-                    responses[meta.id] = encoded_result or result
+                tool_calls.append(
+                    ToolCall(
+                        id=meta.id,
+                        name=meta.name,
+                        parameters=meta.params.to_dict(),
+                        result=result,
+                    )
+                )
 
-        return dotdict({"return_directly": return_directly, "responses": responses})
+        return ToolResponses(return_directly=return_directly, tool_calls=tool_calls)

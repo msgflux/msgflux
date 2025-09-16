@@ -40,3 +40,7 @@ class UnsafeUserInputError(Exception):
 
 class UnsafeModelResponseError(Exception):
     pass
+
+
+class TypedParserNotFoundError(ValueError):
+    """Raised when a requested typed parser is not registered."""

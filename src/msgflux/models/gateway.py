@@ -69,7 +69,7 @@ class ModelGateway:
         self.current_model_index = 0
         logger.debug(
             f"ModelGateway initialized with {len(self.models)} models. Type: "
-            f"`{self.model_type}`. Max fails: `{self.max_retries}`"
+            f"`{self.model_type}`"
         )
         if self.parsed_time_constraints:
             logger.debug(

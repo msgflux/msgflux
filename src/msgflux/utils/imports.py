@@ -1,3 +1,12 @@
+import importlib
+import pathlib
+import pkgutil
+from types import ModuleType
+from typing import Union
+
+_loaded_autoloads = set()
+
+
 def import_module_from_lib(_import: str, _from: str):
     """Import a module (function or class) from library."""
     try:
@@ -38,3 +47,26 @@ def import_dependencies(dependencies: list[dict]) -> dict:
             imported_module = import_module_from_lib(module_name, lib_name)
             globals()[alias] = imported_module
     return
+
+
+def autoload_package(package: Union[str, ModuleType]):
+    """Imports all modules from a package, just once.
+
+    Args:
+        package:
+            Name of the package or module already imported.
+    """
+    if isinstance(package, str):
+        package = importlib.import_module(package)
+
+    if package.__name__ in _loaded_autoloads:
+        return
+
+    package_path = pathlib.Path(package.__file__).parent
+
+    for module_info in pkgutil.iter_modules([str(package_path)]):
+        if module_info.name.startswith("_"):
+            continue
+        importlib.import_module(f"{package.__name__}.{module_info.name}")
+
+    _loaded_autoloads.add(package.__name__)

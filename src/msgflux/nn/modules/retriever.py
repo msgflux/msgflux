@@ -1,7 +1,7 @@
 from functools import partial
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
-from msgflux.data.databases.types import VectorDB
+from msgflux.data.dbs.types import VectorDB
 from msgflux.data.retrievers.types import (
     LexicalRetriever,
     SemanticRetriever,
@@ -18,8 +18,11 @@ from msgflux.models.types import (
 from msgflux.nn import functional as F
 from msgflux.nn.modules.module import Module
 
-_RETRIVERS = Union[WebRetriever, LexicalRetriever, SemanticRetriever, VectorDB]
-_MODELS = Union[AudioEmbedderModel, ImageEmbedderModel, TextEmbedderModel, ModelGateway]
+
+RETRIVERS = Union[WebRetriever, LexicalRetriever, SemanticRetriever, VectorDB]
+EMBEDDER_MODELS = Union[
+    AudioEmbedderModel, ImageEmbedderModel, TextEmbedderModel, ModelGateway
+]
 
 
 class Retriever(Module):
@@ -28,9 +31,9 @@ class Retriever(Module):
     def __init__(
         self,
         name: str,
-        retriever: _RETRIVERS,
+        retriever: RETRIVERS,
         *,
-        model: Optional[_MODELS] = None,
+        model: Optional[EMBEDDER_MODELS] = None,
         task_inputs: Optional[Union[str, Dict[str, str]]] = None,
         response_mode: Optional[str] = "plain_response",
         response_template: Optional[str] = None,
@@ -143,8 +146,7 @@ class Retriever(Module):
                 self._prepare_model_execution, model_preference=model_preference
             )
             distributed_params = list(map(prepare_execution, queries))
-            to_send = [self.model] * len(distributed_params)
-            responses = F.scatter_gather(to_send, kwargs_list=distributed_params)
+            responses = F.map_gather(self.model, kwargs_list=distributed_params)
             raw_resposes = [
                 self._extract_raw_response(model_response)
                 for model_response in responses
@@ -181,7 +183,7 @@ class Retriever(Module):
         if model_preference is None and isinstance(message, Message):
             model_preference = self.get_model_preference_from_message(message)
 
-        return dotdict({"queries": queries, "model_preference": model_preference})
+        return {"queries": queries, "model_preference": model_preference}
 
     def _process_list_of_dict_inputs(self, queries: List[Dict[str, Any]]) -> List[str]:
         """Extract the query value from a dict."""
@@ -194,7 +196,15 @@ class Retriever(Module):
                 "require a `dict_key` to select the key for retrieval"
             )
 
-    def _set_retriever(self, retriever: _RETRIVERS):
+    def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
+        """Debug model input parameters."""
+        if self.model:
+            inputs = self._prepare_task(*args, **kwargs)
+            model_execution_params = self._prepare_model_execution(**inputs)
+            return model_execution_params
+        return {}
+
+    def _set_retriever(self, retriever: RETRIVERS):
         if isinstance(
             retriever, (WebRetriever, LexicalRetriever, SemanticRetriever, VectorDB)
         ):
@@ -205,7 +215,7 @@ class Retriever(Module):
                 f"`SemanticRetriever` or `VectorDB` instance given `{type(retriever)}`"
             )
 
-    def _set_model(self, model: Optional[_MODELS] = None):
+    def _set_model(self, model: Optional[EMBEDDER_MODELS] = None):
         if "embedder" in model.model_type or model is None:
             self.register_buffer("model", model)
         else:

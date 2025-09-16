@@ -1,21 +1,9 @@
-import asyncio
-from typing import Any, AsyncGenerator, Literal, Union
+from typing import Literal
+
+from msgflux._private.response import BaseResponse, StreamResponse
 
 
-class _BaseResponse:
-    def set_metadata(self, metadata: Any):
-        self.metadata = metadata
-
-    def set_response_type(self, response_type: str):
-        if isinstance(response_type, str):
-            self.response_type = response_type
-        else:
-            raise TypeError(
-                f"`response_type` requires strgiven `{type(response_type)}`"
-            )
-
-
-class ModelResponse(_BaseResponse):
+class ModelResponse(BaseResponse):
     response_type: Literal[
         "audio_embedding",
         "audio_generation",
@@ -27,50 +15,15 @@ class ModelResponse(_BaseResponse):
         "structured",
         "reasoning_structured",
         "reasoning_text_generation",
-        "reasoning_tool_call",
         "tool_call",
         "transcript",
-        "translate",
         "text_classification",
         "text_embedding",
         "text_generation",
         "text_reranked",
     ]
 
-    def __init__(self):
-        self.data = None
-        self.metadata = None
-        self.response_type = None
-
-    def add(self, data: Any):
-        self.data = data
-
-    def consume(self) -> Any:
-        return self.data
-
-
-class ModelStreamResponse(_BaseResponse):
+class ModelStreamResponse(StreamResponse):
     response_type: Literal[
         "audio_generation", "reasoning_text_generation", "text_generation", "tool_call"
     ]
-
-    def __init__(self):
-        self.first_chunk_event = asyncio.Event()
-        self.queue = asyncio.Queue()
-        self.metadata = None
-        self.response_type = None
-
-    def add(self, data: Any):
-        """Add data to the stream queue (async)."""
-        self.queue.put_nowait(data)
-
-    async def consume(self) -> AsyncGenerator[Union[bytes, str], None]:
-        """Async generator that yields chunks from the queue until None is received."""
-        while True:
-            try:
-                chunk = await asyncio.wait_for(self.queue.get(), timeout=1.0)
-                if chunk is None:
-                    break
-                yield chunk
-            except asyncio.TimeoutError:
-                continue

@@ -1,34 +1,38 @@
 import re
-from typing import List, Optional, Union
+from typing import Any, List, Mapping, Optional
 
-import wikipedia
+try:
+    import wikipedia
+except ImportError:
+    wikipedia = None
 
-from msgflux.data.retrievers.base import BaseRetriever
-from msgflux.data.retrievers.response import RetrieverResults
-from msgflux.data.retrievers.types import WebRetriever 
+from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
+from msgflux.data.retrievers.registry import register_retriever
+from msgflux.data.retrievers.types import WebRetriever
 from msgflux.dotdict import dotdict
+from msgflux.logger import logger
 from msgflux.nn import functional as F
 
 
-class WikipediaWebRetriever(BaseRetriever, WebRetriever):
-    """
-    A customizable Wikipedia client for searching and retrieving Wikipedia content.
-    
+@register_retriever
+class WikipediaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+    """A customizable Wikipedia client for searching and retrieving Wikipedia content.
+
     This class provides a flexible interface to search Wikipedia articles, retrieve
     content with optional summaries, and extract images from pages.
     """
 
     provider = "wikipedia"
-    
+
     def __init__(
         self,
+        *,
         language: Optional[str] = "en",
-        summary: Optional[int] = None,        
+        summary: Optional[int] = None,
         return_images: Optional[bool] = False,
         max_return_images: Optional[int] = 5
     ):
-        """
-        Args:
+        """Args:
             language:
                 The language code for Wikipedia searches.
             summary:
@@ -37,7 +41,7 @@ class WikipediaWebRetriever(BaseRetriever, WebRetriever):
                 Whether to include images in the results.
             max_return_images:
                 Maximum number of images returned.
-        
+
         !!! example
 
             ```python
@@ -55,15 +59,16 @@ class WikipediaWebRetriever(BaseRetriever, WebRetriever):
     def set_language(self, language: str) -> None:
         """Change the Wikipedia language setting."""
         wikipedia.set_lang(language)
-    
+
     def _process_content(self, content: str, title: str) -> str:
-        """
-        Process page content based on summary parameter.
-        
+        """Process page content based on summary parameter.
+
         Args:
-            content (str): Raw page content.
-            title (str): Page title.
-        
+            content:
+                Raw page content.
+            title:
+                Page title.
+
         Returns:
             str: Processed content (title + summary or title + full content).
         """
@@ -74,150 +79,124 @@ class WikipediaWebRetriever(BaseRetriever, WebRetriever):
             return f"{title}\n\n{summary_text}"
         else:
             return f"{title}\n\n{content}"
-    
+
     def _extract_sentences(self, text: str) -> List[str]:
-        """
-        Extract sentences from text using regex.
-        
+        """Extract sentences from text using regex.
+
         Args:
-            text (str): Input text.
-        
+            text: Input text.
+
         Returns:
-            List[str]: List of sentences.
+            List of sentences.
         """
         # Clean text and split into sentences
         text = re.sub(r"\n+", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
-        
+
         # Split by sentence endings, considering abbreviations
         sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
-        
+
         # Filter out very short sentences and clean them
         clean_sentences = []
-        for sentence in sentences:
-            sentence = sentence.strip()
+        for raw_sentence in sentences:
+            sentence = raw_sentence.strip()
             if len(sentence) > 10:  # Filter very short sentences
                 clean_sentences.append(sentence)
-        
+
         return clean_sentences
-    
+
     def _get_images(self, page) -> List[str]:
-        """
-        Extract image URLs from Wikipedia page.
-        
+        """Extract image URLs from Wikipedia page.
+
         Args:
             page: Wikipedia page object.
-        
+
         Returns:
             List[str]: List of image URLs.
         """
         try:
             # Get images from the page
             images = page.images
-            
+
             # Filter for common image formats and remove SVGs
             valid_images = []
             for img_url in images:
-                if any(ext in img_url.lower() for ext in [".jpg", ".jpeg", ".png", ".gif"]):
-                    # Skip small icons and logos by checking if it"s likely a content image
-                    if not any(skip in img_url.lower() for skip in ["commons-logo", "wikimedia", "edit-icon"]):
+                valid_ext = [".jpg", ".jpeg", ".png", ".gif"]
+                if any(ext in img_url.lower() for ext in valid_ext):
+                    # Skip small icons and logos by checking if it's likely a image
+                    icons = ["commons-logo", "wikimedia", "edit-icon"]
+                    if not any(skip in img_url.lower() for skip in icons):
                         valid_images.append(img_url)
-            
+
             return valid_images[:self.max_return_images]
-            
+
         except Exception:
             return []
 
-    def _search(self, query: str, top_k: int) -> List[RetrieverResults]:
+    def _single_search(self, query: str, top_k: int) -> List[Mapping[str, Any]]:
         """Internal method to search Wikipedia for a single query."""
         try:
             # Search for pages
             search_results = wikipedia.search(query, results=top_k)
-            
+
             results = []
             for title in search_results[:top_k]:
                 try:
                     # Get page content
                     page = wikipedia.page(title)
-                    
+
                     # Process content based on summary parameter
                     content = self._process_content(page.content, page.title)
-                    
+
                     result = {
                         "data": {
                             "title": page.title,
                             "content": content
                         }
                     }
-                    
-                    # Add images if requested
-                    if self.return_images:
+
+                    if self.return_images: # Add images if requested
                         result["images"] = self._get_images(page)
-                    
+
                     results.append(result)
-                    
+
                 except wikipedia.exceptions.DisambiguationError as e:
                     # Handle disambiguation by taking the first option
                     try:
                         page = wikipedia.page(e.options[0])
                         content = self._process_content(page.content, page.title)
-                        
+
                         result = {
                             "data": {
                                 "title": page.title,
                                 "content": content
                             }
                         }
-                        
+
                         if self.return_images:
                             result["images"] = self._get_images(page)
-                        
+
                         results.append(result)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(str(e))
                         continue
-                        
-                except wikipedia.exceptions.PageError:
-                    # Skip pages that don"t exist
+
+                except Exception as e:
+                    logger.debug(str(e))
                     continue
-                except Exception:
-                    # Skip any other errors
-                    continue
-            
+
             return results
-            
-        except Exception as e:
-            print(f"Error searching for `{query}`: {str(e)}")
+
+        except Exception:
             return []
 
-    def __call__(
-        self,
-        queries: Union[str, List[str]],
-        top_k: Optional[int] = 1
-    ) -> List[RetrieverResults]:
-        """
-        Search Wikipedia and retrieve results for given queries.
-        
-        Args:
-            queries:
-                Single query string or list of queries.
-            top_k:
-                Number of results to return per query.
-
-        Returns:
-            List of retriever results containing `data` and `images` (if return_images=True).
-        """
-        if isinstance(queries, str):
-            queries = [queries]
-        
-        response = []
-
-        args_list = [(query,) for query in queries]
-        kwargs_list = [{"top_k": top_k} for _ in queries]
-
-        results = F.map_gather(self._search, args_list=args_list, kwargs_list=kwargs_list)
-
-        response = []
-        for result in results:
-            response.append(dotdict({"results": result}))
-
-        return response
+    def _search(self, top_k):
+        args_list = [(query,) for query in self]
+        kwargs_list = [{"top_k": top_k} for _ in self]
+        query_results = F.map_gather(
+            self._single_search, args_list=args_list, kwargs_list=kwargs_list
+        )
+        results = []
+        for result in query_results:
+            results.append(dotdict({"results": result}))
+        return results

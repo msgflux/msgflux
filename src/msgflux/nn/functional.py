@@ -198,22 +198,15 @@ def msg_scatter_gather(
     to_send: List[Callable],
     messages: List[dotdict],
     *,
-    prefix: Optional[str] = None,
     timeout: Optional[float] = None,
 ) -> Tuple[dotdict, ...]:
     """Scatter a list of messages to a list of modules and gather the responses.
-
-    Each message in `messages` is sent to the corresponding callable in `to_send`,
-    and the responses are stored in the field specified by `prefix` in the
-    respective message. Includes exception handling and optional timeout.
 
     Args:
         to_send:
             List of callable objects (e.g. functions or `Module` instances).
         messages:
             List of `msgflux.dotdict` instances to be distributed.
-        prefix:
-            Field where the responses will be stored.
         timeout:
             Maximum time (in seconds) to wait for responses.
 
@@ -243,16 +236,12 @@ def msg_scatter_gather(
     futures = [executor.submit(f, msg) for f, msg in zip(to_send, messages)]
 
     concurrent.futures.wait(futures, timeout=timeout)
-    for f, message, future in zip(to_send, messages, futures):
+    for f, future in zip(to_send, futures):
         f_name = get_callable_name(f)
-        msg_prefix = ""
-        if prefix is not None:
-            msg_prefix = f"{prefix}."
         try:
-            message.set(f"{msg_prefix}{f_name}", future.result())
+            future.result()
         except Exception as e:
             logger.error(f"Error in scattered task for `{f_name}`: {e}")
-            message.set(f"{msg_prefix}{f_name}", None)
     return tuple(messages)
 
 
@@ -317,23 +306,16 @@ def bcast_gather(
 def msg_bcast_gather(
     to_send: List[Callable],
     message: dotdict,
-    prefix: Optional[str] = None,
     *,
     timeout: Optional[float] = None,
 ) -> dotdict:
     """Broadcasts a single message to multiple modules and gathers the responses.
-
-    The given message is sent to each callable in `to_send`, and the responses
-    are collected in the field specified by `prefix`, using the module name as
-    the key. Includes exception handling and optional timeout to prevent crashes.
 
     Args:
         to_send:
             List of callable objects (e.g. functions or `Module` instances).
         message:
             Instance of `msgflux.dotdict` to broadcast.
-        prefix:
-            Field in the message where the responses will be stored.
         timeout:
             Maximum time (in seconds) to wait for responses.
 
@@ -356,14 +338,10 @@ def msg_bcast_gather(
     concurrent.futures.wait(futures, timeout=timeout)
     for f, future in zip(to_send, futures):
         f_name = get_callable_name(f)
-        msg_prefix = ""
-        if prefix is not None:
-            msg_prefix = f"{prefix}."
         try:
-            message.set(f"{msg_prefix}{f_name}", future.result())
+            future.result()
         except Exception as e:
             logger.error(f"Error in scattered task for `{f_name}`: {e}")
-            message.set(f"{msg_prefix}{f_name}", None)
     return message
 
 

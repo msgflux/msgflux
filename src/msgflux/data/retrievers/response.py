@@ -1,13 +1,11 @@
-from dataclasses import dataclass
-from typing import List, Optional
+from typing import Literal
+
+from msgflux._private.response import BaseResponse
 
 
-@dataclass
-class RetrieverResult:
-    data: str
-    score: Optional[float]
-    images: Optional[List[str]]
-
-@dataclass
-class RetrieverResults:
-    results: List[RetrieverResult]
+class RetrieverResponse(BaseResponse):
+    response_type: Literal[
+        "lexical_search",
+        "vector_search",
+        "web_search"
+    ]
