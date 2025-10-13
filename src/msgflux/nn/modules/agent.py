@@ -8,9 +8,7 @@ from typing import (
 import msgspec
 
 from msgflux.dotdict import dotdict
-from msgflux.dsl.signature import (
-    Signature, SignatureFactory, SIGNATURE_DEFAULT_SYSTEM_MESSAGE
-)
+from msgflux.dsl.signature import Signature, SignatureFactory
 from msgflux.dsl.typed_parsers.registry import typed_parser_registry
 from msgflux.examples import Example, ExampleCollection
 from msgflux.generation.control_flow import ToolFlowControl
@@ -250,6 +248,14 @@ class Agent(Module):
         response = self._process_model_response(message, model_response, **inputs)
         return response
 
+    async def aforward(
+        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs
+    ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
+        inputs = self._prepare_task(message, **kwargs)
+        model_response = await self._aexecute_model(prefilling=self.prefilling, **inputs)
+        response = await self._aprocess_model_response(message, model_response, **inputs)
+        return response
+
     def _execute_model(
         self,
         model_state: List[Mapping[str, Any]],
@@ -266,6 +272,24 @@ class Agent(Module):
         if self.verbose:
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
         model_response = self.model(**model_execution_params)
+        return model_response
+
+    async def _aexecute_model(
+        self,
+        model_state: List[Mapping[str, Any]],
+        vars: Mapping[str, Any],
+        prefilling: Optional[str] = None,
+        model_preference: Optional[str] = None,
+    ) -> Union[ModelResponse, ModelStreamResponse]:
+        model_execution_params = self._prepare_model_execution(
+            model_state=model_state, prefilling=prefilling,
+            model_preference=model_preference, vars=vars
+        )
+        if self.input_guardrail:
+            await self._aexecute_input_guardrail(model_execution_params)
+        if self.verbose:
+            cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
+        model_response = await self.model.acall(**model_execution_params)
         return model_response
 
     @instrument_agent_prepare_model_execution
@@ -339,7 +363,7 @@ class Agent(Module):
         message: Union[str, Mapping[str, str], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
         model_state: List[Mapping[str, Any]],
-        vars: Mapping[str, Any],        
+        vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
     ) -> Union[str, Mapping[str, str], Message, ModelStreamResponse]:
         if "tool_call" in model_response.response_type:
@@ -351,7 +375,7 @@ class Agent(Module):
                 model_response, model_state, vars, model_preference
             )
 
-        if isinstance(model_response, (ModelResponse, ModelStreamResponse)):        
+        if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
             raw_response = self._extract_raw_response(model_response)
             response_type = model_response.response_type
         else:  # returns tool result as response or tool call as response
@@ -366,11 +390,43 @@ class Agent(Module):
         else:
             raise ValueError(f"Unsupported `response_type={response_type}`")
 
+    async def _aprocess_model_response(
+        self,
+        message: Union[str, Mapping[str, str], Message],
+        model_response: Union[ModelResponse, ModelStreamResponse],
+        model_state: List[Mapping[str, Any]],
+        vars: Mapping[str, Any],
+        model_preference: Optional[str] = None,
+    ) -> Union[str, Mapping[str, str], Message, ModelStreamResponse]:
+        if "tool_call" in model_response.response_type:
+            model_response, model_state = await self._aprocess_tool_call_response(
+                model_response, model_state, vars, model_preference
+            )
+        elif is_subclass_of(self.generation_schema, ToolFlowControl):
+            model_response, model_state = await self._aprocess_tool_flow_control_response(
+                model_response, model_state, vars, model_preference
+            )
+
+        if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
+            raw_response = self._extract_raw_response(model_response)
+            response_type = model_response.response_type
+        else:  # returns tool result as response or tool call as response
+            raw_response = model_response
+            response_type = "tool_responses"
+
+        if response_type in self._supported_outputs:
+            response = await self._aprepare_response(
+                raw_response, response_type, model_state, message, vars
+            )
+            return response
+        else:
+            raise ValueError(f"Unsupported `response_type={response_type}`")
+
     def _process_tool_flow_control_response(
         self,
         model_response: Union[ModelResponse, ModelStreamResponse],
         model_state: Mapping[str, Any],
-        vars: Mapping[str, Any],        
+        vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
     ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """Handle the fields returned by `ReAct`. If the fields are different,
@@ -392,14 +448,14 @@ class Agent(Module):
                     cprint(repr, bc="br2", ls="b")
 
                 for act in actions:
-                    act.id = str(uuid4())  # Add tool_id              
+                    act.id = str(uuid4())  # Add tool_id
 
                 tool_callings = [(act.id, act.name, act.arguments) for act in actions]
                 tool_results = self._process_tool_call(tool_callings, model_state, vars)
 
-                if tool_results.return_directly:    
+                if tool_results.return_directly:
                     tool_calls = tool_results.to_dict().pop("return_directly")
-                    tool_calls["reasoning"] = reasoning                    
+                    tool_calls["reasoning"] = reasoning
                     tool_responses = dotdict(tool_responses=tool_calls)
                     # TODO converter tool calls em tool call msgs
                     return tool_responses, model_state
@@ -422,14 +478,74 @@ class Agent(Module):
             model_response = self._execute_model(
                 model_state=model_state,
                 model_preference=model_preference,
-                vars=vars                
+                vars=vars
+            )
+
+    async def _aprocess_tool_flow_control_response(
+        self,
+        model_response: Union[ModelResponse, ModelStreamResponse],
+        model_state: Mapping[str, Any],
+        vars: Mapping[str, Any],
+        model_preference: Optional[str] = None,
+    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+        """Async version of _process_tool_flow_control_response.
+        Handle the fields returned by `ReAct`. If the fields are different,
+        you must rewrite this function.
+        """
+        while True:
+            raw_response = self._extract_raw_response(model_response)
+
+            if getattr(raw_response, "final_answer", None):
+                return model_response, model_state
+
+            if getattr(raw_response, "current_step", None):
+                step = raw_response.current_step
+                actions = step.actions
+                reasoning = step.thought
+
+                if self.verbose:
+                    repr = f"[{self.name}][tool_calls_reasoning] {reasoning}"
+                    cprint(repr, bc="br2", ls="b")
+
+                for act in actions:
+                    act.id = str(uuid4())  # Add tool_id
+
+                tool_callings = [(act.id, act.name, act.arguments) for act in actions]
+                tool_results = await self._aprocess_tool_call(tool_callings, model_state, vars)
+
+                if tool_results.return_directly:
+                    tool_calls = tool_results.to_dict().pop("return_directly")
+                    tool_calls["reasoning"] = reasoning
+                    tool_responses = dotdict(tool_responses=tool_calls)
+                    # TODO converter tool calls em tool call msgs
+                    return tool_responses, model_state
+
+                for act in actions:  # Add results
+                    result = tool_results.get_by_id(act.id).result
+                    error = tool_results.get_by_id(act.id).error
+                    act.result = result or error
+
+                # Compact steps history
+                if model_state and model_state[-1].get("role") == "assistant":
+                    last_react_msg = model_state[-1].get("content")
+                    react_state = msgspec.json.decode(last_react_msg)
+                    react_state.append(raw_response)
+                    model_state[-1] = ChatBlock.assist(react_state)
+                else:
+                    react_state = [raw_response]
+                    model_state.append(ChatBlock.assist(react_state))
+
+            model_response = await self._aexecute_model(
+                model_state=model_state,
+                model_preference=model_preference,
+                vars=vars
             )
 
     def _process_tool_call_response(
         self,
-        model_response: Union[ModelResponse, ModelStreamResponse],  
+        model_response: Union[ModelResponse, ModelStreamResponse],
         model_state: Mapping[str, Any],
-        vars: Mapping[str, Any],        
+        vars: Mapping[str, Any],
         model_preference: Optional[str] = None
     ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """ToolCall example: [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
@@ -438,11 +554,11 @@ class Agent(Module):
         'content': '2024-10-15'}].
         """
         while True:
-            if model_response.response_type == "tool_call":                
+            if model_response.response_type == "tool_call":
                 raw_response = model_response.data
                 reasoning = raw_response.reasoning
-             
-                if self.verbose:         
+
+                if self.verbose:
                     if reasoning:
                         repr = f"[{self.name}][tool_calls_reasoning] {reasoning}"
                         cprint(repr, bc="br2", ls="b")
@@ -450,7 +566,7 @@ class Agent(Module):
                 tool_callings = raw_response.get_calls()
                 tool_results = self._process_tool_call(tool_callings, model_state, vars)
 
-                if tool_results.return_directly:    
+                if tool_results.return_directly:
                     tool_calls = tool_results.to_dict()
                     tool_calls.pop("return_directly")
                     tool_calls["reasoning"] = reasoning
@@ -473,17 +589,93 @@ class Agent(Module):
                 vars=vars
             )
 
+    async def _aprocess_tool_call_response(
+        self,
+        model_response: Union[ModelResponse, ModelStreamResponse],
+        model_state: Mapping[str, Any],
+        vars: Mapping[str, Any],
+        model_preference: Optional[str] = None
+    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+        """Async version of _process_tool_call_response.
+        ToolCall example: [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
+        'type': 'function', 'function': {'arguments': '{"order_id":"order_12345"}',
+        'name': 'get_delivery_date'}}]}, {'role': 'tool', 'tool_call_id': 'call_HA',
+        'content': '2024-10-15'}].
+        """
+        while True:
+            if model_response.response_type == "tool_call":
+                raw_response = model_response.data
+                reasoning = raw_response.reasoning
+
+                if self.verbose:
+                    if reasoning:
+                        repr = f"[{self.name}][tool_calls_reasoning] {reasoning}"
+                        cprint(repr, bc="br2", ls="b")
+
+                tool_callings = raw_response.get_calls()
+                tool_results = await self._aprocess_tool_call(tool_callings, model_state, vars)
+
+                if tool_results.return_directly:
+                    tool_calls = tool_results.to_dict()
+                    tool_calls.pop("return_directly")
+                    tool_calls["reasoning"] = reasoning
+                    tool_responses = dotdict(tool_responses=tool_calls)
+                    return tool_responses, model_state
+
+                id_results = {
+                    call.id: call.result or call.error
+                    for call in tool_results.tool_calls
+                }
+                raw_response.insert_results(id_results)
+                tool_responses_message = raw_response.get_messages()
+                model_state.extend(tool_responses_message)
+            else:
+                return model_response, model_state
+
+            model_response = await self._aexecute_model(
+                model_state=model_state,
+                model_preference=model_preference,
+                vars=vars
+            )
+
     def _process_tool_call(
         self,
         tool_callings: Mapping[str, Any],
         model_state: List[Mapping[str, Any]],
         vars: Mapping[str, Any],
     ) -> ToolResponses:
-        if self.verbose:       
+        if self.verbose:
             for call in tool_callings:
                 repr = f"[{self.name}][tool_call] {call[1]}: {call[2]}"
-                cprint(repr, bc="br2", ls="b")  
+                cprint(repr, bc="br2", ls="b")
         tool_results = self.tool_library(
+            tool_callings=tool_callings,
+            model_state=model_state,
+            vars=vars,
+        )
+        if self.verbose:
+            repr = f"[{self.name}][tool_responses]"
+            if tool_results.return_directly:
+                repr += " return directly"
+            cprint(repr, bc="br1", ls="b")
+            for call in tool_results.tool_calls:
+                result = call.result or call.error or ""
+                repr = f"[{self.name}][tool_response] {call.name}: {result}"
+                cprint(repr, ls="b")
+        return tool_results
+
+    async def _aprocess_tool_call(
+        self,
+        tool_callings: Mapping[str, Any],
+        model_state: List[Mapping[str, Any]],
+        vars: Mapping[str, Any],
+    ) -> ToolResponses:
+        """Async version of _process_tool_call."""
+        if self.verbose:
+            for call in tool_callings:
+                repr = f"[{self.name}][tool_call] {call[1]}: {call[2]}"
+                cprint(repr, bc="br2", ls="b")
+        tool_results = await self.tool_library.acall(
             tool_callings=tool_callings,
             model_state=model_state,
             vars=vars,
@@ -508,10 +700,10 @@ class Agent(Module):
         vars: Mapping[str, Any],
     ) -> Union[str, Mapping[str, Any], ModelStreamResponse]:
         formatted_response = None
-        if not isinstance(raw_response, ModelStreamResponse):          
+        if not isinstance(raw_response, ModelStreamResponse):
             if response_type == "text_generation" or "structured" in response_type:
                 if self.verbose:
-                    cprint(f"[{self.name}][response] {raw_response}", bc="y", ls="b")                
+                    cprint(f"[{self.name}][response] {raw_response}", bc="y", ls="b")
                 if self.output_guardrail:
                     self._execute_output_guardrail(raw_response)
                 if self.response_template:
@@ -525,7 +717,43 @@ class Agent(Module):
                         formatted_response = self._format_response_template(
                             raw_response
                         )
-        
+
+        response = formatted_response or raw_response
+        if self.return_model_state:
+            if response_type == "tool_responses":
+                response.model_state = model_state
+            else:
+                response = dotdict(model_response=response, model_state=model_state)
+        return self._define_response_mode(response, message)
+
+    async def _aprepare_response(
+        self,
+        raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
+        response_type: str,
+        model_state: List[Mapping[str, Any]],
+        message: Union[str, Mapping[str, Any], Message],
+        vars: Mapping[str, Any],
+    ) -> Union[str, Mapping[str, Any], ModelStreamResponse]:
+        """Async version of _prepare_response with async output guardrail support."""
+        formatted_response = None
+        if not isinstance(raw_response, ModelStreamResponse):
+            if response_type == "text_generation" or "structured" in response_type:
+                if self.verbose:
+                    cprint(f"[{self.name}][response] {raw_response}", bc="y", ls="b")
+                if self.output_guardrail:
+                    await self._aexecute_output_guardrail(raw_response)
+                if self.response_template:
+                    if isinstance(raw_response, str):
+                        pre_response = self._format_response_template(vars)
+                        formatted_response = self._format_template(
+                            raw_response, pre_response
+                        )
+                    elif isinstance(raw_response, dict):
+                        raw_response.update(vars)
+                        formatted_response = self._format_response_template(
+                            raw_response
+                        )
+
         response = formatted_response or raw_response
         if self.return_model_state:
             if response_type == "tool_responses":
@@ -1094,14 +1322,6 @@ class Agent(Module):
             self._set_generation_schema(fused_output_struct or signature_output_struct)
 
             # system message
-            if ( # TODO revisar
-                system_message is None
-                and
-                hasattr(generation_schema, "system_message")
-                and
-                generation_schema.system_message is None
-            ):
-                system_message = SIGNATURE_DEFAULT_SYSTEM_MESSAGE
             self._set_system_message(system_message)
 
             # expected output

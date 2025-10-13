@@ -9,7 +9,7 @@ from msgflux.dotdict import dotdict
 from msgflux.nn import functional as F
 from msgflux.nn.modules.container import ModuleDict
 from msgflux.nn.modules.module import Module
-from msgflux.telemetry.span import instrument_tool_library_call
+from msgflux.telemetry.span import ainstrument_tool_library_call, instrument_tool_library_call
 from msgflux.utils.chat import generate_tool_json_schema
 from msgflux.utils.convert import convert_camel_to_snake_case
 from msgflux.utils.inspect import fn_has_parameters
@@ -161,6 +161,18 @@ def _convert_module_to_nn_tool(impl: Callable) -> ToolBase: # noqa: C901
             if inspect.iscoroutinefunction(self.impl):
                 return F.wait_for(self.impl, *args, **kwargs)
             return self.impl(*args, **kwargs)
+
+        @tool_retry
+        async def aforward(self, *args, **kwargs):
+            # Check if impl has acall method first (for Module instances)
+            if hasattr(self.impl, "acall"):
+                return await self.impl.acall(*args, **kwargs)
+            # Then check if it's a coroutine function
+            elif inspect.iscoroutinefunction(self.impl):
+                return await self.impl(*args, **kwargs)
+            # Fall back to sync call
+            else:
+                return self.impl(*args, **kwargs)
 
     return Tool()
 
@@ -343,7 +355,129 @@ class ToolLibrary(Module):
             for meta, result in zip(call_metadata, results):
                 if isinstance(meta.params, dict):
                     parameters = meta.params.to_dict()
-                    parameters.pop("vars", None)        
+                    parameters.pop("vars", None)
+                else:
+                    parameters = None
+                tool_calls.append(
+                    ToolCall(
+                        id=meta.id,
+                        name=meta.name,
+                        parameters=parameters,
+                        result=result,
+                    )
+                )
+
+        return ToolResponses(return_directly=return_directly, tool_calls=tool_calls)
+
+    @ainstrument_tool_library_call
+    async def aforward(  # noqa: C901
+        self,
+        tool_callings: List[Tuple[str, str, Any]],
+        model_state: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+    ) -> ToolResponses:
+        """Async version of forward. Executes tool calls with logic for `handoff`, `return_direct`.
+
+        Args:
+            tool_callings:
+                A list of tuples containing the tool id, name and parameters.
+                !!! example
+                    [('123121', 'tool_name1', {'parameter1': 'value1'}),
+                    ('322', 'tool_name2', '')]
+            model_state:
+                The current state of the Agent for the `handoff` functionality.
+            vars:
+                Extra kwargs to be used in tools.
+
+        Returns:
+            ToolResponses:
+                Structured object containing all tool call results.
+        """
+        if model_state is None:
+            model_state = {}
+
+        if vars is None:
+            vars = {}
+
+        prepared_calls = []
+        call_metadata = []
+        tool_calls: List[ToolCall] = []
+        return_directly = True if tool_callings else False
+
+        for tool_id, tool_name, tool_params in tool_callings:
+            if tool_name not in self.library:
+                tool_calls.append(
+                    ToolCall(
+                        id=tool_id,
+                        name=tool_name,
+                        parameters=tool_params,
+                        error=f"Error: Tool `{tool_name}` not found."
+                    )
+                )
+                return_directly = False
+                continue
+
+            tool = self.library[tool_name]
+            config = self.tool_configs.get(tool_name, {})
+
+            inject_vars = config.get("inject_vars", False)
+            if inject_vars != False:
+                if not inject_vars:
+                    raise ValueError(
+                        f"The tool `{tool_name}` expects injected vars "
+                        f"(`{inject_vars}`), but none were provided."
+                    )
+                if isinstance(inject_vars, list):
+                    for key in inject_vars:
+                        if key not in vars:
+                            raise ValueError(
+                                f"The tool `{tool_name}` requires the injected "
+                                f"parameter `{key}`, but it was not found."
+                            )
+                        tool_params[key] = vars[key]
+                elif inject_vars == True:
+                    tool_params["vars"] = vars
+
+            if config.get("background", False):
+                return_directly = False
+                await F.abackground_task(tool.acall, **(tool_params or {}))
+                tool_calls.append(
+                    ToolCall(
+                        id=tool_id,
+                        name=tool_name,
+                        parameters=tool_params,
+                        result=f"""The `{tool_name}` tool was started in the background.
+                        This tool will not generate a return"""
+                    )
+                )
+                continue
+
+            if config.get("call_as_response", False):  # return function call as response
+                tool_calls.append(
+                    ToolCall(id=tool_id, name=tool_name, parameters=tool_params)
+                )
+                return_directly = True
+                continue
+
+            if config.get("inject_model_state", False):  # Add model_state
+                tool_params["task_messages"] = model_state
+
+            if not config.get("return_direct", False):
+                return_directly = False
+
+            tool_params = tool_params or {}
+            prepared_calls.append(partial(tool.acall, **tool_params))
+
+            call_metadata.append(
+                dotdict(id=tool_id, name=tool_name, config=config, params=tool_params)
+            )
+
+        if prepared_calls:
+            results = await F.ascatter_gather(prepared_calls)
+            for meta, result in zip(call_metadata, results):
+                if isinstance(meta.params, dict):
+                    parameters = meta.params.to_dict()
+                    parameters.pop("vars", None)
                 else:
                     parameters = None
                 tool_calls.append(

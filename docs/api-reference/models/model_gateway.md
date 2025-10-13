@@ -1,0 +1,1 @@
+::: msgflux.models.gateway.ModelGateway

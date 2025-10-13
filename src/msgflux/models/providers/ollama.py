@@ -18,10 +18,8 @@ class _BaseOllama:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        keys = getenv("OLAMA_API_KEY", "ollama")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("OLLAMA_API_KEY", "ollama")
+        return key
 
 @register_model
 class OllamaChatCompletion(_BaseOllama, OpenAIChatCompletion):

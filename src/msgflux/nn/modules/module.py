@@ -325,6 +325,23 @@ def _forward_unimplemented(self, *inputs: Any) -> None:
     )
 
 
+async def _aforward_unimplemented(self, *inputs: Any) -> None:
+    """Define the async computation performed at every acall.
+
+    Should be overridden by all subclasses that want async support.
+
+    !!! note
+
+        Although the recipe for async forward pass needs to be defined within
+        this function, one should call the :class:`Module` instance's acall
+        method afterwards instead of this since the former takes care of running
+        the registered hooks while the latter silently ignores them.
+    """
+    raise NotImplementedError(
+        f"Module [{type(self).__name__}] is missing the required `aforward` function"
+    )
+
+
 class Module:
     training: bool
     _version: int = 1
@@ -390,6 +407,7 @@ class Module:
             super().__init__(*args, **kwargs)
 
     forward: Callable[..., Any] = _forward_unimplemented
+    aforward: Callable[..., Any] = _aforward_unimplemented
 
     # msgflux funcs
 
@@ -732,9 +750,47 @@ class Module:
         if not guardrail_response["safe"]:
             raise UnsafeUserInputError()  # TODO
 
+    async def _aexecute_input_guardrail(self, model_execution_params: Dict[str, Any]):
+        guardrail_params = self._prepare_input_guardrail_execution(
+            model_execution_params
+        )
+
+        # Check if guardrail has acall method or is a coroutine function
+        if hasattr(self.input_guardrail, 'acall'):
+            guardrail_response = await self.input_guardrail.acall(**guardrail_params)
+        elif inspect.iscoroutinefunction(self.input_guardrail):
+            guardrail_response = await self.input_guardrail(**guardrail_params)
+        else:
+            # Fallback to sync call
+            guardrail_response = self.input_guardrail(**guardrail_params)
+
+        if isinstance(guardrail_response, ModelResponse):
+            guardrail_response = self._extract_raw_response(guardrail_response)
+
+        if not guardrail_response["safe"]:
+            raise UnsafeUserInputError()  # TODO
+
     def _execute_output_guardrail(self, model_response: Dict[str, Any]):
         guardrail_params = self._prepare_output_guardrail_execution(model_response)
         guardrail_response = self.output_guardrail(**guardrail_params)
+
+        if isinstance(guardrail_response, ModelResponse):
+            guardrail_response = self._extract_raw_response(guardrail_response)
+
+        if not guardrail_response["safe"]:
+            raise UnsafeModelResponseError()  # TODO
+
+    async def _aexecute_output_guardrail(self, model_response: Dict[str, Any]):
+        guardrail_params = self._prepare_output_guardrail_execution(model_response)
+
+        # Check if guardrail has acall method or is a coroutine function
+        if hasattr(self.output_guardrail, 'acall'):
+            guardrail_response = await self.output_guardrail.acall(**guardrail_params)
+        elif inspect.iscoroutinefunction(self.output_guardrail):
+            guardrail_response = await self.output_guardrail(**guardrail_params)
+        else:
+            # Fallback to sync call
+            guardrail_response = self.output_guardrail(**guardrail_params)
 
         if isinstance(guardrail_response, ModelResponse):
             guardrail_response = self._extract_raw_response(guardrail_response)
@@ -1248,15 +1304,79 @@ class Module:
                 module_output = self.forward(*args, **kwargs)
         return module_output
 
+    async def _acall_impl(self, *args, **kwargs):
+        if not (self._forward_hooks or self._forward_pre_hooks):
+            return await self._acall(*args, **kwargs)
+
+        for hook in self._forward_pre_hooks.values():
+            hook_result = hook(self, args, kwargs)
+            if hook_result is not None:
+                if isinstance(hook_result, tuple) and len(hook_result) == 2:
+                    args, kwargs = hook_result
+                else:
+                    raise RuntimeError(
+                        "forward pre-hook must return None or a tuple of (args, kwargs)"
+                    )
+
+        result = await self._acall(*args, **kwargs)
+
+        for hook in self._forward_hooks.values():
+            hook_result = hook(self, args, kwargs, result)
+            if hook_result is not None:
+                result = hook_result
+
+        return result
+
+    async def _acall(self, *args, **kwargs):
+        # Search for a Message in args and kwargs
+        message = next(
+            (arg for arg in args if isinstance(arg, Message)),
+            next((v for v in kwargs.values() if isinstance(v, Message)), None),
+        )
+
+        if message is not None:
+            # Check if this module has already processed the message
+            # If it is True, skip the module
+            if envs.state_checkpoint and message.in_msg(self.name):
+                return message
+
+        module_name = self.get_module_name()
+        module_name_title = convert_camel_snake_to_title(module_name)
+
+        encoded_state_dict = None
+        if envs.telemetry_capture_state_dict:
+            state_dict = self.state_dict()
+            encoded_state_dict = msgspec.json.encode(state_dict)
+
+        # Trace capture
+        current_span = trace.get_current_span()
+        # If there is no active span or it is not recording, this is the root module
+        if current_span is None or not current_span.is_recording():
+            with self._spans.init_flow(
+                module_name_title, message, encoded_state_dict
+            ):
+                module_output = await self.aforward(*args, **kwargs)
+        else:
+            with self._spans.init_module(module_name_title):
+                module_output = await self.aforward(*args, **kwargs)
+        return module_output
+
     __call__: Callable[..., Any] = _call_impl
 
     async def acall(self, *args, **kwargs):
-        """Async interface to __call__."""
-        executor = Executor.get_instance()
-        future = executor.submit(self.__call__, *args, **kwargs)
-        done, _ = await asyncio.wait([future])
-        response = await done[0]
-        return response
+        """Async interface using aforward.
+
+        If aforward is not implemented, falls back to running __call__ in executor.
+        """
+        # Check if aforward is implemented by comparing with the unimplemented version
+        if type(self).aforward is _aforward_unimplemented:
+            # Fallback to executor for backward compatibility
+            loop = asyncio.get_event_loop()
+            executor = Executor.get_instance()
+            return await loop.run_in_executor(executor, lambda: self.__call__(*args, **kwargs))
+        else:
+            # Use native async implementation
+            return await self._acall_impl(*args, **kwargs)
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -1834,7 +1954,7 @@ class Module:
                     continue
                 submodule_prefix = prefix + ("." if prefix else "") + name
                 yield from module.named_modules(
-                    memo, submodule_prefix, remove_duplicate
+                    memo, submodule_prefix, remove_duplicate=remove_duplicate
                 )
 
     def train(self: T, *, mode: Optional[bool] = True) -> T:
@@ -1856,7 +1976,7 @@ class Module:
             raise ValueError("training mode is expected to be boolean")
         self.training = mode
         for module in self.children():
-            module.train(mode)
+            module.train(mode=mode)
         return self
 
     def eval(self: T) -> T:
@@ -1874,7 +1994,7 @@ class Module:
         Returns:
             Self.
         """
-        return self.train(False)
+        return self.train(mode=False)
 
     def requires_grad_(self: T, *, requires_pgrad: Optional[bool] = True) -> T:
         """Change if autograd should record operations on parameters in this module.
@@ -1897,7 +2017,7 @@ class Module:
             Module: self
         """
         for p in self.parameters():
-            p.requires_grad_(requires_pgrad)
+            p.requires_grad_(requires_grad=requires_pgrad)
         return self
 
     def zero_pgrad(

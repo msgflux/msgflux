@@ -1,0 +1,1 @@
+::: msgflux.models.providers.openai.OpenAITextToImage

@@ -18,10 +18,13 @@ class _BaseOpenRouter:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        keys = getenv("OPENROUTER_API_KEY")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("OPENROUTER_API_KEY")
+        if not key:
+            raise ValueError(
+                "The OpenRouter API key is not available."
+                "Please set `OPENROUTER_API_KEY`"
+            )
+        return key
 
 @register_model
 class OpenRouterChatCompletion(_BaseOpenRouter, OpenAIChatCompletion):

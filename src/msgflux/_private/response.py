@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, AsyncGenerator, Literal, Union
+from typing import Any, AsyncGenerator, Union
 
 
 class CoreResponse:
@@ -29,7 +29,7 @@ class BaseResponse(CoreResponse):
         return self.data
 
 
-class StreamResponse(CoreResponse):
+class BaseStreamResponse(CoreResponse):
 
     def __init__(self):
         self.first_chunk_event = asyncio.Event()

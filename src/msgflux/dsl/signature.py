@@ -18,16 +18,6 @@ from msgflux.generation.templates import EXPECTED_OUTPUTS_TEMPLATE
 from msgflux.utils.xml import apply_xml_tags
 
 
-SIGNATURE_DEFAULT_SYSTEM_MESSAGE = """
-Your goal is to provide accurate, helpful, and well-reasoned responses.
-Carefully analyze the user's request to fully understand the objective. Address all parts of the query.
-Think step-by-step to formulate your answer. Where appropriate, briefly explain your reasoning process.
-Structure your response clearly and concisely using dicts, lists, or other formatting.
-Strive for factual accuracy.
-Be helpful and informative, focusing on directly answering the user's prompt.
-""".strip() # noqa: E501
-
-
 @dataclass
 class SignatureExamples:
     inputs: Dict[str, Any]
@@ -177,7 +167,17 @@ class Signature(metaclass=_SignatureMeta):
                     return " | ".join(cls._dtype_to_str(arg) for arg in args)
             else:
                 arg_strs = [cls._dtype_to_str(arg) for arg in args]
-                return f"{origin.__name__}[{', '.join(arg_strs)}]"
+                # Map lowercase builtin types to capitalized typing versions
+                origin_name = origin.__name__
+                type_name_map = {
+                    "dict": "Dict",
+                    "list": "List",
+                    "tuple": "Tuple",
+                    "set": "Set",
+                    "frozenset": "FrozenSet",
+                }
+                origin_name = type_name_map.get(origin_name, origin_name)
+                return f"{origin_name}[{', '.join(arg_strs)}]"
         elif hasattr(dtype_obj, "__name__"):
             return dtype_obj.__name__
         else:

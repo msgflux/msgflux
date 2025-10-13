@@ -27,10 +27,12 @@ class _BaseJinaAI:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        keys = getenv("JINAAI_API_KEY")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("JINAAI_API_KEY")
+        if not key:
+            raise ValueError(
+                "The JINA AI API key is not available. Please set `JINAAI_API_KEY`"
+            )
+        return key
 
 @register_model
 class JinaAITextReranker(_BaseJinaAI, HTTPXModelClient, TextRerankerModel):
@@ -56,6 +58,13 @@ class JinaAITextReranker(_BaseJinaAI, HTTPXModelClient, TextRerankerModel):
         response.add(model_output["results"])
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("text_reranked")
+        model_output = await self._aexecute(**kwargs)
+        response.add(model_output["results"])
+        return response
+
     @model_retry
     def __call__(self, query: str, documents: List[str]) -> ModelResponse:
         """Args:
@@ -65,6 +74,17 @@ class JinaAITextReranker(_BaseJinaAI, HTTPXModelClient, TextRerankerModel):
             A list of documents to be ranked.
         """
         response = self._generate(query=query, documents=documents)
+        return response
+
+    @model_retry
+    async def acall(self, query: str, documents: List[str]) -> ModelResponse:
+        """Async version of __call__. Args:
+        query:
+            Reference text to search for similar.
+        documents:
+            A list of documents to be ranked.
+        """
+        response = await self._agenerate(query=query, documents=documents)
         return response
 
 @register_model
@@ -107,6 +127,17 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
         response.add(embedding)
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("text_embedding")
+        model_output = await self._aexecute(**kwargs)
+        data = model_output["data"]
+        embedding = [item["embedding"] for item in data]
+        if len(embedding) == 1:  # Compatibility
+            embedding = embedding[0]
+        response.add(embedding)
+        return response
+
     @model_retry
     def __call__(
         self,
@@ -120,6 +151,21 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
             data = [data]
         inputs = [{"text": item} for item in data]
         response = self._generate(input=inputs)
+        return response
+
+    @model_retry
+    async def acall(
+        self,
+        data: Union[str, List[str]],
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        data:
+            Input text to embed.
+        """
+        if isinstance(data, str):
+            data = [data]
+        inputs = [{"text": item} for item in data]
+        response = await self._agenerate(input=inputs)
         return response
 
 @register_model
@@ -140,6 +186,17 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
         response.add(embedding)
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("image_embedding")
+        model_output = await self._aexecute(**kwargs)
+        data = model_output["data"]
+        embedding = [item["embedding"] for item in data]
+        if len(embedding) == 1:  # Compatibility
+            embedding = embedding[0]
+        response.add(embedding)
+        return response
+
     @model_retry
     def __call__(
         self,
@@ -153,6 +210,21 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
             data = [data]
         inputs = [{"image": item} for item in data]
         response = self._generate(input=inputs)
+        return response
+
+    @model_retry
+    async def acall(
+        self,
+        data: Union[str, List[str]],
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        data:
+            Input image to embed.
+        """
+        if isinstance(data, str):
+            data = [data]
+        inputs = [{"image": item} for item in data]
+        response = await self._agenerate(input=inputs)
         return response
 
 @register_model
@@ -181,6 +253,17 @@ class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
         response.add(pred)
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("text_classification")
+        model_output = await self._aexecute(**kwargs)
+        data = model_output["data"]
+        pred = [{"label": item["prediction"], "score": item["score"]} for item in data]
+        if len(pred) == 1:  # Compatibility
+            pred = pred[0]
+        response.add(pred)
+        return response
+
     @model_retry
     def __call__(
         self,
@@ -196,6 +279,21 @@ class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
         response = self._generate(input=inputs)
         return response
 
+    @model_retry
+    async def acall(
+        self,
+        data: Union[str, List[str]],
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        data:
+            Input text to classify.
+        """
+        if isinstance(data, str):
+            data = [data]
+        inputs = [{"text": item} for item in data]
+        response = await self._agenerate(input=inputs)
+        return response
+
 @register_model
 class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
     """JinaAI Image Classifier."""
@@ -204,6 +302,17 @@ class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
         response = ModelResponse()
         response.set_response_type("image_classification")
         model_output = self._execute(**kwargs)
+        data = model_output["data"]
+        pred = [{"label": item["prediction"], "score": item["score"]} for item in data]
+        if len(pred) == 1:  # Compatibility
+            pred = pred[0]
+        response.add(pred)
+        return response
+
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("image_classification")
+        model_output = await self._aexecute(**kwargs)
         data = model_output["data"]
         pred = [{"label": item["prediction"], "score": item["score"]} for item in data]
         if len(pred) == 1:  # Compatibility
@@ -224,4 +333,19 @@ class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
             data = [data]
         inputs = [{"image": item} for item in data]
         response = self._generate(input=inputs)
+        return response
+
+    @model_retry
+    async def acall(
+        self,
+        data: Union[str, List[str]],
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        data:
+            Input image to embed.
+        """
+        if isinstance(data, str):
+            data = [data]
+        inputs = [{"image": item} for item in data]
+        response = await self._agenerate(input=inputs)
         return response

@@ -1,3 +1,4 @@
+import asyncio
 import operator
 from collections import OrderedDict
 from collections import abc as container_abcs
@@ -104,6 +105,32 @@ class Sequential(Module):
 
         for module in modules_iter:
             output = module(output)
+
+        return output
+
+    async def aforward(self, *args, **kwargs) -> Any:
+        """Async version of forward. Executes modules sequentially with async support."""
+        modules_iter = iter(self._modules.values())
+        first_module = next(modules_iter)
+
+        # Check for acall method first, then coroutine function
+        if hasattr(first_module, 'acall'):
+            output = await first_module.acall(*args, **kwargs)
+        elif asyncio.iscoroutinefunction(first_module):
+            output = await first_module(*args, **kwargs)
+        else:
+            # Fallback to sync call
+            output = first_module(*args, **kwargs)
+
+        for module in modules_iter:
+            # Check for acall method first, then coroutine function
+            if hasattr(module, 'acall'):
+                output = await module.acall(output)
+            elif asyncio.iscoroutinefunction(module):
+                output = await module(output)
+            else:
+                # Fallback to sync call
+                output = module(output)
 
         return output
 

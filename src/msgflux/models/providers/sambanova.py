@@ -18,10 +18,13 @@ class _BaseSambaNova:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        keys = getenv("SAMBANOVA_API_KEY")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("SAMBANOVA_API_KEY")
+        if not key:
+            raise ValueError(
+                "The SambaNova API key is not available."
+                "Please set `SAMBANOVA_API_KEY`"
+            )
+        return key
 
 
 @register_model

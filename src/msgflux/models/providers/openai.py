@@ -1,6 +1,7 @@
+import asyncio
 import base64
 import tempfile
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Union
 
@@ -9,7 +10,7 @@ import msgspec
 try:
     import httpx
     import openai
-    from openai import OpenAI
+    from openai import AsyncOpenAI, OpenAI
     from opentelemetry.instrumentation.openai import OpenAIInstrumentor
 
     if not getattr(openai, "_otel_instrumented", False):
@@ -19,6 +20,7 @@ except ImportError:
     httpx = None
     openai = None
     OpenAI = None
+    AsyncOpenAI = None
 
 from msgflux.dotdict import dotdict
 from msgflux.dsl.typed_parsers import typed_parser_registry
@@ -60,10 +62,19 @@ class _BaseOpenAI(BaseModel):
         timeout = getenv("OPENAI_TIMEOUT", None)
         self.client = OpenAI(
             **self.sampling_params,
-            api_key="",
+            api_key=self._get_api_key(),
             timeout=timeout,
             max_retries=max_retries,
             http_client=httpx.Client(
+                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+            ),
+        )
+        self.aclient = AsyncOpenAI(
+            **self.sampling_params,
+            api_key=self._get_api_key(),
+            timeout=timeout,
+            max_retries=max_retries,
+            http_client=httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
             ),
         )
@@ -78,9 +89,7 @@ class _BaseOpenAI(BaseModel):
             raise ValueError(
                 "The OpenAI key is not available. Please set `OPENAI_API_KEY`"
             )
-        self._api_key = key
-        if not self._api_key:
-            raise ValueError("No valid API key found")
+        return key
 
 @register_model
 class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
@@ -207,18 +216,19 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         model_output = self.client.chat.completions.create(**adapted_params)
         return model_output
 
-    def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+    async def _aexecute_model(self, **kwargs):
+        prefilling = kwargs.pop("prefilling")
+        if prefilling:
+            kwargs.get("messages").append({"role": "assistant", "content": prefilling})
+        params = {**kwargs, **self.sampling_run_params}
+        adapted_params = self._adapt_params(params)
+        model_output = await self.aclient.chat.completions.create(**adapted_params)
+        return model_output
+
+    def _process_model_output(self, model_output, typed_parser=None, generation_schema=None):
+        """Shared logic to process model output for both sync and async."""
         response = ModelResponse()
         metadata = dotdict()
-
-        typed_parser = kwargs.pop("typed_parser")
-        generation_schema = kwargs.pop("generation_schema")
-
-        if generation_schema is not None and typed_parser is None:
-            response_format = response_format_from_msgspec_struct(generation_schema)
-            kwargs["response_format"] = response_format
-
-        model_output = self._execute_model(**kwargs)
 
         metadata.update({"usage": model_output.usage.to_dict()})
 
@@ -241,7 +251,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             if reasoning_content is not None:
                 prefix_response_type = "reasoning_"
 
-        if choice.message.annotations: # Extra responses (e.g web search references)
+        if choice.message.annotations:  # Extra responses (e.g web search references)
             annotations_content = [
                 item.model_dump() for item in choice.message.annotations
             ]
@@ -305,6 +315,28 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         response.set_metadata(metadata)
         return response
 
+    def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        typed_parser = kwargs.pop("typed_parser")
+        generation_schema = kwargs.pop("generation_schema")
+
+        if generation_schema is not None and typed_parser is None:
+            response_format = response_format_from_msgspec_struct(generation_schema)
+            kwargs["response_format"] = response_format
+
+        model_output = self._execute_model(**kwargs)
+        return self._process_model_output(model_output, typed_parser, generation_schema)
+
+    async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        typed_parser = kwargs.pop("typed_parser")
+        generation_schema = kwargs.pop("generation_schema")
+
+        if generation_schema is not None and typed_parser is None:
+            response_format = response_format_from_msgspec_struct(generation_schema)
+            kwargs["response_format"] = response_format
+
+        model_output = await self._aexecute_model(**kwargs)
+        return self._process_model_output(model_output, typed_parser, generation_schema)
+
     async def _stream_generate(self, **kwargs: Mapping[str, Any]) -> ModelStreamResponse:
         aggregator = ToolCallAggregator()
         metadata = dotdict()
@@ -315,6 +347,71 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         reasoning_tool_call = ""
 
         for chunk in model_output:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+
+                reasoning_chunk = (
+                    getattr(delta, "reasoning_content", None) or
+                    getattr(delta, "reasoning", None) or
+                    getattr(delta, "thinking", None)
+                )
+
+                if self.reasoning_in_tool_call and reasoning_chunk:
+                    reasoning_tool_call += reasoning_chunk
+
+                if self.return_reasoning and reasoning_chunk:
+                    if stream_response.response_type is None:
+                        stream_response.set_response_type("reasoning_text_generation")
+                        stream_response.first_chunk_event.set()
+                    stream_response.add(reasoning_chunk)
+                    continue
+
+                if getattr(delta, "content", None):
+                    if stream_response.response_type is None:
+                        stream_response.set_response_type("text_generation")
+                        stream_response.first_chunk_event.set()
+                    stream_response.add(delta.content)
+                    continue
+
+                if getattr(delta, "tool_calls", None):
+                    if stream_response.response_type is None:
+                        stream_response.set_response_type("tool_call")
+                    tool_call = delta.tool_calls[0]
+                    call_index = tool_call.index
+                    tool_id = tool_call.id
+                    name = tool_call.function.name
+                    arguments = tool_call.function.arguments
+                    aggregator.process(call_index, tool_id, name, arguments)
+                    continue
+
+                if hasattr(delta, "annotations") and delta.annotations is not None:
+                    metadata.annotations = [
+                        item.model_dump() for item in delta.annotations
+                    ]
+                    continue
+
+            elif chunk.usage:
+                metadata.update(chunk.usage.to_dict())
+
+        if aggregator.tool_calls:
+            if reasoning_tool_call:
+                aggregator.reasoning = reasoning_tool_call
+            stream_response.data = aggregator # For tool calls save as 'data'
+            stream_response.first_chunk_event.set()
+
+        stream_response.set_metadata(metadata)
+        stream_response.add(None)
+
+    async def _astream_generate(self, **kwargs: Mapping[str, Any]) -> ModelStreamResponse:
+        aggregator = ToolCallAggregator()
+        metadata = dotdict()
+
+        stream_response = kwargs.pop("stream_response")
+        model_output = await self._aexecute_model(**kwargs)
+
+        reasoning_tool_call = ""
+
+        async for chunk in model_output:
             if chunk.choices:
                 delta = chunk.choices[0].delta
 
@@ -468,6 +565,104 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             )
             return response
 
+    @model_retry
+    async def acall(
+        self,
+        messages: Union[str, List[Dict[str, Any]]],
+        *,
+        system_prompt: Optional[str] = None,
+        prefilling: Optional[str] = None,
+        stream: Optional[bool] = False,
+        generation_schema: Optional[msgspec.Struct] = None,
+        tool_schemas: Optional[Dict] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        typed_parser: Optional[str] = None,
+    ) -> Union[ModelResponse, ModelStreamResponse]:
+        """Async version of __call__. Args:
+            messages:
+                Conversation history. Can be simple string or list of messages.
+            system_prompt:
+                A set of instructions that defines the overarching behavior
+                and role of the model across all interactions.
+            prefilling:
+                Forces an initial message from the model. From that message
+                it will continue its response from there.
+            stream:
+                Whether generation should be in streaming mode.
+            generation_schema:
+                Schema that defines how the output should be structured.
+            tool_schemas:
+                JSON schema containing available tools.
+            tool_choice:
+                By default the model will determine when and how many tools to use.
+                You can force specific behavior with the tool_choice parameter.
+                    1. auto:
+                        (Default) Call zero, one, or multiple functions.
+                    2. required:
+                        Call one or more functions.
+                    3. Forced Tool:
+                        Call exactly one specific tool e.g: "get_weather".
+            typed_parser:
+                Converts the model raw output into a typed-dict. Supported parser:
+                `typed_xml`.
+
+        Raises:
+            ValueError:
+                Raised if `generation_schema` and `stream=True`.
+            ValueError:
+                Raised if `typed_xml=True` and `stream=True`.
+        """
+        if isinstance(messages, str):
+            messages = [ChatBlock.user(messages)]
+        if isinstance(system_prompt, str):
+            messages.insert(0, ChatBlock.system(system_prompt))
+
+        if isinstance(tool_choice, str):
+            if tool_choice not in ["auto", "required", "none"]:
+                tool_choice = {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
+
+        generation_params = {
+            "messages": messages,
+            "prefilling": prefilling,
+            "tool_choice": tool_choice,
+            "tools": tool_schemas,
+            "model": self.model_id
+        }
+
+        if tool_schemas:
+            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+
+        if stream is True:
+            if typed_parser is not None:
+                raise ValueError("`typed_parser` is not `stream=True` compatible")
+
+            stream_response = ModelStreamResponse()
+            await F.abackground_task(
+                self._astream_generate,
+                **generation_params,
+                stream=stream,
+                stream_response=stream_response,
+                stream_options={"include_usage": True},
+            )
+            await F.await_for_event(stream_response.first_chunk_event)
+            return stream_response
+        else:
+            if typed_parser and typed_parser not in typed_parser_registry:
+                available = ", ".join(typed_parser_registry.keys())
+                raise TypedParserNotFoundError(
+                    f"Typed parser `{typed_parser}` not found. "
+                    f"Available parsers: {available}"
+                )
+            response = await self._agenerate(
+                **generation_params,
+                typed_parser=typed_parser,
+                generation_schema=generation_schema,
+            )
+            return response
+
 @register_model
 class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
     """OpenAI Text to Speech."""
@@ -507,6 +702,13 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         ) as model_output:
             yield model_output
 
+    @asynccontextmanager
+    async def _aexecute_model(self, **kwargs):
+        async with self.aclient.audio.speech.with_streaming_response.create(
+            model=self.model_id, **kwargs, **self.sampling_run_params
+        ) as model_output:
+            yield model_output
+
     def _generate(self, **kwargs):
         response = ModelResponse()
 
@@ -522,12 +724,39 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
 
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+
+        async with self._aexecute_model(**kwargs) as model_output:
+            with tempfile.NamedTemporaryFile(
+                suffix=f".{kwargs.get('response_format')}", delete=False
+            ) as temp_file:
+                temp_file_path = temp_file.name
+                await model_output.astream_to_file(temp_file_path)
+
+            response.set_response_type("audio_generation")
+            response.add(temp_file_path)
+
+        return response
+
     def _stream_generate(self, **kwargs):
         stream_response = kwargs.pop("stream_response")
         stream_response.set_response_type("audio_generation")
 
         with self._execute_model(**kwargs) as model_output:
             for chunk in model_output.iter_bytes(chunk_size=1024):
+                stream_response.add(chunk)
+                if not stream_response.first_chunk_event.is_set():
+                    stream_response.first_chunk_event.set()
+
+        stream_response.add(None)
+
+    async def _astream_generate(self, **kwargs):
+        stream_response = kwargs.pop("stream_response")
+        stream_response.set_response_type("audio_generation")
+
+        async with self._aexecute_model(**kwargs) as model_output:
+            async for chunk in model_output.aiter_bytes(chunk_size=1024):
                 stream_response.add(chunk)
                 if not stream_response.first_chunk_event.is_set():
                     stream_response.first_chunk_event.set()
@@ -568,6 +797,40 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
             response = self._generate(**params)
             return response
 
+    @model_retry
+    async def acall(
+        self,
+        data: str,
+        *,
+        stream: Optional[bool] = False,
+        prompt: Optional[str] = None,
+        response_format: Optional[
+            Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
+        ] = "opus",
+    ) -> Union[ModelResponse, ModelStreamResponse]:
+        """Async version of __call__. Args:
+        data:
+            The text to generate audio for.
+        stream:
+            Whether generation should be in streaming mode.
+        prompt:
+            Control the voice of your generated audio with additional instructions.
+        response_format:
+            The format to audio in.
+        """
+        params = dotdict({"input": data, "response_format": response_format})
+        if prompt:
+            params.instructions = prompt
+        if stream:
+            stream_response = ModelStreamResponse()
+            params.stream_response = stream_response
+            await F.abackground_task(self._astream_generate, **params)
+            await F.await_for_event(stream_response.first_chunk_event)
+            return stream_response
+        else:
+            response = await self._agenerate(**params)
+            return response
+
 @register_model
 class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
     """OpenAI Image Generation."""
@@ -601,6 +864,10 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         model_output = self.client.images.generate(**kwargs, **self.sampling_run_params)
         return model_output
 
+    async def _aexecute_model(self, **kwargs):
+        model_output = await self.aclient.images.generate(**kwargs, **self.sampling_run_params)
+        return model_output
+
     def _get_metadata(self, model_output):
         metadata = dotdict(
             usage=model_output.usage.to_dict(),
@@ -618,6 +885,29 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         response.set_response_type("image_generation")
 
         model_output = self._execute_model(**kwargs)
+
+        metadata = self._get_metadata(model_output)
+
+        images = []
+        for item in model_output.data:
+            if item.url:
+                images.append(item.url)
+            if item.b64_json:
+                images.append(item.b64_json)
+
+        if len(images) == 1:
+            images = images[0]
+
+        response.add(images)
+        response.set_metadata(metadata)
+
+        return response
+
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("image_generation")
+
+        model_output = await self._aexecute_model(**kwargs)
 
         metadata = self._get_metadata(model_output)
 
@@ -678,12 +968,58 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         response = self._generate(**generation_params)
         return response
 
+    @model_retry
+    async def acall(
+        self,
+        prompt: str,
+        *,
+        response_format: Optional[Literal["url", "base64"]] = None,
+        n: Optional[int] = 1,
+        size: Optional[str] = "auto",
+        quality: Optional[str] = "auto",
+        background: Optional[Literal["transparent", "opaque", "auto"]] = None,
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        prompt:
+            A text description of the desired image(s).
+        response_format:
+            Format in which images are returned.
+        n:
+            The number of images to generate.
+        size:
+            The size of the generated images.
+        quality:
+            The quality of the image that will be generated.
+        background:
+            Allows to set transparency for the background of the generated image(s).
+        """
+        generation_params = dotdict(
+            prompt=prompt,
+            n=n,
+            size=size,
+            quality=quality,
+            background=background,
+            model=self.model_id
+        )
+
+        if response_format is not None:
+            if response_format == "base64":
+                response_format = "b64_json"
+            generation_params.response_format = response_format
+
+        response = await self._agenerate(**generation_params)
+        return response
+
 @register_model
 class OpenAIImageTextToImage(OpenAITextToImage, ImageTextToImageModel):
     """OpenAI Image Edit."""
 
     def _execute_model(self, **kwargs):
         model_output = self.client.images.edit(**kwargs, **self.sampling_run_params)
+        return model_output
+
+    async def _aexecute_model(self, **kwargs):
+        model_output = await self.aclient.images.edit(**kwargs, **self.sampling_run_params)
         return model_output
 
     def _prepare_inputs(self, image, mask):
@@ -731,6 +1067,42 @@ class OpenAIImageTextToImage(OpenAITextToImage, ImageTextToImageModel):
         response = self._generate(**generation_params, **inputs)
         return response
 
+    @model_retry
+    async def acall(
+        self,
+        prompt: str,
+        image: Union[str, List[str]],
+        *,
+        mask: Optional[str] = None,
+        response_format: Optional[Literal["url", "base64"]] = None,
+        n: Optional[int] = 1,
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        prompt:
+            A text description of the desired image(s).
+        image:
+            The image(s) to edit. Can be a path, an url or base64 string.
+        mask:
+            An additional image whose fully transparent areas
+            (e.g. where alpha is zero) indicate where image
+            should be edited. If there are multiple images provided,
+            the mask will be applied on the first image.
+        response_format:
+            Format in which images are returned.
+        n:
+            The number of images to generate.
+        """
+        generation_params = dotdict(prompt=prompt, n=n, model=self.model_id)
+
+        if response_format is not None:
+            if response_format == "base64":
+                response_format = "b64_json"
+            generation_params.response_format = response_format
+
+        inputs = self._prepare_inputs(image, mask)
+        response = await self._agenerate(**generation_params, **inputs)
+        return response
+
 @register_model
 class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
     """OpenAI Speech to Text."""
@@ -759,6 +1131,12 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
 
     def _execute_model(self, **kwargs):
         model_output = self.client.audio.transcriptions.create(
+            **kwargs, **self.sampling_run_params
+        )
+        return model_output
+
+    async def _aexecute_model(self, **kwargs):
+        model_output = await self.aclient.audio.transcriptions.create(
             **kwargs, **self.sampling_run_params
         )
         return model_output
@@ -794,6 +1172,37 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
 
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+
+        model_output = await self._aexecute_model(**kwargs)
+
+        response.set_response_type("transcript")
+
+        transcript = {}
+
+        if isinstance(model_output, str):
+            transcript["text"] = model_output
+        else:
+            if model_output.text:
+                transcript["text"] = model_output.text
+            if model_output.words:
+                words = [
+                    dict(word=w.word, start=w.start, end=w.end)
+                    for w in model_output.words
+                ]
+                transcript["words"] = words
+            if model_output.segment:
+                segments = [
+                    dict(id=seg.id, start=seg.start, end=seg.end, text=seg.text)
+                    for seg in model_output.segments
+                ]
+                transcript["segments"] = segments
+
+        response.add(transcript)
+
+        return response
+
     def _stream_generate(self, **kwargs):
         stream_response = kwargs.pop("stream_response")
         stream_response.set_response_type("transcript")
@@ -801,6 +1210,23 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         model_output = self._execute_model(**kwargs)
 
         for event in model_output:
+            chunk = event.transcript.text.delta
+            if chunk:
+                stream_response.add(chunk)
+                if not stream_response.first_chunk_event.is_set():
+                    stream_response.first_chunk_event.set()
+            elif event.transcript.text.done:
+                stream_response.add(None)
+
+        return stream_response
+
+    async def _astream_generate(self, **kwargs):
+        stream_response = kwargs.pop("stream_response")
+        stream_response.set_response_type("transcript")
+
+        model_output = await self._aexecute_model(**kwargs)
+
+        async for event in model_output:
             chunk = event.transcript.text.delta
             if chunk:
                 stream_response.add(chunk)
@@ -866,6 +1292,61 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
             response = self._generate(**params)
             return response
 
+    @model_retry
+    async def acall(
+        self,
+        data: str,
+        *,
+        stream: Optional[bool] = False,
+        response_format: Optional[
+            Literal["json", "text", "srt", "verbose_json", "vtt"]
+        ] = "text",
+        timestamp_granularities: Optional[List[str]] = None,
+        prompt: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> Union[ModelResponse, ModelStreamResponse]:
+        """Async version of __call__. Args:
+        data:
+            Url, path, base64 to audio.
+        stream:
+            Whether generation should be in streaming mode.
+        response_format:
+            The format of the output, in one of these options:
+            json, text, srt, verbose_json, or vtt.
+        timestamp_granularities:
+            The timestamp granularities to populate for this
+            transcription. `response_format` must be set `verbose_json`
+            to use timestamp granularities. Either or both of these
+            options are supported: word, or segment. Note: There is no
+            additional latency for segment timestamps, but generating
+            word timestamps incurs additional latency.
+        prompt:
+            An optional text to guide the model's style or continue a
+            previous audio segment. The prompt should match the audio language.
+        language:
+            The language of the input audio. Supplying the input language in
+            ISO-639-1 (e.g. en) format will improve accuracy and latency.
+        """
+        file = encode_data_to_bytes(data)
+        params = dict(
+            file=file,
+            language=language,
+            response_format=response_format,
+            timestamp_granularities=timestamp_granularities,
+            prompt=prompt,
+            model=self.model_id
+        )
+        if stream:
+            stream_response = ModelStreamResponse()
+            params["stream_response"] = stream_response
+            params["stream"] = stream
+            await F.abackground_task(self._astream_generate, **params)
+            await F.await_for_event(stream_response.first_chunk_event)
+            return stream_response
+        else:
+            response = await self._agenerate(**params)
+            return response
+
 @register_model
 class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
     """OpenAI Text Embedder."""
@@ -893,7 +1374,13 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         self._get_api_key()
 
     def _execute_model(self, **kwargs):
-        model_output = self.client.embeddings.create(            
+        model_output = self.client.embeddings.create(
+            **kwargs, **self.sampling_run_params,
+        )
+        return model_output
+
+    async def _aexecute_model(self, **kwargs):
+        model_output = await self.aclient.embeddings.create(
             **kwargs, **self.sampling_run_params,
         )
         return model_output
@@ -902,6 +1389,16 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         response = ModelResponse()
         response.set_response_type("text_embedding")
         model_output = self._execute_model(**kwargs)
+        embedding = model_output.data[0].embedding
+        metadata = dotdict({"usage": model_output.usage.to_dict()})
+        response.add(embedding)
+        response.set_metadata(metadata)
+        return response
+
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("text_embedding")
+        model_output = await self._aexecute_model(**kwargs)
         embedding = model_output.data[0].embedding
         metadata = dotdict({"usage": model_output.usage.to_dict()})
         response.add(embedding)
@@ -918,6 +1415,18 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
             Input text to embed.
         """
         response = self._generate(input=data, model=self.model_id)
+        return response
+
+    @model_retry
+    async def acall(
+        self,
+        data: Union[str, List[str]],
+    ):
+        """Async version of __call__. Args:
+        data:
+            Input text to embed.
+        """
+        response = await self._agenerate(input=data, model=self.model_id)
         return response
 
 @register_model
@@ -946,10 +1455,23 @@ class OpenAIModeration(_BaseOpenAI, ModerationModel):
         model_output = self.client.moderations.create(**kwargs)
         return model_output
 
+    async def _aexecute_model(self, **kwargs):
+        model_output = await self.aclient.moderations.create(**kwargs)
+        return model_output
+
     def _generate(self, **kwargs):
         response = ModelResponse()
         response.set_response_type("moderation")
         model_output = self._execute_model(**kwargs)
+        moderation = dotdict({"results": model_output.results[0].model_dump()})
+        moderation.safe = not moderation.results.flagged
+        response.add(moderation)
+        return response
+
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("moderation")
+        model_output = await self._aexecute_model(**kwargs)
         moderation = dotdict({"results": model_output.results[0].model_dump()})
         moderation.safe = not moderation.results.flagged
         response.add(moderation)
@@ -967,4 +1489,18 @@ class OpenAIModeration(_BaseOpenAI, ModerationModel):
             objects similar to other models.
         """
         response = self._generate(input=data, model=self.model_id)
+        return response
+
+    @model_retry
+    async def acall(
+        self,
+        data: Union[str, List[Dict[str, Any]]],
+    ) -> ModelResponse:
+        """Async version of __call__. Args:
+        data:
+            Input (or inputs) to classify. Can be a single string,
+            an array of strings, or an array of multi-modal input
+            objects similar to other models.
+        """
+        response = await self._agenerate(input=data, model=self.model_id)
         return response

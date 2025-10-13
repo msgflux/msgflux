@@ -1,0 +1,126 @@
+# mkdocs.yml
+site_name: msgflux
+site_author: Vilson Rodrigues
+site_description: >-
+  Engine for Build Multimodal AI Workflows
+copyright: Copyright &copy; 2025 Vilson Rodrigues
+
+theme: 
+  name: material
+  language: en  
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - header.autohide
+    - blog
+    - content.code.copy
+    - navigation.tracking
+  palette:
+    - scheme: default
+      primary: amber
+      toggle:
+        icon: material/weather-night
+        name: Night
+    - scheme: slate
+      primary: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Sunny
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+plugins:
+  - blog
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_if_no_docstring: true
+            separate_signature: true
+            docstring_style: google
+            show_root_heading: true
+            show_root_full_path: false
+            separate_signature: true
+
+markdown_extensions:  
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - admonition
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details  
+  - pymdownx.tasklist
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: 
+    - index.md
+  - Docs:
+    - QuickStart: quickstart.md
+    - Learn:
+      - ✧ Models:
+        - models/model.md
+        - models/model_gateway.md
+        - models/chat_completion.md
+        - models/moderation.md
+        - models/text_embedder.md        
+        - models/text_to_speech.md
+        - models/speech_to_text.md        
+        - models/text_to_image.md
+        - models/image_text_to_image.md
+      - ⛁ DataBases: 
+        - core/database.md
+        - Vector: databases/vector.md
+      - ⟳ Retrievers:
+        - retrievers/retriever.md
+      - ⎙ Parsers: parsers/parser.md
+      - ⟢ nn:
+        - module.md      
+    - ⇄ Dependency Management: dependency-management.md
+    - API Reference:
+        Models:
+          - api-reference/models/model.md
+          - api-reference/models/model_gateway.md
+          - Types:
+              - ChatCompletion: api-reference/models/types/chat_completion.md
+        DataBases:
+          - api-reference/databases/database.md
+          - Types:
+              - KV: api-reference/databases/types/kv.md
+              - Vector: api-reference/databases/types/vector.md
+        nn:
+          - api-reference/nn/functional.md
+          - api-reference/nn/modules/agent.md          
+    - Changelog: changelog.md
+  - Blog:
+    - blog/index.md
+
+extra_css:
+  - https://unpkg.com/mermaid@8.5.1/dist/mermaid.css
+  - stylesheets/extra.css  
+
+extra_javascript:
+  - https://unpkg.com/mermaid@8.5.1/dist/mermaid.min.js

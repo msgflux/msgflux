@@ -3,7 +3,7 @@ from .data.dbs import DB
 #from .data.parsers import Parser
 from .data.retrievers import Retriever
 from .dotdict import dotdict
-from .dsl.inline import inline
+from .dsl.inline import ainline, inline
 from .dsl.signature import Audio, Image, InputField, OutputField, Signature
 from .examples import Example
 from .envs import set_envs
@@ -19,6 +19,7 @@ from .tools.config import tool_config
 
 
 __all__ = [
+    "ainline",
     "Audio",
     "ChatBlock",
     "ChatML",

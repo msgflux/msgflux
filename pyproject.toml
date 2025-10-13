@@ -38,7 +38,7 @@ dependencies = [
     "opentelemetry-sdk>=1.35.0",
     "tenacity>=8.2.3",
     "typing-extensions>=4.14.1",
-    "uvloop>=0.21.0",
+    "uvloop>=0.21.0 ; sys_platform != 'win32'",
 ]
 
 [tool.hatch.version]
@@ -49,13 +49,22 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
+    "pytest-mock>=3.14.0",
     "ruff>=0.12.5",
+]
+doc = [
+    "markdown-include>=0.8.1",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.21",
+    "mkdocstrings>=0.30.1",
+    "mkdocstrings-python>=1.18.2",
+    "pymdown-extensions>=10.16.1",
 ]
 
 [project.urls]
-Homepage = "https://github.com/msgflux/msgspec-ext"
-Documentation = "https://github.com/msgflux/msgspec-ext"
-Repository = "https://github.com/msgflux/msgspec-ext"
+Homepage = "https://github.com/msgflux/msgflux"
+Documentation = "https://github.com/msgflux/msgflux"
+Repository = "https://github.com/msgflux/msgflux"
 
 [project.optional-dependencies]
 openai = [
@@ -71,6 +80,13 @@ xml = [
 plot = [
     "code2mermaid>=0.3.0",
     "mermaid-py>=0.8.0",
+]
+fal = [
+    "fal-client>=0.8.0",
+]
+google = [
+    "google-genai>=1.42.0",
+    "opentelemetry-instrumentation-google-genai>=0.3b0",
 ]
 
 [tool.ruff]

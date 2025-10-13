@@ -22,14 +22,14 @@ def get_mime_type(source: str) -> str: # noqa: C901
         return mime_type
     # Extension-based fallbacks (simplistic)
     ext = Path(source).suffix.lower()
+    if not ext:
+        ext = f".{source.lower()}"
     if ext in {".jpeg", ".jpg"}:
         return "image/jpeg"
     if ext == ".png":
         return "image/png"
     if ext == ".gif":
         return "image/gif"
-    if ext == ".webp":
-        return "image/webp"
     if ext == ".mp3":
         return "audio/mpeg"
     if ext == ".wav":

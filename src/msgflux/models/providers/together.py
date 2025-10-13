@@ -21,10 +21,14 @@ class _BaseTogether:
         return base_url
 
     def _get_api_key(self):
-        keys = getenv("TOGETHER_API_KEY")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("TOGETHER_API_KEY")
+        if not key:
+            raise ValueError(
+                "The Together API key is not available."
+                "Please set `TOGETHER_API_KEY`"
+            )
+        return key
+
 
 @register_model
 class TogetherChatCompletion(_BaseTogether, OpenAIChatCompletion):

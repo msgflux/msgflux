@@ -89,12 +89,47 @@ class Retriever(Module):
         response = self._prepare_response(retriever_response, message)
         return response
 
+    async def aforward(
+        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs
+    ) -> Union[str, Dict[str, str], Message]:
+        inputs = self._prepare_task(message, **kwargs)
+        retriever_response = await self._aexecute_retriever(**inputs)
+        response = self._prepare_response(retriever_response, message)
+        return response
+
     def _execute_retriever(
         self, queries: List[str], model_preference: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         queries_embed = None
         if self.model:
             queries_embed = self._execute_model(queries, model_preference)
+
+        retriever_execution_params = self._prepare_retriever_execution(
+            queries_embed or queries
+        )
+        retriever_response = self.retriever(**retriever_execution_params)
+
+        results = []
+
+        for query, query_results in zip(queries, retriever_response):
+            formatted_result = {
+                "results": [
+                    {"data": item.get("data", None), "score": item.get("score", None)}
+                    for item in query_results
+                ],
+            }
+            if isinstance(query, str):
+                formatted_result["query"] = query
+            results.append(formatted_result)
+
+        return results
+
+    async def _aexecute_retriever(
+        self, queries: List[str], model_preference: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        queries_embed = None
+        if self.model:
+            queries_embed = await self._aexecute_model(queries, model_preference)
 
         retriever_execution_params = self._prepare_retriever_execution(
             queries_embed or queries
@@ -143,6 +178,31 @@ class Retriever(Module):
             )
             distributed_params = list(map(prepare_execution, queries))
             responses = F.map_gather(self.model, kwargs_list=distributed_params)
+            raw_resposes = [
+                self._extract_raw_response(model_response)
+                for model_response in responses
+            ]
+            return raw_resposes
+
+        return queries_embed
+
+    async def _aexecute_model(
+        self, queries: List[str], model_preference: Optional[str] = None
+    ) -> List[List[float]]:
+        if "bached" in self.model.model_type or len(queries) == 1:
+            model_execution_params = self._prepare_model_execution(
+                queries, model_preference
+            )
+            model_response = await self.model.acall(**model_execution_params)
+            queries_embed = self._extract_raw_response(model_response)
+            if not isinstance(queries_embed, list):
+                queries_embed = [queries_embed]
+        else:
+            prepare_execution = partial(
+                self._prepare_model_execution, model_preference=model_preference
+            )
+            distributed_params = list(map(prepare_execution, queries))
+            responses = await F.amap_gather(self.model.acall, kwargs_list=distributed_params)
             raw_resposes = [
                 self._extract_raw_response(model_response)
                 for model_response in responses

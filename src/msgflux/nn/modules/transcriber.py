@@ -84,11 +84,26 @@ class Transcriber(Module):
         response = self._process_model_response(model_response, message)
         return response
 
+    async def aforward(
+        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
+    ) -> Union[str, Dict[str, str], Message, ModelStreamResponse]:
+        inputs = self._prepare_task(message, **kwargs)
+        model_response = await self._aexecute_model(**inputs)
+        response = self._process_model_response(model_response, message)
+        return response
+
     def _execute_model(
         self, data: Union[str, bytes], model_preference: Optional[str] = None
     ) -> Union[ModelResponse, ModelStreamResponse]:
         model_execution_params = self._prepare_model_execution(data, model_preference)
         model_response = self.model(**model_execution_params)
+        return model_response
+
+    async def _aexecute_model(
+        self, data: Union[str, bytes], model_preference: Optional[str] = None
+    ) -> Union[ModelResponse, ModelStreamResponse]:
+        model_execution_params = self._prepare_model_execution(data, model_preference)
+        model_response = await self.model.acall(**model_execution_params)
         return model_response
 
     def _prepare_model_execution(

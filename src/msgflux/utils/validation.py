@@ -16,6 +16,7 @@ def is_builtin_type(obj: Any):
 
 def is_base64(string: str):
     try:
-        return base64.b64encode(base64.b64decode(string)) == string
+        base64.b64decode(string.encode('ascii'))
+        return True
     except Exception:
         return False

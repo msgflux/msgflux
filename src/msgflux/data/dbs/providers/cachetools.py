@@ -1,7 +1,10 @@
 from typing import Any, Dict, List, Optional, Union
 
 import msgspec
-from cachetools import TTLCache
+try:
+    from cachetools import TTLCache
+except ImportError:
+    TTLCache = None
 
 from msgflux.data.dbs.base import BaseDB, BaseKV
 from msgflux.data.dbs.registry import register_db
@@ -30,6 +33,11 @@ class CacheToolsKVDB(BaseKV, BaseDB, KVDB):
         hash_key:
             Whether to hash the keys before storing them in the cache.
         """
+        if TTLCache is None:
+            raise ImportError(
+                "`cachetools` client is not available. Install with "
+                "`pip install cachetools`"
+            )        
         self.hash_key = hash_key
         self.maxsize = maxsize
         self.ttl = ttl

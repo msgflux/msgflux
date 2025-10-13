@@ -1,6 +1,6 @@
 from typing import Literal
 
-from msgflux._private.response import BaseResponse, StreamResponse
+from msgflux._private.response import BaseStreamResponse, BaseResponse
 
 
 class ModelResponse(BaseResponse):
@@ -23,7 +23,7 @@ class ModelResponse(BaseResponse):
         "text_reranked",
     ]
 
-class ModelStreamResponse(StreamResponse):
+class ModelStreamResponse(BaseStreamResponse):
     response_type: Literal[
         "audio_generation", "reasoning_text_generation", "text_generation", "tool_call"
     ]

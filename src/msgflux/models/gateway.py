@@ -260,6 +260,55 @@ class ModelGateway:
             [failure[2] for failure in failures], failures, message=error_message
         )
 
+    async def _aexecute_model(
+        self, model_preference: Optional[str] = None, **kwargs: Any
+    ) -> Any:
+        """Async version of _execute_model. Attempts to execute the call on the
+        configured models, respecting time constraints and failure limits.
+        """
+        if not self.models:
+            raise ModelRouterError([], [], message="No model configured on gateway")
+
+        available_models = [
+            model
+            for model in self.models
+            if not self._is_time_restricted(model.model_id)
+        ]
+
+        if not available_models:
+            raise ModelRouterError(
+                [], [], message="No model available due to time constraints"
+            )
+
+        if model_preference:
+            preferred_model = next(
+                (m for m in available_models if m.model_id == model_preference), None
+            )
+            if preferred_model:
+                available_models = [preferred_model] + [
+                    m for m in available_models if m != preferred_model
+                ]
+
+        failures = []
+
+        for model in available_models:
+            try:
+                response = await model.acall(**kwargs)
+                return response
+            except Exception as e:
+                logger.debug(
+                    f"""Model `{model.model_id}` ({model.provider})
+                    failed to execute: {e}""",
+                    exc_info=False,
+                )
+                failures.append((model.model_id, model.provider, e))
+
+        error_message = f"All {len(available_models)} available models failed"
+        logger.error(error_message)
+        raise ModelRouterError(
+            [failure[2] for failure in failures], failures, message=error_message
+        )
+
     def __call__(
         self, *, model_preference: Optional[str] = None, **kwargs
     ) -> Union[ModelResponse, ModelStreamResponse]:
@@ -282,9 +331,27 @@ class ModelGateway:
         """
         return self._execute_model(model_preference=model_preference, **kwargs)
 
-    async def acall(self, *args, **kwargs):
-        """Async interface to `__call__`."""
-        return self.__call__(*args, **kwargs)
+    async def acall(
+        self, *, model_preference: Optional[str] = None, **kwargs
+    ) -> Union[ModelResponse, ModelStreamResponse]:
+        """Async version of __call__. Executes the call on the gateway.
+
+        Args:
+            model_preference:
+                The ID of the model that should be tried first.
+                If None, starts from the last model used or the first one.
+            kwargs:
+                Arguments to pass to the acall method of the selected model.
+
+        Returns:
+            The response of the first model that executes successfully.
+
+        Raises:
+            ModelRouterError:
+                If all models fail consecutively up to the `max_retries`
+                limit, or if no models are available/functional.
+        """
+        return await self._aexecute_model(model_preference=model_preference, **kwargs)
 
     def serialize(self) -> Dict[str, Any]:
         """Serializes the gateway state including time constraints as strings."""

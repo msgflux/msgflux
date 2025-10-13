@@ -27,10 +27,8 @@ class _BaseVLLM:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        keys = getenv("VLLM_API_KEY", "vllm")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("VLLM_API_KEY", "vllm")
+        return key
 
 @register_model
 class VLLMChatCompletion(_BaseVLLM, OpenAIChatCompletion):
@@ -86,6 +84,15 @@ class VLLMTextClassifier(_BaseVLLM, HTTPXModelClient, TextClassifierModel):
         response.add(results)
         return response
 
+    async def _agenerate(self, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("text_classification")
+        model_output = await self._aexecute(**kwargs)
+        data = model_output["data"]
+        results = [item["label"] for item in data]
+        response.add(results)
+        return response
+
     @model_retry
     def __call__(self, data: Union[str, List[str]]) -> ModelResponse:
         """Args:
@@ -95,4 +102,15 @@ class VLLMTextClassifier(_BaseVLLM, HTTPXModelClient, TextClassifierModel):
         if isinstance(data, str):
             data = [data]
         response = self._generate(input=data)
+        return response
+
+    @model_retry
+    async def acall(self, data: Union[str, List[str]]) -> ModelResponse:
+        """Async version of __call__. Args:
+        data:
+            Input text to classify.
+        """
+        if isinstance(data, str):
+            data = [data]
+        response = await self._agenerate(input=data)
         return response

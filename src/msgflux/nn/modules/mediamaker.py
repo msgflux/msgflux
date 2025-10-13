@@ -107,6 +107,12 @@ class MediaMaker(Module):
         response = self._process_model_response(model_response, message)
         return response
 
+    async def aforward(self, message: Union[str, Message], **kwargs) -> Union[str, Message]:
+        inputs = self._prepare_task(message, **kwargs)
+        model_response = await self._aexecute_model(**inputs)
+        response = self._process_model_response(model_response, message)
+        return response
+
     def _execute_model(
         self,
         prompt: str,
@@ -117,9 +123,24 @@ class MediaMaker(Module):
         model_execution_params = self._prepare_model_execution(
             prompt, image, mask, model_preference
         )
-        if self.guardrail is not None:
-            self._execute_guardrail(model_execution_params)
+        if self.input_guardrail is not None:
+            self._execute_input_guardrail(model_execution_params)
         model_response = self.model(**model_execution_params)
+        return model_response
+
+    async def _aexecute_model(
+        self,
+        prompt: str,
+        image: Optional[str] = None,
+        mask: Optional[str] = None,
+        model_preference: Optional[str] = None,
+    ) -> ModelResponse:
+        model_execution_params = self._prepare_model_execution(
+            prompt, image, mask, model_preference
+        )
+        if self.input_guardrail is not None:
+            await self._aexecute_input_guardrail(model_execution_params)
+        model_response = await self.model.acall(**model_execution_params)
         return model_response
 
     def _prepare_model_execution(

@@ -18,10 +18,12 @@ class _BaseGroq:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        keys = getenv("GROQ_API_KEY")
-        self._api_key = [key.strip() for key in keys.split(",")]
-        if not self._api_key:
-            raise ValueError("No valid API keys found")
+        key = getenv("GROQ_API_KEY")
+        if not key:
+            raise ValueError(
+                "The Grok API key is not available. Please set `GROQ_API_KEY`"
+            )
+        return key
 
 @register_model
 class GroqChatCompletion(_BaseGroq, OpenAIChatCompletion):
