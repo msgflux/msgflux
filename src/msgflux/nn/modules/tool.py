@@ -185,6 +185,7 @@ class ToolLibrary(Module):
         name: str,
         tools: List[Callable],
         special_tools: Optional[List[str]] = None,
+        mcp_servers: Optional[List[Dict[str, Any]]] = None,
     ):
         """Args:
         name:
@@ -193,17 +194,27 @@ class ToolLibrary(Module):
             A list of callables.
         special_tools:
             Autonomy tools for the model.
+        mcp_servers:
+            List of MCP server configurations. Each config should contain:
+            - name: Namespace for tools from this server
+            - transport: "stdio" or "http"
+            - For stdio: command, args, cwd, env
+            - For http: base_url, headers
+            - Optional: include_tools, exclude_tools, tool_config
         """
         super().__init__()
         self.set_name(f"{name}_tool_library")
         self.library = ModuleDict()
         self.register_buffer("special_library", [])
         self.register_buffer("tool_configs", {})
+        self.register_buffer("mcp_clients", {})
         for tool in tools:
             self.add(tool)
         if special_tools:
             for special_tool in special_tools:
                 self.special_add(special_tool)
+        if mcp_servers:
+            self._initialize_mcp_clients(mcp_servers)
 
     def add(self, tool: Union[str, Callable]):
         if isinstance(tool, str):
@@ -236,16 +247,107 @@ class ToolLibrary(Module):
         self.library.clear()
         self.special_library.clear()
 
+    def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
+        """Initialize MCP clients from server configurations."""
+        try:
+            from msgflux.protocols.mcp import (
+                MCPClient,
+                filter_tools,
+                convert_mcp_schema_to_tool_schema,
+            )
+        except ImportError as e:
+            raise ImportError(
+                f"Failed to import MCP modules: {e}. "
+                "Make sure the mcp protocol is properly installed."
+            )
+
+        from msgflux.nn import functional as F
+
+        for server_config in mcp_servers:
+            namespace = server_config.get("name")
+            if not namespace:
+                raise ValueError("MCP server config must include 'name' field")
+
+            transport_type = server_config.get("transport", "stdio")
+
+            # Create client based on transport type
+            if transport_type == "stdio":
+                client = MCPClient.from_stdio(
+                    command=server_config.get("command"),
+                    args=server_config.get("args"),
+                    cwd=server_config.get("cwd"),
+                    env=server_config.get("env"),
+                    timeout=server_config.get("timeout", 30.0)
+                )
+            elif transport_type == "http":
+                client = MCPClient.from_http(
+                    base_url=server_config.get("base_url"),
+                    timeout=server_config.get("timeout", 30.0),
+                    headers=server_config.get("headers")
+                )
+            else:
+                raise ValueError(
+                    f"Unknown transport type: {transport_type}. "
+                    "Supported types: 'stdio', 'http'"
+                )
+
+            # Connect and list tools synchronously using executor
+            F.wait_for(client.connect)
+            all_tools = F.wait_for(client.list_tools, use_cache=False)
+
+            # Apply filters
+            include_tools = server_config.get("include_tools")
+            exclude_tools = server_config.get("exclude_tools")
+            filtered_tools = filter_tools(all_tools, include_tools, exclude_tools)
+
+            # Store client and tools
+            tool_configs = server_config.get("tool_config", {})
+            self.mcp_clients[namespace] = {
+                "client": client,
+                "tools": filtered_tools,
+                "tool_config": tool_configs
+            }
+
     def get_tools(self) -> Iterator[Dict[str, ToolBase]]:
         return self.library.items()
 
     def get_tool_names(self) -> List[str]:
+        """Get names of all local tools."""
         return list(self.library.keys())
 
+    def get_mcp_tool_names(self) -> List[str]:
+        """Get names of all MCP tools (with namespace)."""
+        tool_names = []
+        for namespace, mcp_data in self.mcp_clients.items():
+            for tool in mcp_data["tools"]:
+                tool_names.append(f"{namespace}__{tool.name}")
+        return tool_names
+
+    def get_all_tool_names(self) -> List[str]:
+        """Get names of all tools (local + MCP)."""
+        return self.get_tool_names() + self.get_mcp_tool_names()
+
     def get_tool_json_schemas(self) -> List[Dict[str, Any]]:
-        """Returns a list of JSON schemas from functions."""
-        # TODO: support to especial and mcp tool schemas
-        return [self.library[tool_name].get_json_schema() for tool_name in self.library]
+        """Returns a list of JSON schemas from local and MCP tools."""
+        schemas = []
+
+        # Local tools
+        for tool_name in self.library:
+            schemas.append(self.library[tool_name].get_json_schema())
+
+        # MCP tools
+        if self.mcp_clients:
+            try:
+                from msgflux.protocols.mcp import convert_mcp_schema_to_tool_schema
+            except ImportError:
+                return schemas
+
+            for namespace, mcp_data in self.mcp_clients.items():
+                for mcp_tool in mcp_data["tools"]:
+                    schema = convert_mcp_schema_to_tool_schema(mcp_tool, namespace)
+                    schemas.append(schema)
+
+        return schemas
 
     @instrument_tool_library_call
     def forward(  # noqa: C901
@@ -283,6 +385,67 @@ class ToolLibrary(Module):
         return_directly = True if tool_callings else False
 
         for tool_id, tool_name, tool_params in tool_callings:
+            # Check if it's an MCP tool (has namespace prefix)
+            if "__" in tool_name:
+                namespace, mcp_tool_name = tool_name.split("__", 1)
+
+                if namespace in self.mcp_clients:
+                    # Execute MCP tool
+                    mcp_data = self.mcp_clients[namespace]
+                    client = mcp_data["client"]
+                    tool_config = mcp_data["tool_config"].get(mcp_tool_name, {})
+
+                    # Apply inject_vars if configured
+                    inject_vars = tool_config.get("inject_vars", False)
+                    if inject_vars:
+                        if isinstance(inject_vars, list):
+                            for key in inject_vars:
+                                if key in vars:
+                                    tool_params[key] = vars[key]
+                        elif inject_vars is True:
+                            tool_params["vars"] = vars
+
+                    # Check return_direct config
+                    if not tool_config.get("return_direct", False):
+                        return_directly = False
+
+                    # Call MCP tool
+                    try:
+                        from msgflux.protocols.mcp import extract_tool_result_text
+                        result = F.wait_for(client.call_tool, mcp_tool_name, tool_params)
+
+                        if result.isError:
+                            error_text = extract_tool_result_text(result)
+                            tool_calls.append(
+                                ToolCall(
+                                    id=tool_id,
+                                    name=tool_name,
+                                    parameters=tool_params,
+                                    error=error_text
+                                )
+                            )
+                        else:
+                            result_text = extract_tool_result_text(result)
+                            tool_calls.append(
+                                ToolCall(
+                                    id=tool_id,
+                                    name=tool_name,
+                                    parameters=tool_params,
+                                    result=result_text
+                                )
+                            )
+                    except Exception as e:
+                        tool_calls.append(
+                            ToolCall(
+                                id=tool_id,
+                                name=tool_name,
+                                parameters=tool_params,
+                                error=f"MCP tool execution error: {str(e)}"
+                            )
+                        )
+                    continue
+
+            # Local tool execution
             if tool_name not in self.library:
                 tool_calls.append(
                     ToolCall(
@@ -405,6 +568,67 @@ class ToolLibrary(Module):
         return_directly = True if tool_callings else False
 
         for tool_id, tool_name, tool_params in tool_callings:
+            # Check if it's an MCP tool (has namespace prefix)
+            if "__" in tool_name:
+                namespace, mcp_tool_name = tool_name.split("__", 1)
+
+                if namespace in self.mcp_clients:
+                    # Execute MCP tool
+                    mcp_data = self.mcp_clients[namespace]
+                    client = mcp_data["client"]
+                    tool_config = mcp_data["tool_config"].get(mcp_tool_name, {})
+
+                    # Apply inject_vars if configured
+                    inject_vars = tool_config.get("inject_vars", False)
+                    if inject_vars:
+                        if isinstance(inject_vars, list):
+                            for key in inject_vars:
+                                if key in vars:
+                                    tool_params[key] = vars[key]
+                        elif inject_vars is True:
+                            tool_params["vars"] = vars
+
+                    # Check return_direct config
+                    if not tool_config.get("return_direct", False):
+                        return_directly = False
+
+                    # Call MCP tool asynchronously
+                    try:
+                        from msgflux.protocols.mcp import extract_tool_result_text
+                        result = await client.call_tool(mcp_tool_name, tool_params)
+
+                        if result.isError:
+                            error_text = extract_tool_result_text(result)
+                            tool_calls.append(
+                                ToolCall(
+                                    id=tool_id,
+                                    name=tool_name,
+                                    parameters=tool_params,
+                                    error=error_text
+                                )
+                            )
+                        else:
+                            result_text = extract_tool_result_text(result)
+                            tool_calls.append(
+                                ToolCall(
+                                    id=tool_id,
+                                    name=tool_name,
+                                    parameters=tool_params,
+                                    result=result_text
+                                )
+                            )
+                    except Exception as e:
+                        tool_calls.append(
+                            ToolCall(
+                                id=tool_id,
+                                name=tool_name,
+                                parameters=tool_params,
+                                error=f"MCP tool execution error: {str(e)}"
+                            )
+                        )
+                    continue
+
+            # Local tool execution
             if tool_name not in self.library:
                 tool_calls.append(
                     ToolCall(

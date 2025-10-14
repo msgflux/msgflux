@@ -3,6 +3,11 @@ from typing import Any, Mapping, Type
 from msgflux.data.parsers.base import BaseParser
 from msgflux.data.parsers.registry import parser_registry
 from msgflux.data.parsers.types import (
+    CsvParser,
+    DocxParser,
+    EmailParser,
+    HtmlParser,
+    MarkdownParser,
     PdfParser,
     PptxParser,
     XlsxParser,
@@ -20,7 +25,7 @@ class Parser:
         return list(parser_registry.keys())
 
     @classmethod
-    def _get_parser_class(cls, parser_type: str, provider: str) -> Type[BaseDB]:
+    def _get_parser_class(cls, parser_type: str, provider: str) -> Type[BaseParser]:
         if parser_type not in parser_registry:
             raise ValueError(f"Parser type `{parser_type}` is not supported")
         if provider not in parser_registry[parser_type]:
@@ -54,7 +59,7 @@ class Parser:
         Returns:
             An instance of the appropriate parser class with restored state.
         """
-        parser_cls = cls._get_parser_class(retriever_type, provider)
+        parser_cls = cls._get_parser_class(parser_type, provider)
         # Create instance without calling __init__
         instance = object.__new__(parser_cls)
         # Restore the instance state
@@ -72,3 +77,23 @@ class Parser:
     @classmethod
     def xlsx(cls, provider: str, **kwargs) -> XlsxParser:
         return cls._create_parser("xlsx", provider, **kwargs)
+
+    @classmethod
+    def docx(cls, provider: str, **kwargs) -> DocxParser:
+        return cls._create_parser("docx", provider, **kwargs)
+
+    @classmethod
+    def csv(cls, provider: str, **kwargs) -> CsvParser:
+        return cls._create_parser("csv", provider, **kwargs)
+
+    @classmethod
+    def html(cls, provider: str, **kwargs) -> HtmlParser:
+        return cls._create_parser("html", provider, **kwargs)
+
+    @classmethod
+    def markdown(cls, provider: str, **kwargs) -> MarkdownParser:
+        return cls._create_parser("markdown", provider, **kwargs)
+
+    @classmethod
+    def email(cls, provider: str, **kwargs) -> EmailParser:
+        return cls._create_parser("email", provider, **kwargs)

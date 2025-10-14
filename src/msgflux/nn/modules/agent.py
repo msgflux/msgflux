@@ -78,6 +78,7 @@ class Agent(Module):
         response_mode: Optional[str] = "plain_response",
         tools: Optional[List[Callable]] = None,
         tool_choice: Optional[str] = None,
+        mcp_servers: Optional[List[Mapping[str, Any]]] = None,
         vars: Optional[str] = None,
         response_template: Optional[str] = None,
         fixed_messages: Optional[List[Mapping[str, Any]]] = None,
@@ -161,6 +162,23 @@ class Agent(Module):
                     Call one or more functions. tool_choice: "required"
                 3. Forced Function:
                     Call exactly one specific function. E.g. "add".
+        mcp_servers:
+            List of MCP (Model Context Protocol) server configurations.
+            Each config should contain:
+            - name: Namespace for tools from this server
+            - transport: "stdio" or "http"
+            - For stdio: command, args, cwd, env
+            - For http: base_url, headers
+            - Optional: include_tools, exclude_tools, tool_config
+            !!! example
+                mcp_servers=[{
+                    "name": "fs",
+                    "transport": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+                    "include_tools": ["read_file", "write_file"],
+                    "tool_config": {"read_file": {"inject_vars": ["context"]}}
+                }]
         response_template:
             A Jinja template to format response.
         fixed_messages:
@@ -243,7 +261,7 @@ class Agent(Module):
         self._set_task_inputs(task_inputs)
         self._set_vars(vars)
         self._set_tool_choice(tool_choice)
-        self._set_tools(tools)
+        self._set_tools(tools, mcp_servers)
         self._set_verbose(verbose)
         self._set_image_detail(image_detail)
 
@@ -1102,8 +1120,16 @@ class Agent(Module):
                 f"`prefilling` requires a string or Nonegiven `{type(prefilling)}`"
             )
 
-    def _set_tools(self, tools: Optional[List[Callable]] = None):
-        self.tool_library = ToolLibrary(self.get_module_name(), tools or [])
+    def _set_tools(
+        self,
+        tools: Optional[List[Callable]] = None,
+        mcp_servers: Optional[List[Mapping[str, Any]]] = None
+    ):
+        self.tool_library = ToolLibrary(
+            self.get_module_name(),
+            tools or [],
+            mcp_servers=mcp_servers
+        )
 
     def _set_fixed_messages(
         self, fixed_messages: Optional[List[Mapping[str, Any]]] = None
