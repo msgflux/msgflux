@@ -23,7 +23,7 @@ class Spans:
         self,
         name: str,
         attributes: Optional[Dict[str, Any]] = None,
-        kind: str = SpanKind.INTERNAL,
+        kind: Optional[str] = SpanKind.INTERNAL,
     ):
         """Generic context manager to create and manage a span."""
         with self.tracer.start_as_current_span(name, kind=kind) as span:
@@ -80,7 +80,7 @@ class Spans:
         self,
         name: str,
         attributes: Optional[Dict[str, Any]] = None,
-        kind: str = SpanKind.INTERNAL,
+        kind: Optional[str] = SpanKind.INTERNAL,
     ):
         """Async generic context manager to create and manage a span."""
         with self.tracer.start_as_current_span(name, kind=kind) as span:

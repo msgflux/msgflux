@@ -2,17 +2,20 @@
 
 import asyncio
 import json
-import subprocess
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 try:
     import httpx
-    HTTPX_AVAILABLE = True
 except ImportError:
-    HTTPX_AVAILABLE = False
+    httpx = None
 
-from .exceptions import MCPConnectionError, MCPError, MCPTimeoutError
+from msgflux.protocols.mcp.exceptions import (
+    MCPConnectionError, MCPError, MCPTimeoutError
+)
+
+if TYPE_CHECKING:
+    from msgflux.protocols.mcp.auth.base import BaseAuth
 
 
 class BaseTransport(ABC):
@@ -44,7 +47,7 @@ class HTTPTransport(BaseTransport):
 
     Uses Server-Sent Events for server-initiated messages.
     Requires httpx to be installed.
-    Supports connection pooling for improved performance.
+    Supports connection pooling and authentication.
     """
 
     def __init__(
@@ -52,12 +55,22 @@ class HTTPTransport(BaseTransport):
         base_url: str,
         timeout: float = 30.0,
         headers: Optional[Dict[str, str]] = None,
-        pool_limits: Optional[Dict[str, int]] = None
+        pool_limits: Optional[Dict[str, int]] = None,
+        auth: Optional["BaseAuth"] = None
     ):
-        if not HTTPX_AVAILABLE:
+        """Initialize HTTP transport.
+
+        Args:
+            base_url: Base URL of the MCP server.
+            timeout: Request timeout in seconds.
+            headers: Additional headers to include in requests.
+            pool_limits: Connection pool configuration.
+            auth: Authentication provider (optional).
+        """
+        if httpx is None:
             raise ImportError(
                 "httpx is required for HTTP transport. "
-                "Install it with: pip install msgflux[httpx]"
+                "Install it with: `pip install msgflux[httpx]`"
             )
 
         self.base_url = base_url.rstrip("/")
@@ -67,6 +80,7 @@ class HTTPTransport(BaseTransport):
             "max_connections": 100,
             "max_keepalive_connections": 20
         }
+        self.auth = auth
         self._http_client: Optional[httpx.AsyncClient] = None
         self._request_id_counter = 0
 
@@ -98,8 +112,29 @@ class HTTPTransport(BaseTransport):
             await self._http_client.aclose()
             self._http_client = None
 
+    async def _get_headers(self) -> Dict[str, str]:
+        """Get headers with authentication applied.
+
+        Returns:
+            Headers with auth credentials if auth provider is configured.
+        """
+        headers = {"Content-Type": "application/json"}
+        headers.update(self.headers)
+
+        # Apply authentication if configured
+        if self.auth:
+            # Refresh token if needed
+            await self.auth.refresh_if_needed()
+            # Apply auth headers
+            headers = self.auth.apply_auth(headers)
+
+        return headers
+
     async def send_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Send HTTP POST request with JSON-RPC."""
+        """Send HTTP POST request with JSON-RPC.
+
+        Automatically applies authentication and refreshes tokens if needed.
+        """
         if not self._http_client:
             raise MCPConnectionError("Transport not connected")
 
@@ -113,10 +148,11 @@ class HTTPTransport(BaseTransport):
             request_data["params"] = params
 
         try:
+            headers = await self._get_headers()
             response = await self._http_client.post(
                 f"{self.base_url}/",
                 json=request_data,
-                headers={"Content-Type": "application/json"}
+                headers=headers
             )
             response.raise_for_status()
             return response.json()
@@ -126,7 +162,10 @@ class HTTPTransport(BaseTransport):
             raise MCPError(f"HTTP error {e.response.status_code}: {e.response.text}")
 
     async def send_notification(self, method: str, params: Optional[Dict[str, Any]] = None):
-        """Send HTTP notification (fire-and-forget)."""
+        """Send HTTP notification (fire-and-forget).
+
+        Automatically applies authentication.
+        """
         if not self._http_client:
             raise MCPConnectionError("Transport not connected")
 
@@ -139,10 +178,11 @@ class HTTPTransport(BaseTransport):
             notification_data["params"] = params
 
         try:
+            headers = await self._get_headers()
             await self._http_client.post(
                 f"{self.base_url}/",
                 json=notification_data,
-                headers={"Content-Type": "application/json"}
+                headers=headers
             )
         except Exception:
             # Notifications are fire-and-forget, log but don't raise

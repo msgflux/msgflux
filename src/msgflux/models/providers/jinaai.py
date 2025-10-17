@@ -1,6 +1,7 @@
 from os import getenv
 from typing import List, Optional, Union
 
+from msgflux.models.cache import ResponseCache, generate_cache_key
 from msgflux.models.httpx import HTTPXModelClient
 from msgflux.models.registry import register_model
 from msgflux.models.response import ModelResponse
@@ -40,29 +41,68 @@ class JinaAITextReranker(_BaseJinaAI, HTTPXModelClient, TextRerankerModel):
 
     endpoint = "/rerank"
 
-    def __init__(self, model_id: str, base_url: Optional[str] = None):
+    def __init__(
+        self,
+        model_id: str,
+        base_url: Optional[str] = None,
+        enable_cache: Optional[bool] = False,
+        cache_size: Optional[int] = 128,
+    ):
         """Args:
         model_id:
             Model ID in provider.
         base_url:
             URL to model provider.
+        enable_cache:
+            If True, enables response caching to avoid redundant API calls.
+        cache_size:
+            Maximum number of responses to cache (default: 128).
         """
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
+        self.enable_cache = enable_cache
+        self.cache_size = cache_size
+        self._response_cache = ResponseCache(maxsize=cache_size) if enable_cache else None
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_reranked")
         model_output = self._execute(**kwargs)
         response.add(model_output["results"])
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_reranked")
         model_output = await self._aexecute(**kwargs)
         response.add(model_output["results"])
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry
@@ -100,6 +140,8 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
         model_id: str,
         dimensions: Optional[int] = None,
         base_url: Optional[str] = None,
+        enable_cache: Optional[bool] = False,
+        cache_size: Optional[int] = 128,
     ):
         """Args:
         model_id:
@@ -108,15 +150,29 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
             The number of dimensions the resulting output embeddings should have.
         base_url:
             URL to model provider.
+        enable_cache:
+            If True, enables response caching to avoid redundant API calls.
+        cache_size:
+            Maximum number of responses to cache (default: 128).
         """
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {"dimensions": dimensions}
+        self.enable_cache = enable_cache
+        self.cache_size = cache_size
+        self._response_cache = ResponseCache(maxsize=cache_size) if enable_cache else None
         self._initialize()
         self._get_api_key()
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_embedding")
         model_output = self._execute(**kwargs)
@@ -125,9 +181,22 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
         if len(embedding) == 1:  # Compatibility
             embedding = embedding[0]
         response.add(embedding)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_embedding")
         model_output = await self._aexecute(**kwargs)
@@ -136,6 +205,12 @@ class JinaAITextEmbedder(TextEmbedderModel, HTTPXModelClient, _BaseJinaAI):
         if len(embedding) == 1:  # Compatibility
             embedding = embedding[0]
         response.add(embedding)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry
@@ -176,6 +251,13 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
     batch_support = True
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("image_embedding")
         model_output = self._execute(**kwargs)
@@ -184,9 +266,22 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
         if len(embedding) == 1:  # Compatibility
             embedding = embedding[0]
         response.add(embedding)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("image_embedding")
         model_output = await self._aexecute(**kwargs)
@@ -195,6 +290,12 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
         if len(embedding) == 1:  # Compatibility
             embedding = embedding[0]
         response.add(embedding)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry
@@ -234,15 +335,32 @@ class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
     endpoint: str = "/classify"
     batch_support = True
 
-    def __init__(self, model_id, labels: List[str], base_url: Optional[str] = None):
+    def __init__(
+        self,
+        model_id,
+        labels: List[str],
+        base_url: Optional[str] = None,
+        enable_cache: Optional[bool] = False,
+        cache_size: Optional[int] = 128,
+    ):
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {"labels": labels}
+        self.enable_cache = enable_cache
+        self.cache_size = cache_size
+        self._response_cache = ResponseCache(maxsize=cache_size) if enable_cache else None
         self._initialize()
         self._get_api_key()
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_classification")
         model_output = self._execute(**kwargs)
@@ -251,9 +369,22 @@ class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
         if len(pred) == 1:  # Compatibility
             pred = pred[0]
         response.add(pred)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_classification")
         model_output = await self._aexecute(**kwargs)
@@ -262,6 +393,12 @@ class JinaAITextClassifier(TextClassifierModel, HTTPXModelClient, _BaseJinaAI):
         if len(pred) == 1:  # Compatibility
             pred = pred[0]
         response.add(pred)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry
@@ -299,6 +436,13 @@ class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
     """JinaAI Image Classifier."""
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("image_classification")
         model_output = self._execute(**kwargs)
@@ -307,9 +451,22 @@ class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
         if len(pred) == 1:  # Compatibility
             pred = pred[0]
         response.add(pred)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("image_classification")
         model_output = await self._aexecute(**kwargs)
@@ -318,6 +475,12 @@ class JinaAIImageClassifier(JinaAITextClassifier, ImageClassifierModel):
         if len(pred) == 1:  # Compatibility
             pred = pred[0]
         response.add(pred)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry

@@ -26,13 +26,13 @@ from msgflux.dotdict import dotdict
 from msgflux.dsl.typed_parsers import typed_parser_registry
 from msgflux.exceptions import TypedParserNotFoundError
 from msgflux.models.base import BaseModel
+from msgflux.models.cache import ResponseCache, generate_cache_key
 from msgflux.models.registry import register_model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.types import (
     ChatCompletionModel,
     ImageTextToImageModel,
-    ImageTextToVideoModel,
     ModerationModel,
     SpeechToTextModel,
     TextEmbedderModel,
@@ -78,6 +78,10 @@ class _BaseOpenAI(BaseModel):
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
             ),
         )
+        # Initialize response cache
+        cache_size = getattr(self, "cache_size", 128)
+        enable_cache = getattr(self, "enable_cache", None)
+        self._response_cache = ResponseCache(maxsize=cache_size) if enable_cache else None
 
     def _get_base_url(self):
         return None
@@ -117,6 +121,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         base_url: Optional[str] = None,
         context_length: Optional[int] = None,
         reasoning_max_tokens: Optional[int] = None,
+        enable_cache: Optional[bool] = False,
+        cache_size: Optional[int] = 128,
     ):
         """Args:
         model_id:
@@ -177,11 +183,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             The maximum context length supported by the model.
         reasoning_max_tokens:
             Maximum number of tokens for reasoning/thinking.
+        enable_cache:
+            If True, enable response caching to avoid redundant API calls.
+        cache_size:
+            Maximum number of cached responses (default: 128).
         """
         super().__init__()
         self.model_id = model_id
         self.context_length = context_length
         self.reasoning_max_tokens = reasoning_max_tokens
+        self.enable_cache = enable_cache
+        self.cache_size = cache_size
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         sampling_run_params = {"max_tokens": max_tokens}
         if temperature:
@@ -324,6 +336,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         return response
 
     def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        typed_parser = kwargs.get("typed_parser")
+        generation_schema = kwargs.get("generation_schema")
+
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
+        # Pop after cache check to avoid modifying kwargs during cache key generation
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
 
@@ -332,9 +355,29 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             kwargs["response_format"] = response_format
 
         model_output = self._execute_model(**kwargs)
-        return self._process_model_output(model_output, typed_parser, generation_schema)
+        response = self._process_model_output(model_output, typed_parser, generation_schema)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            # Re-add popped values for cache key
+            cache_kwargs = {**kwargs, "typed_parser": typed_parser, "generation_schema": generation_schema}
+            cache_key = generate_cache_key(**cache_kwargs)
+            self._response_cache.set(cache_key, response)
+
+        return response
 
     async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        typed_parser = kwargs.get("typed_parser")
+        generation_schema = kwargs.get("generation_schema")
+
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
+        # Pop after cache check to avoid modifying kwargs during cache key generation
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
 
@@ -343,7 +386,16 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             kwargs["response_format"] = response_format
 
         model_output = await self._aexecute_model(**kwargs)
-        return self._process_model_output(model_output, typed_parser, generation_schema)
+        response = self._process_model_output(model_output, typed_parser, generation_schema)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            # Re-add popped values for cache key
+            cache_kwargs = {**kwargs, "typed_parser": typed_parser, "generation_schema": generation_schema}
+            cache_key = generate_cache_key(**cache_kwargs)
+            self._response_cache.set(cache_key, response)
+
+        return response
 
     async def _stream_generate(self, **kwargs: Mapping[str, Any]) -> ModelStreamResponse:
         aggregator = ToolCallAggregator()
@@ -1365,6 +1417,8 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         model_id: str,
         dimensions: Optional[int] = None,
         base_url: Optional[str] = None,
+        enable_cache: Optional[bool] = False,
+        cache_size: Optional[int] = 128,
     ):
         """Args:
         model_id:
@@ -1373,11 +1427,17 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
             The number of dimensions the resulting output embeddings should have.
         base_url:
             URL to model provider.
+        enable_cache:
+            If True, enables response caching to avoid redundant API calls.
+        cache_size:
+            Maximum number of responses to cache (default: 128).
         """
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {"dimensions": dimensions}
+        self.enable_cache = enable_cache
+        self.cache_size = cache_size
         self._initialize()
         self._get_api_key()
 
@@ -1394,6 +1454,13 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         return model_output
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_embedding")
         model_output = self._execute_model(**kwargs)
@@ -1401,9 +1468,22 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         metadata = dotdict({"usage": model_output.usage.to_dict()})
         response.add(embedding)
         response.set_metadata(metadata)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("text_embedding")
         model_output = await self._aexecute_model(**kwargs)
@@ -1411,6 +1491,12 @@ class OpenAITextEmbedder(_BaseOpenAI, TextEmbedderModel):
         metadata = dotdict({"usage": model_output.usage.to_dict()})
         response.add(embedding)
         response.set_metadata(metadata)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry
@@ -1446,16 +1532,24 @@ class OpenAIModeration(_BaseOpenAI, ModerationModel):
         *,
         model_id: str,
         base_url: Optional[str] = None,
+        enable_cache: Optional[bool] = False,
+        cache_size: Optional[int] = 128,
     ):
         """Args:
         model_id:
             Model ID in provider.
         base_url:
             URL to model provider.
+        enable_cache:
+            If True, enables response caching to avoid redundant API calls.
+        cache_size:
+            Maximum number of responses to cache (default: 128).
         """
         super().__init__()
         self.model_id = model_id
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
+        self.enable_cache = enable_cache
+        self.cache_size = cache_size
         self._initialize()
         self._get_api_key()
 
@@ -1468,21 +1562,47 @@ class OpenAIModeration(_BaseOpenAI, ModerationModel):
         return model_output
 
     def _generate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("moderation")
         model_output = self._execute_model(**kwargs)
         moderation = dotdict({"results": model_output.results[0].model_dump()})
         moderation.safe = not moderation.results.flagged
         response.add(moderation)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     async def _agenerate(self, **kwargs):
+        # Check cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            hit, cached_response = self._response_cache.get(cache_key)
+            if hit:
+                return cached_response
+
         response = ModelResponse()
         response.set_response_type("moderation")
         model_output = await self._aexecute_model(**kwargs)
         moderation = dotdict({"results": model_output.results[0].model_dump()})
         moderation.safe = not moderation.results.flagged
         response.add(moderation)
+
+        # Store in cache if enabled
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
         return response
 
     @model_retry

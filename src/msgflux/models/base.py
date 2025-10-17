@@ -6,7 +6,7 @@ from msgflux._private.client import BaseClient
 
 class BaseModel(BaseClient):
     msgflux_type = "model"
-    to_ignore = ["_api_key", "model", "processor", "client"]
+    to_ignore = ["_api_key", "model", "processor", "client", "_response_cache"]
 
     def instance_type(self) -> Mapping[str, str]:
         return {"model_type": self.model_type}

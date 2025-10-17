@@ -5,14 +5,20 @@ A lightweight implementation that supports multiple transports (stdio, HTTP/SSE)
 
 import asyncio
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
+from msgflux.protocols.mcp.exceptions import MCPConnectionError, MCPError
+from msgflux.protocols.mcp.loglevels import LogLevel
+from msgflux.protocols.mcp.transports import (
+    BaseTransport, HTTPTransport, StdioTransport
+)
+from msgflux.protocols.mcp.types import (
+    MCPContent, MCPPrompt, MCPResource, MCPTool, MCPToolResult
+)
 from msgflux.telemetry.span import instrument
 
-from .exceptions import MCPConnectionError, MCPError
-from .loglevels import LogLevel
-from .transports import BaseTransport, HTTPTransport, StdioTransport
-from .types import MCPContent, MCPPrompt, MCPResource, MCPTool, MCPToolResult
+if TYPE_CHECKING:
+    from msgflux.protocols.mcp.auth.base import BaseAuth
 
 
 class MCPClient:
@@ -109,6 +115,7 @@ class MCPClient:
         base_url: str,
         timeout: float = 30.0,
         headers: Optional[Dict[str, str]] = None,
+        auth: Optional["BaseAuth"] = None,
         client_info: Optional[Dict[str, Any]] = None,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -121,6 +128,7 @@ class MCPClient:
             base_url: Base URL of MCP server
             timeout: Request timeout in seconds
             headers: Additional HTTP headers
+            auth: Authentication provider (BearerTokenAuth, APIKeyAuth, etc.)
             client_info: Client identification
             max_retries: Maximum connection retry attempts
             retry_delay: Initial delay between retries
@@ -129,12 +137,24 @@ class MCPClient:
 
         Returns:
             MCPClient instance configured for HTTP
+
+        Example:
+            ```python
+            from msgflux.protocols.mcp import MCPClient, BearerTokenAuth
+
+            auth = BearerTokenAuth(token="your-jwt-token")
+            client = MCPClient.from_http(
+                base_url="https://api.example.com/mcp",
+                auth=auth
+            )
+            ```
         """
         transport = HTTPTransport(
             base_url=base_url,
             timeout=timeout,
             headers=headers,
-            pool_limits=pool_limits
+            pool_limits=pool_limits,
+            auth=auth
         )
         return cls(
             transport=transport,

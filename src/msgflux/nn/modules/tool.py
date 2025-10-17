@@ -4,12 +4,20 @@ from functools import partial
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Union, Tuple
 
 import msgspec
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from msgflux.dotdict import dotdict
+from msgflux.logger import logger
 from msgflux.nn import functional as F
 from msgflux.nn.modules.container import ModuleDict
 from msgflux.nn.modules.module import Module
-from msgflux.telemetry.span import ainstrument_tool_library_call, instrument_tool_library_call
+from msgflux.protocols.mcp import (
+    MCPClient, convert_mcp_schema_to_tool_schema, filter_tools
+)
+from msgflux.telemetry.span import (
+    ainstrument_tool_library_call, instrument_tool_library_call
+)
 from msgflux.utils.chat import generate_tool_json_schema
 from msgflux.utils.convert import convert_camel_to_snake_case
 from msgflux.utils.inspect import fn_has_parameters
@@ -249,20 +257,6 @@ class ToolLibrary(Module):
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
-        try:
-            from msgflux.protocols.mcp import (
-                MCPClient,
-                filter_tools,
-                convert_mcp_schema_to_tool_schema,
-            )
-        except ImportError as e:
-            raise ImportError(
-                f"Failed to import MCP modules: {e}. "
-                "Make sure the mcp protocol is properly installed."
-            )
-
-        from msgflux.nn import functional as F
-
         for server_config in mcp_servers:
             namespace = server_config.get("name")
             if not namespace:
@@ -337,11 +331,6 @@ class ToolLibrary(Module):
 
         # MCP tools
         if self.mcp_clients:
-            try:
-                from msgflux.protocols.mcp import convert_mcp_schema_to_tool_schema
-            except ImportError:
-                return schemas
-
             for namespace, mcp_data in self.mcp_clients.items():
                 for mcp_tool in mcp_data["tools"]:
                     schema = convert_mcp_schema_to_tool_schema(mcp_tool, namespace)
@@ -435,12 +424,37 @@ class ToolLibrary(Module):
                                 )
                             )
                     except Exception as e:
+                        error_msg = f"MCP tool execution error: {str(e)}"
+
+                        # Log error
+                        logger.error(
+                            "MCP tool execution failed",
+                            extra={
+                                "tool_id": tool_id,
+                                "tool_name": tool_name,
+                                "namespace": namespace,
+                                "mcp_tool_name": mcp_tool_name,
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                            },
+                            exc_info=True
+                        )
+
+                        # Record telemetry
+                        span = trace.get_current_span()
+                        if span.is_recording():
+                            span.record_exception(e)
+                            span.set_status(Status(StatusCode.ERROR, error_msg))
+                            span.set_attribute("mcp.tool.error", True)
+                            span.set_attribute("mcp.tool.namespace", namespace)
+                            span.set_attribute("mcp.tool.name", mcp_tool_name)
+
                         tool_calls.append(
                             ToolCall(
                                 id=tool_id,
                                 name=tool_name,
                                 parameters=tool_params,
-                                error=f"MCP tool execution error: {str(e)}"
+                                error=error_msg
                             )
                         )
                     continue
@@ -618,12 +632,37 @@ class ToolLibrary(Module):
                                 )
                             )
                     except Exception as e:
+                        error_msg = f"MCP tool execution error: {str(e)}"
+
+                        # Log error
+                        logger.error(
+                            "MCP tool execution failed",
+                            extra={
+                                "tool_id": tool_id,
+                                "tool_name": tool_name,
+                                "namespace": namespace,
+                                "mcp_tool_name": mcp_tool_name,
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                            },
+                            exc_info=True
+                        )
+
+                        # Record telemetry
+                        span = trace.get_current_span()
+                        if span.is_recording():
+                            span.record_exception(e)
+                            span.set_status(Status(StatusCode.ERROR, error_msg))
+                            span.set_attribute("mcp.tool.error", True)
+                            span.set_attribute("mcp.tool.namespace", namespace)
+                            span.set_attribute("mcp.tool.name", mcp_tool_name)
+
                         tool_calls.append(
                             ToolCall(
                                 id=tool_id,
                                 name=tool_name,
                                 parameters=tool_params,
-                                error=f"MCP tool execution error: {str(e)}"
+                                error=error_msg
                             )
                         )
                     continue

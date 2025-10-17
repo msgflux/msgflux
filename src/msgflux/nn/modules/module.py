@@ -552,6 +552,13 @@ class Module:
     def set_name(self, name: str):
         if isinstance(name, str):
             if name != "":
+                # Validate snake_case pattern
+                if not re.match(r"^[a-z][a-z0-9_]*$", name):
+                    raise ValueError(
+                        f"`name` must follow snake_case pattern (lowercase letters, "
+                        f"numbers, and underscores only, starting with a letter). "
+                        f"Got: '{name}'"
+                    )
                 self.register_buffer("name", name)
             else:
                 raise ValueError("`name` requires a string not empty")

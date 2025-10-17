@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from .types import MCPTool
+from msgflux.protocols.mcp.types import MCPTool
 
 
 def convert_mcp_schema_to_tool_schema(

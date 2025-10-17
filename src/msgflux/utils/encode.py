@@ -68,6 +68,7 @@ def encode_to_io_object(input_data: Union[bytes, str]) -> io.IOBase:
         f"Given: {type(input_data)}"
     )
 
+
 def encode_data_to_bytes(
     input_data: Union[bytes, str], *, filename: Optional[str] = "image.png"
 ) -> io.BytesIO:
