@@ -6,7 +6,7 @@ This module provides a Module wrapper around language models, enabling:
 - Consistent interface with other nn.Modules
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from msgflux.nn.modules.module import Module
 
@@ -43,17 +43,19 @@ class LM(Module):
 
         Args:
             model: A msgflux Model instance (e.g., from mf.Model.chat_completion())
+
+        Raises:
+            TypeError: If model is not a chat completion model
         """
         super().__init__()
-        self.model = model
 
-        # Set module name based on model (sanitize for snake_case)
-        if hasattr(model, 'model_name'):
-            # Convert model name to snake_case (replace hyphens and dots with underscores)
-            sanitized_name = model.model_name.replace("-", "_").replace(".", "_").replace("/", "_")
-            self.set_name(f"lm_{sanitized_name}")
-        else:
-            self.set_name("lm")
+        # Validate model type
+        if not hasattr(model, 'model_type') or model.model_type != "chat_completion":
+            raise TypeError(
+                f"`model` must be a `chat_completion` model, given `{type(model)}`"
+            )
+
+        self.model = model
 
     def forward(self, **kwargs) -> Any:
         """Forward call to underlying model.
@@ -76,38 +78,3 @@ class LM(Module):
             Model response
         """
         return await self.model.acall(**kwargs)
-
-    def _set_model(self, model):
-        """Update the wrapped model.
-
-        Args:
-            model: New model instance to wrap
-        """
-        self.model = model
-        if hasattr(model, 'model_name'):
-            # Convert model name to snake_case (replace hyphens and dots with underscores)
-            sanitized_name = model.model_name.replace("-", "_").replace(".", "_").replace("/", "_")
-            self.set_name(f"lm_{sanitized_name}")
-
-    @property
-    def model_name(self) -> Optional[str]:
-        """Get the name of the wrapped model.
-
-        Returns:
-            Model name if available, None otherwise
-        """
-        return getattr(self.model, 'model_name', None)
-
-    @property
-    def model_type(self) -> Optional[str]:
-        """Get the type of the wrapped model.
-
-        Returns:
-            Model type if available, None otherwise
-        """
-        return getattr(self.model, 'model_type', None)
-
-    def __repr__(self) -> str:
-        """String representation of LM."""
-        model_name = self.model_name or "unknown"
-        return f"LM(model={model_name})"

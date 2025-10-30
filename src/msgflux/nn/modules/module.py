@@ -769,45 +769,6 @@ class Module:
         self._set_task_multimodal_inputs(message_fields.get("task_multimodal_inputs"))
         self._set_model_preference(message_fields.get("model_preference"))
 
-    def _set_config(
-        self, config: Optional[Dict[str, Any]] = None
-    ):
-        """Set module configuration.
-
-        Args:
-            config: Dictionary with configuration options.
-                Valid keys: "verbose", "return_model_state", "tool_choice",
-                "stream", "image_detail", "include_date"
-
-        Raises:
-            TypeError: If config is not a dict or None
-            ValueError: If invalid keys are provided
-        """
-        # Define valid keys for base Module class
-        valid_keys = {
-            "verbose", "return_model_state", "tool_choice",
-            "stream", "image_detail", "include_date"
-        }
-
-        if config is None:
-            self.config = {}
-            return
-
-        if not isinstance(config, dict):
-            raise TypeError(
-                f"`config` must be a dict or None, given `{type(config)}`"
-            )
-
-        # Validate keys
-        invalid_keys = set(config.keys()) - valid_keys
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid config keys: {invalid_keys}. "
-                f"Valid keys are: {valid_keys}"
-            )
-
-        # Store config
-        self.config = config.copy()
 
     def _set_templates(
         self, templates: Optional[Dict[str, str]] = None

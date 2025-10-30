@@ -1173,11 +1173,7 @@ class Agent(Module):
         if isinstance(model, LM):
             self.lm = model
         else:
-            # Validate model type before wrapping
-            if model.model_type != "chat_completion":
-                raise TypeError(
-                    f"`model` need be a `chat completion` model, given `{type(model)}`"
-                )
+            # LM will validate model type
             self.lm = LM(model)
 
     @property
@@ -1279,6 +1275,61 @@ class Agent(Module):
                 "`task_messages` requires a string or None "
                 f"given `{type(task_messages)}`"
             )
+
+    def _set_config(self, config: Optional[Dict[str, Any]] = None):
+        """Set agent configuration.
+
+        Args:
+            config: Dictionary with configuration options.
+                Valid keys: "verbose", "return_model_state", "tool_choice",
+                "stream", "image_block_kwargs", "video_block_kwargs", "include_date"
+
+        Raises:
+            TypeError: If config is not a dict or None
+            ValueError: If invalid keys are provided
+        """
+        # Define valid keys for Agent
+        valid_keys = {
+            "verbose", "return_model_state", "tool_choice",
+            "stream", "image_block_kwargs", "video_block_kwargs", "include_date",
+            "execution"  # Added for execution settings
+        }
+
+        if config is None:
+            self.config = {}
+            return
+
+        if not isinstance(config, dict):
+            raise TypeError(
+                f"`config` must be a dict or None, given `{type(config)}`"
+            )
+
+        # Validate keys
+        invalid_keys = set(config.keys()) - valid_keys
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid config keys: {invalid_keys}. "
+                f"Valid keys are: {valid_keys}"
+            )
+
+        # Validate image_block_kwargs if present
+        if "image_block_kwargs" in config:
+            if not isinstance(config["image_block_kwargs"], dict):
+                raise TypeError(
+                    f"`image_block_kwargs` must be a dict, "
+                    f"given `{type(config['image_block_kwargs'])}`"
+                )
+
+        # Validate video_block_kwargs if present
+        if "video_block_kwargs" in config:
+            if not isinstance(config["video_block_kwargs"], dict):
+                raise TypeError(
+                    f"`video_block_kwargs` must be a dict, "
+                    f"given `{type(config['video_block_kwargs'])}`"
+                )
+
+        # Store config
+        self.config = config.copy()
 
     def _set_system_extra_message(self, system_extra_message: Optional[str] = None):
         if isinstance(system_extra_message, str) or system_extra_message is None:
