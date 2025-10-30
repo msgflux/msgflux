@@ -8,12 +8,13 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from msgflux.dotdict import dotdict
+from msgflux.envs import envs
 from msgflux.logger import logger
 from msgflux.nn import functional as F
 from msgflux.nn.modules.container import ModuleDict
 from msgflux.nn.modules.module import Module
 from msgflux.protocols.mcp import (
-    MCPClient, convert_mcp_schema_to_tool_schema, filter_tools
+    MCPClient, convert_mcp_schema_to_tool_schema, extract_tool_result_text, filter_tools
 )
 from msgflux.telemetry.span import (
     ainstrument_tool_execution,
@@ -67,9 +68,6 @@ class Tool(Module):
 
     def _call_impl(self, *args, **kwargs):
         """Override Module._call_impl to create tool execution spans instead of generic module spans."""
-        from opentelemetry import trace
-        from msgflux.envs import envs
-
         # Apply forward hooks
         if not (self._forward_hooks or self._forward_pre_hooks):
             result = self._call(*args, **kwargs)
@@ -95,9 +93,6 @@ class Tool(Module):
 
     def _call(self, *args, **kwargs):
         """Internal call method with tool-specific telemetry."""
-        from opentelemetry import trace
-        from msgflux.envs import envs
-
         # Early return if telemetry is disabled
         if not envs.telemetry_requires_trace:
             return self.forward(*args, **kwargs)
@@ -114,18 +109,14 @@ class Tool(Module):
                 # Capture result if enabled
                 if envs.telemetry_capture_tool_call_responses:
                     try:
-                        import msgspec
                         encoded_result = msgspec.json.encode(result)
                         span.set_attribute("tool.result", encoded_result)
                     except (TypeError, ValueError):
                         # If result can't be encoded, skip
                         pass
-
-                from opentelemetry.trace import Status, StatusCode
                 span.set_status(Status(StatusCode.OK))
                 return result
             except Exception as e:
-                from opentelemetry.trace import Status, StatusCode
                 span.record_exception(e)
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
@@ -157,9 +148,6 @@ class Tool(Module):
 
     async def _acall(self, *args, **kwargs):
         """Async internal call method with tool-specific telemetry."""
-        from opentelemetry import trace
-        from msgflux.envs import envs
-
         # Early return if telemetry is disabled
         if not envs.telemetry_requires_trace:
             return await self.aforward(*args, **kwargs)
@@ -176,18 +164,15 @@ class Tool(Module):
                 # Capture result if enabled
                 if envs.telemetry_capture_tool_call_responses:
                     try:
-                        import msgspec
                         encoded_result = msgspec.json.encode(result)
                         span.set_attribute("tool.result", encoded_result)
                     except (TypeError, ValueError):
                         # If result can't be encoded, skip
                         pass
 
-                from opentelemetry.trace import Status, StatusCode
                 span.set_status(Status(StatusCode.OK))
                 return result
             except Exception as e:
-                from opentelemetry.trace import Status, StatusCode
                 span.record_exception(e)
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
@@ -238,7 +223,7 @@ class MCPTool(Tool):
         self._mcp_tool_name = name
 
         # Set description from MCP tool info
-        if hasattr(mcp_tool_info, 'description'):
+        if hasattr(mcp_tool_info, "description"):
             self.set_description(mcp_tool_info.description)
 
         # Store config
@@ -258,8 +243,6 @@ class MCPTool(Tool):
         Note: This automatically wraps async MCP calls for sync usage.
         Telemetry is handled by Tool._call().
         """
-        from msgflux.protocols.mcp import extract_tool_result_text
-
         # Add MCP-specific telemetry attributes
         span = trace.get_current_span()
         if span.is_recording():
@@ -284,7 +267,6 @@ class MCPTool(Tool):
 
         Telemetry is handled by Tool._acall().
         """
-        from msgflux.protocols.mcp import extract_tool_result_text
 
         # Add MCP-specific telemetry attributes
         span = trace.get_current_span()
@@ -470,6 +452,7 @@ class ToolLibrary(Module):
             self._initialize_mcp_clients(mcp_servers)
 
     def add(self, tool: Union[str, Callable]):
+        """Add a local tool in library."""
         if isinstance(tool, str):
             if tool in self.special_library.keys():
                 raise ValueError(
@@ -483,7 +466,8 @@ class ToolLibrary(Module):
             if not isinstance(tool, Tool):
                 tool = _convert_module_to_nn_tool(tool)
 
-            self.tool_configs[tool.name] = tool.tool_config
+            # Store tool config (may be empty dict for local tools)
+            self.tool_configs[tool.name] = getattr(tool, 'tool_config', {})
 
             self.library.update({tool.name: tool})
 
@@ -530,45 +514,57 @@ class ToolLibrary(Module):
                     "Supported types: 'stdio', 'http'"
                 )
 
-            # Connect and list tools synchronously using executor
-            F.wait_for(client.connect)
-            all_tools = F.wait_for(client.list_tools, use_cache=False)
+            # Connect and list tools with error handling
+            try:
+                F.wait_for(client.connect)
+                all_tools = F.wait_for(client.list_tools, use_cache=False)
 
-            # Apply filters
-            include_tools = server_config.get("include_tools")
-            exclude_tools = server_config.get("exclude_tools")
-            filtered_tools = filter_tools(all_tools, include_tools, exclude_tools)
+                # Apply filters
+                include_tools = server_config.get("include_tools")
+                exclude_tools = server_config.get("exclude_tools")
+                filtered_tools = filter_tools(all_tools, include_tools, exclude_tools)
 
-            # Create MCPTool for each remote tool
-            tool_configs = server_config.get("tool_config", {})
-            for mcp_tool_info in filtered_tools:
-                tool_config = tool_configs.get(mcp_tool_info.name, {})
+                # Create MCPTool for each remote tool
+                tool_configs = server_config.get("tool_config", {})
+                for mcp_tool_info in filtered_tools:
+                    tool_config = tool_configs.get(mcp_tool_info.name, {})
 
-                # Create MCPTool instance
-                mcp_tool = MCPTool(
-                    name=mcp_tool_info.name,
-                    mcp_client=client,
-                    mcp_tool_info=mcp_tool_info,
-                    namespace=namespace,
-                    config=tool_config
+                    # Create MCPTool instance
+                    mcp_tool = MCPTool(
+                        name=mcp_tool_info.name,
+                        mcp_client=client,
+                        mcp_tool_info=mcp_tool_info,
+                        namespace=namespace,
+                        config=tool_config
+                    )
+
+                    # Add to library (will have name like "namespace__tool_name")
+                    self.library.update({mcp_tool.name: mcp_tool})
+                    self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
+
+                # Also store in mcp_clients for backward compatibility
+                self.mcp_clients[namespace] = {
+                    "client": client,
+                    "tools": filtered_tools,
+                    "tool_config": tool_configs
+                }
+
+                logger.info(
+                    f"Successfully connected to MCP server '{namespace}' "
+                    f"with {len(filtered_tools)} tools"
                 )
-
-                # Add to library (will have name like "namespace__tool_name")
-                self.library.update({mcp_tool.name: mcp_tool})
-                self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
-
-            # Also store in mcp_clients for backward compatibility
-            self.mcp_clients[namespace] = {
-                "client": client,
-                "tools": filtered_tools,
-                "tool_config": tool_configs
-            }
+            except Exception as e:
+                logger.error(
+                    f"Failed to initialize MCP server '{namespace}': {str(e)}",
+                    exc_info=True
+                )
+                # Continue with other servers instead of failing completely
 
     def get_tools(self) -> Iterator[Dict[str, Tool]]:
         return self.library.items()
 
     def get_tool_names(self) -> List[str]:
-        """Get names of all local tools."""
+        """Get names of all tools."""
         return list(self.library.keys())
 
     def get_mcp_tool_names(self) -> List[str]:
@@ -578,10 +574,6 @@ class ToolLibrary(Module):
             for tool in mcp_data["tools"]:
                 tool_names.append(f"{namespace}__{tool.name}")
         return tool_names
-
-    def get_all_tool_names(self) -> List[str]:
-        """Get names of all tools (local + MCP)."""
-        return self.get_tool_names() + self.get_mcp_tool_names()
 
     def get_tool_json_schemas(self) -> List[Dict[str, Any]]:
         """Returns a list of JSON schemas from local and MCP tools."""
@@ -607,10 +599,7 @@ class ToolLibrary(Module):
         model_state: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
-        """Executes tool calls with logic for `handoff`, `return_direct`.
-
-        REFACTORED: Now uses MCPTool for polymorphism and includes MCP tools
-        in scatter_gather for better parallelism!
+        """Executes tool calls with tool config logic.
 
         Args:
             tool_callings:
@@ -639,7 +628,6 @@ class ToolLibrary(Module):
         return_directly = True if tool_callings else False
 
         for tool_id, tool_name, tool_params in tool_callings:
-            # POLYMORPHISM: Get tool from library (works for Local and MCP!)
             if tool_name not in self.library:
                 tool_calls.append(
                     ToolCall(
@@ -652,11 +640,11 @@ class ToolLibrary(Module):
                 return_directly = False
                 continue
 
-            # Get tool (polymorphism works for Local and MCP!)
+            # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
 
-            # Handle inject_vars (works for both local and MCP tools)
+            # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
             if inject_vars:
                 if isinstance(inject_vars, list):
@@ -784,10 +772,7 @@ class ToolLibrary(Module):
                         return_directly = False
 
                     # Call MCP tool asynchronously with telemetry
-                    try:
-                        from msgflux.protocols.mcp import extract_tool_result_text
-                        from msgflux.envs import envs
-
+                    try:                        
                         # Create individual span for MCP tool execution
                         if envs.telemetry_requires_trace:
                             async with self._spans.atool_execution(tool_name, tool_params) as mcp_span:
@@ -802,7 +787,6 @@ class ToolLibrary(Module):
                                 if envs.telemetry_capture_tool_call_responses and not result.isError:
                                     result_text = extract_tool_result_text(result)
                                     try:
-                                        import msgspec
                                         encoded_result = msgspec.json.encode(result_text)
                                         mcp_span.set_attribute("tool.result", encoded_result)
                                     except (TypeError, ValueError):
@@ -879,11 +863,11 @@ class ToolLibrary(Module):
                 return_directly = False
                 continue
 
-            # Get tool (polymorphism works for Local and MCP!)
+            # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
 
-            # Handle inject_vars (works for both local and MCP tools)
+            # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
             if inject_vars:
                 if isinstance(inject_vars, list):

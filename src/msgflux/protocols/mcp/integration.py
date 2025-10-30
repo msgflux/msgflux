@@ -62,6 +62,10 @@ def filter_tools(
         - If both are set, include_tools takes priority
         - If neither is set, all tools are included
     """
+    # Handle None or empty tools list
+    if not tools:
+        return []
+
     if include_tools:
         # Only include specified tools
         return [tool for tool in tools if tool.name in include_tools]
