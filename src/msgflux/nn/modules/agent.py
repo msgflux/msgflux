@@ -19,6 +19,7 @@ from msgflux.message import Message
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import ChatCompletionModel
+from msgflux.nn.modules.lm import LM
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
@@ -120,14 +121,15 @@ class Agent(Module):
         config:
             Dictionary with configuration options.
             Valid keys: "verbose", "return_model_state", "tool_choice",
-            "stream", "image_detail", "include_date"
+            "stream", "image_block_kwargs", "video_block_kwargs", "include_date"
             !!! example
                 config={
                     "verbose": True,
                     "return_model_state": False,
                     "tool_choice": "auto",
                     "stream": False,
-                    "image_detail": "high",
+                    "image_block_kwargs": {"detail": "high"},
+                    "video_block_kwargs": {"format": "mp4"},
                     "include_date": False
                 }
 
@@ -136,7 +138,8 @@ class Agent(Module):
             - return_model_state: Return dict with model_state and response (bool)
             - tool_choice: Control tool selection ("auto", "required", or function name)
             - stream: Transmit response on-the-fly (bool)
-            - image_detail: Image processing detail level ("high" or "low")
+            - image_block_kwargs: Dict of kwargs to pass to ChatBlock.image (e.g., {"detail": "high"})
+            - video_block_kwargs: Dict of kwargs to pass to ChatBlock.video (e.g., {"format": "mp4"})
             - include_date: Include current date in system prompt (bool)
         templates:
             Dictionary mapping template types to Jinja template strings.
@@ -217,8 +220,8 @@ class Agent(Module):
             if typed_parser is not None:
                 raise ValueError("`typed_parser` is not `stream=True` compatible")
 
-        # Extract task_template from templates if provided
-        task_template = templates.get("task") if templates else None
+        # Initialize templates first so _set_signature can override if needed
+        self._set_templates(templates)
 
         if signature is not None:
             signature_params = dotdict(
@@ -238,7 +241,6 @@ class Agent(Module):
             self._set_expected_output(expected_output)
             self._set_instructions(instructions)
             self._set_system_message(system_message)
-            self._set_task_template(task_template)
 
         self.set_name(name)
         self.set_description(description)
@@ -247,7 +249,6 @@ class Agent(Module):
         self._set_fixed_messages(fixed_messages)
         self._set_guardrails(guardrails)
         self._set_message_fields(message_fields)
-        self._set_templates(templates)
         self._set_config(config)
         self._set_model(model)
         self._set_prefilling(prefilling)
@@ -306,7 +307,7 @@ class Agent(Module):
             self._execute_input_guardrail(model_execution_params)
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
-        model_response = self.model(**model_execution_params)
+        model_response = self.lm(**model_execution_params)
         return model_response
 
     async def _aexecute_model(
@@ -324,7 +325,7 @@ class Agent(Module):
             await self._aexecute_input_guardrail(model_execution_params)
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
-        model_response = await self.model.acall(**model_execution_params)
+        model_response = await self.lm.acall(**model_execution_params)
         return model_response
 
     @instrument_agent_prepare_model_execution
@@ -1008,13 +1009,13 @@ class Agent(Module):
                 mime_type = "image/jpeg"  # Fallback
             encoded_image = f"data:{mime_type};base64,{encoded_image}"
 
-        return ChatBlock.image(encoded_image, detail=self.config.get("image_detail"))
+        return ChatBlock.image(encoded_image, **self.config.get("image_block_kwargs", {}))
 
     def _format_video_input(self, video_source: str) -> Optional[Mapping[str, Any]]:
         """Formats the video input for the model."""
         # Check if it's a URL
         if video_source.startswith("http://") or video_source.startswith("https://"):
-            return ChatBlock.video(video_source)
+            return ChatBlock.video(video_source, **self.config.get("video_block_kwargs", {}))
 
         # Otherwise, encode as base64
         encoded_video = self._prepare_data_uri(video_source, force_encode=True)
@@ -1029,7 +1030,7 @@ class Agent(Module):
 
         video_data_uri = f"data:{mime_type};base64,{encoded_video}"
 
-        return ChatBlock.video(video_data_uri)
+        return ChatBlock.video(video_data_uri, **self.config.get("video_block_kwargs", {}))
 
     def _format_audio_input(self, audio_source: str) -> Optional[Mapping[str, Any]]:
         """Formats the audio input for the model."""
@@ -1160,13 +1161,42 @@ class Agent(Module):
                 f"given `{type(generation_schema)}`"
             )
 
-    def _set_model(self, model: Union[ChatCompletionModel, ModelGateway]):
-        if model.model_type == "chat_completion":
-            self.register_buffer("model", model)
+    def _set_model(self, model: Union[ChatCompletionModel, ModelGateway, LM]):
+        """Initialize language model wrapper.
+
+        Args:
+            model: Can be either:
+                - ChatCompletionModel/ModelGateway: Will be auto-wrapped in LM
+                - LM: Custom LM instance (for advanced usage with hooks)
+        """
+        # Auto-detect: if already LM, use directly; otherwise wrap it
+        if isinstance(model, LM):
+            self.lm = model
         else:
-            raise TypeError(
-                f"`model` need be a `chat completion` model, given `{type(model)}`"
-            )
+            # Validate model type before wrapping
+            if model.model_type != "chat_completion":
+                raise TypeError(
+                    f"`model` need be a `chat completion` model, given `{type(model)}`"
+                )
+            self.lm = LM(model)
+
+    @property
+    def model(self):
+        """Access underlying model for convenience.
+
+        Returns:
+            The wrapped model instance
+        """
+        return self.lm.model
+
+    @model.setter
+    def model(self, value: Union[ChatCompletionModel, ModelGateway, LM]):
+        """Update the agent's model.
+
+        Args:
+            value: New model (can be Model or LM)
+        """
+        self._set_model(value)
 
     def _set_system_message(self, system_message: Optional[str] = None):
         if isinstance(system_message, str) or system_message is None:
@@ -1376,11 +1406,11 @@ class Agent(Module):
             # typed_parser
             self._set_typed_parser(typed_parser)
 
-            # task template
+            # task template - add to templates dict, overriding if present
             task_template = SignatureFactory.get_task_template_from_signature(
                 inputs_info
             )
-            self._set_task_template(task_template)
+            self.templates["task"] = task_template
 
             # instructions
             self._set_instructions(instructions or signature_instructions)
