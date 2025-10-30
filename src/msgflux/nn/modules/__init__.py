@@ -8,7 +8,6 @@ from msgflux.nn.modules.retriever import Retriever
 from msgflux.nn.modules.speaker import Speaker
 from msgflux.nn.modules.tool import Tool, ToolLibrary
 
-# Backward compatibility alias
 ToolBase = Tool
 from msgflux.nn.modules.transcriber import Transcriber
 
@@ -24,7 +23,7 @@ __all__ = [
     "Sequential",
     "Speaker",
     "Tool",
-    "ToolBase",  # Backward compatibility
+    "ToolBase",
     "ToolLibrary",
     "Transcriber",
 ]

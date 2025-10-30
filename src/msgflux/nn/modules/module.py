@@ -370,7 +370,6 @@ class Module:
     call_super_init: bool = False
 
     def __init__(self, *args, **kwargs) -> None:
-        # Backward compatibility: no args used to be allowed when call_super_init=False
         if self.call_super_init is False and bool(kwargs):
             raise TypeError(
                 f"{type(self).__name__}.__init__() got an unexpected "
@@ -1465,7 +1464,6 @@ class Module:
         """
         # Check if aforward is implemented by comparing with the unimplemented version
         if type(self).aforward is _aforward_unimplemented:
-            # Fallback to executor for backward compatibility
             loop = asyncio.get_event_loop()
             executor = Executor.get_instance()
             return await loop.run_in_executor(executor, lambda: self.__call__(*args, **kwargs))

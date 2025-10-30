@@ -492,15 +492,14 @@ class ToolLibrary(Module):
                     self.library.update({mcp_tool.name: mcp_tool})
                     self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
 
-                # Also store in mcp_clients for backward compatibility
                 self.mcp_clients[namespace] = {
                     "client": client,
                     "tools": filtered_tools,
                     "tool_config": tool_configs
                 }
 
-                logger.info(
-                    f"Successfully connected to MCP server '{namespace}' "
+                logger.debug(
+                    f"Successfully connected to MCP server `{namespace}` "
                     f"with {len(filtered_tools)} tools"
                 )
             except Exception as e:
