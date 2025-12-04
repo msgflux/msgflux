@@ -37,7 +37,8 @@ from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.parameter import Parameter
-from msgflux.telemetry.span import spans
+from msgflux.telemetry import Spans
+from msgflux.telemetry.attributes import MsgTraceAttributes
 from msgflux.utils.convert import convert_camel_snake_to_title
 from msgflux.utils.encode import encode_data_to_base64
 from msgflux.utils.hooks import RemovableHandle
@@ -401,7 +402,6 @@ class Module:
         super().__setattr__("_load_state_dict_pre_hooks", OrderedDict())
         super().__setattr__("_load_state_dict_post_hooks", OrderedDict())
         super().__setattr__("_modules", {})
-        super().__setattr__("_spans", spans)
 
         if self.call_super_init:
             super().__init__(*args, **kwargs)
@@ -1382,8 +1382,10 @@ class Module:
         Returns:
             Module output from forward method
         """
-        with self._spans.init_module(module_name_title, module_type) as span:
+        with Spans.init_module(module_name_title, module_type) as span:
             try:
+                MsgTraceAttributes.set_module_name(module_name_title)
+                MsgTraceAttributes.set_module_type(module_type)
                 result = self.forward(*args, **kwargs)
                 span.set_status(Status(StatusCode.OK))
                 return result
@@ -1406,10 +1408,12 @@ class Module:
         current_span = trace.get_current_span()
         # If there is no active span or it is not recording, this is the root module
         if current_span is None or not current_span.is_recording():
-            with self._spans.init_flow(
+            with Spans.init_flow(
                 module_name_title, module_type, encoded_state_dict
             ) as span:
                 try:
+                    MsgTraceAttributes.set_module_name(module_name_title)
+                    MsgTraceAttributes.set_module_type(module_type)
                     module_output = self.forward(*args, **kwargs)
                     span.set_status(Status(StatusCode.OK))
                     return module_output
@@ -1458,8 +1462,10 @@ class Module:
         Returns:
             Module output from aforward method
         """
-        async with self._spans.ainit_module(module_name_title, module_type) as span:
+        async with Spans.ainit_module(module_name_title, module_type) as span:
             try:
+                MsgTraceAttributes.set_module_name(module_name_title)
+                MsgTraceAttributes.set_module_type(module_type)
                 result = await self.aforward(*args, **kwargs)
                 span.set_status(Status(StatusCode.OK))
                 return result
@@ -1482,10 +1488,12 @@ class Module:
         current_span = trace.get_current_span()
         # If there is no active span or it is not recording, this is the root module
         if current_span is None or not current_span.is_recording():
-            async with self._spans.ainit_flow(
+            async with Spans.ainit_flow(
                 module_name_title, module_type, encoded_state_dict
             ) as span:
                 try:
+                    MsgTraceAttributes.set_module_name(module_name_title)
+                    MsgTraceAttributes.set_module_type(module_type)
                     module_output = await self.aforward(*args, **kwargs)
                     span.set_status(Status(StatusCode.OK))
                     return module_output
