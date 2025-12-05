@@ -25,7 +25,7 @@ def set_envs(**kwargs: Any):
 
 class EnvironmentVariables(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".msgflux_env",
+        env_file=".env",
         env_prefix="msgflux_",
     )
 
@@ -58,26 +58,15 @@ class EnvironmentVariables(BaseSettings):
     # If set to True, msgflux will trace function calls. Useful for debugging
     trace_function: bool = False
 
-    # if set, msgflux will track executions in nn modules using OTel
-    telemetry_requires_trace: bool = False
-
-    # OTLP endpoint
-    telemetry_otlp_endpoint: str = "http://localhost:8000/api/v1/traces/export"
-
-    # Span exporter type
-    telemetry_span_exporter_type: Literal["console", "otlp"] = "console"
-
-    # Capture state dict
-    telemetry_capture_state_dict: bool = False
-
-    # Capture platform details
-    telemetry_capture_platform: bool = False
-
+    # Telemetry configuration (msgflux-specific)
     # Capture tool call responses
     telemetry_capture_tool_call_responses: bool = True
 
     # Capture agent state, system prompt and tool schemas
     telemetry_capture_agent_prepare_model_execution: bool = False
+
+    # Capture state dict in module execution
+    telemetry_capture_state_dict: bool = False
 
     # State checkpoint, if True, if a module output is in message, skip process
     # if False, reprocess
@@ -106,3 +95,30 @@ class EnvironmentVariables(BaseSettings):
 
 
 envs = EnvironmentVariables()
+
+
+def configure_msgtrace_env(
+    enabled: bool = True,
+    otlp_endpoint: str = "http://localhost:8000/api/v1/traces/export",
+    exporter: Literal["console", "otlp"] = "otlp",
+    service_name: str = "msgflux",
+    capture_platform: bool = True,
+):
+    """Configure msgtrace-sdk environment variables.
+
+    This is a convenience function for users to quickly configure
+    msgtrace-sdk. Users can also configure msgtrace-sdk directly
+    using MSGTRACE_* environment variables.
+
+    Args:
+        enabled: Enable telemetry tracking
+        otlp_endpoint: OTLP endpoint URL
+        exporter: Exporter type ("otlp" or "console")
+        service_name: Service name for telemetry
+        capture_platform: Capture platform details (CPU, OS, Python version)
+    """
+    os.environ["MSGTRACE_TELEMETRY_ENABLED"] = "true" if enabled else "false"
+    os.environ["MSGTRACE_OTLP_ENDPOINT"] = otlp_endpoint
+    os.environ["MSGTRACE_EXPORTER"] = exporter
+    os.environ["MSGTRACE_SERVICE_NAME"] = service_name
+    os.environ["MSGTRACE_CAPTURE_PLATFORM"] = "true" if capture_platform else "false"

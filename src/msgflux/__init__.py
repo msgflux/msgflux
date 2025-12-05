@@ -10,7 +10,7 @@ from .envs import set_envs
 from .message import Message
 from .models.gateway import ModelGateway
 from .models import Model
-from .telemetry.span import instrument
+from .telemetry import Spans
 from .utils.chat import ChatBlock, ChatML
 from .utils.console import cprint
 from .utils.inspect import get_fn_name
@@ -39,7 +39,7 @@ __all__ = [
     "dotdict",
     "get_fn_name",
     "inline",
-    "instrument",
+    "Spans",
     "load",
     "msgspec_dumps",
     "response_cache",

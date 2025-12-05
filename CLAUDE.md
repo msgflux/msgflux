@@ -25,14 +25,16 @@ The project is being split into specialized libraries:
 - **Integration**: Already listed in pyproject.toml dependencies
 - **Note**: Not to be confused with msgtrace - this is msgspec-ext
 
-#### 2. msgtrace (In Development)
-- **Purpose**: Isolated observability service
+#### 2. msgtrace-sdk (Integrated ✓)
+- **Purpose**: OpenTelemetry-based tracing SDK for AI applications
+- **Status**: Integrated as core dependency (v1.0.0)
 - **Components**:
-  - Backend for trace collection
-  - Frontend dashboard
-  - SDK (msgtrace-sdk) with similar interface to msgflux's current implementation
-- **Status**: Currently being developed separately
-- **Migration Plan**: Will replace built-in OpenTelemetry observability in msgflux
+  - Spans API for creating traces (flows, modules, operations)
+  - MsgTraceAttributes for GenAI semantic conventions
+  - Zero-overhead when disabled
+  - Thread-safe with async support
+- **Integration**: msgflux now uses msgtrace-sdk for all telemetry
+- **Note**: msgflux keeps specialized decorators for tools and agents on top of msgtrace-sdk base
 
 #### 3. txml (Rust Implementation)
 - **Purpose**: XML parsing
@@ -45,13 +47,16 @@ The project is being split into specialized libraries:
 - **Language**: Rust
 - **Status**: New Rust-based implementation
 
-### Current Built-in Features (To Be Migrated)
+### Telemetry Architecture (Updated ✓)
 
-The msgflux codebase still includes:
-- OpenTelemetry-based observability (src/msgflux/telemetry/)
-  - Will be replaced by msgtrace integration
-- Python XML parsers (src/msgflux/dsl/typed_parsers/)
-  - Will be replaced by txml references
+msgflux now uses msgtrace-sdk for telemetry:
+- **Core**: msgtrace-sdk provides Spans API and MsgTraceAttributes
+- **Extensions**: msgflux adds specialized decorators for tools and agents
+- **Configuration**: Environment variables mapped from MSGFLUX_* to MSGTRACE_*
+- **Features Preserved**:
+  - Tool execution tracking (local/remote, protocols like MCP)
+  - Agent telemetry (name, ID, responses)
+  - Detailed argument and response capture
 
 ## Project Structure
 

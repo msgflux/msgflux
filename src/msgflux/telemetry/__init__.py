@@ -1,7 +1,22 @@
 """
-msgflux.telemetry - Built-in OpenTelemetry instrumentation.
+msgflux.telemetry - msgtrace-sdk integration.
+
+Provides telemetry capabilities through msgtrace-sdk with msgflux-specific
+decorators for detailed tool and agent instrumentation.
 """
 
-from msgflux.telemetry.span import spans
+from msgtrace.sdk import Spans
+from msgflux.telemetry.span import (
+    aset_agent_attributes,
+    aset_tool_attributes,
+    set_agent_attributes,
+    set_tool_attributes,
+)
 
-__all__ = ["spans"]
+__all__ = [
+    "Spans",
+    "set_tool_attributes",
+    "aset_tool_attributes",
+    "set_agent_attributes",
+    "aset_agent_attributes",
+]

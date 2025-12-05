@@ -15,7 +15,7 @@ from msgflux.protocols.mcp.transports import (
 from msgflux.protocols.mcp.types import (
     MCPContent, MCPPrompt, MCPResource, MCPTool, MCPToolResult
 )
-from msgflux.telemetry.span import instrument
+from msgflux.telemetry import Spans
 
 if TYPE_CHECKING:
     from msgflux.protocols.mcp.auth.base import BaseAuth
@@ -173,7 +173,7 @@ class MCPClient:
         """Async context manager exit."""
         await self.disconnect()
 
-    @instrument(name="mcp.client.connect", attributes={"mcp.operation": "connect"})
+    @Spans.ainstrument(attributes={"mcp.operation": "connect"})
     async def connect(self):
         """Establish connection to MCP server with retry logic."""
         await self._connect_with_retry()
@@ -263,7 +263,7 @@ class MCPClient:
         await self.transport.send_notification("notifications/initialized")
 
     # Resource Methods
-    @instrument(name="mcp.client.list_resources", attributes={"mcp.operation": "list_resources"})
+    @Spans.ainstrument(attributes={"mcp.operation": "list_resources"})
     async def list_resources(self, use_cache: bool = True) -> List[MCPResource]:
         """List available resources."""
         await self._ensure_connected()
@@ -289,7 +289,7 @@ class MCPClient:
         self._resources_cache = resources
         return resources
 
-    @instrument(name="mcp.client.read_resource", attributes={"mcp.operation": "read_resource"})
+    @Spans.ainstrument(attributes={"mcp.operation": "read_resource"})
     async def read_resource(self, uri: str) -> List[MCPContent]:
         """Read content from a resource."""
         await self._ensure_connected()
@@ -310,7 +310,7 @@ class MCPClient:
         return contents
 
     # Tool Methods
-    @instrument(name="mcp.client.list_tools", attributes={"mcp.operation": "list_tools"})
+    @Spans.ainstrument(attributes={"mcp.operation": "list_tools"})
     async def list_tools(self, use_cache: bool = True) -> List[MCPTool]:
         """List available tools."""
         await self._ensure_connected()
@@ -334,7 +334,7 @@ class MCPClient:
         self._tools_cache = tools
         return tools
 
-    @instrument(name="mcp.client.call_tool", attributes={"mcp.operation": "call_tool"})
+    @Spans.ainstrument(attributes={"mcp.operation": "call_tool"})
     async def call_tool(
         self,
         name: str,
