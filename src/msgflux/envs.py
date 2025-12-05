@@ -1,5 +1,5 @@
 import os
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from msgspec_ext import BaseSettings, SettingsConfigDict
 
@@ -98,11 +98,11 @@ envs = EnvironmentVariables()
 
 
 def configure_msgtrace_env(
-    enabled: bool = True,
-    otlp_endpoint: str = "http://localhost:8000/api/v1/traces/export",
-    exporter: Literal["console", "otlp"] = "otlp",
-    service_name: str = "msgflux",
-    capture_platform: bool = True,
+    enabled: Optional[bool] = True,
+    otlp_endpoint: Optional[str] = "http://localhost:8000/api/v1/traces/export",
+    exporter: Optional[Literal["console", "otlp"]] = "otlp",
+    service_name: Optional[str] = "msgflux",
+    capture_platform: Optional[bool] = True,
 ):
     """Configure msgtrace-sdk environment variables.
 
