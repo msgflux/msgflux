@@ -105,15 +105,15 @@ git push origin feat/add-retry-logic
 
 ```bash
 gh pr create \
-  --title "feat: Add retry logic to tracer initialization" \
+  --title "feat: Add support for streaming responses in Model" \
   --body "## Summary
-- Adds exponential backoff retry for OTLP connection
-- Configurable via MSGTRACE_MAX_RETRIES env var
-- Defaults to 3 retries with 1s, 2s, 4s delays
+- Adds streaming support for real-time text generation
+- Configurable via stream parameter in Model.generate()
+- Compatible with all model providers (OpenAI, Anthropic, Google)
 
 ## Testing
-- Added unit tests for retry logic
-- Tested with flaky network conditions
+- Added unit tests for streaming logic
+- Tested with all supported providers
 
 ## Checklist
 - [x] Tests pass locally
@@ -378,11 +378,11 @@ gh pr create --title "🚨 HOTFIX: Critical bug" --label "urgent"
 ## 📦 Local Development Install
 
 ```bash
-# Install SDK in editable mode
+# Install in editable mode
 uv pip install -e .
 
 # Test import
-python -c "from msgflux.sdk import Spans, MsgTraceAttributes; print('✓ OK')"
+python -c "from msgflux import Model, Message, Spans; print('✓ OK')"
 ```
 
 ## 🐛 Debugging CI Failures

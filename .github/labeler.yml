@@ -1,15 +1,18 @@
 # Configuration for labeler action
 # https://github.com/actions/labeler
 
-# SDK code
-sdk:
+# Models
+models:
   - changed-files:
-    - any-glob-to-any-file: 'src/msgtrace/sdk/**'
+    - any-glob-to-any-file: 'src/msgflux/models/**'
 
-# Core/Parser code
+# Core
 core:
   - changed-files:
-    - any-glob-to-any-file: 'src/msgtrace/core/**'
+    - any-glob-to-any-file:
+      - 'src/msgflux/generation/**'
+      - 'src/msgflux/dsl/**'
+      - 'src/msgflux/nn/**'
 
 # Tests
 tests:
