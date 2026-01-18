@@ -1,0 +1,181 @@
+site_name: msgFlux
+site_url: https://msgflux.com/
+site_author: Vilson Rodrigues
+site_description: >-
+  An engine for build dynamic AI systems.
+copyright: |
+    &copy; 2025 <a href="https://github.com/msgflux"  target="_blank" rel="noopener">msgFlux</a>
+
+repo_url: https://github.com/msgflux/msgflux
+repo_name: msgflux/msgflux
+
+theme:
+  name: material
+  language: en
+  logo: assets/logo-msgFlux-S.png
+  favicon: assets/favicon.png
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    # Navigation
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.footer
+    - navigation.tracking
+    - navigation.path
+    # Header
+    - header.autohide
+    # Blog
+    - blog
+    # Table of Contents
+    - toc.follow
+    - toc.integrate
+    # Search
+    - search.suggest
+    - search.highlight
+    - search.share
+    # Content
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    # Announce
+    - announce.dismiss
+  palette:
+    - scheme: default
+      primary: white
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+plugins:
+  - blog
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_if_no_docstring: true
+            separate_signature: true
+            docstring_style: google
+            show_root_heading: true
+            show_root_full_path: false
+            separate_signature: true
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - admonition
+  - def_list
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+nav:
+  - Home: 
+    - index.md
+  - Learn:
+    - QuickStart: quickstart.md
+    - Docs:
+      - ✧ Models:
+        - learn/models/model.md
+        - learn/models/model_gateway.md
+        - learn/models/chat_completion.md
+        - learn/models/moderation.md
+        - learn/models/text_embedder.md        
+        - learn/models/text_to_speech.md
+        - learn/models/speech_to_text.md        
+        - learn/models/text_to_image.md
+        - learn/models/image_text_to_image.md
+      #- ⛁ DataBases: 
+      #  - core/database.md
+      #  - Vector: databases/vector.md
+      - ⟳ Retrievers:
+        - learn/retrievers/retriever.md
+      - ⎙ Parsers: learn/parsers/parser.md
+      - ⟢ nn:
+        - learn/module.md      
+    #- ⇄ Dependency Management: dependency-management.md
+  - API Reference:
+    - Models:
+        - api-reference/models/model.md
+        - api-reference/models/model_gateway.md
+        - Types:
+            - ChatCompletion: api-reference/models/types/chat_completion.md
+    - DataBases:
+        - api-reference/databases/database.md
+        - Types:
+            - KV: api-reference/databases/types/kv.md
+            - Vector: api-reference/databases/types/vector.md
+    - nn:
+        - api-reference/nn/functional.md
+        - api-reference/nn/modules/agent.md       
+  - Changelog: changelog.md
+  - Dependency Management: dependency-management.md
+  - Blog:
+    - blog/index.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/msgflux/msgflux
+      name: msgFlux on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/msgflux/
+      name: msgFlux on PyPI
+    #- icon: fontawesome/brands/discord
+    #  link: https://discord.gg/msgflux
+    #  name: Join our Discord
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/msgflux
+      name: Follow us on Twitter
+
+extra_css:
+  - https://unpkg.com/mermaid@8.5.1/dist/mermaid.css
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@8.5.1/dist/mermaid.min.js

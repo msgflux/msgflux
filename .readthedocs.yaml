@@ -1,0 +1,29 @@
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+version: 2
+
+# Build documentation with MkDocs
+mkdocs:
+  configuration: mkdocs.yml
+
+# Build in additional formats
+formats:
+  - pdf
+  - epub
+
+# Set build environment
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.11"
+  jobs:
+    post_install:
+      - pip install uv
+      - uv sync --group doc
+
+# Install the package
+python:
+  install:
+    - method: pip
+      path: .

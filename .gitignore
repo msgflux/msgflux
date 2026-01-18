@@ -1,0 +1,94 @@
+# Python virtual environments
+env/
+venv/
+.venv
+.envrc
+env3*/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python compiled files
+*.py[cod]
+*.pyo
+*.pyd
+__pycache__/
+*.so
+
+# Python package management
+Pipfile
+Pipfile.lock
+poetry.lock
+# Keep uv.lock for reproducibility
+# uv.lock should be committed
+
+# Build artifacts
+*.egg-info/
+/build/
+/dist/
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Caching
+.cache/
+/.ruff_cache/
+.mypy_cache/
+.pytype/
+.dmypy.json
+dmypy.json
+
+# Documentation
+/site/
+/site.zip
+_build/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+/sandbox/
+/worktrees/
+.auto-format
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Claude Code local config
+.claude/
+
+# Temporary ignore (to be committed later)
+/next_version/
+/docs/
+/examples/
+
+# CI/CD (managed separately, only gh-pages needed)
+.github/workflows/ci.yml
+.github/workflows/publish.yml
+.github/dependabot.yml
+
+# Tests (work in progress)
+/tests/
+
+# MCP documentation (to be moved to /docs later)
+src/msgflux/protocols/mcp/*.md
+
+# New providers (to be added in dedicated branches)
+src/msgflux/models/providers/anthropic.py
+src/msgflux/models/providers/google.py
+src/msgflux/models/providers/mistral.py

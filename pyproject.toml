@@ -1,0 +1,183 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[project]
+name = "msgflux"
+dynamic = ["version"]
+description = "Messages and Dynamic AI Systems in Python powered by pretrained models"
+readme = "README.md"
+authors = [
+    { name = "Vilson Rodrigues", email = "vilson@msgflux.com" }
+]
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Information Analysis"
+]
+dependencies = [
+    "jinja2>=3.1.6",
+    "msgspec-ext>=0.5.0",
+    "msgtrace-sdk>=1.1.0",
+    "tenacity>=8.2.3",
+    "typing-extensions>=4.14.1",
+    "uvloop>=0.21.0 ; sys_platform != 'win32'",
+]
+
+[tool.hatch.version]
+path = "src/msgflux/version.py"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.12.5",
+    "twine>=6.0.1",
+    "packaging>=24.0",
+]
+doc = [
+    "markdown-include>=0.8.1",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.21",
+    "mkdocstrings>=0.30.1",
+    "mkdocstrings-python>=1.18.2",
+    "pymdown-extensions>=10.16.1",
+]
+msgtrace = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.0.0",
+    "websockets>=12.0",
+    "aiohttp>=3.9.0",
+    "python-multipart>=0.0.6",
+    "httpx>=0.28.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/msgflux/msgflux"
+Documentation = "https://github.com/msgflux/msgflux"
+Repository = "https://github.com/msgflux/msgflux"
+
+[project.optional-dependencies]
+openai = [
+    "openai>=1.97.1",
+    "opentelemetry-instrumentation-openai>=0.43.1",
+]
+httpx = [
+    "httpx>=0.28.1",
+]
+xml = [
+    "defusedxml>=0.7.1",
+]
+plot = [
+    "code2mermaid>=0.3.0",
+    "mermaid-py>=0.8.0",
+]
+fal = [
+    "fal-client>=0.8.0",
+]
+google = [
+    "google-genai>=1.42.0",
+    "opentelemetry-instrumentation-google-genai>=0.3b0",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+  "A",
+  "ARG",
+  "B",
+  "C",
+  "D",
+  "DTZ",
+  "E",
+  "EM",
+  "F",
+  "FBT",
+  "I",
+  "ICN",
+  "ISC",
+  "N",
+  "PLC",
+  "PLE",
+  "PLR",
+  "PLW",
+  "Q",
+  "RUF",
+  "S",
+  "T",
+  "TID",
+  "UP",
+  "W",
+  "YTT",
+]
+ignore = [
+  "D100",    # Allow missing docstring in top level module
+  "D101",    # Allow missing docstring in public class
+  "D102",    # Allow missing docstring in public method  
+  "D103",    # Allow missing docstring in public functions
+  "D104",    # Allow missing docstring in public package
+  "D105",    # Allow missing docstring in magic method
+  "D107",    # Allow missing docstring in `__init__`
+  "D203",    # Allow docstring directly below class definition (as enforced by D211)
+  "D205",    # Allow docstring multiline without blank space
+  "D213",    # Allow multi-line-summary on first line of docstring (as enforced by D212)
+  "D401",    # Allow non imperative mood in docstring
+  "D413",    # Allow no new line at end of docstring.
+  "D417",    # Allow missing argument description  
+  "EM101",   # Allow `raise ValueError(msg)`
+  "EM102",   # Allow f strings in `raise` statements
+  "FBT003",  # Allow boolean positional values in function calls, like `dict.get(... True)`
+  "PLR0911", # Allow many returns
+  "PLR0912", # Allow many branches
+  "PLR0913",
+  "PLR0915", # Allow many statements
+  "PLR2004", # Allow magic values to constants  
+  "N812",    # Allow Lowerscae imports as non-lowercase
+  "N817",    # Allow CamelCase imports that are aliased as acronyms.
+  "TID252",  # Allow relative imports
+  "RUF012",  # Allow mutable class attributes should not be annotated
+  "UP006",   # Allow List instead list to type hyint  
+  "UP007",   # Allow `from typing import Optional` instead of `X | None`  
+  "UP035",   # Allow `from typing import Sequence` instead of `Sequence[X]`
+]
+unfixable = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["msgflux"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*" = [
+  "D",
+  "PLR0911",
+  "PLR0912",
+  "PLR0915",
+  "PLR2004",
+  "S101",
+  "S105",
+  "S106",
+  "S107",
+  "TID252",
+]

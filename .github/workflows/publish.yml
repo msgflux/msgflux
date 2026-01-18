@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["Validate Release"]
+    types:
+      - completed
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-and-tag:
+    name: Build and Tag
+    # Only run if validation succeeded and commit has RELEASE marker
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      contains(github.event.workflow_run.head_commit.message, 'RELEASE:')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install packaging
+        run: pip install packaging
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(grep -oP '__version__ = "\K[^"]+' src/msgflux/version.py)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Get previous version
+        id: previous
+        run: |
+          PREV_VERSION=$(git show HEAD~1:src/msgflux/version.py 2>/dev/null | grep -oP '__version__ = "\K[^"]+' || echo "0.0.0")
+          echo "version=$PREV_VERSION" >> $GITHUB_OUTPUT
+          echo "Previous version: $PREV_VERSION"
+
+      - name: Validate version bump
+        id: validate
+        run: |
+          python << EOF
+          from packaging.version import parse as parse_version
+          import sys
+
+          current = "${{ steps.current.outputs.version }}"
+          previous = "${{ steps.previous.outputs.version }}"
+
+          print(f"Comparing: {previous} -> {current}")
+
+          if parse_version(current) > parse_version(previous):
+              print(f"✅ Version bumped from {previous} to {current}")
+              sys.exit(0)
+          elif parse_version(current) == parse_version(previous):
+              print(f"⚠️ No version change detected")
+              sys.exit(1)
+          else:
+              print(f"❌ Version downgrade detected: {previous} -> {current}")
+              sys.exit(1)
+          EOF
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Build package
+        run: uv build
+
+      - name: Check package
+        run: uv run twine check dist/*
+
+      - name: Create and push tag
+        run: |
+          VERSION="v${{ steps.current.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release ${{ steps.current.outputs.version }}"
+          git push origin "$VERSION"
+          echo "✅ Created and pushed tag: $VERSION"
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build-and-tag
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  create-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(grep -oP '__version__ = "\K[^"]+' src/msgflux/version.py)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body: |
+            ## Release v${{ steps.version.outputs.version }}
+
+            See [CHANGELOG.md](https://github.com/msgflux/msgflux/blob/main/CHANGELOG.md) for details.
+
+            ### Installation
+
+            ```bash
+            pip install msgflux==${{ steps.version.outputs.version }}
+            ```
+
+            Or with uv:
+
+            ```bash
+            uv add msgflux==${{ steps.version.outputs.version }}
+            ```
+          draft: false
+          prerelease: false
