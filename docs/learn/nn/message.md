@@ -13,6 +13,8 @@ from msgflux import Message
 
 msg = Message(
     content="Analyze this text",
+    user_id="user123",
+    chat_id="chat456",
 )
 
 msg.set("context.data", {"key": "value"})
@@ -37,6 +39,27 @@ print(msg.context.data)  # {"key": "value"}
 | `extra` | Extra data |
 | `outputs` | Module outputs |
 | `response` | Final response |
+
+### Metadata
+
+`Message` also initializes metadata fields that help track workflow executions:
+
+| Field | Description |
+|-------|-------------|
+| `execution_id` | Auto-generated unique ID |
+| `user_id` | User identifier |
+| `user_name` | User name |
+| `chat_id` | Chat/session identifier |
+
+```python
+msg = Message(
+    user_id="123",
+    user_name="Bruce Wayne",
+    chat_id="456",
+)
+
+print(msg.metadata["execution_id"])  # Auto-generated UUID
+```
 
 ---
 
@@ -79,21 +102,49 @@ print(msg.outputs.analysis)  # Agent's response
 | Mode | Behavior |
 |------|----------|
 | `None` (default) | Return response directly |
-| `"<path>"` | Write to `msg.<path>` and return the `Message` |
+| `"<path>"` | Write to `msg.<path>` in place and return `None` |
+| `"<path>:"` | Return a new `dotdict` with the response under `<path>` |
 
 **Writing to a Message** — pass a string path *without* a trailing colon. The
-module writes to that field of the `Message` object and returns it:
+module writes to that field of the `Message` object and returns `None`:
 
 ```python
-# Write response to msg.outputs.result, return the Message
+# Write response to msg.outputs.result, return None
 agent = nn.Agent(model, response_mode="outputs.result")
-msg = agent(Message(content="Hi"))
+msg = Message(content="Hi")
+result = agent(msg)
+print(result)  # None
 print(msg.outputs.result)
+```
+
+**Returning a dotdict** — add a trailing colon (`:`). The module creates a new
+`dotdict` whose structure mirrors the path, without needing a `Message` at all:
+
+```python
+# Returns dotdict({"outputs": {"result": <response>}})
+agent = nn.Agent(model, response_mode="outputs.result:")
+result = agent("What is Python?")
+print(result.get("outputs.result"))
+
+# Simple key
+agent = nn.Agent(model, response_mode="answer:")
+result = agent("What is Python?")
+print(result.answer)
+```
+
+**Writing structured extraction** (for signatures):
+
+```python
+agent = nn.Agent(model, signature="text -> label: str", response_mode="extraction")
+agent(msg)
+print(msg.extraction)  # {"label": "..."}
 ```
 
 ---
 
-## 4. **Inline**
+## 4. **In Workflows**
+
+### Inline DSL
 
 ```python
 import msgflux.nn.functional as F
@@ -115,6 +166,28 @@ F.inline("preprocess -> analyze", modules, msg)
 print(msg.outputs.analysis)  # "Analyzed: HELLO WORLD"
 ```
 
+### Passing Between Modules
+
+```python
+import msgflux.nn as nn
+
+
+class Pipeline(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transcriber = nn.Transcriber(...)
+        self.analyzer = nn.Agent(...)
+
+    def forward(self, msg):
+        # Transcriber writes to msg.content
+        self.transcriber(msg)
+
+        # Analyzer reads from msg.content
+        self.analyzer(msg)
+
+        return msg
+```
+
 ---
 
 ## 5. **Multimodal Data**
@@ -133,4 +206,59 @@ msg.set("images.product", ["img1.jpg", "img2.jpg"])
 
 # Files
 msg.set("user_file", "/path/to/document.pdf")
+```
+
+---
+
+## 6. **Complete Example**
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+import msgflux.nn.functional as F
+from msgflux import Message
+
+
+class Speech2Text(nn.Transcriber):
+    model = mf.Model.speech_to_text("openai/whisper-1")
+    message_fields = {"task_multimodal": {"audio": "user_audio"}}
+    response_mode = "content"
+
+
+class Analyzer(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    message_fields = {"task": "content"}
+    response_mode = "outputs.analysis"
+
+
+class Pipeline(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transcriber = Speech2Text()
+        self.analyzer = Analyzer()
+        self.components = nn.ModuleDict(
+            {
+                "transcriber": self.transcriber,
+                "analyzer": self.analyzer,
+            }
+        )
+        self.register_buffer("flux", "{user_audio is not None? transcriber} -> analyzer")
+
+    def forward(self, msg):
+        return F.inline(self.flux, self.components, msg)
+
+
+pipeline = Pipeline()
+
+# Text input
+msg = Message(content="Analyze this text for sentiment.")
+pipeline(msg)
+print(msg.outputs.analysis)
+
+# Audio input
+msg = Message()
+msg.user_audio = "/path/to/audio.mp3"
+pipeline(msg)
+print(msg.content)           # Transcription
+print(msg.outputs.analysis)  # Analysis result
 ```

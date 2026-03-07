@@ -53,6 +53,8 @@ class Speaker(Module, metaclass=AutoParams):
             * ``None`` (default): Returns the response directly.
             * ``"<path>"``: Writes to ``obj.<path>`` and returns ``None``
               (``dotdict`` or ``Message`` is mutated in place).
+            * ``"<path>:"``: Returns a new ``dotdict`` with the response stored
+              under ``<path>`` (no ``Message`` required).
         response_format:
             The format to audio in.
         prompt:

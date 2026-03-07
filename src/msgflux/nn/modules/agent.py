@@ -247,6 +247,8 @@ class Agent(Module, metaclass=AutoParams):
             * ``None`` (default): Returns the response directly.
             * ``"<path>"``: Writes to ``obj.<path>`` and returns ``None``
               (``dotdict`` or ``Message`` is mutated in place).
+            * ``"<path>:"``: Returns a new ``dotdict`` with the response stored
+              under ``<path>`` (no ``Message`` required).
         tools:
             A list of callable objects.
         mcp_servers:

@@ -527,7 +527,7 @@ class Module:
         if response_mode is None:
             self.register_buffer("response_mode", None)
         elif isinstance(response_mode, str):
-            if response_mode == "":
+            if response_mode in ("", ":"):
                 raise ValueError("`response_mode` requires a non-empty string or None")
             self.register_buffer("response_mode", response_mode)
         else:
@@ -574,6 +574,11 @@ class Module:
     def _define_response_mode(self, response: Any, message: Any) -> Any:
         if self.response_mode is None:
             return response
+        elif self.response_mode.endswith(":"):
+            path = self.response_mode[:-1]
+            result = dotdict()
+            result.set(path, response)
+            return result
         elif isinstance(message, dotdict):
             message.set(self.response_mode, response)
             return None
