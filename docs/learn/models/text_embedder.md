@@ -368,22 +368,32 @@ Access usage and cost information:
 
     ```python
     import msgflux as mf
-    from msgflux.models.profiles import get_model_profile
 
     embedder = mf.Model.text_embedder("openai/text-embedding-3-small")
 
     response = embedder("This is a test sentence")
 
-    # Check metadata
+    # Check token usage
     print(response.metadata)
     # {'usage': {'prompt_tokens': 5, 'total_tokens': 5}}
 
+    # Access the model profile directly from the embedder
+    print(embedder.profile)
+    # ModelProfile(id='text-embedding-3-small', name='text-embedding-3-small',
+    #   provider_id='openai',
+    #   capabilities=ModelCapabilities(tool_call=False, structured_output=False,
+    #     reasoning=False, attachment=False, temperature=False),
+    #   modalities=ModelModalities(input=['text'], output=['text']),
+    #   cost=ModelCost(input_per_million=0.02, output_per_million=0,
+    #     cache_read_per_million=None),
+    #   limits=ModelLimits(context=8191, output=1536),
+    #   knowledge='2024-01', release_date='2024-01-25',
+    #   last_updated='2024-01-25', open_weights=False)
+
     # Calculate cost
-    profile = get_model_profile("text-embedding-3-small", provider_id="openai")
-    if profile:
-        tokens = response.metadata.usage.total_tokens
-        cost = tokens * profile.cost.input_per_token
-        print(f"Cost: ${cost:.6f}")
+    tokens = response.metadata.usage.total_tokens
+    cost = tokens * (embedder.profile.cost.input_per_million / 1_000_000)
+    print(f"Cost: ${cost:.6f}")
     ```
 
 ## 8. **Error Handling**
