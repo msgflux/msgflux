@@ -3,11 +3,11 @@
 
 The [`ModelGateway`](../../api-reference/models/gateway.md) class is an **orchestration layer** over multiple models of the same type (e.g., multiple `chat_completion` models), allowing:
 
-- 🔁 **Automatic fallback** between models.
-- ⏱️ **Time-based** model availability constraints.
-- ✅ **Model preference** selection via aliases.
-- 📃 **Control of execution attempts** with exception handling.
-- 🔎 **Consistent model typing validation**.
+- **Automatic fallback** between models.
+- **Time-based** model availability constraints.
+- **Model preference** selection via aliases.
+- **Control of execution attempts** with exception handling.
+- **Consistent model typing validation**.
 
 It's ideal for production-grade model orchestration where reliability and control over model usage are required.
 
@@ -41,7 +41,7 @@ gateway = mf.ModelGateway([
     },
     {
         "model_name": "fallback",
-        "model": mf.Model.chat_completion("together/mistral-7b"),
+        "model": mf.Model.chat_completion("together/gpt-oss-120B"),
     },
 ])
 
@@ -52,20 +52,25 @@ print(response.consume())
 ### 1.2 **Simulated Failure**
 
 ```python
+import msgflux as mf
 from msgflux.models.base import BaseModel
 from msgflux.models.types import ChatCompletionModel
 
 # Simulate a model that fails
 class BrokenModel(BaseModel, ChatCompletionModel):
-    provider: "mock"
+    provider = "mock"
+    model_id = "broken-model"
+
+    def _initialize(self):
+        pass
 
     def __call__(self, **kwargs):
         raise RuntimeError("Simulate failure")
 
 broken = BrokenModel()
-fallback = Model.chat_completion("openai/gpt-4.1-nano")
+fallback = mf.Model.chat_completion("openai/gpt-4.1-nano")
 
-gateway_broken = ModelGateway([
+gateway_broken = mf.ModelGateway([
     {"model_name": "broken", "model": broken},
     {"model_name": "fallback", "model": fallback},
 ])
@@ -100,6 +105,9 @@ class MockChatCompletion(BaseModel, ChatCompletionModel):
         self._fail_sometimes = fail_sometimes
         self._success_rate = success_rate
         self._call_count = 0
+
+    def _initialize(self):
+        pass
 
     def __call__(self, **kwargs: Any):
         response = ModelResponse()
