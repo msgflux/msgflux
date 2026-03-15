@@ -68,6 +68,30 @@ Any `__init__` parameter can be set as a class attribute: `model`, `system_messa
 
 The `description` is especially useful when using an [agent as a tool](tools.md#agent-as-tool) — the calling agent uses it to understand what the tool-agent does.
 
+## String shorthand
+
+When you do not need to configure extra model parameters, you can pass a
+`"provider/model-id"` string directly as the `model` argument. msgFlux will
+call `Model.chat_completion` internally.
+
+???+ example
+
+    ```python
+    import msgflux.nn as nn
+
+    agent = nn.Agent("assistant", "openai/gpt-4.1-mini")
+
+    response = agent("What is the capital of France?")
+    print(response)  # "The capital of France is Paris."
+    ```
+
+The string shorthand also works when reassigning `agent.model` after
+construction:
+
+```python
+agent.model = "groq/llama-3.1-8b-instant"
+```
+
 ## Adding Tools
 
 Agents can call functions to interact with external systems. Any callable with type annotations and a docstring can be used as a tool:

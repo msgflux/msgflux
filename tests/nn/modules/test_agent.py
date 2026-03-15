@@ -1229,3 +1229,46 @@ class TestAgentMessagesAccumulator:
         roles = [m.get("role") for m in history]
         assert "assistant" not in roles
         assert response == "I am the assistant"
+
+
+class TestAgentModelStringShorthand:
+    """Test Agent initialization with string shorthand for model."""
+
+    def test_string_model_calls_chat_completion(self):
+        """Passing 'provider/model-id' must call Model.chat_completion."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        with patch(
+            "msgflux.nn.modules.agent.Model.chat_completion", return_value=mock_model
+        ) as mock_factory:
+            agent = Agent(name="agent", model="openai/gpt-4.1-mini")
+
+        mock_factory.assert_called_once_with("openai/gpt-4.1-mini")
+        assert agent.generator.model is mock_model
+
+    def test_string_model_setter_calls_chat_completion(self):
+        """Assigning a string to agent.model must call Model.chat_completion."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(name="agent", model=mock_model)
+
+        new_mock = Mock()
+        new_mock.model_type = "chat_completion"
+
+        with patch(
+            "msgflux.nn.modules.agent.Model.chat_completion", return_value=new_mock
+        ) as mock_factory:
+            agent.model = "groq/llama-3.1-8b-instant"
+
+        mock_factory.assert_called_once_with("groq/llama-3.1-8b-instant")
+        assert agent.generator.model is new_mock
+
+    def test_invalid_model_type_raises(self):
+        """Non-string, non-chat_completion model must still raise TypeError."""
+        bad_model = Mock()
+        bad_model.model_type = "embedding"
+
+        with pytest.raises(TypeError, match="`model` must be a `chat_completion`"):
+            Agent(name="agent", model=bad_model)
