@@ -17,7 +17,7 @@ The `chat_completion` model is the most versatile model type for natural languag
 
     See [Dependency Management](../../dependency-management.md) for the complete provider matrix.
 
-## Overview
+## ✦₊⁺ Overview
 
 Chat completion models are stateless - they don't maintain conversation history between calls. You must provide all context (previous messages, system prompt, etc.) in each request.
 
@@ -26,7 +26,6 @@ Chat completion models are stateless - they don't maintain conversation history 
 ???+ example
 
     ```python
-    # pip install msgflux[openai]
     import msgflux as mf
 
     # mf.set_envs(OPENAI_API_KEY="...")
@@ -42,9 +41,9 @@ Chat completion models are stateless - they don't maintain conversation history 
 
     `consume()` is an alias for `.data`.
 
-## Model Initialization
+## 1. **Model Initialization**
 
-### Basic Parameters
+### 1.1 **Basic Parameters**
 
 ???+ example
 
@@ -82,7 +81,7 @@ Chat completion models are stateless - they don't maintain conversation history 
     )
     ```
 
-## System Prompt
+## 2. **System Prompt**
 
 The `system_prompt` parameter sets the model's overarching behavior and role before any user messages. It is a convenience shorthand: when provided, msgFlux automatically inserts a `system` message at the beginning of the conversation, so you don't have to do it manually in the messages list.
 
@@ -101,7 +100,6 @@ The `system_prompt` parameter sets the model's overarching behavior and role bef
         )
 
         print(response.consume())
-        # Recursion is when a function calls itself to solve a smaller version of the same problem...
         ```
 
     === "Persona and Tone"
@@ -140,17 +138,12 @@ The `system_prompt` parameter sets the model's overarching behavior and role bef
         )
 
         print(response.consume())
-        # - Water evaporates from oceans and lakes due to solar heat.
-        # - Water vapor rises and cools, forming clouds (condensation).
-        # - Clouds release water as rain or snow (precipitation).
-        # - Water flows into rivers and groundwater (collection).
-        # - The cycle repeats continuously.
         ```
 
 !!! note
     If your messages list already contains a `{"role": "system", ...}` entry, passing `system_prompt` will insert a **second** system message at position 0. Avoid mixing both approaches in the same call.
 
-## Response Caching
+## 3. **Response Caching**
 
 Response caching avoids redundant API calls by caching identical requests:
 
@@ -212,7 +205,7 @@ Response caching avoids redundant API calls by caching identical requests:
             model._response_cache.cache_clear()
         ```
 
-### Cache Behavior
+### 3.1 **Cache Behavior**
 
 The cache is sensitive to:
 - Message content
@@ -223,7 +216,7 @@ The cache is sensitive to:
 
 Changing any of these creates a new cache entry.
 
-## Message Formats
+## 4. **Message Formats**
 
 ???+ example
 
@@ -263,7 +256,7 @@ Changing any of these creates a new cache entry.
         messages = [
             mf.ChatBlock.user(
                 "Describe this image",
-                media=mf.ChatBlock.image("https://example.com/image.jpg")
+                media=mf.ChatBlock.image("https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Above_Gotham.jpg/1280px-Above_Gotham.jpg")
             )
         ]
 
@@ -272,8 +265,8 @@ Changing any of these creates a new cache entry.
             mf.ChatBlock.user(
                 "Compare these images",
                 media=[
-                    mf.ChatBlock.image("https://example.com/image1.jpg"),
-                    mf.ChatBlock.image("https://example.com/image2.jpg")
+                    mf.ChatBlock.image("https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg"),
+                    mf.ChatBlock.image("https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Golde33443.jpg/1200px-Golde33443.jpg")
                 ]
             )
         ]
@@ -281,7 +274,7 @@ Changing any of these creates a new cache entry.
         response = model(messages=messages)
         ```
 
-## Async Support
+## 5. **Async Support**
 
 Async version for concurrent operations:
 
@@ -299,7 +292,7 @@ Async version for concurrent operations:
     return response.consume()
     ```
 
-## Streaming
+## 6. **Streaming**
 
 Stream tokens as they're generated:
 
@@ -360,7 +353,7 @@ Stream tokens as they're generated:
             )
         ```
 
-## Multimodal Inputs
+## 7. **Multimodal Inputs**
 
 Modern models support multiple input modalities:
 
@@ -435,7 +428,7 @@ Modern models support multiple input modalities:
         response = model(messages=messages)
         ```
 
-## Structured Generation
+## 8. **Structured Generation**
 
 Generate structured data conforming to a schema:
 
@@ -549,7 +542,7 @@ Generate structured data conforming to a schema:
         print(result)
         ```
 
-## Tool Calling
+## 9. **Tool Calling**
 
 Models can suggest calling functions (tools) to gather information:
 
@@ -710,7 +703,7 @@ Models can suggest calling functions (tools) to gather information:
         print(calls)
         ```
 
-## Prefilling
+## 10. **Prefilling**
 
 Force the model to start its response with specific text:
 
@@ -733,7 +726,7 @@ Force the model to start its response with specific text:
     # So, the answer is 123.
     ```
 
-## Web Search
+## 11. **Web Search**
 
 The `web_search_options` parameter enables real-time web search, letting the model ground its answers in up-to-date information retrieved from the internet. It is currently supported by OpenAI search models (`gpt-4o-search-preview`, `gpt-4o-mini-search-preview`) and OpenRouter.
 
@@ -795,7 +788,7 @@ The `web_search_options` parameter enables real-time web search, letting the mod
         print(response.consume())
         ```
 
-### search_context_size
+### 11.1 **search_context_size**
 
 Controls how much web content is retrieved and included in the model's context window:
 
@@ -805,7 +798,7 @@ Controls how much web content is retrieved and included in the model's context w
 | `"medium"` | Balanced context (default) |
 | `"high"` | Maximum context — most comprehensive answers, higher cost |
 
-### Annotations
+### 11.2 **Annotations**
 
 Search responses include inline citations. The raw URLs are also available in `response.metadata.annotations`:
 
@@ -828,7 +821,7 @@ Search responses include inline citations. The raw URLs are also available in `r
     # ...
     ```
 
-## Reasoning Models
+## 12. **Reasoning Models**
 
 Reasoning models "think before answering" — they generate an internal chain of thought before producing a final response. This improves accuracy on complex tasks such as multi-step math, code generation, and logical deduction, at the cost of additional latency and tokens.
 
@@ -842,7 +835,7 @@ msgFlux exposes five parameters that control reasoning behaviour:
 | `enable_thinking` | Activate extended model reasoning (provider-level switch, e.g. Anthropic). |
 | `reasoning_in_tool_call` | Preserve reasoning context across tool calls so the model keeps its chain of thought intact. |
 
-### Provider behaviour
+### 12.1 **Provider behaviour**
 
 Not all reasoning providers behave the same way:
 
@@ -851,7 +844,7 @@ Not all reasoning providers behave the same way:
 | **Groq** (`groq/openai/gpt-oss-20b`) | Yes — `response.data.think` | Yes |
 | **OpenAI** (`openai/gpt-5-mini`) | No — reasoning is fully internal | Yes |
 
-### Reasoning Effort
+### 12.2 **Reasoning Effort**
 
 `reasoning_effort` is the primary knob. Higher effort means the model spends more tokens on internal reasoning, which typically improves answer quality on hard problems.
 
@@ -890,7 +883,7 @@ Not all reasoning providers behave the same way:
         print(response.consume())
         ```
 
-### Inspecting the Reasoning Trace
+### 12.3 **Inspecting the Reasoning Trace**
 
 Providers like Groq return the chain of thought as a separate field when `return_reasoning=True`. The response becomes a `dotdict` with `think` (the trace) and `answer` (the final response):
 
@@ -940,7 +933,7 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
     # Reasoning tokens used: 64
     ```
 
-### Controlling the Reasoning Budget
+### 12.4 **Controlling the Reasoning Budget**
 
 `reasoning_max_tokens` caps how many tokens the model can use for internal thinking. Use it to bound latency and cost while still enabling reasoning:
 
@@ -962,7 +955,7 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
     # x = 5
     ```
 
-### Reasoning Across Tool Calls
+### 12.5 **Reasoning Across Tool Calls**
 
 When a reasoning model uses tools it normally loses its chain of thought between calls. `reasoning_in_tool_call=True` preserves the reasoning context so the model can continue thinking coherently after each tool result:
 
@@ -1003,7 +996,7 @@ When a reasoning model uses tools it normally loses its chain of thought between
     print(calls)
     ```
 
-### Structured Output with Reasoning
+### 12.6 **Structured Output with Reasoning**
 
 Reasoning models pair well with `generation_schema` — the model uses its thinking budget to produce more accurate structured output:
 
@@ -1034,7 +1027,7 @@ Reasoning models pair well with `generation_schema` — the model uses its think
     # {'answer': 80.0, 'confidence': 'high', 'explanation': '120 km / 1.5 h = 80 km/h'}
     ```
 
-### Choosing the Right Effort Level
+### 12.7 **Choosing the Right Effort Level**
 
 | Task | Recommended effort |
 |---|---|
@@ -1044,7 +1037,7 @@ Reasoning models pair well with `generation_schema` — the model uses its think
 | Complex math / formal proofs | `"high"` |
 | Multi-step planning with tools | `"high"` + `reasoning_in_tool_call=True` |
 
-## Response Metadata
+## 13. **Response Metadata**
 
 All responses include metadata with usage information:
 
@@ -1080,7 +1073,7 @@ All responses include metadata with usage information:
         print(f"Request cost: ${cost:.4f}")
     ```
 
-## Error Handling
+## 14. **Error Handling**
 
 Handle common errors gracefully:
 
@@ -1102,7 +1095,7 @@ Handle common errors gracefully:
         print(f"API error: {e}")
     ```
 
-## Model Profiles
+## 15. **Model Profiles**
 
 Model profiles provide metadata about capabilities, pricing, and limits from [models.dev](https://models.dev).
 
@@ -1168,11 +1161,11 @@ Every initialized model exposes a `.profile` property that returns this metadata
             print(f"Estimated cost: ${cost:.4f}")
         ```
 
-## Adding a Custom Provider
+## 16. **Adding a Custom Provider**
 
 If the service you want to use exposes an **OpenAI-compatible API**, you can add it as a provider by subclassing `OpenAIChatCompletion`. The process has two stages depending on how compatible the endpoint is.
 
-### Stage 1 — URL and API key only
+### 16.1 **Stage 1 — URL and API key only**
 
 When the target API is fully OpenAI-compatible and only requires a different base URL and authentication key, the entire subclass is a small configuration mixin plus the `@register_model` decorator.
 
@@ -1216,7 +1209,7 @@ After registering, the model is available through the standard factory. The stri
     print(response.consume())
     ```
 
-### Stage 2 — Adapting parameters
+### 16.2 **Stage 2 — Adapting parameters**
 
 Some providers are mostly OpenAI-compatible but have small differences: renamed fields, required extra headers, or unsupported parameters. Override `_adapt_params` to transform the parameter dict before it reaches the API.
 
@@ -1284,7 +1277,7 @@ Common adaptations inside `_adapt_params`:
 | Provider requires extra headers | Add keys to `params["extra_headers"]` |
 | Provider accepts non-standard extensions | Add keys to `params["extra_body"]` |
 
-### Stage 3 — Using a different client
+### 16.3 **Stage 3 — Using a different client**
 
 The two previous stages assume the service is reached through the `openai` Python package. If you want to use a completely different HTTP client or SDK — one that is **not** the `openai` package but still exposes a compatible interface — override `_initialize` instead.
 
@@ -1361,10 +1354,3 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 
 !!! note
     The response returned by `.chat.completions.create()` is consumed by `_process_model_output`. That method reads `model_output.choices[0].message` and `model_output.usage.to_dict()`. If your SDK returns a different structure, also override `_process_model_output` to adapt it.
-
-## See Also
-
-- [Model](model.md) - Model factory and registry
-- [Text Embeddings](text_embedder.md) - Text embedding models
-- [Tool Usage](../tools.md) - Working with tools
-- [Generation Schemas](../generation.md) - Planning schemas
