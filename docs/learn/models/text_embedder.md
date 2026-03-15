@@ -336,6 +336,11 @@ Embeddings are essential for Retrieval-Augmented Generation:
 
 ### 6.1 **Choosing Dimensions**
 
+The `dimensions` parameter is only meaningful when the provider trains its models with **Matryoshka Representation Learning (MRL)** — a technique introduced by Kusupati et al. (2022) that trains embeddings so that the first `k` dimensions of a full vector are already a valid, high-quality embedding of size `k`. This means you can truncate the vector without retraining, trading a small accuracy loss for significantly lower storage and compute cost.
+
+!!! note
+    Not every provider supports `dimensions`. Check the model's documentation or `embedder.profile` before using it. Passing `dimensions` to a model that doesn't support MRL will either be ignored or raise an error.
+
 ???+ example
 
     ```python
@@ -350,14 +355,13 @@ Embeddings are essential for Retrieval-Augmented Generation:
     # Lower dimensions = faster, less storage, slightly lower accuracy
     embedder_small = mf.Model.text_embedder(
         "openai/text-embedding-3-small",
-        dimensions=256   # Reduced from 1536
+        dimensions=256   # Reduced from 1536 via MRL
     )
 
-    # Trade-off example:
-    # - 3072 dims: 99% accuracy, 12x storage
-    # - 1536 dims: 98% accuracy, 6x storage
-    # - 512 dims:  95% accuracy, 2x storage
-    # - 256 dims:  92% accuracy, 1x storage
+    # Trade-off example (text-embedding-3-small):
+    # - 1536 dims: full accuracy, 6x storage
+    # - 512 dims:  ~95% accuracy, 2x storage
+    # - 256 dims:  ~92% accuracy, 1x storage
     ```
 
 ## 7. **Response Metadata**
@@ -416,9 +420,3 @@ Access usage and cost information:
         print(f"API error: {e}")
     ```
 
-## See Also
-
-- [Model](model.md) - Model factory and registry
-- [Chat Completion](chat_completion.md) - Chat models
-- [Data Retrievers](../data/retrievers.md) - Vector databases and retrievers
-- [RAG Patterns](../patterns/rag.md) - RAG implementation patterns
