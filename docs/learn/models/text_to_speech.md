@@ -2,7 +2,7 @@
 
 The `text_to_speech` model converts text into natural-sounding spoken audio. These models enable voice generation for accessibility, content creation, virtual assistants, and more.
 
-## Overview
+## ✦₊⁺ Overview
 
 Text-to-speech (TTS) models transform written text into spoken audio. They enable:
 
@@ -21,7 +21,10 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
 - **Language Learning**: Pronunciation examples
 - **Notifications**: Voice alerts and announcements
 
-## Supported Providers
+## 1. **Supported Providers**
+
+!!! info "Dependencies"
+    See [Dependency Management](../../dependency-management.md) for the complete provider matrix.
 
 ???+ example
 
@@ -51,7 +54,7 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
         )
         ```
 
-## Quick Start
+## 2. **Quick Start**
 
 ???+ example
 
@@ -86,7 +89,7 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
         audio_path = response.consume()
         ```
 
-## Audio Formats
+## 3. **Audio Formats**
 
 ### Format Comparison
 
@@ -99,7 +102,7 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
 | **wav** | Lossless | Large | Professional audio |
 | **pcm** | Raw | Largest | Audio processing |
 
-## Voice Instructions
+## 4. **Voice Instructions**
 
 Control voice characteristics with prompts:
 
@@ -131,7 +134,7 @@ Control voice characteristics with prompts:
 
 Note: `gpt-4o-mini-tts` has native steerability — you can instruct not just *what* to say but *how* to say it.
 
-## Streaming Audio
+## 5. **Streaming Audio**
 
 Generate and play audio in real-time:
 
@@ -235,7 +238,7 @@ Generate and play audio in real-time:
         p.terminate()
         ```
 
-## Async Support
+## 6. **Async Support**
 
 Generate audio asynchronously:
 
@@ -277,7 +280,7 @@ Generate audio asynchronously:
         asyncio.run(stream_speech("Hello world"))
         ```
 
-## Batch Processing
+## 7. **Batch Processing**
 
 Generate multiple audio files:
 
@@ -308,7 +311,7 @@ Generate multiple audio files:
         shutil.copy(audio_path, f"chapter_{i+1}.opus")
     ```
 
-## Working with Audio Files
+## 8. **Working with Audio Files**
 
 ???+ example
 
@@ -363,7 +366,7 @@ Generate multiple audio files:
         print(f"Sample width: {audio.sample_width} bytes")
         ```
 
-## Common Patterns
+## 9. **Common Patterns**
 
 ???+ example
 
@@ -462,7 +465,7 @@ Generate multiple audio files:
         podcast.export("podcast.mp3", format="mp3")
         ```
 
-## Error Handling
+## 10. **Error Handling**
 
 ???+ example
 
@@ -489,9 +492,3 @@ Generate multiple audio files:
         # - Network issues
         # - Text too long
     ```
-
-## See Also
-
-- [Speech to Text](speech_to_text.md) - Transcribe audio to text
-- [Chat Completion](chat_completion.md) - Generate text for TTS
-- [Model](model.md) - Model factory and registry

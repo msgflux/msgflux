@@ -291,3 +291,49 @@ results = F.map_gather(
 embeddings = [r.consume() for r in results]
 print(f"Generated {len(embeddings)} embeddings")
 ```
+
+## 8. **Model Profiles**
+
+`get_model_profile` lets you query model metadata — capabilities, pricing, and limits — without instantiating a model. Profiles are fetched from [models.dev](https://models.dev) and cached locally with TTL-based invalidation.
+
+```python
+from msgflux.models.profiles import get_model_profile
+
+profile = get_model_profile("gpt-4.1-mini", provider_id="openai")
+
+if profile:
+    # Capabilities
+    print(profile.capabilities.tool_call)        # True
+    print(profile.capabilities.structured_output) # True
+    print(profile.capabilities.reasoning)         # False
+
+    # Cost (per million tokens)
+    print(profile.cost.input_per_million)         # 0.40
+    print(profile.cost.output_per_million)        # 1.60
+
+    # Limits
+    print(profile.limits.context)                 # 1047576
+    print(profile.limits.output)                  # 16384
+
+    # Modalities
+    print(profile.modalities.input)               # ['text', 'image']
+    print(profile.modalities.output)              # ['text']
+```
+
+Omit `provider_id` to search across all providers (returns the first match):
+
+```python
+from msgflux.models.profiles import get_model_profile
+
+profile = get_model_profile("text-embedding-3-small")
+print(profile.provider_id)  # "openai"
+```
+
+All instantiated models also expose their profile directly via the `.profile` attribute:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+print(model.profile.cost.input_per_million)  # 0.40
+```

@@ -2,7 +2,7 @@
 
 The `speech_to_text` model transcribes spoken audio into written text. These models enable voice-to-text conversion for accessibility, transcription services, voice commands, and more.
 
-## Overview
+## ✦₊⁺ Overview
 
 Speech-to-text (STT) models convert audio recordings into text transcripts. They enable:
 
@@ -21,7 +21,7 @@ Speech-to-text (STT) models convert audio recordings into text transcripts. They
 - **Interview Analysis**: Transcribe interviews and podcasts
 - **Call Center**: Analyze customer service calls
 
-## Quick Start
+## 1. **Quick Start**
 
 ### Basic Usage
 
@@ -57,7 +57,27 @@ Speech-to-text (STT) models convert audio recordings into text transcripts. They
     print(transcript["text"])
     ```
 
-## Supported Providers
+## 2. **Audio Format Support**
+
+### Supported Formats
+
+- **MP3** (.mp3)
+- **MP4** (.mp4, audio track)
+- **MPEG** (.mpeg)
+- **MPGA** (.mpga)
+- **M4A** (.m4a)
+- **WAV** (.wav)
+- **WEBM** (.webm)
+
+### File Size Limits
+
+- Maximum file size: **25 MB**
+- For larger files, split into chunks or compress
+
+## 3. **Supported Providers**
+
+!!! info "Dependencies"
+    See [Dependency Management](../../dependency-management.md) for the complete provider matrix.
 
 ### OpenAI
 
@@ -82,19 +102,7 @@ Speech-to-text (STT) models convert audio recordings into text transcripts. They
     model = mf.Model.speech_to_text("openai/whisper-1")
     ```
 
-| Model | Streaming | Timestamps | SRT/VTT | Temperature | Diarization |
-|-------|-----------|------------|---------|-------------|-------------|
-| `gpt-4o-transcribe` | Yes | No | No | No | No |
-| `gpt-4o-mini-transcribe` | Yes | No | No | No | No |
-| `gpt-4o-transcribe-diarize` | No | No | No | No | **Yes** |
-| `whisper-1` (legacy) | No | Yes | Yes | Yes | No |
-
-All OpenAI STT models support:
-- **100+ languages** including English, Spanish, French, German, Chinese, Japanese
-- **Audio formats**: mp3, mp4, mpeg, mpga, m4a, wav, webm
-- **File size**: Up to 25 MB
-
-## Response Formats
+## 4. **Response Formats**
 
 !!! info "Format support by model"
 
@@ -232,7 +240,7 @@ Web-friendly subtitle format:
 
     `timestamp_granularities` requires `response_format="verbose_json"` and is only supported by `whisper-1`. The `gpt-4o-transcribe` family does not support granular timestamps.
 
-## Timestamp Granularities
+## 5. **Timestamp Granularities**
 
 ### Word-Level Timestamps
 
@@ -304,7 +312,7 @@ Get timestamps for phrases/segments:
     print("Segments:", transcript["segments"])
     ```
 
-## Language Specification
+## 6. **Language Specification**
 
 ### Automatic Detection
 
@@ -333,20 +341,7 @@ Improve accuracy and speed by specifying the language:
 
     model = mf.Model.speech_to_text("openai/whisper-1")
 
-    # English
-    response = model("audio.mp3", language="en")
-
-    # Spanish
-    response = model("audio.mp3", language="es")
-
-    # French
-    response = model("audio.mp3", language="fr")
-
-    # Japanese
-    response = model("audio.mp3", language="ja")
-
-    # Chinese
-    response = model("audio.mp3", language="zh")
+    response = model("audio.mp3", language="en")  # ISO 639-1 code
     ```
 
 ### ISO 639-1 Language Codes
@@ -365,7 +360,7 @@ Common language codes:
 - `ar` - Arabic
 - `hi` - Hindi
 
-## Context and Prompts
+## 7. **Context and Prompts**
 
 Improve transcription accuracy with context:
 
@@ -399,7 +394,7 @@ Improve transcription accuracy with context:
 
     `temperature` is only supported by `whisper-1`. The `gpt-4o-transcribe` family ignores this parameter.
 
-## Temperature Control
+## 8. **Temperature Control**
 
 Control transcription randomness:
 
@@ -417,7 +412,7 @@ Control transcription randomness:
 
 Note: Lower temperature = more conservative/repetitive, Higher temperature = more creative but potentially less accurate.
 
-## Streaming
+## 9. **Streaming**
 
 !!! info "Requires gpt-4o-transcribe or gpt-4o-mini-transcribe"
 
@@ -444,7 +439,7 @@ Process transcription in real-time:
         print(chunk, end="", flush=True)
     ```
 
-## Speaker Diarization
+## 10. **Speaker Diarization**
 
 Identify who is speaking with `gpt-4o-transcribe-diarize`:
 
@@ -469,7 +464,7 @@ Identify who is speaking with `gpt-4o-transcribe-diarize`:
 
     `gpt-4o-transcribe-diarize` is available via the transcriptions endpoint only and is not yet supported in the Realtime API.
 
-## Async Support
+## 11. **Async Support**
 
 Transcribe audio asynchronously:
 
@@ -481,24 +476,16 @@ Transcribe audio asynchronously:
 
     model = mf.Model.speech_to_text("openai/whisper-1")
 
-    async def transcribe_audio(audio_path):
-        response = await model.acall(audio_path)
-        return response.consume()
+    audio_files = ["audio1.mp3", "audio2.mp3", "audio3.mp3"]
 
-    async def main():
-        # Transcribe multiple files concurrently
-        audio_files = ["audio1.mp3", "audio2.mp3", "audio3.mp3"]
+    responses = await asyncio.gather(*[model.acall(f) for f in audio_files])
 
-        tasks = [transcribe_audio(f) for f in audio_files]
-        transcripts = await asyncio.gather(*tasks)
-
-        for file, transcript in zip(audio_files, transcripts):
-            print(f"{file}: {transcript['text']}")
-
-    asyncio.run(main())
+    for file, response in zip(audio_files, responses):
+        transcript = response.consume()
+        print(f"{file}: {transcript['text']}")
     ```
 
-## Batch Processing
+## 12. **Batch Processing**
 
 Transcribe multiple files:
 
@@ -530,448 +517,7 @@ Transcribe multiple files:
         print()
     ```
 
-## Common Patterns
-
-### Meeting Transcription
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def transcribe_meeting(audio_path, attendees=None):
-        """Transcribe meeting with context."""
-        prompt = ""
-        if attendees:
-            prompt = f"Meeting with {', '.join(attendees)}"
-
-        response = model(
-            audio_path,
-            prompt=prompt,
-            response_format="verbose_json",
-            timestamp_granularities=["segment"]
-        )
-
-        transcript = response.consume()
-
-        # Format output
-        output = f"Meeting Transcript\n{'='*50}\n\n"
-
-        for segment in transcript.get("segments", []):
-            timestamp = f"[{segment['start']:.1f}s - {segment['end']:.1f}s]"
-            output += f"{timestamp}\n{segment['text']}\n\n"
-
-        return output
-
-    # Use it
-    transcript = transcribe_meeting(
-        "meeting.mp3",
-        attendees=["Alice", "Bob", "Carol"]
-    )
-    print(transcript)
-    ```
-
-### Subtitle Generation
-
-!!! info "Requires whisper-1"
-
-    SRT/VTT output is only supported by `whisper-1`.
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def generate_subtitles(video_audio_path, output_path):
-        """Generate SRT subtitles for video."""
-        response = model(
-            video_audio_path,
-            response_format="srt",
-            language="en"
-        )
-
-        transcript = response.consume()
-
-        # Save subtitles
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(transcript["text"])
-
-        return output_path
-
-    # Generate subtitles
-    subtitle_file = generate_subtitles("video_audio.mp3", "subtitles.srt")
-    print(f"Subtitles saved to: {subtitle_file}")
-    ```
-
-### Podcast Transcription
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def transcribe_podcast(audio_path, hosts=None, topic=None):
-        """Transcribe podcast with metadata."""
-        # Build context prompt
-        prompt_parts = []
-        if hosts:
-            prompt_parts.append(f"Podcast hosts: {', '.join(hosts)}")
-        if topic:
-            prompt_parts.append(f"Topic: {topic}")
-
-        prompt = ". ".join(prompt_parts) if prompt_parts else None
-
-        response = model(
-            audio_path,
-            prompt=prompt,
-            response_format="verbose_json",
-            timestamp_granularities=["word", "segment"]
-        )
-
-        return response.consume()
-
-    # Transcribe
-    transcript = transcribe_podcast(
-        "podcast.mp3",
-        hosts=["Alice", "Bob"],
-        topic="Artificial Intelligence"
-    )
-
-    print("Full text:", transcript["text"])
-    print(f"Duration: {transcript.get('duration', 'N/A')} seconds")
-    print(f"Language: {transcript.get('language', 'N/A')}")
-    ```
-
-### Multi-Language Support
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def transcribe_multilingual(audio_files_with_langs):
-        """Transcribe multiple files in different languages."""
-        results = {}
-
-        for audio_file, language in audio_files_with_langs:
-            response = model(audio_file, language=language)
-            transcript = response.consume()
-            results[audio_file] = {
-                "language": language,
-                "text": transcript["text"]
-            }
-
-        return results
-
-    # Transcribe files in different languages
-    files_langs = [
-        ("english.mp3", "en"),
-        ("spanish.mp3", "es"),
-        ("french.mp3", "fr")
-    ]
-
-    transcripts = transcribe_multilingual(files_langs)
-
-    for file, data in transcripts.items():
-        print(f"{file} ({data['language']}):")
-        print(data['text'])
-        print()
-    ```
-
-### Voice Command Processing
-
-!!! info "Requires whisper-1"
-
-    `temperature=0.0` for deterministic output is only supported by `whisper-1`.
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def process_voice_command(audio_path):
-        """Process voice command."""
-        response = model(
-            audio_path,
-            prompt="Voice command for controlling smart home devices",
-            language="en",
-            temperature=0.0  # Deterministic — whisper-1 only
-        )
-
-        transcript = response.consume()
-        command_text = transcript["text"].lower().strip()
-
-        # Parse command
-        if "turn on" in command_text:
-            device = command_text.replace("turn on", "").strip()
-            return {"action": "turn_on", "device": device}
-        elif "turn off" in command_text:
-            device = command_text.replace("turn off", "").strip()
-            return {"action": "turn_off", "device": device}
-        else:
-            return {"action": "unknown", "text": command_text}
-
-    # Process command
-    command = process_voice_command("command.mp3")
-    print(command)
-    # {"action": "turn_on", "device": "the lights"}
-    ```
-
-### Search Transcripts
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def search_in_audio(audio_path, search_term):
-        """Search for specific content in audio."""
-        response = model(
-            audio_path,
-            response_format="verbose_json",
-            timestamp_granularities=["word", "segment"]
-        )
-
-        transcript = response.consume()
-
-        # Search segments
-        results = []
-        for segment in transcript.get("segments", []):
-            if search_term.lower() in segment["text"].lower():
-                results.append({
-                    "timestamp": f"{segment['start']:.1f}s - {segment['end']:.1f}s",
-                    "text": segment["text"]
-                })
-
-        return results
-
-    # Search
-    matches = search_in_audio("meeting.mp3", "budget")
-    for match in matches:
-        print(f"[{match['timestamp']}] {match['text']}")
-    ```
-
-## Best Practices
-
-### 1. Choose the Right Model
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    # New content / general use — best accuracy + streaming
-    model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
-
-    # Need verbose_json, timestamps, srt/vtt, or temperature — use Whisper
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    # Need to identify speakers
-    model = mf.Model.speech_to_text("openai/gpt-4o-transcribe-diarize")
-    ```
-
-### 2. Specify Language When Known
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    # Good - Faster and more accurate
-    response = model("english_audio.mp3", language="en")
-
-    # Less optimal - Requires language detection
-    response = model("english_audio.mp3")
-    ```
-
-### 3. Use Prompts for Context
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    # Good - Provides context
-    response = model(
-        "tech_talk.mp3",
-        prompt="Technical presentation about Kubernetes, Docker, and microservices"
-    )
-
-    # Less optimal - No context
-    response = model("tech_talk.mp3")
-    ```
-
-### 4. Choose Appropriate Response Format
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    # Simple text — works with all models
-    model = mf.Model.speech_to_text("openai/whisper-1")
-    response = model("audio.mp3", response_format="text")
-
-    # Subtitles — whisper-1 only
-    model = mf.Model.speech_to_text("openai/whisper-1")
-    response = model("video.mp3", response_format="srt")
-
-    # Detailed analysis with timestamps — whisper-1 only
-    response = model("interview.mp3", response_format="verbose_json",
-                     timestamp_granularities=["word", "segment"])
-    ```
-
-### 5. Handle Long Audio Files
-
-???+ example
-
-    ```python
-    import msgflux as mf
-    from pydub import AudioSegment
-
-    def split_audio(audio_path, chunk_length_ms=30000):
-        """Split long audio into chunks."""
-        audio = AudioSegment.from_file(audio_path)
-        chunks = []
-
-        for i in range(0, len(audio), chunk_length_ms):
-            chunk = audio[i:i + chunk_length_ms]
-            chunk_path = f"/tmp/chunk_{i}.mp3"
-            chunk.export(chunk_path, format="mp3")
-            chunks.append(chunk_path)
-
-        return chunks
-
-    def transcribe_long_audio(audio_path):
-        """Transcribe long audio file."""
-        model = mf.Model.speech_to_text("openai/whisper-1")
-
-        # Split into chunks
-        chunks = split_audio(audio_path)
-
-        # Transcribe each chunk
-        full_transcript = ""
-        previous_text = ""
-
-        for chunk_path in chunks:
-            # Use previous text for context
-            response = model(
-                chunk_path,
-                prompt=previous_text[-500:] if previous_text else None
-            )
-            transcript = response.consume()
-            chunk_text = transcript["text"]
-
-            full_transcript += chunk_text + " "
-            previous_text = chunk_text
-
-        return full_transcript.strip()
-
-    transcript = transcribe_long_audio("long_audio.mp3")
-    ```
-
-### 6. Save Transcripts
-
-???+ example
-
-    ```python
-    import msgflux as mf
-    import json
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    def save_transcript(audio_path, output_path):
-        """Transcribe and save with metadata."""
-        response = model(
-            audio_path,
-            response_format="verbose_json",
-            timestamp_granularities=["word", "segment"]
-        )
-
-        transcript = response.consume()
-
-        # Save to JSON
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(transcript, f, indent=2, ensure_ascii=False)
-
-        # Also save plain text
-        text_path = output_path.replace(".json", ".txt")
-        with open(text_path, "w", encoding="utf-8") as f:
-            f.write(transcript["text"])
-
-        return output_path
-
-    save_transcript("meeting.mp3", "meeting_transcript.json")
-    ```
-
-## Audio Format Support
-
-### Supported Formats
-
-- **MP3** (.mp3)
-- **MP4** (.mp4, audio track)
-- **MPEG** (.mpeg)
-- **MPGA** (.mpga)
-- **M4A** (.m4a)
-- **WAV** (.wav)
-- **WEBM** (.webm)
-
-### File Size Limits
-
-- Maximum file size: **25 MB**
-- For larger files, split into chunks or compress
-
-### Audio Preprocessing
-
-???+ example
-
-    ```python
-    from pydub import AudioSegment
-
-    def prepare_audio(input_path, output_path):
-        """Prepare audio for transcription."""
-        audio = AudioSegment.from_file(input_path)
-
-        # Normalize volume
-        audio = audio.normalize()
-
-        # Convert to mono if stereo
-        if audio.channels > 1:
-            audio = audio.set_channels(1)
-
-        # Set sample rate to 16kHz (optimal for Whisper)
-        audio = audio.set_frame_rate(16000)
-
-        # Export as MP3
-        audio.export(output_path, format="mp3", bitrate="64k")
-
-        return output_path
-
-    # Prepare and transcribe
-    prepared = prepare_audio("raw_audio.wav", "prepared.mp3")
-
-    import msgflux as mf
-    model = mf.Model.speech_to_text("openai/whisper-1")
-    response = model(prepared)
-    ```
-
-## Error Handling
+## 13. **Error Handling**
 
 ???+ example
 
@@ -1001,34 +547,3 @@ Transcribe multiple files:
         # - Network issues
         # - Rate limits
     ```
-
-## Cost Optimization
-
-### Efficient Transcription
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.speech_to_text("openai/whisper-1")
-
-    # Use language specification to reduce processing time
-    response = model("audio.mp3", language="en")
-
-    # Use simple format when timestamps not needed
-    response = model("audio.mp3", response_format="text")
-
-    # Compress audio before uploading
-    from pydub import AudioSegment
-
-    audio = AudioSegment.from_file("original.wav")
-    audio.export("compressed.mp3", format="mp3", bitrate="64k")
-    response = model("compressed.mp3")
-    ```
-
-## See Also
-
-- [Text to Speech](text_to_speech.md) - Convert text to audio
-- [Chat Completion](chat_completion.md) - Process transcripts with LLMs
-- [Model](model.md) - Model factory and registry

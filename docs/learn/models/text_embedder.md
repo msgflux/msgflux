@@ -94,20 +94,16 @@ Providers with native batch support (OpenAI, JinaAI, Together AI, vLLM, Ollama) 
 
         ```python
         import msgflux as mf
-        import asyncio
 
         embedder = mf.Model.text_embedder("openai/text-embedding-3-small")
-
-        async def embed_batch(texts):
-            response = await embedder.acall(texts)
-            return response.consume()  # List[List[float]]
 
         support_tickets = [
             "My order hasn't arrived after 10 days, please help",
             "I was charged twice for the same purchase",
             "How do I return a damaged item?",
         ]
-        embeddings = asyncio.run(embed_batch(support_tickets))
+        response = await embedder.acall(support_tickets)
+        embeddings = response.consume()  # List[List[float]]
         ```
 
     === "Concurrent (Fallback)"

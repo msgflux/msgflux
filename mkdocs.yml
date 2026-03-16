@@ -4,7 +4,7 @@ site_author: Vilson Rodrigues
 site_description: >-
   An engine for build dynamic AI systems.
 copyright: |
-    &copy; 2025 <a href="https://github.com/msgflux"  target="_blank" rel="noopener">msgFlux</a>
+    &copy; 2026 <a href="https://github.com/msgflux"  target="_blank" rel="noopener">msgFlux</a>
 
 repo_url: https://github.com/msgflux/msgflux
 repo_name: msgflux/msgflux
@@ -132,6 +132,9 @@ nav:
       - learn/models/speech_to_text.md
       - learn/models/text_to_image.md
       - learn/models/image_text_to_image.md
+      - learn/models/text_classifier.md
+      - learn/models/image_embedder.md
+      - learn/models/text_reranker.md
     #- ⛁ DataBases:
     #  - core/database.md
     #  - Vector: databases/vector.md
