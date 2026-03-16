@@ -1,5 +1,7 @@
 # Inline
 
+## ✦₊⁺ Overview
+
 `Inline` is a lightweight domain-specific language (DSL) for composing
 **message-centric workflows** from small, focused functions.
 
@@ -9,7 +11,7 @@ shared `dotdict` message, reads what it needs, and writes its results back.
 
 ---
 
-## How It Works
+## 1. **How It Works**
 
 Every module in an `Inline` pipeline receives the shared `dotdict` as its only
 argument and writes results directly onto it. **Return values are ignored.**
@@ -43,7 +45,7 @@ reused across every call without re-parsing the string.
 
 ---
 
-## Constructor
+## 2. **Constructor**
 
 ```python
 Inline(expression, modules, *, max_iterations=1000)
@@ -78,7 +80,7 @@ flux = mf.Inline(
 
 ---
 
-## Execution
+## 3. **Execution**
 
 | Method | When to use |
 |--------|-------------|
@@ -89,7 +91,7 @@ Both return the same `msg` object after all steps have run.
 
 ---
 
-## Syntax Overview
+## 4. **Syntax Overview**
 
 | Pattern | Description | Example |
 |---------|-------------|---------|
@@ -114,7 +116,7 @@ message field and a literal value.
 
 ---
 
-## Sequential Execution
+## 5. **Sequential Execution**
 
 Modules run in the order listed. Each step sees the message exactly as the
 previous step left it, so earlier results are always available to later stages.
@@ -147,7 +149,7 @@ previous step left it, so earlier results are always available to later stages.
 
 ---
 
-## Parallel Execution
+## 6. **Parallel Execution**
 
 Modules inside `[…]` run concurrently in a thread pool. All of them receive
 **the same message object**, so they execute as a group before the pipeline
@@ -210,7 +212,7 @@ def feat_b(msg):
 
 ---
 
-## Conditionals
+## 7. **Conditionals**
 
 A conditional evaluates a condition against the current message at runtime and
 executes either the true branch, the false branch, or nothing.
@@ -419,7 +421,7 @@ intent explicit when combining operators.
 
 ---
 
-## While Loops
+## 8. **While Loops**
 
 Syntax: `@{condition}: pipeline;`
 
@@ -495,7 +497,7 @@ hang silently.
 
 ---
 
-## Error Handling
+## 9. **Error Handling**
 
 If a module raises an exception, `Inline` wraps it in a `RuntimeError` that
 includes the module name, making it easy to trace the failure back to the
@@ -518,7 +520,7 @@ RuntimeError: Execution failed for `enrich`: KeyError('text')
 
 ---
 
-## Async Execution
+## 10. **Async Execution**
 
 Use `await flux.acall(msg)` when any module in the pipeline is an async
 function or an `nn.Module` with an `acall` method. The snippet below runs
@@ -551,7 +553,7 @@ overhead. Parallel stages run each branch as a separate coroutine via
 
 ---
 
-## Complex Workflow
+## 11. **Complex Workflow**
 
 All constructs compose freely. The example below combines every DSL feature
 in a single pipeline: a conditional transcription step, two parallel analysis
@@ -634,7 +636,7 @@ always refer to values stored in the message passed to the pipeline.
 
 ---
 
-## DSL Grammar
+## 12. **DSL Grammar**
 
 ```
 pipeline     ::= step ("->" step)*

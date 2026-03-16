@@ -1,6 +1,10 @@
 # Core Concepts
 
-## Parameters and Buffers
+## ✦₊⁺ Overview
+
+Modules store state through **Parameters** and **Buffers**, both of which are captured in the state dict. The state dict is serializable, enabling saving, loading, and hot-swapping values at runtime.
+
+## 1. **Parameters and Buffers**
 
 Modules store their state through **Parameters** and **Buffers**, both are registered in the state dict.
 
@@ -36,7 +40,7 @@ print(Workflow().state_dict())
 # {'expected_output': 'JSON format', 'flux': 'preprocess -> analyze'}
 ```
 
-## State Dict
+## 2. **State Dict**
 
 Every module can export its complete state as a dictionary. This enables saving, loading, and updating module configurations without reloading the module.
 

@@ -1,6 +1,8 @@
 # Visualization
 
-Generate a Mermaid diagram of your module:
+## ✦₊⁺ Overview
+
+Generate a Mermaid diagram of any module with `module.plot()`. Useful for inspecting the structure of composed pipelines.
 
 ```python
 module.plot()  # Displays a flow diagram
@@ -9,7 +11,7 @@ module.plot()  # Displays a flow diagram
 !!! warning
     Flow visualization is **experimental** and may be incomplete for complex conditionals.
 
-## Example: Complete Module
+## 1. **Example: Complete Module**
 
 ```python
 import msgflux as mf

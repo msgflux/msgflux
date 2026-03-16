@@ -1,10 +1,12 @@
 # ModuleList
 
+## ✦₊⁺ Overview
+
 Holds submodules in a list.
 
 `nn.ModuleList` can be indexed like a regular Python list, but modules it contains are properly registered, and will be visible by all `nn.Module` methods.
 
-## Example
+## 1. **Example**
 
 ```python
 import msgflux.nn as nn
@@ -40,6 +42,6 @@ expert = Expert()
 expert("I need help with my tv.")
 ```
 
-## ModuleList vs Sequential
+## 2. **ModuleList vs Sequential**
 
 A `ModuleList` is exactly what it sounds like -- a list for storing `Module`s. You control how and when each module is called. On the other hand, the layers in a [Sequential](sequential.md) are connected in a cascading way, where the output of one module is automatically passed as input to the next.

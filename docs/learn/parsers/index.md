@@ -1,5 +1,7 @@
 # Parsers
 
+## ✦₊⁺ Overview
+
 The `Parser` class provides a unified interface for extracting text, images, and metadata from a wide variety of document formats. Every parser converts its input into a consistent `ParserResponse` with a `data` dict containing at minimum a `text` field in Markdown format.
 
 All code examples use the recommended import pattern:
@@ -10,7 +12,7 @@ import msgflux as mf
 
 ---
 
-## Supported Formats
+## 1. **Supported Formats**
 
 | Format | Factory method | Provider |
 |--------|---------------|----------|
@@ -33,7 +35,7 @@ mf.Parser.providers()
 
 ---
 
-## ParserResponse
+## 2. **ParserResponse**
 
 Every parser returns a `ParserResponse`. Its main attributes are:
 
@@ -53,7 +55,7 @@ Every parser returns a `ParserResponse`. Its main attributes are:
 
 ---
 
-## PDF
+## 3. **PDF**
 
 ```python
 from io import BytesIO
@@ -81,7 +83,7 @@ print(response.data["metadata"].extraction_mode)  # "layout"
 
 ---
 
-## Word (.docx)
+## 4. **Word (.docx)**
 
 ```python
 from io import BytesIO
@@ -122,7 +124,7 @@ print(response.data["metadata"].num_tables)  # 1
 
 ---
 
-## PowerPoint (.pptx)
+## 5. **PowerPoint (.pptx)**
 
 ```python
 from io import BytesIO
@@ -156,7 +158,7 @@ print(response.data["metadata"].num_slides)  # 1
 
 ---
 
-## Excel (.xlsx)
+## 6. **Excel (.xlsx)**
 
 ```python
 from io import BytesIO
@@ -192,7 +194,7 @@ print(response.data["metadata"].num_sheets)  # 1
 
 ---
 
-## CSV / TSV
+## 7. **CSV / TSV**
 
 ```python
 import msgflux as mf
@@ -219,7 +221,7 @@ print(response.data["metadata"].delimiter)  # ","
 
 ---
 
-## HTML
+## 8. **HTML**
 
 ```python
 import msgflux as mf
@@ -254,7 +256,7 @@ print(response.data["metadata"].title)  # "My Page"
 
 ---
 
-## Email (.eml)
+## 9. **Email (.eml)**
 
 ```python
 import msgflux as mf

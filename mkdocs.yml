@@ -172,10 +172,7 @@ nav:
         - learn/nn/agent/model-gateway.md
         - learn/nn/agent/prefilling.md
       - Functional:
-        - learn/nn/functional/index.md
-        - learn/nn/functional/gather.md
-        - learn/nn/functional/utility.md
-        - learn/nn/functional/best-practices.md
+        - learn/nn/functional.md
       - Transcriber:
         - learn/nn/transcriber.md        
       - Retriever:

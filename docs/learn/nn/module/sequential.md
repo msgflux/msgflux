@@ -1,15 +1,15 @@
 # Sequential
 
-A sequential container.
+## ✦₊⁺ Overview
 
-Modules will be added to it in the order they are passed in the constructor. Alternatively, an `OrderedDict` of modules can be passed in. The `forward()` method of `Sequential` accepts any input and forwards it to the first module it contains. It then "chains" outputs to inputs sequentially for each subsequent module, finally returning the output of the last module.
+A sequential container. Modules are added in constructor order; `forward()` chains their outputs automatically, passing the result of each module as input to the next.
 
 The value a `Sequential` provides over manually calling a sequence of modules is that it allows treating the whole container as a single module, such that performing a transformation on the `Sequential` applies to each of the modules it stores (which are each a registered submodule of the `Sequential`).
 
 !!! info "Sequential vs ModuleList"
     A [ModuleList](module-list.md) is exactly what it sounds like -- a list for storing `Module`s! On the other hand, the layers in a `Sequential` are connected in a cascading way.
 
-## Basic Usage
+## 1. **Basic Usage**
 
 ```python
 import msgflux.nn as nn
@@ -39,7 +39,7 @@ experts = nn.Sequential(ExpertSales(), ExpertSupport())
 experts("I need help with my tv.")
 ```
 
-## Using OrderedDict
+## 2. **Using OrderedDict**
 
 You can pass an `OrderedDict` to name each step in the sequence:
 
@@ -55,7 +55,7 @@ experts_dict = nn.Sequential(OrderedDict([
 experts_dict("I need help with my tv.")
 ```
 
-## Async Support
+## 3. **Async Support**
 
 `Sequential` supports async execution via `.acall()`. It checks each module for an `acall` method first, then falls back to sync `forward()`:
 

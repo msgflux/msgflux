@@ -1,5 +1,7 @@
 # ModuleDict
 
+## ✦₊⁺ Overview
+
 Holds submodules in a dictionary.
 
 `nn.ModuleDict` can be indexed like a regular Python dictionary, but modules it contains are properly registered, and will be visible by all Module methods.
@@ -9,7 +11,7 @@ Holds submodules in a dictionary.
 - the order of insertion, and
 - in `update()`, the order of the merged `OrderedDict`, `dict` (started from Python 3.6) or another `nn.ModuleDict` (the argument to `update()`).
 
-## Example
+## 1. **Example**
 
 ```python
 import random

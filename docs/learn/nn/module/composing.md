@@ -1,6 +1,10 @@
 # Composing Modules
 
-## Sub-Modules
+## ✦₊⁺ Overview
+
+Modules can contain other modules as sub-modules. Sub-modules are automatically tracked in the state dict with dot-separated keys and visible to all Module methods.
+
+## 1. **Sub-Modules**
 
 Modules can contain other modules:
 

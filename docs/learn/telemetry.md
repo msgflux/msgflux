@@ -6,7 +6,7 @@ All modules, agents, and tools are automatically instrumented. You can also add 
 
 ---
 
-## Overview
+## ✦₊⁺ Overview
 
 The telemetry pipeline works at two levels:
 
@@ -21,7 +21,7 @@ from msgflux import Spans
 
 ---
 
-## Enabling Telemetry
+## 1. **Enabling Telemetry**
 
 Set the environment variable before running your application:
 
@@ -39,7 +39,7 @@ configure_msgtrace(enabled=True)
 
 ---
 
-## Environment Variables
+## 2. **Environment Variables**
 
 ### msgtrace-sdk (transport & exporter)
 
@@ -67,7 +67,7 @@ Fine-grained control over the data included in spans.
 
 ---
 
-## Console Exporter (development)
+## 3. **Console Exporter (development)**
 
 The default exporter prints spans to stdout — useful during local development.
 
@@ -87,7 +87,7 @@ result = agent("What is the capital of France?")
 
 ---
 
-## OTLP Exporter (production)
+## 4. **OTLP Exporter (production)**
 
 Send traces to any OpenTelemetry-compatible backend (Jaeger, Tempo, Honeycomb, Datadog, etc.):
 
@@ -111,7 +111,7 @@ Then open `http://localhost:16686` to browse traces.
 
 ---
 
-## Instrumenting Your Own Code
+## 5. **Instrumenting Your Own Code**
 
 Use `Spans.instrument()` to add tracing to any function without changing its signature.
 
@@ -172,7 +172,7 @@ async with Spans.ainit_flow("my-pipeline") as span:
 
 ---
 
-## Automatic Instrumentation
+## 6. **Automatic Instrumentation**
 
 ### Modules and Agents
 
@@ -219,7 +219,7 @@ All operations in `msgflux.nn.functional` are automatically traced:
 
 ---
 
-## Programmatic Configuration
+## 7. **Programmatic Configuration**
 
 You can configure everything at runtime instead of using environment variables:
 
@@ -242,7 +242,7 @@ configure_msgtrace(
 
 ---
 
-## Sampling
+## 8. **Sampling**
 
 Use `MSGTRACE_SAMPLING_RATIO` to control the fraction of traces that are recorded:
 
@@ -256,7 +256,7 @@ export MSGTRACE_SAMPLING_RATIO=1.0
 
 ---
 
-## Reducing Span Payload Size
+## 9. **Reducing Span Payload Size**
 
 For high-throughput systems, disable verbose captures to keep span sizes small:
 

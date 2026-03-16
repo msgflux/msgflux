@@ -1,10 +1,12 @@
 # nn.Module
 
+## ✦₊⁺ Overview
+
 The `nn.Module` class is the foundation for all AI components in msgFlux, inspired by **PyTorch's `torch.nn.Module`**.
 
 It provides a structured way to build, compose, and manage AI workflows with features like parameter serialization, hooks, and async support.
 
-## Quick Start
+## 1. **Quick Start**
 
 ```python
 import msgflux.nn as nn
@@ -21,7 +23,7 @@ workflow = MyWorkflow()
 result = workflow("World")  # "Hello! World"
 ```
 
-## Built-in Modules
+## 2. **Built-in Modules**
 
 msgFlux provides ready-to-use modules:
 
@@ -36,7 +38,7 @@ msgFlux provides ready-to-use modules:
 | `nn.MediaMaker` | Image/video generation |
 | `nn.Predictor` | ML model wrapper (sklearn, etc.) |
 
-## Naming and Description
+## 3. **Naming and Description**
 
 Set module metadata:
 
@@ -50,7 +52,7 @@ class MyAgent(nn.Module):
 
 This is useful when using modules as tools.
 
-## Contents
+## 4. **Contents**
 
 | Topic | Description |
 |-------|-------------|

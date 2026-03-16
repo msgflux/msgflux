@@ -1,6 +1,10 @@
 # Forward and Async
 
-## forward()
+## ✦₊⁺ Overview
+
+All module logic is defined in `forward()`. The async counterpart `aforward()` enables non-blocking execution, and hooks let you enrich inputs or inspect outputs without modifying the module itself.
+
+## 1. **`forward()`**
 
 The main execution method. All module logic is defined in `forward`:
 
@@ -26,7 +30,7 @@ result = model("You did the work?")  # Calls forward()
 print(result)  # "You did the work?Yes I did."
 ```
 
-## aforward()
+## 2. **`aforward()`**
 
 The async execution method. Called via `.acall()`:
 
@@ -43,7 +47,7 @@ result = await processor.acall(data)  # Calls aforward()
 !!! note
     If `aforward` is not implemented, `.acall()` will fall back to `forward()`.
 
-## Hooks
+## 3. **Hooks**
 
 Hooks allow you to execute code before or after the forward pass without modifying the module itself. This is useful for context enrichment, logging, inspection, and monitoring.
 
