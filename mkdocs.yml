@@ -140,6 +140,8 @@ nav:
     #  - Vector: databases/vector.md
     - ⟳ Retrievers:
       - learn/retrievers/retriever.md
+      - learn/retrievers/bm25.md
+      - learn/retrievers/wikipedia.md
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
