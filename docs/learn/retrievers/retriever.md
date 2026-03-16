@@ -1,4 +1,4 @@
-# Retrievers
+# Retriever
 
 ## ✦₊⁺ Overview
 
@@ -20,7 +20,7 @@ There are two retriever families:
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.bm25()
+    retriever = mf.Retriever.lexical("bm25")
 
     retriever.add([
         "Python is a high-level programming language.",
@@ -40,7 +40,7 @@ There are two retriever families:
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.wikipedia(summary=2)
+    retriever = mf.Retriever.web("wikipedia", summary=2)
 
     response = retriever("quantum entanglement")
 
@@ -91,7 +91,7 @@ Pass a list to search multiple queries in a single call. Results are returned in
 ```python
 import msgflux as mf
 
-retriever = mf.Retriever.bm25()
+retriever = mf.Retriever.lexical("bm25")
 retriever.add(["Doc A about Python", "Doc B about Java", "Doc C about Rust"])
 
 queries = ["Python language", "systems programming"]
@@ -112,7 +112,7 @@ All retrievers expose `.acall()` for async usage:
 ```python
 import msgflux as mf
 
-retriever = mf.Retriever.wikipedia(summary=3)
+retriever = mf.Retriever.web("wikipedia", summary=3)
 
 response = await retriever.acall("artificial intelligence", top_k=2)
 

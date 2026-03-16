@@ -16,7 +16,7 @@ The `wikipedia` retriever fetches and returns Wikipedia article content at query
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.wikipedia()
+    retriever = mf.Retriever.web("wikipedia")
 
     response = retriever("machine learning", top_k=2)
 
@@ -45,7 +45,7 @@ The `wikipedia` retriever fetches and returns Wikipedia article content at query
 ```python
 import msgflux as mf
 
-retriever = mf.Retriever.wikipedia(
+retriever = mf.Retriever.web("wikipedia",
     language="en",
     summary=3,           # Return only the first 3 sentences
     return_images=True,
@@ -64,7 +64,7 @@ By default, the full article content is returned. Set `summary` to an integer to
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.wikipedia(summary=2)
+    retriever = mf.Retriever.web("wikipedia", summary=2)
 
     response = retriever("Eiffel Tower")
 
@@ -86,7 +86,7 @@ Enable `return_images=True` to get a list of image URLs from each article. Icons
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.wikipedia(
+    retriever = mf.Retriever.web("wikipedia",
         return_images=True,
         max_return_images=3
     )
@@ -111,7 +111,7 @@ Set `language` to any Wikipedia language code:
         ```python
         import msgflux as mf
 
-        retriever = mf.Retriever.wikipedia(language="pt", summary=3)
+        retriever = mf.Retriever.web("wikipedia", language="pt", summary=3)
         response = retriever("inteligência artificial")
         print(response.data[0].results[0].data.content)
         ```
@@ -121,7 +121,7 @@ Set `language` to any Wikipedia language code:
         ```python
         import msgflux as mf
 
-        retriever = mf.Retriever.wikipedia(language="es", summary=3)
+        retriever = mf.Retriever.web("wikipedia", language="es", summary=3)
         response = retriever("aprendizaje automático")
         print(response.data[0].results[0].data.content)
         ```
@@ -131,7 +131,7 @@ Set `language` to any Wikipedia language code:
         ```python
         import msgflux as mf
 
-        retriever = mf.Retriever.wikipedia(language="fr", summary=3)
+        retriever = mf.Retriever.web("wikipedia", language="fr", summary=3)
         response = retriever("réseau de neurones")
         print(response.data[0].results[0].data.content)
         ```
@@ -143,7 +143,7 @@ Set `language` to any Wikipedia language code:
 ```python
 import msgflux as mf
 
-retriever = mf.Retriever.wikipedia(summary=2)
+retriever = mf.Retriever.web("wikipedia", summary=2)
 
 queries = ["Python programming", "Rust programming language", "Go programming"]
 response = retriever(queries, top_k=1)
@@ -165,7 +165,7 @@ A typical pattern: retrieve Wikipedia context, then pass it to an LLM:
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.wikipedia(summary=5)
+    retriever = mf.Retriever.web("wikipedia", summary=5)
     chat = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
     def answer_with_wikipedia(question: str) -> str:
@@ -191,7 +191,7 @@ A typical pattern: retrieve Wikipedia context, then pass it to an LLM:
 ```python
 import msgflux as mf
 
-retriever = mf.Retriever.wikipedia(summary=3)
+retriever = mf.Retriever.web("wikipedia", summary=3)
 
 queries = ["quantum computing", "photosynthesis", "black holes"]
 response = await retriever.acall(queries, top_k=1)
