@@ -786,70 +786,43 @@ class VisionAgent(nn.Agent):
 
 ???+ example "OR Inputs in a Pipeline"
 
-    === "Inline + Agent Pipeline"
+    A `Refiner` agent is an optional step that rewrites the user's question. The `Answerer` uses OR inputs so it works correctly whether or not the refiner ran:
 
-        An `inline` step may optionally refine the user's question. The agent consumes whichever version is available:
+    ```python
+    # pip install msgflux[openai]
+    import msgflux as mf
+    import msgflux.nn as nn
 
-        ```python
-        # pip install msgflux[openai]
-        import msgflux as mf
-        import msgflux.nn as nn
-        from msgflux.dsl import ainline
+    # mf.set_envs(OPENAI_API_KEY="...")
 
-        # mf.set_envs(OPENAI_API_KEY="...")
+    class Refiner(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        instructions = "Rewrite the question to be clearer and more specific."
+        message_fields = {"task_inputs": "user.question"}
+        response_mode = "refined.question"
 
-        @ainline
-        async def maybe_refine(msg: mf.Message) -> mf.Message:
-            """Optionally reformulate ambiguous questions."""
-            ...  # writes to msg.refined.question only when reformulation is needed
+    class Answerer(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        message_fields = {
+            # Use refined question if available, fall back to original
+            "task_inputs": ("refined.question", "user.question")
+        }
+        response_mode = "answer"
 
-        class Answerer(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            message_fields = {
-                # Use refined question if available, fall back to original
-                "task_inputs": ("refined.question", "user.question")
-            }
-            response_mode = "answer"
+    refiner = Refiner()
+    answerer = Answerer()
 
-        answerer = Answerer()
+    # With refinement
+    msg_a = mf.Message()
+    msg_a.set("user.question", "how do i make it go faster?")
+    refiner(msg_a)   # writes to msg_a.refined.question
+    answerer(msg_a)  # uses refined.question
+    print(msg_a.answer)
 
-        msg = mf.Message()
-        msg.set("user.question", "how do i make it go faster?")
+    # Without refinement — answerer falls back to user.question
+    msg_b = mf.Message()
+    msg_b.set("user.question", "What is the capital of France?")
+    answerer(msg_b)  # uses user.question directly
+    print(msg_b.answer)
+    ```
 
-        await maybe_refine(msg)   # may or may not set msg.refined.question
-        answerer(msg)             # picks the best available path automatically
-
-        print(msg.answer)
-        ```
-
-    === "Multi-source Router"
-
-        Different upstream agents write to different paths. A single downstream agent handles all of them:
-
-        ```python
-        # pip install msgflux[openai]
-        import msgflux as mf
-        import msgflux.nn as nn
-
-        # mf.set_envs(OPENAI_API_KEY="...")
-
-        class Summarizer(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            instructions = "Summarize the given content."
-            message_fields = {
-                # Accept content from any of these sources
-                "task_inputs": ("scraped.text", "uploaded.text", "user.pasted_text")
-            }
-            response_mode = "summary"
-
-        summarizer = Summarizer()
-
-        # Works regardless of which source produced the content
-        msg_a = mf.Message()
-        msg_a.set("scraped.text", "...")
-        summarizer(msg_a)
-
-        msg_b = mf.Message()
-        msg_b.set("uploaded.text", "...")
-        summarizer(msg_b)
-        ```
