@@ -778,29 +778,28 @@ class Module:
     # msgflux END
 
     def register_buffer(self, name: str, data: Any) -> None:
-        # TODO: muito trabalho pra ajeitar a docstring
-        # mudei de tensor para data
         """Add a buffer to the module.
 
-        This is typically used to register a buffer that should not to be
-        considered a model parameter. For example, BatchNorm's ``running_mean``
-        is not a parameter, but is part of the module's state. Buffers, by
-        default, are persistent and will be saved alongside parameters. This
-        behavior can be changed by setting :attr:`persistent` to ``False``. The
-        only difference between a persistent buffer and a non-persistent buffer
-        is that the latter will not be a part of this module's
-        :attr:`state_dict`.
+        This is typically used to register data that should not be considered a
+        module parameter but is part of the module's state. Buffers are persistent
+        and will be saved alongside parameters in the module's state.
 
-        Buffers can be accessed as attributes using given names.
+        Buffers can be accessed as attributes using the given name.
 
         Args:
             name:
                 Name of the buffer. The buffer can be accessed
-                from this module using the given name
+                from this module using the given name.
             data:
-                buffer to be registered.
-        Example::
-            >>> self.register_buffer("name", "agent")
+                Data to be registered as a buffer.
+
+        !!! example
+            ```python
+            class MyAgent(Agent):
+                def __init__(self):
+                    super().__init__()
+                    self.register_buffer("context", {"domain": "finance"})
+            ```
         """
         if "_buffers" not in self.__dict__:
             raise AttributeError("cannot assign buffer before Module.__init__() call")
@@ -1062,8 +1061,8 @@ class Module:
                 to look for. (See ``get_submodule`` for how to specify a
                 fully-qualified string.)
 
-        Returns: TODO
-            torch.Tensor: The buffer referenced by ``target``
+        Returns:
+            Any: The buffer referenced by ``target``
 
         Raises:
             AttributeError: If the target string references an invalid
@@ -1085,8 +1084,6 @@ class Module:
             raise AttributeError("`" + buffer_name + "` is not a buffer")
 
         return buffer
-
-    # revisar
 
     def register_forward_pre_hook(
         self,
@@ -1793,12 +1790,9 @@ class Module:
             Parameter: module parameter
 
         !!! example
-            # TODO
             ```python
             for param in model.parameters():
-                print(type(param), param.size())
-            >>> <class 'torch.Tensor'> (20L,)
-            >>> <class 'torch.Tensor'> (20L, 1L, 5L, 5L)
+                print(param.data, param.spec)
             ```
         """
         for _name, param in self.named_parameters(recurse=recurse):
@@ -1807,7 +1801,6 @@ class Module:
     def named_parameters(
         self, prefix: str = "", *, recurse: bool = True, remove_duplicate: bool = True
     ) -> Iterator[Tuple[str, Parameter]]:
-        # TODO: docstring
         """Return an iterator over module parameters, yielding both the name of the
             parameter as well as the parameter itself.
 
@@ -1822,13 +1815,11 @@ class Module:
         Yields:
             (str, Parameter): Tuple containing the name and parameter
 
-        Example::
-
-            >>> # xdoctest: +SKIP("undefined vars")
-            >>> for name, param in self.named_parameters():
-            >>>     if name in ['bias']:
-            >>>         print(param.size())
-
+        !!! example
+            ```python
+            for name, param in model.named_parameters():
+                print(name, param.data)
+            ```
         """
         gen = self._named_members(
             lambda module: module._parameters.items(),
@@ -1838,7 +1829,7 @@ class Module:
         )
         yield from gen
 
-    def buffers(self, *, recurse: Optional[bool] = True) -> Iterator[Any]:  # TODO doc
+    def buffers(self, *, recurse: Optional[bool] = True) -> Iterator[Any]:
         """Return an iterator over module buffers.
 
         Args:
@@ -1846,17 +1837,14 @@ class Module:
                 and all submodules. Otherwise, yields only buffers that
                 are direct members of this module.
 
-        Returns:
-            torch.Tensor: module buffer
+        Yields:
+            Any: module buffer
 
-        Example::
-
-            >>> # xdoctest: +SKIP("undefined vars")
-            >>> for buf in model.buffers():
-            >>>     print(type(buf), buf.size())
-            <class 'torch.Tensor'> (20L,)
-            <class 'torch.Tensor'> (20L, 1L, 5L, 5L)
-
+        !!! example
+            ```python
+            for buf in model.buffers():
+                print(type(buf), buf)
+            ```
         """
         for _, buf in self.named_buffers(recurse=recurse):
             yield buf
@@ -1867,7 +1855,7 @@ class Module:
         *,
         recurse: Optional[bool] = True,
         remove_duplicate: Optional[bool] = True,
-    ) -> Iterator[Tuple[str, Any]]:  # TODO docstring
+    ) -> Iterator[Tuple[str, Any]]:
         """Return an iterator over module buffers, yielding both the name of the
             buffer as well as the buffer itself.
 
@@ -1878,20 +1866,18 @@ class Module:
                 If True, then yields buffers of this module
                 and all submodules. Otherwise, yields only buffers that
                 are direct members of this module. Defaults to True.
-            remove_duplicat:
+            remove_duplicate:
                 Whether to remove the duplicated buffers in the result.
                 Defaults to True.
 
         Yields:
             Tuple containing the name and buffer
 
-        Example::
-
-            >>> # xdoctest: +SKIP("undefined vars")
-            >>> for name, buf in self.named_buffers():
-            >>>     if name in ['running_var']:
-            >>>         print(buf.size())
-
+        !!! example
+            ```python
+            for name, buf in model.named_buffers():
+                print(name, type(buf))
+            ```
         """
         gen = self._named_members(
             lambda module: module._buffers.items(),
@@ -1931,7 +1917,7 @@ class Module:
                 memo.add(module)
                 yield name, module
 
-    def modules(self) -> Iterator["Module"]:  # TODO DOC
+    def modules(self) -> Iterator["Module"]:
         """Return an iterator over all modules in the network.
 
         Yields:
@@ -1939,21 +1925,15 @@ class Module:
 
         Note:
             Duplicate modules are returned only once. In the following
-            example, ``l`` will be returned only once.
+            example, ``lm`` will be returned only once.
 
-        Example::
-
-            >>> l = nn.Linear(2, 2)
-            >>> net = nn.Sequential(l, l)
-            >>> for idx, m in enumerate(net.modules()):
-            ...     print(idx, '->', m)
-
-            0 -> Sequential(
-              (0): Linear(in_features=2, out_features=2, bias=True)
-              (1): Linear(in_features=2, out_features=2, bias=True)
-            )
-            1 -> Linear(in_features=2, out_features=2, bias=True)
-
+        !!! example
+            ```python
+            lm = LM("gpt-4o-mini")
+            pipeline = Sequential(lm, lm)
+            for idx, m in enumerate(pipeline.modules()):
+                print(idx, '->', m)
+            ```
         """
         for _, module in self.named_modules():
             yield module
@@ -2063,20 +2043,18 @@ class Module:
 
     def zero_pgrad(
         self, *, set_to_none: Optional[bool] = True
-    ) -> None:  # TODO isso é interessante mas vai mudar
+    ) -> None:
         """Reset gradients of all model parameters.
 
-        See similar function under :class:`msgflux.optim.Optimizer` for more context.
-
         Args:
-            set_to_none (bool): instead of setting to zero, set the grads to None.
-                See :meth:`msgflux.optim.Optimizer.zero_grad` for details.
+            set_to_none (bool): if True, sets the gradients to None instead
+                of zeroing them out. Defaults to True.
         """
         for p in self.parameters():
             if p.pgrad is not None:
                 if set_to_none:
                     p.pgrad = None
-                else:  # TODO revisar abaixo
+                else:
                     if p.pgrad.grad_fn is not None:
                         p.pgrad.detach_()
                     else:
