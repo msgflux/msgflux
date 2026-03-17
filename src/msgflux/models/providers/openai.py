@@ -976,12 +976,12 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
 
     def _get_metadata(self, model_output):
         metadata = dotdict(
-            usage=model_output.usage.to_dict(),
+            usage=model_output.usage.to_dict() if model_output.usage is not None else {},
             details={
-                "size": model_output.size,
-                "quality": model_output.quality,
-                "output_format": model_output.output_format,
-                "background": model_output.background,
+                "size": getattr(model_output, "size", None),
+                "quality": getattr(model_output, "quality", None),
+                "output_format": getattr(model_output, "output_format", None),
+                "background": getattr(model_output, "background", None),
             },
         )
         return metadata
@@ -1038,8 +1038,8 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         *,
         response_format: Optional[Literal["url", "base64"]] = None,
         n: Optional[int] = 1,
-        size: Optional[str] = "auto",
-        quality: Optional[str] = "auto",
+        size: Optional[str] = None,
+        quality: Optional[str] = None,
         background: Optional[Literal["transparent", "opaque", "auto"]] = None,
     ) -> ModelResponse:
         """Args:
@@ -1056,15 +1056,14 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         background:
             Allows to set transparency for the background of the generated image(s).
         """
-        generation_params = dotdict(
-            prompt=prompt,
-            n=n,
-            size=size,
-            quality=quality,
-            background=background,
-            model=self.model_id,
-        )
+        generation_params = dotdict(prompt=prompt, n=n, model=self.model_id)
 
+        if size is not None:
+            generation_params.size = size
+        if quality is not None:
+            generation_params.quality = quality
+        if background is not None:
+            generation_params.background = background
         if response_format is not None:
             if response_format == "base64":
                 response_format = "b64_json"
@@ -1079,8 +1078,8 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         *,
         response_format: Optional[Literal["url", "base64"]] = None,
         n: Optional[int] = 1,
-        size: Optional[str] = "auto",
-        quality: Optional[str] = "auto",
+        size: Optional[str] = None,
+        quality: Optional[str] = None,
         background: Optional[Literal["transparent", "opaque", "auto"]] = None,
     ) -> ModelResponse:
         """Async version of __call__. Args:
@@ -1097,15 +1096,14 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
         background:
             Allows to set transparency for the background of the generated image(s).
         """
-        generation_params = dotdict(
-            prompt=prompt,
-            n=n,
-            size=size,
-            quality=quality,
-            background=background,
-            model=self.model_id,
-        )
+        generation_params = dotdict(prompt=prompt, n=n, model=self.model_id)
 
+        if size is not None:
+            generation_params.size = size
+        if quality is not None:
+            generation_params.quality = quality
+        if background is not None:
+            generation_params.background = background
         if response_format is not None:
             if response_format == "base64":
                 response_format = "b64_json"
@@ -1116,7 +1114,7 @@ class OpenAITextToImage(_BaseOpenAI, TextToImageModel):
 
 
 @register_model
-class OpenAIImageTextToImage(OpenAITextToImage, ImageTextToImageModel):
+class OpenAIImageTextToImage(ImageTextToImageModel, OpenAITextToImage):
     """OpenAI Image Edit."""
 
     def _execute_model(self, **kwargs):
@@ -1131,7 +1129,7 @@ class OpenAIImageTextToImage(OpenAITextToImage, ImageTextToImageModel):
 
     def _prepare_inputs(self, image, mask):
         inputs = {}
-        if isinstance(image, str):
+        if isinstance(image, (str, bytes)):
             image = [image]
         inputs["image"] = [encode_data_to_bytes(item) for item in image]
         if mask:
