@@ -375,7 +375,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def clear(self):
         self.library.clear()
         self.special_library.clear()
-        # TODO: clean mcp
+        self.tool_configs.clear()
+        for mcp_data in self.mcp_clients.values():
+            F.wait_for(mcp_data["client"].disconnect)
+        self.mcp_clients.clear()
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
