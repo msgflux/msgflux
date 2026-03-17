@@ -70,6 +70,10 @@ class Image(MediaType):
         """
         source = self.source
 
+        if isinstance(source, bytes):
+            import base64 as _base64
+            return _base64.b64encode(source).decode("utf-8")
+
         if is_base64(source):
             return source
 
@@ -111,6 +115,16 @@ class Image(MediaType):
 
     def _detect_mime_type(self) -> str:
         """Detect MIME type from source."""
+        if isinstance(self.source, bytes):
+            if self.source[:2] == b"\xff\xd8":
+                return "image/jpeg"
+            if self.source[:4] == b"\x89PNG":
+                return "image/png"
+            if self.source[:4] in (b"GIF8", b"GIF9"):
+                return "image/gif"
+            if self.source[:4] == b"RIFF" and self.source[8:12] == b"WEBP":
+                return "image/webp"
+            return self.default_mime_type
         mime = get_mime_type(self.source)
         if not mime.startswith("image/"):
             return self.default_mime_type

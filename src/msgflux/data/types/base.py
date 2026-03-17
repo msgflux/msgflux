@@ -63,6 +63,8 @@ class MediaType(ABC):
         """Default MIME type for fallback."""
         pass
 
-    def _is_url(self, source: str) -> bool:
+    def _is_url(self, source) -> bool:
         """Check if source is a URL."""
+        if isinstance(source, bytes):
+            return source.startswith(b"http")
         return source.startswith("http")

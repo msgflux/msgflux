@@ -28,7 +28,9 @@ def encode_local_file_in_base64(path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def encode_data_to_base64(path: str) -> str:
+def encode_data_to_base64(path: Union[str, bytes]) -> str:
+    if isinstance(path, bytes):
+        return base64.b64encode(path).decode("utf-8")
     if "http" in path:
         return encode_base64_from_url(path)
     elif os.path.exists(path) and not os.path.isdir(path):
@@ -143,6 +145,14 @@ def encode_data_to_bytes(
     filename = None
     if isinstance(input_data, bytes):
         data = input_data
+        if input_data[:2] == b"\xff\xd8":
+            filename = "image.jpg"
+        elif input_data[:4] == b"\x89PNG":
+            filename = "image.png"
+        elif input_data[:4] == b"RIFF" and input_data[8:12] == b"WEBP":
+            filename = "image.webp"
+        else:
+            filename = "image.jpg"
 
     elif isinstance(input_data, str):
         # 1. Check if it's a valid local file path

@@ -14,7 +14,9 @@ def is_builtin_type(obj: Any):
     return isinstance(obj, builtin_types)
 
 
-def is_base64(string: str):
+def is_base64(string) -> bool:
+    if not isinstance(string, str):
+        return False
     try:
         base64.b64decode(string.encode("ascii"))
         return True
