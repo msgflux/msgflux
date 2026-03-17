@@ -114,21 +114,25 @@ class TestMediaMaker:
         with pytest.raises(ValueError, match="`prompt` cannot be None"):
             mediamaker(msg)
 
-    def test_mediamaker_invalid_response_type(self):
-        """Test MediaMaker raises ValueError for unsupported response type."""
+    def test_mediamaker_process_any_response_type(self):
+        """Test MediaMaker processes any response type without raising."""
         mock_model = Mock()
         mock_model.model_type = "text_to_image"
         mock_response = Mock(spec=ModelResponse)
-        mock_response.response_type = "text_generation"
-        mock_model.return_value = mock_response
+        mock_response.response_type = "image_generation"
+        mock_response.consume.return_value = b"image_bytes"
 
         mediamaker = MediaMaker.__new__(MediaMaker)
-        mediamaker._buffers = {"model": mock_model}
+        mediamaker._buffers = {
+            "model": mock_model,
+            "response_mode": None,
+            "response_format": None,
+        }
         mediamaker._modules = {}
         mediamaker._parameters = {}
 
-        with pytest.raises(ValueError, match="Unsupported model response type"):
-            mediamaker._process_model_response(mock_response, "test")
+        result = mediamaker._process_model_response(mock_response, "test")
+        assert result == b"image_bytes"
 
     @pytest.mark.asyncio
     async def test_mediamaker_aforward_with_string(self):

@@ -177,14 +177,9 @@ class MediaMaker(Module, metaclass=AutoParams):
     def _process_model_response(
         self, model_response: ModelResponse, message: Union[str, Message]
     ) -> str:
-        if model_response.response_type == "audio_generation":
-            raw_response = self._extract_raw_response(model_response)
-            response = self._prepare_response(raw_response, message)
-            return response
-        else:
-            raise ValueError(
-                f"Unsupported model response type `{model_response.response_type}`"
-            )
+        raw_response = self._extract_raw_response(model_response)
+        response = self._prepare_response(raw_response, message)
+        return response
 
     def _prepare_task(self, message: Union[str, Message], **kwargs) -> Dict[str, Any]:
         inputs = dotdict()
