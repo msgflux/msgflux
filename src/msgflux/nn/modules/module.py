@@ -62,11 +62,8 @@ MSGFLUX_DESERIALIZABLE_CLS: Dict[str, Type] = {
 
 T = TypeVar("T", bound="Module")
 
-# TODO para serializar basta verificar se o obj tem msgflux_type
-# isso resolve em vez de ficar add manualmente quais são
 
-
-class _IncompatibleKeys(  # TODO tirar. tirar nao porra. tem que ficar
+class _IncompatibleKeys(
     namedtuple("IncompatibleKeys", ["missing_keys", "unexpected_keys"]),
 ):
     def __repr__(self):
@@ -436,7 +433,7 @@ class Module:
         orientation: Optional[str] = "TD",
         *,
         remove_self: Optional[bool] = True,
-    ) -> Mermaid:
+    ) -> "Mermaid":
         """Generates and renders a Mermaid diagram of the `forward` method.
 
         This method extracts the source code of the `forward` method and converts
@@ -480,10 +477,10 @@ class Module:
     def _extract_message_values(
         self, paths: Union[str, List[str], Dict[str, str]], message: Message
     ) -> Optional[Union[str, Dict[str, Any], List[Any], None]]:
-        """Process inputs based on their type (str, dict, list)
+        """Process inputs based on their type (str, tuple, dict, list)
         by extracting content from the message.
         """
-        if isinstance(paths, str):
+        if isinstance(paths, (str, tuple)):  # tuple = OR inputs
             return self._get_content_from_message(paths, message)
         elif isinstance(paths, dict):
             return dotdict(
@@ -586,7 +583,6 @@ class Module:
     def _set_task_inputs(
         self, task_inputs: Optional[Union[str, Dict[str, str], Tuple[str, ...]]] = None
     ):
-        # TODO: suporte para lista de inputs ["outputs.text1", "outputs.text2"]
         if isinstance(task_inputs, (str, dict, tuple)) or task_inputs is None:
             if isinstance(task_inputs, str) and task_inputs == "":
                 raise ValueError(
@@ -607,7 +603,6 @@ class Module:
     def _set_task_multimodal_inputs(
         self, task_multimodal_inputs: Optional[Dict[str, List[str]]] = None
     ):
-        # TODO permitir passar em vez de uma lista passar so um valor se for unico
         if isinstance(task_multimodal_inputs, dict) or task_multimodal_inputs is None:
             if not task_multimodal_inputs and task_multimodal_inputs is not None:
                 raise ValueError(

@@ -730,3 +730,126 @@ Use `config={"return_messages": True}` to get back both the agent's response and
             # Update messages for next turn (include the assistant reply)
             messages = result.messages + [mf.ChatBlock.assist(full_response)]
         ```
+
+## Declarative Mode with Message
+
+In declarative mode, you configure the agent once with `message_fields` and `response_mode`, then pass a `mf.Message` object. The agent reads its inputs from the Message and writes its output back into it — no manual wiring needed.
+
+```python
+class MyAgent(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    message_fields = {
+        "task_inputs": "user.query",            # Read task from msg.user.query
+        "context_inputs": "context.background"  # Read context from msg.context.background
+    }
+    response_mode = "agent.output"              # Write response to msg.agent.output
+```
+
+### Path Formats
+
+| Path type | Syntax | Behavior |
+|-----------|--------|----------|
+| Simple field | `"query"` | Reads the top-level `query` field |
+| Nested field | `"user.question"` | Reads `msg.user.question` via dot notation |
+| **OR inputs** | `("path1", "path2", ...)` | Returns the **first non-None value** found |
+
+### OR Inputs — Flexible Path Resolution
+
+When a path is defined as a **tuple**, the agent tries each path in order and uses the first one that returns a non-None value. This is the **OR inputs** pattern.
+
+It is especially powerful in dynamic pipelines where the same agent may receive input from different upstream steps — for example, when an `inline` function may or may not have produced a refined output:
+
+```python
+class QAAgent(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    message_fields = {
+        "task_inputs": ("refined.question", "user.question", "user.raw_input")
+    }
+    response_mode = "qa.answer"
+```
+
+If `refined.question` is present in the message, it is used. Otherwise the agent falls back to `user.question`, and then to `user.raw_input`.
+
+OR inputs also work inside dict-valued fields (e.g. `task_multimodal_inputs`):
+
+```python
+class VisionAgent(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    message_fields = {
+        "task_inputs": ("user.query", "user.raw_input"),        # OR on task
+        "task_multimodal_inputs": {
+            "image": ("user.photo_url", "user.image")           # OR on image
+        }
+    }
+    response_mode = "vision.result"
+```
+
+???+ example "OR Inputs in a Pipeline"
+
+    === "Inline + Agent Pipeline"
+
+        An `inline` step may optionally refine the user's question. The agent consumes whichever version is available:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.dsl import ainline
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        @ainline
+        async def maybe_refine(msg: mf.Message) -> mf.Message:
+            """Optionally reformulate ambiguous questions."""
+            ...  # writes to msg.refined.question only when reformulation is needed
+
+        class Answerer(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            message_fields = {
+                # Use refined question if available, fall back to original
+                "task_inputs": ("refined.question", "user.question")
+            }
+            response_mode = "answer"
+
+        answerer = Answerer()
+
+        msg = mf.Message()
+        msg.set("user.question", "how do i make it go faster?")
+
+        await maybe_refine(msg)   # may or may not set msg.refined.question
+        answerer(msg)             # picks the best available path automatically
+
+        print(msg.answer)
+        ```
+
+    === "Multi-source Router"
+
+        Different upstream agents write to different paths. A single downstream agent handles all of them:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class Summarizer(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            instructions = "Summarize the given content."
+            message_fields = {
+                # Accept content from any of these sources
+                "task_inputs": ("scraped.text", "uploaded.text", "user.pasted_text")
+            }
+            response_mode = "summary"
+
+        summarizer = Summarizer()
+
+        # Works regardless of which source produced the content
+        msg_a = mf.Message()
+        msg_a.set("scraped.text", "...")
+        summarizer(msg_a)
+
+        msg_b = mf.Message()
+        msg_b.set("uploaded.text", "...")
+        summarizer(msg_b)
+        ```
