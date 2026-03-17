@@ -1,4 +1,3 @@
-import asyncio
 import math
 from collections import Counter
 from typing import Dict, List, Optional, Union
@@ -197,66 +196,6 @@ class BM25LexicalRetriever(BaseLexical, BaseRetriever, LexicalRetriever):
             "std_score": std_score,
         }
 
-    async def _asearch(
-        self,
-        queries: List[str],
-        top_k: int,
-        threshold: float,
-        *,
-        return_score: bool,
-    ):
-        """Async version of _search that runs queries in parallel.
-
-        Args:
-            queries:
-                Query string or list of strings.
-            top_k:
-                Number of results to return.
-            threshold:
-                Minimum score to include a document in the results.
-            return_score:
-                If True, returns the score along with the document.
-
-        Returns:
-            List of results for each query.
-        """
-        loop = asyncio.get_event_loop()
-
-        def process_query(query):
-            query_tokens = self._tokenize(query)
-
-            # Calculate scores for all documents
-            doc_scores = [
-                (doc_id, self._calculate_bm25_score(query_tokens, doc_id))
-                for doc_id in range(len(self.documents))
-            ]
-
-            # Filter documents by threshold
-            filtered_doc_scores = [
-                (doc_id, score) for doc_id, score in doc_scores if score >= threshold
-            ]
-
-            # Sort documents by score in descending order
-            filtered_doc_scores.sort(key=lambda x: x[1], reverse=True)
-
-            # Returns the K best results
-            results = []
-            for doc_id, score in filtered_doc_scores[:top_k]:
-                result = dotdict({"data": self.documents[doc_id]})
-                if return_score:
-                    result.score = score
-                results.append(result)
-
-            return results
-
-        # Execute all queries in parallel using executor
-        tasks = [loop.run_in_executor(None, process_query, query) for query in queries]
-        query_results = await asyncio.gather(*tasks)
-        results = []
-        for result in query_results:
-            results.append(dotdict({"results": result}))
-        return results
-
     async def acall(
         self,
         queries: Union[str, List[str]],
@@ -266,6 +205,9 @@ class BM25LexicalRetriever(BaseLexical, BaseRetriever, LexicalRetriever):
         return_score: Optional[bool] = None,
     ):
         """Async version of __call__ for BM25 retrieval.
+
+        BM25 is pure in-memory CPU work — no I/O to await.
+        Delegates directly to __call__ to avoid unnecessary executor overhead.
 
         Args:
             queries:
@@ -282,28 +224,5 @@ class BM25LexicalRetriever(BaseLexical, BaseRetriever, LexicalRetriever):
 
         Returns:
             dotdict containing search results.
-
-        !!! example
-
-            ```python
-            retriever = BM25LexicalRetriever(k1=1.5, b=0.75)
-            retriever.add(["Document 1 text", "Document 2 text"])
-            results = await retriever.acall(
-                ["search query"], top_k=5, return_score=True
-            )
-            print(results)
-            ```
         """
-        if isinstance(queries, str):
-            queries = [queries]
-        if top_k is None:
-            top_k = 5
-        if threshold is None:
-            threshold = 0.0
-        if return_score is None:
-            return_score = False
-
-        results = await self._asearch(
-            queries, top_k, threshold, return_score=return_score
-        )
-        return dotdict({"response_type": "lexical_search", "data": results})
+        return self(queries, top_k=top_k, threshold=threshold, return_score=return_score)
