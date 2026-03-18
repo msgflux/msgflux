@@ -189,7 +189,7 @@ class Agent(Module, metaclass=AutoParams):
             Dictionary with configuration options.
             Valid keys: "verbose", "return_messages", "tool_choice",
             "stream", "image_block_kwargs", "video_block_kwargs", "include_date",
-            "reasoning_in_response"
+            "reasoning_in_response", "validate_inputs"
             !!! example
                 config={
                     "verbose": True,
@@ -198,7 +198,8 @@ class Agent(Module, metaclass=AutoParams):
                     "stream": False,
                     "image_block_kwargs": {"detail": "high"},
                     "video_block_kwargs": {"format": "mp4"},
-                    "include_date": False
+                    "include_date": False,
+                    "validate_inputs": True,
                 }
 
             Configuration options:
@@ -212,6 +213,8 @@ class Agent(Module, metaclass=AutoParams):
               (e.g., {"format": "mp4"})
             - include_date: Include current date with weekday in system prompt
               (bool). Format: "Weekday, Month DD, YYYY"
+            - validate_inputs: Validate input types against the signature
+              schema before calling the model (bool).
         templates:
             Dictionary mapping template types to Jinja template strings.
             Valid keys: "task", "response", "task_context", "system_prompt"
@@ -1151,6 +1154,10 @@ class Agent(Module, metaclass=AutoParams):
         ):
             messages = self._get_content_from_message(self.messages, message)
 
+        validation_inputs = self._get_validation_inputs(message, task, vars)
+        if validation_inputs is not None:
+            self._validate_inputs(validation_inputs)
+
         content = self._render_task(message, task=task, vars=vars, **kwargs)
 
         if content is None and not messages:
@@ -1247,6 +1254,10 @@ class Agent(Module, metaclass=AutoParams):
             and self.messages is not None
         ):
             messages = self._get_content_from_message(self.messages, message)
+
+        validation_inputs = self._get_validation_inputs(message, task, vars)
+        if validation_inputs is not None:
+            self._validate_inputs(validation_inputs)
 
         content = await self._arender_task(message, task=task, vars=vars, **kwargs)
 
@@ -1957,6 +1968,7 @@ class Agent(Module, metaclass=AutoParams):
             "include_date",
             "reasoning_in_response",
             "max_tool_turns",
+            "validate_inputs",
         }
 
         if config is None:
@@ -1993,6 +2005,14 @@ class Agent(Module, metaclass=AutoParams):
                     f"`max_tool_turns` must be a positive integer, "
                     f"given `{config['max_tool_turns']}`"
                 )
+
+        if "validate_inputs" in config and not isinstance(
+            config["validate_inputs"], bool
+        ):
+            raise TypeError(
+                f"`validate_inputs` must be a bool, "
+                f"given `{type(config['validate_inputs'])}`"
+            )
 
         self.register_buffer("config", config.copy())
 
@@ -2200,6 +2220,60 @@ class Agent(Module, metaclass=AutoParams):
                 inputs_info, signature
             )
             self.set_annotations(generated_annotations)
+
+            input_schema = SignatureFactory.get_input_schema_from_signature(
+                inputs_info, signature
+            )
+            self._input_schema = input_schema
+            if input_schema is not None:
+                self._input_encoder = msgspec.json.Encoder()
+                self._input_decoder = msgspec.json.Decoder(input_schema)
+            else:
+                self._input_encoder = None
+                self._input_decoder = None
+
+    def _get_validation_inputs(
+        self,
+        message: Optional[Union[str, Message, Mapping[str, Any]]],
+        task: Any,
+        vars: Mapping[str, Any],
+    ) -> Optional[Mapping[str, Any]]:
+        if not self.config.get("validate_inputs", False):
+            return None
+        if getattr(self, "_input_decoder", None) is None:
+            return None
+
+        if task is _UNSET:
+            if isinstance(message, dotdict):
+                task = self._extract_message_values(self.task, message)
+            else:
+                task = message
+
+        if isinstance(task, Mapping):
+            validation_inputs = dict(task)
+            validation_inputs.update(vars)
+            return validation_inputs
+        if task is None and vars:
+            return vars
+        return None
+
+    def _validate_inputs(self, inputs: Mapping[str, Any]) -> None:
+        if not self.config.get("validate_inputs", False):
+            return
+        decoder = getattr(self, "_input_decoder", None)
+        if decoder is None:
+            return
+
+        schema_fields = getattr(self._input_schema, "__struct_fields__", ())
+        payload = {field: inputs[field] for field in schema_fields if field in inputs}
+
+        try:
+            decoder.decode(self._input_encoder.encode(payload))
+        except (msgspec.ValidationError, msgspec.EncodeError, TypeError) as exc:
+            raise ValueError(
+                f"[{self.name}] Input validation failed: {exc}. "
+                f"Expected schema: {self._input_schema.__struct_fields__}"
+            ) from exc
 
     # --- System Prompt ---
 

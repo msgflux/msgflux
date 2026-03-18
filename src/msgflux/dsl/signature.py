@@ -11,10 +11,12 @@ from typing import (
     get_type_hints,
 )
 
+import msgspec
 from jinja2 import Template
 
 from msgflux.dsl.typed_parsers.base import BaseTypedParser
 from msgflux.generation.templates import EXPECTED_OUTPUTS_TEMPLATE
+from msgflux.utils.msgspec import StructFactory
 from msgflux.utils.xml import apply_xml_tags
 
 
@@ -283,6 +285,48 @@ class SignatureFactory:
         return expected_output
 
     @classmethod
+    def get_input_schema_from_signature(
+        cls,
+        inputs_info: List[FieldInfo],
+        signature: Union[str, Type["Signature"]],
+    ) -> Optional[type]:
+        """Create a msgspec Struct for validating signature inputs.
+
+        Builds a schema from the input fields, skipping multimodal types
+        (Image, Audio, Video, File) since they are handled separately.
+        Optional fields get a default of ``None``.
+
+        Returns ``None`` when no validatable fields exist (e.g. all
+        inputs are multimodal).
+        """
+        struct_fields = []
+
+        for input_info in inputs_info:
+            if is_multimodal_type(input_info.dtype):
+                continue
+
+            # Resolve the Python type
+            if isinstance(signature, type) and issubclass(signature, Signature):
+                type_hints = get_type_hints(signature)
+                if input_info.name in type_hints:
+                    parsed_type = type_hints[input_info.name]
+                else:
+                    parsed_type = StructFactory._parse_type_string(input_info.dtype)
+            else:
+                parsed_type = StructFactory._parse_type_string(input_info.dtype)
+
+            is_optional = input_info.dtype.startswith("Optional[")
+            if is_optional:
+                struct_fields.append((input_info.name, parsed_type, None))
+            else:
+                struct_fields.append((input_info.name, parsed_type))
+
+        if not struct_fields:
+            return None
+
+        return msgspec.defstruct("Inputs", struct_fields, kw_only=True)
+
+    @classmethod
     def get_task_template_from_signature(
         cls,
         inputs_info: List[FieldInfo],
@@ -365,8 +409,6 @@ def generate_annotations_from_signature(
     Returns:
         Dict mapping parameter names to types, excluding multimodal types
     """
-    from msgflux.utils.msgspec import StructFactory  # noqa: PLC0415
-
     annotations = {}
 
     # Process inputs
