@@ -287,6 +287,78 @@
 }
 
 /* ===========================
+   HOMEPAGE HERO SPLIT
+   =========================== */
+
+/* Hide auto-generated h1 on homepage when hero is present */
+.md-typeset .hero-split ~ *,
+.md-typeset .hero-split {
+    /* ensure hero is recognized */
+}
+.md-content__inner > h1:first-child:has(+ .hero-split),
+.md-content__inner > h1:first-child {
+    /* fallback: we hide via JS or markdown */
+}
+.homepage-title {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+.md-typeset .hero-split {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    gap: 2rem;
+    padding: 3rem 0 1rem;
+    min-height: 240px;
+}
+
+.md-typeset .hero-left {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.md-typeset .hero-left img {
+    max-width: 260px;
+    height: auto;
+    display: block;
+}
+
+.md-typeset .hero-right .tagline {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 2.5rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    margin: 0 0 1.5rem 0;
+    color: var(--md-default-fg-color);
+}
+
+.md-typeset .hero-right .tagline em {
+    font-style: italic;
+    color: #F9A825;
+    background: linear-gradient(90deg, #FFD54F 0%, #F9A825 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .hero-right .tagline em {
+    background: linear-gradient(90deg, #FFEE58 0%, #FFD54F 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* ===========================
    RESPONSIVE ADJUSTMENTS
    =========================== */
 
@@ -302,6 +374,20 @@
     .grid.cards {
         grid-template-columns: 1fr;
     }
+
+    .md-typeset .hero-split {
+        grid-template-columns: 1fr;
+        text-align: center;
+        padding: 2rem 0 0.5rem;
+    }
+
+    .md-typeset .hero-left {
+        justify-content: center;
+    }
+
+    .md-typeset .hero-right .tagline {
+        font-size: 2rem;
+    }
 }
 
 @media screen and (max-width: 44.9375em) {
@@ -311,5 +397,9 @@
 
     .hero h1 {
         font-size: 2rem !important;
+    }
+
+    .md-typeset .hero-right .tagline {
+        font-size: 1.6rem;
     }
 }
