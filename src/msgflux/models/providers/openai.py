@@ -321,15 +321,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 response_content = dotdict(parser.decode(choice.message.content))
                 # Type validation
                 if generation_schema and self.validate_typed_parser_output:
-                    encoded_response_content = msgspec.json.encode(response_content)
-                    msgspec.json.decode(
-                        encoded_response_content, type=generation_schema
-                    )
+                    decoder = self._get_decoder(generation_schema)
+                    decoder.decode(self._encoder.encode(response_content))
             elif generation_schema is not None:
                 response.set_response_type(f"{prefix_response_type}structured")
-                struct = msgspec.json.decode(
-                    choice.message.content, type=generation_schema
-                )
+                decoder = self._get_decoder(generation_schema)
+                struct = decoder.decode(choice.message.content)
                 response_content = dotdict(struct_to_dict(struct))
             else:
                 response.set_response_type(f"{prefix_response_type}text_generation")

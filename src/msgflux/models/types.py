@@ -1,5 +1,19 @@
+import msgspec
+
+
 class ChatCompletionModel:
     model_type = "chat_completion"
+
+    _encoder: msgspec.json.Encoder = msgspec.json.Encoder()
+    _decoders: dict[type, msgspec.json.Decoder] = {}
+
+    def _get_decoder(self, schema: type) -> msgspec.json.Decoder:
+        """Return a cached Decoder for *schema*, creating it on first use."""
+        decoder = self._decoders.get(schema)
+        if decoder is None:
+            decoder = msgspec.json.Decoder(schema)
+            self._decoders[schema] = decoder
+        return decoder
 
 
 class BatchedChatCompletionModel:
