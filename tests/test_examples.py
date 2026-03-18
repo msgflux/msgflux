@@ -1,6 +1,6 @@
 import pytest
 
-from msgflux.examples import Example, ExampleCollection
+from msgflux.core.examples import Example, ExampleCollection
 
 
 @pytest.fixture
