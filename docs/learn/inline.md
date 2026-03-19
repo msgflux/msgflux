@@ -97,8 +97,9 @@ Both return the same `msg` object after all steps have run.
 |---------|-------------|---------|
 | `->` | Sequential | `"a -> b -> c"` |
 | `[…]` | Parallel | `"[b, c]"` |
-| `{field op value ? a}` | Conditional (if) | `"{score > 0.9 ? accept}"` |
-| `{field op value ? a, b}` | Conditional (if-else) | `"{is_vip == true ? vip, standard}"` |
+| `{cond ? a}` | Conditional (if) | `"{score > 0.9 ? accept}"` |
+| `{cond ? a, b}` | Conditional (if/else) | `"{is_vip == true ? vip, standard}"` |
+| `{c1 ? a, c2 ? b, c}` | Multi-branch (if/elif/else) | `"{score > 0.9 ? premium, score > 0.5 ? standard, fallback}"` |
 | `@{field op value}: …;` | While loop | `"@{retries < 3}: fetch;"` |
 
 `field` represents a **path read from the current message** at runtime
@@ -214,27 +215,30 @@ def feat_b(msg):
 
 ## 7. **Conditionals**
 
-A conditional evaluates a condition against the current message at runtime and
-executes either the true branch, the false branch, or nothing.
+A conditional evaluates conditions against the current message at runtime.
+Conditions are checked in order — the **first match wins**. The last item
+without `?` is the **default** branch (fallback).
 
 ### Syntax
 
 ```
-{key_path operator value ? true_module}
-{key_path operator value ? true_module, false_module}
+{condition ? module}                              # if
+{condition ? module_a, module_b}                  # if / else
+{cond1 ? module_a, cond2 ? module_b, module_c}   # if / elif / else
 ```
 
-If the false branch is omitted, nothing runs when the condition is false.
+Branches are separated by `,`. Each branch with `?` is a condition–module
+pair. The last item without `?` is the default — it runs when no condition
+matches. If no default is provided and nothing matches, no module runs.
 
-```python
-# Runs accept when score > 0.9; skips otherwise
-"{score > 0.9 ? accept}"
+Use `_` as an explicit wildcard when you want to make the default visually
+clear:
 
-# Equivalent to: if score > 0.9: accept(msg) else: reject(msg)
-"{score > 0.9 ? accept, reject}"
+```
+{cond1 ? module_a, _ ? module_b}
 ```
 
-???+ example
+???+ example "If / else"
 
     ```python
     import msgflux as mf
@@ -253,6 +257,34 @@ If the false branch is omitted, nothing runs when the condition is false.
     msg = mf.dotdict(priority=9)
     msg = flux(msg)
     print(msg.label)  # "urgent"
+    ```
+
+???+ example "Multi-branch (if / elif / else)"
+
+    ```python
+    import msgflux as mf
+
+    def route_premium(msg):
+        msg.tier = "premium"
+
+    def route_standard(msg):
+        msg.tier = "standard"
+
+    def route_free(msg):
+        msg.tier = "free"
+
+    flux = mf.Inline(
+        "{score > 90 ? route_premium, score > 50 ? route_standard, route_free}",
+        {
+            "route_premium": route_premium,
+            "route_standard": route_standard,
+            "route_free": route_free,
+        },
+    )
+
+    msg = mf.dotdict(score=75)
+    msg = flux(msg)
+    print(msg.tier)  # "standard"
     ```
 
 ### Key Paths
@@ -586,6 +618,9 @@ modules, a refinement loop, a routing branch, and a final cleanup step.
     def standard_handler(msg):
         msg.queue = "standard"
 
+    def bulk_handler(msg):
+        msg.queue = "bulk"
+
     def finalize(msg):
         msg.done = True
 
@@ -594,7 +629,9 @@ modules, a refinement loop, a routing branch, and a final cleanup step.
         -> {audio is not None ? transcribe}
         -> [extract_entities, analyze_sentiment]
         -> @{confidence < 0.8}: refine;
-        -> {is_urgent == true ? priority_handler, standard_handler}
+        -> {is_urgent == true ? priority_handler,
+            confidence > 0.9 ? standard_handler,
+            bulk_handler}
         -> finalize
     """
 
@@ -608,6 +645,7 @@ modules, a refinement loop, a routing branch, and a final cleanup step.
             "refine": refine,
             "priority_handler": priority_handler,
             "standard_handler": standard_handler,
+            "bulk_handler": bulk_handler,
             "finalize": finalize,
         },
     )
@@ -628,7 +666,7 @@ Execution order:
 2. `transcribe` — runs because `audio` is not `None`
 3. `extract_entities` and `analyze_sentiment` — run in parallel
 4. `refine` — loops until `confidence >= 0.8` (capped at 1000 iterations)
-5. `priority_handler` — runs because `is_urgent == true`
+5. `priority_handler` — runs because `is_urgent == true` (first match wins)
 6. `finalize` — always runs
 
 Field names used in conditions (e.g. `audio`, `confidence`, `is_urgent`)
@@ -650,9 +688,11 @@ module       ::= IDENTIFIER
 
 parallel     ::= "[" module ("," module)* "]"
 
-conditional  ::= "{" condition "?" branch ("," branch)? "}"
+conditional  ::= "{" cond_branch ("," cond_branch)* ("," default)? "}"
 
-branch       ::= module ("," module)*
+cond_branch  ::= condition "?" module
+
+default      ::= module
 
 while_loop   ::= "@{" condition "}:" pipeline ";"
 
