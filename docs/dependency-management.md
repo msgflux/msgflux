@@ -1,140 +1,142 @@
-# Models
+# Dependency Management
 
-## Chat Completion
+## Models
 
-| Provider    | Dependency        |
-|-------------|-------------------|
-| Ollama      | `msgflux[openai]` |
-| OpenAI      | `msgflux[openai]` |
-| OpenRouter  | `msgflux[openai]` |
-| SambaNova   | `msgflux[openai]` |
-| Together    | `msgflux[openai]` |
-| vLLM        | `msgflux[openai]` |
+### Chat Completion
 
-## Image Classifier
+| Provider    | Dependency        | Auth Env             |
+|-------------|-------------------|----------------------|
+| Ollama      | `msgflux[openai]` |                      |
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`     |
+| OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY` |
+| SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`  |
+| Together    | `msgflux[openai]` | `TOGETHER_API_KEY`   |
+| vLLM        | `msgflux[openai]` |                      |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| JinaAI      | `msgflux[httpx]`   |
+### Image Classifier
 
-## Image Embedder
+| Provider    | Dependency       | Auth Env           |
+|-------------|------------------|--------------------|
+| JinaAI      | `msgflux[httpx]` | `JINAAI_API_KEY`   |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| JinaAI      | `msgflux[httpx]`   |
+### Image Embedder
 
-## Image Text To Image
+| Provider    | Dependency       | Auth Env           |
+|-------------|------------------|--------------------|
+| JinaAI      | `msgflux[httpx]` | `JINAAI_API_KEY`   |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| OpenAI      | `msgflux[openai]`  |
+### Text To Image
 
-## Moderation
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| OpenAI      | `msgflux[openai]`  |
+### Image Text To Image
 
-## Speech To Text
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| OpenAI      | `msgflux[openai]`  |
-| vLLM        | `msgflux[openai]`  |
+### Moderation
 
-## Text Classifier
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| JinaAI      | `msgflux[httpx]`   |
-| vLLM        | `msgflux[openai]`  |
+### Speech To Text
 
-## Text Embedder
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
+| vLLM        | `msgflux[openai]` |                    |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| JinaAI      | `msgflux[httpx]`   |
-| Ollama      | `msgflux[openai]`  |
-| OpenAI      | `msgflux[openai]`  |
-| Together    | `msgflux[openai]`  |
-| vLLM        | `msgflux[openai]`  |
+### Text Classifier
 
-## Text Reranker
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
+| vLLM        | `msgflux[openai]` |                    |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| JinaAI      | `msgflux[httpx]`   |
-| vLLM        | `msgflux[openai]`  |
+### Text Embedder
 
-## Text To Image
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
+| Ollama      | `msgflux[openai]` |                    |
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
+| Together    | `msgflux[openai]` | `TOGETHER_API_KEY` |
+| vLLM        | `msgflux[openai]` |                    |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| OpenAI      | `msgflux[openai]`  |
+### Text Reranker
 
-## Text To Speech
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
+| vLLM        | `msgflux[openai]` |                    |
 
-| Provider    | Dependency         |
-|-------------|--------------------|
-| OpenAI      | `msgflux[openai]`  |
-| Together    | `msgflux[openai]`  |
+### Text To Speech
 
-# Parsers
+| Provider    | Dependency        | Auth Env           |
+|-------------|-------------------|--------------------|
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
+| Together    | `msgflux[openai]` | `TOGETHER_API_KEY` |
 
-## PDF
+## Parsers
 
-| Provider | Dependency |
-|----------|------------|
-| `pypdf` | `pypdf` |
+### PDF
 
-## Word (.docx)
+| Provider  | Dependency  |
+|-----------|-------------|
+| `pypdf`   | `pypdf`     |
 
-| Provider | Dependency |
-|----------|------------|
+### Word (.docx)
+
+| Provider      | Dependency    |
+|---------------|---------------|
 | `python_docx` | `python-docx` |
 
-## PowerPoint (.pptx)
+### PowerPoint (.pptx)
 
-| Provider | Dependency |
-|----------|------------|
+| Provider      | Dependency    |
+|---------------|---------------|
 | `python_pptx` | `python-pptx` |
 
-## Excel (.xlsx)
+### Excel (.xlsx)
 
-| Provider | Dependency |
-|----------|------------|
+| Provider  | Dependency |
+|-----------|------------|
 | `openpyxl` | `openpyxl` |
 
-## HTML
+### HTML
 
-| Provider | Dependency |
-|----------|------------|
+| Provider        | Dependency       |
+|-----------------|------------------|
 | `beautifulsoup` | `beautifulsoup4` |
 
-## CSV / TSV
+### CSV / TSV
 
 | Provider | Dependency |
 |----------|------------|
-| `csv` | built-in |
+| `csv`    | built-in   |
 
-## Email (.eml)
+### Email (.eml)
 
 | Provider | Dependency |
 |----------|------------|
-| `email` | built-in |
+| `email`  | built-in   |
 
-# Retrievers
+## Retrievers
 
-## Lexical
+### Lexical
 
-| Provider    | Dependency        |
-|-------------|-------------------|
-| BM25        |     built-in      |
-| BM25s       |     `bm25s`       |
-| Rank BM25   |   `rank-bm25s`    |
+| Provider    | Dependency    |
+|-------------|---------------|
+| BM25        | built-in      |
+| BM25s       | `bm25s`       |
+| Rank BM25   | `rank-bm25s`  |
 
-## Web Search
+### Web Search
 
-| Provider    | Dependency        |
-|-------------|-------------------|
-| Wikipedia   |   `wikipedia`     |
+| Provider    | Dependency    |
+|-------------|---------------|
+| Wikipedia   | `wikipedia`   |
