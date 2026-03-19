@@ -39,24 +39,28 @@ class Inline:
 
     3. Conditional Node:
         Syntax:
-            `"{condition?true_branch[,false_branch]}"`
+            `"{condition1 ? branch1, condition2 ? branch2, default}"`
         Description:
-            Conditionally executes a branch of modules depending on the
-            evaluation of the condition against the `message`.
-            The condition must follow the format `key_path operator value`,
+            Multi-branch conditional. Evaluates conditions in order and
+            executes the first matching branch. The last item without `?`
+            is the default (fallback) branch. Use `_` as an explicit
+            wildcard default.
+
+            Conditions follow the format `key_path operator value`,
             e.g., `output.agent == "xpto"`.
-            The `true_branch` and `false_branch` are comma-separated module names.
             Supports logic operators:
                 * AND (&): condition1 & condition2
                 * OR (||): condition1 || condition2
                 * NOT (!): !(condition)
-            None verification
+            None verification:
                 * is None: user.name is None
                 * is not None: user.name is not None
+
         !!! example
 
-            `"{output.agent == 'xpto'?a,b}"`
-            Executes `a` if the condition is true, `b` otherwise.
+            `"{score > 0.9 ? premium, score > 0.5 ? standard, fallback}"`
+            `"{cond ? a, b}"` — equivalent to if/else (backwards compatible).
+            `"{cond1 ? a, _ ? b}"` — explicit wildcard default.
 
     4. While Loop Node:
         Syntax:
@@ -99,7 +103,7 @@ class Inline:
         self.patterns = {
             "arrow": r"\s*->\s*",
             "parallel": r"\[(.*?)\]",
-            "conditional": r"\{(.*?)\?(.*?)(?:,(.*?))?\}",
+            "conditional": r"\{([^{}]+)\}",
             "while_loop": r"@\{(.*?)\}:\s*((?:[^;]|(?:->|\[.*?\]|\{.*?\}|@\{.*?\}:\s*.*?;))+);",  # noqa: E501
             "identifier": r"[a-zA-Z_][a-zA-Z0-9_]*",
             "comparison": r"([a-zA-Z0-9_.]+)\s*(==|!=|<=|>=|<|>|is not|is)\s*(.*)",
@@ -143,17 +147,8 @@ class Inline:
 
             conditional_match = re.match(self.patterns["conditional"], part)
             if conditional_match:
-                condition, true_branch, false_branch = conditional_match.groups()
-                steps.append(
-                    {
-                        "type": "conditional",
-                        "condition": condition.strip(),
-                        "true_branch": self._parse_branch(true_branch),
-                        "false_branch": self._parse_branch(false_branch)
-                        if false_branch
-                        else [],
-                    }
-                )
+                content = conditional_match.group(1)
+                steps.append(self._parse_conditional_content(content))
                 continue
 
             parallel_match = re.match(self.patterns["parallel"], part)
@@ -169,10 +164,25 @@ class Inline:
 
         return steps
 
-    def _parse_branch(self, branch: str) -> List[str]:
-        if not branch:
-            return []
-        return [m.strip() for m in branch.split(",") if m.strip()]
+    def _parse_conditional_content(self, content: str) -> Dict[str, Any]:
+        """Parse multi-branch conditional content into a step dict."""
+        parts = [p.strip() for p in content.split(",")]
+        branches: List[Dict[str, str]] = []
+        default: List[str] = []
+
+        for part in parts:
+            if "?" in part:
+                q_idx = part.index("?")
+                condition = part[:q_idx].strip()
+                module = part[q_idx + 1 :].strip()
+                if condition == "_":
+                    default = [module]
+                else:
+                    branches.append({"condition": condition, "module": module})
+            else:
+                default.append(part)
+
+        return {"type": "conditional", "branches": branches, "default": default}
 
     def _tokenize_condition(self, condition: str) -> List[str]:
         condition = condition.strip()
@@ -414,16 +424,18 @@ class Inline:
                 self._validate_parallel_results(module_names, results)
 
             elif step["type"] == "conditional":
-                condition_result = self._evaluate_condition(step["condition"], message)
-                branch = (
-                    step["true_branch"] if condition_result else step["false_branch"]
-                )
-
-                for module_name in branch:
-                    self._call_module(module_name, message)
+                self._execute_conditional(step, message)
 
             elif step["type"] == "while":
                 self._execute_while_loop(step["condition"], step["actions"], message)
+
+    def _execute_conditional(self, step: Dict[str, Any], message: dotdict) -> None:
+        for branch in step["branches"]:
+            if self._evaluate_condition(branch["condition"], message):
+                self._call_module(branch["module"], message)
+                return
+        for module_name in step["default"]:
+            self._call_module(module_name, message)
 
     async def _aexecute_steps(
         self, steps: List[Dict[str, Any]], message: dotdict
@@ -443,18 +455,22 @@ class Inline:
                 self._validate_parallel_results(module_names, results)
 
             elif step["type"] == "conditional":
-                condition_result = self._evaluate_condition(step["condition"], message)
-                branch = (
-                    step["true_branch"] if condition_result else step["false_branch"]
-                )
-
-                for module_name in branch:
-                    await self._acall_module(module_name, message)
+                await self._aexecute_conditional(step, message)
 
             elif step["type"] == "while":
                 await self._aexecute_while_loop(
                     step["condition"], step["actions"], message
                 )
+
+    async def _aexecute_conditional(
+        self, step: Dict[str, Any], message: dotdict
+    ) -> None:
+        for branch in step["branches"]:
+            if self._evaluate_condition(branch["condition"], message):
+                await self._acall_module(branch["module"], message)
+                return
+        for module_name in step["default"]:
+            await self._acall_module(module_name, message)
 
     def __call__(self, message: dotdict) -> dotdict:
         self._validate_message(message)

@@ -672,3 +672,118 @@ async def test_async_while_loop_zero_iterations(async_modules):
     input_msg = dotdict()
     result = await ainline(expression, modules_ext, input_msg)
     assert result["counter"] == 100
+
+
+# ── Multi-branch conditional tests ──────────────────────────────────────────
+
+
+def test_multibranch_first_match(modules):
+    """First matching branch is executed."""
+    expression = "prep -> {output.score > 9 ? feat_a, output.score > 5 ? feat_b, final}"
+    result = inline(expression, modules, dotdict())
+    assert result["feat_a"] == "result_a"
+    assert "feat_b" not in result
+    assert "final" not in result
+
+
+def test_multibranch_second_match(modules):
+    """Second branch matches when first doesn't."""
+    expression = (
+        "prep -> {output.score > 20 ? feat_a, output.score > 5 ? feat_b, final}"
+    )
+    result = inline(expression, modules, dotdict())
+    assert "feat_a" not in result
+    assert result["feat_b"] == "result_b"
+    assert "final" not in result
+
+
+def test_multibranch_default(modules):
+    """Default branch executes when no condition matches."""
+    expression = (
+        "prep -> {output.score > 100 ? feat_a, output.score > 50 ? feat_b, final}"
+    )
+    result = inline(expression, modules, dotdict())
+    assert "feat_a" not in result
+    assert "feat_b" not in result
+    assert result["final"] == "done"
+
+
+def test_multibranch_no_default(modules):
+    """No module executes when no condition matches and no default."""
+    expression = "prep -> {output.score > 100 ? feat_a, output.score > 50 ? feat_b}"
+    result = inline(expression, modules, dotdict())
+    assert "feat_a" not in result
+    assert "feat_b" not in result
+
+
+def test_multibranch_wildcard_default(modules):
+    """Explicit _ wildcard acts as default."""
+    expression = "prep -> {output.score > 100 ? feat_a, _ ? feat_b}"
+    result = inline(expression, modules, dotdict())
+    assert "feat_a" not in result
+    assert result["feat_b"] == "result_b"
+
+
+def test_multibranch_in_pipeline(modules):
+    """Multi-branch conditional works inside a full pipeline."""
+    expression = (
+        "prep -> {output.score > 15 ? feat_a, output.score > 5 ? feat_b, final}"
+        " -> increment"
+    )
+    result = inline(expression, modules, dotdict())
+    assert result["feat_b"] == "result_b"
+    assert result["counter"] == 1
+
+
+def test_multibranch_with_logic_operators(modules):
+    """Multi-branch with complex conditions."""
+    expression = (
+        "prep -> {"
+        "output.score > 100 & output.agent == 'xpto' ? feat_a, "
+        "output.score >= 10 || output.agent == 'unknown' ? feat_b, "
+        "final"
+        "}"
+    )
+    result = inline(expression, modules, dotdict())
+    assert "feat_a" not in result
+    assert result["feat_b"] == "result_b"
+
+
+@pytest.mark.asyncio
+async def test_async_multibranch_first_match(async_modules):
+    """Async: first matching branch is executed."""
+    expression = "prep -> {output.score > 9 ? feat_a, output.score > 5 ? feat_b, final}"
+    result = await ainline(expression, async_modules, dotdict())
+    assert result["feat_a"] == "result_a"
+    assert "feat_b" not in result
+    assert "final" not in result
+
+
+@pytest.mark.asyncio
+async def test_async_multibranch_default(async_modules):
+    """Async: default branch executes when no condition matches."""
+    expression = (
+        "prep -> {output.score > 100 ? feat_a, output.score > 50 ? feat_b, final}"
+    )
+    result = await ainline(expression, async_modules, dotdict())
+    assert "feat_a" not in result
+    assert "feat_b" not in result
+    assert result["final"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_async_multibranch_no_default(async_modules):
+    """Async: no module executes when nothing matches and no default."""
+    expression = "prep -> {output.score > 100 ? feat_a, output.score > 50 ? feat_b}"
+    result = await ainline(expression, async_modules, dotdict())
+    assert "feat_a" not in result
+    assert "feat_b" not in result
+
+
+@pytest.mark.asyncio
+async def test_async_multibranch_wildcard(async_modules):
+    """Async: explicit _ wildcard acts as default."""
+    expression = "prep -> {output.score > 100 ? feat_a, _ ? feat_b}"
+    result = await ainline(expression, async_modules, dotdict())
+    assert "feat_a" not in result
+    assert result["feat_b"] == "result_b"
