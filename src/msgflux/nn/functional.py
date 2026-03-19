@@ -1,6 +1,7 @@
 # https://mpitutorial.com/tutorials/mpi-scatter-gather-and-allgather/
 import asyncio
 import concurrent.futures
+import threading
 from concurrent.futures import Future
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -296,26 +297,31 @@ def wait_for(
 
 
 @Spans.instrument()
-def wait_for_event(event: asyncio.Event) -> None:
-    """Waits synchronously for an asyncio.Event to be set.
+def wait_for_event(event: Any) -> None:
+    """Waits synchronously for an event to be set.
 
     This function will block until event.set() is called elsewhere.
 
     Args:
-        event: The asyncio.Event to wait for.
+        event: The event to wait for.
 
     Raises:
-        TypeError: If `event` is not an instance of asyncio.Event.
+        TypeError: If `event` is not an instance of asyncio.Event or threading.Event.
     """
-    if not isinstance(event, asyncio.Event):
-        raise TypeError("`event` must be an instance of asyncio.Event")
+    if isinstance(event, threading.Event):
+        event.wait()
+        return
 
-    executor = Executor.get_instance()
-    future = executor._submit_to_async_worker(event.wait())
-    try:
-        future.result()
-    except Exception as e:
-        logger.error(str(e))
+    if isinstance(event, asyncio.Event):
+        executor = Executor.get_instance()
+        future = executor._submit_to_async_worker(event.wait())
+        try:
+            future.result()
+        except Exception as e:
+            logger.error(str(e))
+        return
+
+    raise TypeError("`event` must be an instance of asyncio.Event or threading.Event")
 
 
 @Spans.instrument()
@@ -419,16 +425,16 @@ async def afire_and_forget(to_send: Callable, *args, **kwargs) -> None:
 
 
 @Spans.ainstrument()
-async def await_for_event(event: asyncio.Event) -> None:
-    """Waits asynchronously for an asyncio.Event to be set.
+async def await_for_event(event: Any) -> None:
+    """Waits asynchronously for an event to be set.
 
     This function will await until event.set() is called elsewhere.
 
     Args:
-        event: The asyncio.Event to wait for.
+        event: The event to wait for.
 
     Raises:
-        TypeError: If `event` is not an instance of asyncio.Event.
+        TypeError: If `event` is not an instance of asyncio.Event or threading.Event.
 
     Examples:
         # Example 1:
@@ -443,10 +449,16 @@ async def await_for_event(event: asyncio.Event) -> None:
         await F.await_for_event(event)
         print("Event was set!")
     """
-    if not isinstance(event, asyncio.Event):
-        raise TypeError("`event` must be an instance of asyncio.Event")
+    if isinstance(event, asyncio.Event):
+        await event.wait()
+        return
 
-    await event.wait()
+    if isinstance(event, threading.Event):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, event.wait)
+        return
+
+    raise TypeError("`event` must be an instance of asyncio.Event or threading.Event")
 
 
 @Spans.ainstrument()
