@@ -814,3 +814,60 @@ async def test_async_multibranch_wildcard(async_modules):
     result = await ainline(expression, async_modules, dotdict())
     assert "feat_a" not in result
     assert result["feat_b"] == "result_b"
+
+
+# ── to_mermaid tests ─────────────────────────────────────────────────────────
+
+
+def test_to_mermaid_returns_string():
+    """to_mermaid returns a non-empty string."""
+    modules = {"a": lambda m: None, "b": lambda m: None}
+    diagram = Inline("a -> b", modules).to_mermaid()
+    assert isinstance(diagram, str)
+    assert "flowchart TD" in diagram
+    assert '"a"' in diagram
+    assert '"b"' in diagram
+
+
+def test_to_mermaid_escapes_quoted_conditions():
+    """Conditions containing double quotes render as valid Mermaid labels."""
+    modules = {
+        "prep": lambda m: None,
+        "feat_a": lambda m: None,
+        "feat_b": lambda m: None,
+    }
+    diagram = Inline('prep -> {status == "ok"?feat_a,feat_b}', modules).to_mermaid()
+    assert "if status == #quot;ok#quot;" in diagram
+    assert 'status == "ok"' not in diagram
+
+
+def test_to_mermaid_chains_multiple_default_modules():
+    """Default modules render sequentially, matching execution order."""
+    modules = {
+        "prep": lambda m: None,
+        "fallback_a": lambda m: None,
+        "fallback_b": lambda m: None,
+        "final": lambda m: None,
+    }
+    diagram = Inline(
+        "prep -> {score > 10 ? final, fallback_a, fallback_b} -> final",
+        modules,
+    ).to_mermaid()
+    lines = diagram.splitlines()
+    else_id = next(line.split("{{", 1)[0].strip() for line in lines if '"else"' in line)
+    fallback_a_id = next(
+        line.split("[", 1)[0].strip() for line in lines if '"fallback_a"' in line
+    )
+    fallback_b_id = next(
+        line.split("[", 1)[0].strip() for line in lines if '"fallback_b"' in line
+    )
+
+    assert f"  {else_id} --> {fallback_a_id}" in lines
+    assert f"  {fallback_a_id} --> {fallback_b_id}" in lines
+
+
+def test_to_mermaid_includes_escaped_title():
+    """Titles are quoted for Mermaid frontmatter."""
+    modules = {"a": lambda m: None}
+    diagram = Inline("a", modules).to_mermaid(title='Inline "Demo"')
+    assert 'title: "Inline #quot;Demo#quot;"' in diagram

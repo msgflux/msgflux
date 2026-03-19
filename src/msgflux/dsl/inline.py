@@ -482,3 +482,161 @@ class Inline:
         self._validate_message(message)
         await self._aexecute_steps(self.steps, message)
         return message
+
+    # --- Visualization ----------------------------------------------------
+
+    _MERMAID_THEME = (
+        "%%{\n"
+        "  init: {\n"
+        "    'theme': 'base',\n"
+        "    'themeVariables': {\n"
+        "      'primaryColor': '#E9E7E7',\n"
+        "      'primaryTextColor': '#000000',\n"
+        "      'primaryBorderColor': '#C00000',\n"
+        "      'lineColor': '#F8B229',\n"
+        "      'secondaryColor': '#91939C',\n"
+        "      'tertiaryColor': '#fff'\n"
+        "    }\n"
+        "  }\n"
+        "}%%"
+    )
+
+    _MERMAID_STYLES = (
+        "\n%% Styles\n"
+        "classDef conditional fill:#f5e1ce,stroke:#333,stroke-width:2px;\n"
+        "classDef condition fill:#f5e1ce,stroke:#333,stroke-width:2px;\n"
+        "classDef loop fill:#fadc9b,stroke:#333,stroke-width:2px;"
+    )
+
+    def to_mermaid(self, title: str = "") -> str:
+        """Generate a Mermaid flowchart from the parsed pipeline."""
+        ctx: Dict[str, Any] = {"n": 0, "classes": []}
+        header = f"---\ntitle: {self._md_title(title)}\n---\n" if title else ""
+        lines = [f"{header}{self._MERMAID_THEME}", "flowchart TD"]
+        self._md_render(self.steps, [], lines, ctx)
+        lines.append(self._MERMAID_STYLES)
+        for cls_line in ctx["classes"]:
+            lines.append(cls_line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _md_label(value: Any) -> str:
+        return str(value).replace('"', "#quot;").replace("\n", "<br/>")
+
+    @classmethod
+    def _md_title(cls, value: str) -> str:
+        return f'"{cls._md_label(value)}"'
+
+    def _md_nid(self, ctx: Dict[str, Any]) -> str:
+        nid = f"n{ctx['n']}"
+        ctx["n"] += 1
+        return nid
+
+    def _md_render(
+        self,
+        steps: List[Dict[str, Any]],
+        prev: List[str],
+        lines: List[str],
+        ctx: Dict[str, Any],
+    ) -> List[str]:
+        curr = prev
+        for step in steps:
+            stype = step["type"]
+            if stype == "module":
+                curr = self._md_module(step, curr, lines, ctx)
+            elif stype == "parallel":
+                curr = self._md_parallel(step, curr, lines, ctx)
+            elif stype == "conditional":
+                curr = self._md_conditional(step, curr, lines, ctx)
+            elif stype == "while":
+                curr = self._md_while(step, curr, lines, ctx)
+        return curr
+
+    def _md_module(
+        self,
+        step: Dict[str, Any],
+        curr: List[str],
+        lines: List[str],
+        ctx: Dict[str, Any],
+    ) -> List[str]:
+        nid = self._md_nid(ctx)
+        lines.append(f'  {nid}["{self._md_label(step["module"])}"]')
+        for p in curr:
+            lines.append(f"  {p} --> {nid}")
+        return [nid]
+
+    def _md_parallel(
+        self,
+        step: Dict[str, Any],
+        curr: List[str],
+        lines: List[str],
+        ctx: Dict[str, Any],
+    ) -> List[str]:
+        exits: List[str] = []
+        for mod in step["modules"]:
+            nid = self._md_nid(ctx)
+            lines.append(f'  {nid}["{self._md_label(mod)}"]')
+            for p in curr:
+                lines.append(f"  {p} --> {nid}")
+            exits.append(nid)
+        return exits
+
+    def _md_conditional(
+        self,
+        step: Dict[str, Any],
+        curr: List[str],
+        lines: List[str],
+        ctx: Dict[str, Any],
+    ) -> List[str]:
+        # Decision diamond
+        cid = self._md_nid(ctx)
+        lines.append(f'  {cid}{{"Decision"}}')
+        ctx["classes"].append(f"class {cid} conditional;")
+        for p in curr:
+            lines.append(f"  {p} --> {cid}")
+        branch_exits: List[str] = []
+        # Each branch: Decision -> condition hexagon -> module rectangle
+        for i, branch in enumerate(step["branches"]):
+            keyword = "if" if i == 0 else "elif"
+            cond_nid = self._md_nid(ctx)
+            condition = self._md_label(branch["condition"])
+            lines.append(f'  {cond_nid}{{{{"{keyword} {condition}"}}}}')
+            ctx["classes"].append(f"class {cond_nid} condition;")
+            lines.append(f"  {cid} --> {cond_nid}")
+            mod_nid = self._md_nid(ctx)
+            lines.append(f'  {mod_nid}["{self._md_label(branch["module"])}"]')
+            lines.append(f"  {cond_nid} --> {mod_nid}")
+            branch_exits.append(mod_nid)
+        if step["default"]:
+            else_nid = self._md_nid(ctx)
+            lines.append(f'  {else_nid}{{{{"else"}}}}')
+            ctx["classes"].append(f"class {else_nid} condition;")
+            lines.append(f"  {cid} --> {else_nid}")
+            default_exits = [else_nid]
+            for mod in step["default"]:
+                mod_nid = self._md_nid(ctx)
+                lines.append(f'  {mod_nid}["{self._md_label(mod)}"]')
+                for p in default_exits:
+                    lines.append(f"  {p} --> {mod_nid}")
+                default_exits = [mod_nid]
+            branch_exits.extend(default_exits)
+        else:
+            branch_exits.append(cid)
+        return branch_exits
+
+    def _md_while(
+        self,
+        step: Dict[str, Any],
+        curr: List[str],
+        lines: List[str],
+        ctx: Dict[str, Any],
+    ) -> List[str]:
+        cid = self._md_nid(ctx)
+        lines.append(f'  {cid}(("{self._md_label(step["condition"])}"))')
+        ctx["classes"].append(f"class {cid} loop;")
+        for p in curr:
+            lines.append(f"  {p} --> {cid}")
+        body_exits = self._md_render(step["actions"], [cid], lines, ctx)
+        for e in body_exits:
+            lines.append(f"  {e} -.->|loop| {cid}")
+        return [cid]
