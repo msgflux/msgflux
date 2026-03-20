@@ -39,7 +39,7 @@ All core functions have async counterparts prefixed with `a`:
 | `scatter_gather` | `ascatter_gather` |
 | `wait_for` | — |
 | `wait_for_event` | `await_for_event` |
-| `fire_and_forget` | `afire_and_forget` |
+| `spawn` | `aspawn` |
 
 ---
 
@@ -408,7 +408,7 @@ Wait for an `asyncio.Event` in synchronous code.
 
 ---
 
-### `fire_and_forget`
+### `spawn`
 
 Dispatch a task without waiting for a result.
 
@@ -423,7 +423,7 @@ Dispatch a task without waiting for a result.
             print(f"Logging: {event_type} for user {user_id}")
 
         # Returns immediately
-        F.fire_and_forget(log_event, "login", 12345)
+        F.spawn(log_event, "login", 12345)
         print("Main thread continues...")
         ```
 
@@ -437,7 +437,7 @@ Dispatch a task without waiting for a result.
             await asyncio.sleep(1)
             print(f"[Async] {message}")
 
-        F.fire_and_forget(async_log, "Hello from fire_and_forget")
+        F.spawn(async_log, "Hello from spawn")
         ```
 
     === "Error Handling"
@@ -449,10 +449,10 @@ Dispatch a task without waiting for a result.
             raise ValueError("This task failed!")
 
         # Error is logged, not raised
-        F.fire_and_forget(failing_task)
+        F.spawn(failing_task)
         ```
 
 !!! tip "Use Cases"
-    Fire-and-forget is ideal for logging, cache updates, notifications, and non-critical side effects.
+    Spawn is ideal for logging, cache updates, notifications, and non-critical side effects.
 
-**Async version:** `afire_and_forget`
+**Async version:** `aspawn`

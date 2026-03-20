@@ -9,7 +9,7 @@ def tool_config(
     *,
     return_direct: Optional[bool] = False,
     call_as_response: Optional[bool] = False,
-    fire_and_forget: Optional[bool] = False,
+    spawn: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
     inject_vars: Optional[Union[bool, List[str]]] = False,
     handoff: Optional[bool] = False,
@@ -36,7 +36,7 @@ def tool_config(
             If True, returns the tool call as its result. This property requires
             `return_direct = True` and will automatically change it to True if it
             is passed as false.
-        fire_and_forget:
+        spawn:
             If True, the tool will be dispatched without waiting for a result.
             The model receives a confirmation that the task was started.
         inject_messages:
@@ -68,7 +68,7 @@ def tool_config(
 
     Raises:
         ValueError:
-           `fire_and_forget=True` is not compatible with `return_direct=True`
+           `spawn=True` is not compatible with `return_direct=True`
            and `call_as_response=True`.
         ValueError:
            `inject_vars=True` is not compatible with `call_as_response=True`.
@@ -108,9 +108,9 @@ def tool_config(
             _return_direct = True
             _inject_messages = True
 
-        if fire_and_forget and (_return_direct or call_as_response):
+        if spawn and (_return_direct or call_as_response):
             raise ValueError(
-                "`fire_and_forget=True` is not compatible with `return_direct=True`"
+                "`spawn=True` is not compatible with `return_direct=True`"
                 " and `call_as_response=True`."
             )
 
@@ -122,7 +122,7 @@ def tool_config(
         tool_config = {
             "tool_config": dotdict(
                 {
-                    "fire_and_forget": fire_and_forget,
+                    "spawn": spawn,
                     "call_as_response": call_as_response,
                     "handoff": handoff,
                     "inject_messages": _inject_messages,

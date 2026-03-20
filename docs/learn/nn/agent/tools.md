@@ -1085,13 +1085,13 @@ Use cases:
     # Returns the tool call parameters without executing the function
     ```
 
-#### fire_and_forget
+#### spawn
 
 Dispatch a tool without waiting for a result. The model receives a confirmation that the task was started, but no return value. Requires async tool.
 
 Use cases:
 
-- Fire-and-forget operations (emails, notifications)
+- Spawned operations (emails, notifications)
 - Tasks that don't need to return a result to the model
 
 ???+ example
@@ -1104,7 +1104,7 @@ Use cases:
 
     # mf.set_envs(OPENAI_API_KEY="...")
 
-    @mf.tool_config(fire_and_forget=True)
+    @mf.tool_config(spawn=True)
     async def send_notification(user_id: str, message: str):
         """Send notification asynchronously. Will not generate a return."""
         # Simulate async operation (e.g., API call, email sending)

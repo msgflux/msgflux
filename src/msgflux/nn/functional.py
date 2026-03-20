@@ -11,14 +11,14 @@ from msgflux.logger import logger
 from msgflux.telemetry import Spans
 
 __all__ = [
-    "afire_and_forget",
     "amap_gather",
     "ascatter_gather",
+    "aspawn",
     "await_for_event",
-    "fire_and_forget",
     "bcast_gather",
     "map_gather",
     "scatter_gather",
+    "spawn",
     "wait_for",
     "wait_for_event",
 ]
@@ -325,7 +325,7 @@ def wait_for_event(event: Any) -> None:
 
 
 @Spans.instrument()
-def fire_and_forget(to_send: Callable, *args, **kwargs) -> None:
+def spawn(to_send: Callable, *args, **kwargs) -> None:
     """Dispatches a task without waiting for a result.
     Uses the AsyncExecutorPool. The task is not tracked and no return is provided.
 
@@ -346,19 +346,19 @@ def fire_and_forget(to_send: Callable, *args, **kwargs) -> None:
         def print_message(message: str):
             time.sleep(1)
             print(f"[Sync] Message: {message}")
-        F.fire_and_forget(print_message, "Hello from sync function")
+        F.spawn(print_message, "Hello from sync function")
 
         # Example 2:
         import asyncio
         async def async_print_message(message: str):
             await asyncio.sleep(1)
             print(f"[Async] Message: {message}")
-        F.fire_and_forget(async_print_message, "Hello from async function")
+        F.spawn(async_print_message, "Hello from async function")
 
         # Example 3 (with error):
         def failing_task():
             raise ValueError("This task failed!")
-        F.fire_and_forget(failing_task)  # Error will be logged
+        F.spawn(failing_task)  # Error will be logged
     """
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")
@@ -368,7 +368,7 @@ def fire_and_forget(to_send: Callable, *args, **kwargs) -> None:
         try:
             future.result()
         except Exception as e:
-            logger.error(f"Fire-and-forget task error: {e!s}", exc_info=True)
+            logger.error(f"Spawned task error: {e!s}", exc_info=True)
 
     executor = Executor.get_instance()
     future = executor.submit(to_send, *args, **kwargs)
@@ -376,7 +376,7 @@ def fire_and_forget(to_send: Callable, *args, **kwargs) -> None:
 
 
 @Spans.ainstrument()
-async def afire_and_forget(to_send: Callable, *args, **kwargs) -> None:
+async def aspawn(to_send: Callable, *args, **kwargs) -> None:
     """Dispatches an async task without waiting for a result.
     The task is not tracked and no return is provided.
 
@@ -397,12 +397,12 @@ async def afire_and_forget(to_send: Callable, *args, **kwargs) -> None:
         async def async_print_message(message: str):
             await asyncio.sleep(1)
             print(f"[Async] Message: {message}")
-        await F.afire_and_forget(async_print_message, "Hello from async function")
+        await F.aspawn(async_print_message, "Hello from async function")
 
         # Example 2 (with error):
         async def failing_task():
             raise ValueError("This task failed!")
-        await F.afire_and_forget(failing_task)  # Error will be logged
+        await F.aspawn(failing_task)  # Error will be logged
     """
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")

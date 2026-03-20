@@ -351,14 +351,14 @@ class TestConvertModuleToNNTool:
         assert tool.name.startswith("transfer_to_")
         assert tool.annotations == {}
 
-    def test_convert_with_fire_and_forget_config(self):
-        """Test converting with fire_and_forget configuration."""
+    def test_convert_with_spawn_config(self):
+        """Test converting with spawn configuration."""
 
         def dispatched_task(data: str) -> None:
             """Dispatch task without return."""
             pass
 
-        dispatched_task.tool_config = {"fire_and_forget": True}
+        dispatched_task.tool_config = {"spawn": True}
         tool = _convert_module_to_nn_tool(dispatched_task)
 
         assert "not generate a return" in tool.description.lower()
@@ -815,14 +815,14 @@ class TestToolLibrary:
         assert "5-value" in result.tool_calls[0].result
 
     @pytest.mark.asyncio
-    async def test_tool_library_aforward_fire_and_forget(self):
-        """Test async ToolLibrary fire_and_forget execution."""
+    async def test_tool_library_aforward_spawn(self):
+        """Test async ToolLibrary spawn execution."""
 
         async def async_tool(x: int) -> int:
-            """Fire and forget async tool."""
+            """Spawn async tool."""
             return x * 2
 
-        async_tool.tool_config = {"fire_and_forget": True}
+        async_tool.tool_config = {"spawn": True}
         library = ToolLibrary(name="lib", tools=[async_tool])
 
         tool_callings = [("call_1", "async_tool", {"x": 10})]
@@ -864,14 +864,14 @@ class TestToolLibrary:
 
         assert "8-state_value" in result.tool_calls[0].result
 
-    def test_tool_library_forward_fire_and_forget(self):
-        """Test ToolLibrary fire_and_forget execution in sync mode."""
+    def test_tool_library_forward_spawn(self):
+        """Test ToolLibrary spawn execution in sync mode."""
 
         def sync_tool(x: int) -> int:
-            """Fire and forget sync tool."""
+            """Spawn sync tool."""
             return x * 4
 
-        sync_tool.tool_config = {"fire_and_forget": True}
+        sync_tool.tool_config = {"spawn": True}
         library = ToolLibrary(name="lib", tools=[sync_tool])
 
         tool_callings = [("call_1", "sync_tool", {"x": 5})]

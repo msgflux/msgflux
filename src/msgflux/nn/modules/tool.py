@@ -290,7 +290,7 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
         name = "transfer_to_" + name
         annotations = {}  # pass only the model state
 
-    if tool_config.get("fire_and_forget"):
+    if tool_config.get("spawn"):
         doc = "This tool will not generate a return. \n" + doc
 
     return LocalTool(
@@ -563,9 +563,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 elif inject_vars is True:
                     tool_params["vars"] = vars
 
-            if config.get("fire_and_forget", False):
+            if config.get("spawn", False):
                 return_directly = False
-                F.fire_and_forget(tool, **(tool_params or {}))
+                F.spawn(tool, **(tool_params or {}))
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
@@ -693,9 +693,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 elif inject_vars is True:
                     tool_params["vars"] = vars
 
-            if config.get("fire_and_forget", False):
+            if config.get("spawn", False):
                 return_directly = False
-                await F.afire_and_forget(tool.acall, **(tool_params or {}))
+                await F.aspawn(tool.acall, **(tool_params or {}))
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,

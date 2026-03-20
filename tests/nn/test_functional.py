@@ -178,17 +178,17 @@ class TestWaitFor:
             F.wait_for("not_callable", 1)
 
 
-class TestFireAndForget:
-    """Test suite for fire_and_forget function."""
+class TestSpawn:
+    """Test suite for spawn function."""
 
-    def test_fire_and_forget_basic(self):
-        """Test basic fire_and_forget functionality."""
+    def test_spawn_basic(self):
+        """Test basic spawn functionality."""
         results = []
 
         def append_value(value):
             results.append(value)
 
-        F.fire_and_forget(append_value, 42)
+        F.spawn(append_value, 42)
         # Give it a moment to execute
         import time
 
@@ -196,10 +196,10 @@ class TestFireAndForget:
 
         assert 42 in results
 
-    def test_fire_and_forget_not_callable(self):
-        """Test fire_and_forget raises TypeError for non-callable."""
+    def test_spawn_not_callable(self):
+        """Test spawn raises TypeError for non-callable."""
         with pytest.raises(TypeError, match="`to_send` must be a callable"):
-            F.fire_and_forget("not_callable")
+            F.spawn("not_callable")
 
 
 class TestWaitForEvent:
@@ -293,21 +293,21 @@ class TestAsyncFunctions:
             await F.await_for_event("not_event")
 
     @pytest.mark.asyncio
-    async def test_afire_and_forget_basic(self):
-        """Test basic afire_and_forget functionality."""
+    async def test_aspawn_basic(self):
+        """Test basic aspawn functionality."""
         results = []
 
         async def append_value(value):
             results.append(value)
 
-        await F.afire_and_forget(append_value, 99)
+        await F.aspawn(append_value, 99)
         # Give it a moment to execute
         await asyncio.sleep(0.1)
 
         assert 99 in results
 
     @pytest.mark.asyncio
-    async def test_afire_and_forget_not_callable(self):
-        """Test afire_and_forget raises TypeError for non-callable."""
+    async def test_aspawn_not_callable(self):
+        """Test aspawn raises TypeError for non-callable."""
         with pytest.raises(TypeError, match="`to_send` must be a callable"):
-            await F.afire_and_forget("not_callable")
+            await F.aspawn("not_callable")
