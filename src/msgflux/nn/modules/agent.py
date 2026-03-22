@@ -401,7 +401,7 @@ class Agent(Module, metaclass=AutoParams):
         """
         inputs = self._prepare_task(message, **kwargs)
         model_response = self._execute_model(
-            message=message, prefilling=self.prefilling, **inputs
+            prefilling=self.prefilling, **inputs
         )
         if isinstance(model_response, str):
             return self._define_response_mode(model_response, message)
@@ -414,7 +414,7 @@ class Agent(Module, metaclass=AutoParams):
         """Async version of forward."""
         inputs = await self._aprepare_task(message, **kwargs)
         model_response = await self._aexecute_model(
-            message=message, prefilling=self.prefilling, **inputs
+            prefilling=self.prefilling, **inputs
         )
         if isinstance(model_response, str):
             return self._define_response_mode(model_response, message)
@@ -429,7 +429,6 @@ class Agent(Module, metaclass=AutoParams):
         self,
         messages: List[Mapping[str, Any]],
         vars: Mapping[str, Any],
-        message: Optional[Union[str, Mapping[str, Any], Message]] = None,  # noqa: ARG002
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
     ) -> Union[str, ModelResponse, ModelStreamResponse]:
@@ -451,7 +450,6 @@ class Agent(Module, metaclass=AutoParams):
         self,
         messages: List[Mapping[str, Any]],
         vars: Mapping[str, Any],
-        message: Optional[Union[str, Mapping[str, Any], Message]] = None,  # noqa: ARG002
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
     ) -> Union[str, ModelResponse, ModelStreamResponse]:
