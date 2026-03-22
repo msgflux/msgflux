@@ -31,7 +31,7 @@ classifiers = [
 ]
 dependencies = [
     "jinja2>=3.1.6",
-    "msgspec-ext>=0.5.0",
+    "msgspec-ext>=0.5.1",
     "msgtrace-sdk>=1.1.0",
     "tenacity>=8.2.3",
     "typing-extensions>=4.14.1",
