@@ -274,6 +274,22 @@ class Agent(Module, metaclass=AutoParams):
                 "from the signature inputs. Remove the 'annotations' parameter."
             )
 
+        # Validate that signature and expected_output are not both provided
+        if signature is not None and expected_output is not None:
+            raise ValueError(
+                "Cannot specify both 'signature' and 'expected_output'. "
+                "When using a signature, expected_output is generated automatically "
+                "from the signature outputs. Remove the 'expected_output' parameter."
+            )
+
+        # Validate that signature and task template are not both provided
+        if signature is not None and templates is not None and "task" in templates:
+            raise ValueError(
+                "Cannot specify both 'signature' and templates['task']. "
+                "When using a signature, the task template is generated automatically "
+                "from the signature inputs. Remove the 'task' key from templates."
+            )
+
         super().__init__()
         self.set_name(name)
         self.set_description(description)

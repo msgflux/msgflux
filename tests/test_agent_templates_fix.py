@@ -34,29 +34,29 @@ def test_agent_without_signature_no_error():
     print("✓ Test 1 passed: Agent without signature created successfully")
 
 
-def test_agent_with_signature_overrides_task_template():
-    """Test that signature-generated task_template overrides user-provided template."""
+def test_agent_with_signature_rejects_task_template():
+    """Test that signature and templates['task'] cannot be used together."""
     model = create_mock_model()
 
+    with pytest.raises(ValueError, match="Cannot specify both 'signature' and templates"):
+        Agent(
+            name="test_agent_sig",
+            model=model,
+            signature="input: str -> output: str",
+            templates={"task": "This should be rejected", "response": "{{output}}"},
+        )
+
+    # Signature with other templates (without 'task') should work fine
     agent = Agent(
         name="test_agent_sig",
         model=model,
         signature="input: str -> output: str",
-        templates={"task": "This should be overridden", "response": "{{output}}"},
+        templates={"response": "{{output}}"},
     )
-
-    # Verify task template was overridden
-    assert "task" in agent.templates
-    assert "response" in agent.templates
-
-    # The task template should be from signature, not the user-provided one
-    assert agent.templates["task"] != "This should be overridden"
+    assert agent.templates["response"] == "{{output}}"
     assert "input" in agent.templates["task"]
 
-    # The response template should remain unchanged
-    assert agent.templates["response"] == "{{output}}"
-
-    print("✓ Test 2 passed: Signature correctly overrides task template")
+    print("✓ Test 2 passed: Signature correctly rejects task template")
 
 
 def test_agent_with_signature_without_templates():
@@ -75,23 +75,21 @@ def test_agent_with_signature_without_templates():
 
 
 def test_templates_initialization_order():
-    """Test that templates are initialized before signature processing."""
+    """Test that non-task templates are preserved when signature is used."""
     model = create_mock_model()
 
-    # When both templates and signature are provided
+    # Signature with non-task templates should work
     agent = Agent(
         name="test_agent",
         model=model,
         signature="x: int -> y: int",
         templates={
-            "task": "User template",
             "context": "Context: {{ctx}}",
             "response": "Result: {{y}}",
         },
     )
 
-    # Task should be overridden by signature
-    assert agent.templates["task"] != "User template"
+    # Task should come from signature
     assert "x" in agent.templates["task"]
 
     # Other templates should be preserved
@@ -103,7 +101,7 @@ def test_templates_initialization_order():
 
 if __name__ == "__main__":
     test_agent_without_signature_no_error()
-    test_agent_with_signature_overrides_task_template()
+    test_agent_with_signature_rejects_task_template()
     test_agent_with_signature_without_templates()
     test_templates_initialization_order()
 
