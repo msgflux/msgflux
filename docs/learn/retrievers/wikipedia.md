@@ -23,12 +23,6 @@ The `wikipedia` retriever fetches and returns Wikipedia article content at query
     for result in response.data[0].results:
         print(result.data.title)
         print(result.data.content[:200])
-        print()
-    # Machine learning
-    # Machine learning (ML) is a field of study in artificial intelligence...
-    #
-    # Deep learning
-    # Deep learning is part of a broader family of machine learning methods...
     ```
 
 ---
