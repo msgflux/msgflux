@@ -6,6 +6,7 @@ if TYPE_CHECKING:
 
     from msgflux.cache import response_cache
     from msgflux.core.dotdict import dotdict
+    from msgflux.core.examples import Example
     from msgflux.core.message import Message
     from msgflux.data.dbs import DB
     from msgflux.data.parsers import Parser
@@ -14,7 +15,6 @@ if TYPE_CHECKING:
     from msgflux.dsl.inline import Inline
     from msgflux.dsl.signature import InputField, OutputField, Signature
     from msgflux.envs import set_envs
-    from msgflux.core.examples import Example
     from msgflux.exceptions import TaskError
     from msgflux.models import Model
     from msgflux.models.gateway import ModelGateway
