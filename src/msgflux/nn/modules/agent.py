@@ -569,7 +569,7 @@ class Agent(Module, metaclass=AutoParams):
             response_type = "tool_responses"
 
         if response_type in self._supported_outputs:
-            response = await self._aprepare_response(
+            response = self._prepare_response(
                 raw_response, response_type, messages, message, vars
             )
             return response
@@ -833,40 +833,6 @@ class Agent(Module, metaclass=AutoParams):
         message: Union[str, Mapping[str, Any], Message],
         vars: Mapping[str, Any],
     ) -> Union[str, Mapping[str, Any], ModelStreamResponse]:
-        formatted_response = None
-        if not isinstance(raw_response, ModelStreamResponse):
-            if response_type == "text_generation" or "structured" in response_type:
-                if self.config.get("verbose", False):
-                    cprint(f"[{self.name}][response] {raw_response}", bc="y", ls="b")
-                if self.templates.get("response"):
-                    if isinstance(raw_response, str):
-                        pre_response = self._format_response_template(vars)
-                        formatted_response = self._format_template(
-                            raw_response, pre_response
-                        )
-                    elif isinstance(raw_response, dict):
-                        raw_response.update(vars)
-                        formatted_response = self._format_response_template(
-                            raw_response
-                        )
-
-        result = formatted_response or raw_response
-        if self.config.get("return_messages", False):
-            if response_type == "tool_responses":
-                result.messages = messages
-            else:
-                result = dotdict(response=result, messages=messages)
-        return self._define_response_mode(result, message)
-
-    async def _aprepare_response(
-        self,
-        raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
-        response_type: str,
-        messages: List[Mapping[str, Any]],
-        message: Union[str, Mapping[str, Any], Message],
-        vars: Mapping[str, Any],
-    ) -> Union[str, Mapping[str, Any], ModelStreamResponse]:
-        """Async version of _prepare_response."""
         formatted_response = None
         if not isinstance(raw_response, ModelStreamResponse):
             if response_type == "text_generation" or "structured" in response_type:
