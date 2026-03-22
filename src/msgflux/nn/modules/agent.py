@@ -400,11 +400,12 @@ class Agent(Module, metaclass=AutoParams):
             >>> agent(name="Vilson", age=27)
         """
         inputs = self._prepare_task(message, **kwargs)
-        model_response = self._execute_model(
-            prefilling=self.prefilling, **inputs
-        )
-        if isinstance(model_response, str):
-            return self._define_response_mode(model_response, message)
+        try:
+            model_response = self._execute_model(
+                prefilling=self.prefilling, **inputs
+            )
+        except _GuardInterrupt as e:
+            return self._define_response_mode(e.response, message)
         response = self._process_model_response(message, model_response, **inputs)
         return response
 
@@ -413,11 +414,12 @@ class Agent(Module, metaclass=AutoParams):
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
         inputs = await self._aprepare_task(message, **kwargs)
-        model_response = await self._aexecute_model(
-            prefilling=self.prefilling, **inputs
-        )
-        if isinstance(model_response, str):
-            return self._define_response_mode(model_response, message)
+        try:
+            model_response = await self._aexecute_model(
+                prefilling=self.prefilling, **inputs
+            )
+        except _GuardInterrupt as e:
+            return self._define_response_mode(e.response, message)
         response = await self._aprocess_model_response(
             message, model_response, **inputs
         )
@@ -431,7 +433,7 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
-    ) -> Union[str, ModelResponse, ModelStreamResponse]:
+    ) -> Union[ModelResponse, ModelStreamResponse]:
         model_execution_params = self._prepare_model_execution(
             messages=messages,
             prefilling=prefilling,
@@ -440,11 +442,7 @@ class Agent(Module, metaclass=AutoParams):
         )
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
-        try:
-            model_response = self.generator(**model_execution_params)
-        except _GuardInterrupt as e:
-            return e.response
-        return model_response
+        return self.generator(**model_execution_params)
 
     async def _aexecute_model(
         self,
@@ -452,7 +450,7 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
-    ) -> Union[str, ModelResponse, ModelStreamResponse]:
+    ) -> Union[ModelResponse, ModelStreamResponse]:
         model_execution_params = self._prepare_model_execution(
             messages=messages,
             prefilling=prefilling,
@@ -461,11 +459,7 @@ class Agent(Module, metaclass=AutoParams):
         )
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
-        try:
-            model_response = await self.generator.acall(**model_execution_params)
-        except _GuardInterrupt as e:
-            return e.response
-        return model_response
+        return await self.generator.acall(**model_execution_params)
 
     def _prepare_model_execution(
         self,
