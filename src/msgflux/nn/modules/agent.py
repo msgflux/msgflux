@@ -423,6 +423,8 @@ class Agent(Module, metaclass=AutoParams):
         )
         return response
 
+    # --- Model Execution ---
+
     def _execute_model(
         self,
         messages: List[Mapping[str, Any]],
@@ -509,6 +511,8 @@ class Agent(Module, metaclass=AutoParams):
 
         return model_execution_params
 
+    # --- Response Processing ---
+
     def _process_model_response(
         self,
         message: Union[str, Mapping[str, Any], Message],
@@ -575,6 +579,8 @@ class Agent(Module, metaclass=AutoParams):
             return response
         else:
             raise ValueError(f"Unsupported `response_type={response_type}`")
+
+    # --- Tool Processing ---
 
     def _process_tool_flow_control_response(
         self,
@@ -857,6 +863,8 @@ class Agent(Module, metaclass=AutoParams):
             else:
                 result = dotdict(response=result, messages=messages)
         return self._define_response_mode(result, message)
+
+    # --- Task Preparation ---
 
     def _prepare_task(  # noqa: C901
         self, message: Optional[Union[str, Message, Mapping[str, Any]]] = None, **kwargs
@@ -1162,6 +1170,8 @@ class Agent(Module, metaclass=AutoParams):
             return apply_xml_tags("context", context_content) + "\n\n"
         return None
 
+    # --- Multimodal Inputs ---
+
     def _process_task_multimodal_inputs(
         self, message: Union[str, Message, Mapping[str, Any]], **kwargs
     ) -> Optional[List[Mapping[str, Any]]]:
@@ -1302,6 +1312,8 @@ class Agent(Module, metaclass=AutoParams):
         f = File(file_source)
         return await f.acall()
 
+    # --- Debug ---
+
     def inspect_model_execution_params(
         self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs
     ) -> Mapping[str, Any]:
@@ -1315,6 +1327,8 @@ class Agent(Module, metaclass=AutoParams):
             prefilling=self.prefilling, **inputs
         )
         return model_execution_params
+
+    # --- Configuration ---
 
     def _set_context_inputs(
         self, context_inputs: Optional[Union[str, List[str]]] = None
@@ -1721,6 +1735,8 @@ class Agent(Module, metaclass=AutoParams):
                 inputs_info, signature
             )
             self.set_annotations(generated_annotations)
+
+    # --- System Prompt ---
 
     def get_system_prompt(self, vars: Optional[Mapping[str, Any]] = None) -> str:
         """Render the system prompt using the Jinja template.
