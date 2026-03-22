@@ -78,6 +78,48 @@ flux = mf.Inline(
 )
 ```
 
+### Registry
+
+Instead of building the modules dict by hand, use `mf.Registry` to collect
+functions with a decorator and pass them as a `{name: callable}` mapping:
+
+```python
+import msgflux as mf
+
+modules = mf.Registry()
+
+@modules
+def prep(msg):
+    msg.ready = True
+
+@modules
+def feat_a(msg):
+    msg.score_a = 1
+
+@modules
+def feat_b(msg):
+    msg.score_b = 2
+
+@modules
+def combine(msg):
+    msg.total = msg.score_a + msg.score_b
+
+flux = mf.Inline(
+    "prep -> [feat_a, feat_b] -> combine",
+    modules.to_items(),  # {"prep": prep, "feat_a": feat_a, ...}
+)
+
+msg = mf.dotdict()
+msg = flux(msg)
+
+print(msg.ready)  # True
+print(msg.total)  # 3
+```
+
+The decorator captures each function's `__name__` automatically. Use
+`@modules(name="custom")` to override the registered name when the
+expression uses a different identifier.
+
 ---
 
 ## 3. **Execution**

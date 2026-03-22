@@ -6,7 +6,9 @@ if TYPE_CHECKING:
 
     from msgflux.cache import response_cache
     from msgflux.core.dotdict import dotdict
+    from msgflux.core.examples import Example
     from msgflux.core.message import Message
+    from msgflux.core.registry import Registry
     from msgflux.data.dbs import DB
     from msgflux.data.parsers import Parser
     from msgflux.data.retrievers import Retriever
@@ -14,7 +16,6 @@ if TYPE_CHECKING:
     from msgflux.dsl.inline import Inline
     from msgflux.dsl.signature import InputField, OutputField, Signature
     from msgflux.envs import set_envs
-    from msgflux.core.examples import Example
     from msgflux.exceptions import TaskError
     from msgflux.models import Model
     from msgflux.models.gateway import ModelGateway
@@ -40,6 +41,7 @@ __all__ = [
     "ModelGateway",
     "OutputField",
     "Parser",
+    "Registry",
     "Retriever",
     "Signature",
     "Spans",
@@ -72,6 +74,7 @@ _LAZY_IMPORTS = {
     "ModelGateway": ("msgflux.models.gateway", "ModelGateway"),
     "OutputField": ("msgflux.dsl.signature", "OutputField"),
     "Parser": ("msgflux.data.parsers", "Parser"),
+    "Registry": ("msgflux.core.registry", "Registry"),
     "Retriever": ("msgflux.data.retrievers", "Retriever"),
     "Signature": ("msgflux.dsl.signature", "Signature"),
     "Spans": ("msgflux.telemetry", "Spans"),
