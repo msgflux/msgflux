@@ -488,7 +488,7 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
 
 ### **Compose Modules into Programs**
 
-msgFlux's module system mirrors `torch.nn`. Every component inherits from `nn.Module`, supports `forward()` / `aforward()` for sync and async, automatic submodule registration via `__setattr__`, parameter management, and built-in telemetry. Compose multiple modules to create a **program** — a self-contained AI system where each piece has a clear responsibility.
+A composition of modules is a **program** — each module handles one responsibility, and they work together naturally.
 
 
 !!! info "Compose modules into programs"
