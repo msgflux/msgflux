@@ -171,22 +171,23 @@ By combining imperative and declarative modules with a clear separation between 
 
 ---
 
-## **Agents** — define AI behavior as composable modules.
+### **Agents**
 
 msgFlux supports multiple styles for defining what an agent does. You can write explicit prompts for full control, use **signatures** to declare typed inputs and outputs, bind to fields on a shared **message** for pipeline composition, or give agents access to **tools** and **vars** that flow through the system. You can even use one agent as a **tool** for another. These styles compose freely — pick the right one for each component.
 
 !!! info "Build agents for any task"
 
-    Try the examples below after configuring your model above. Each tab demonstrates a different style or capability. When subclassing `nn.Agent`, the class name becomes the agent's `name` and the docstring becomes its `description`.
+    Try the examples below after configuring your model above. Each tab demonstrates a different style or capability.
 
     === "Prompting"
 
         Write your own system message and instructions for full control:
 
         ```python linenums="1"
-        class Writer(nn.Agent):
-            """Expert technical writer."""
+        import msgflux as mf
+        import msgflux.nn as nn
 
+        class Writer(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             system_message = "You are an expert technical writer."
             instructions = "Write a clear, concise summary of the given topic."
@@ -201,9 +202,10 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
         Use `signature` to define inputs and outputs — msgFlux generates the prompt and parses structured output:
 
         ```python linenums="1"
-        class Extractor(nn.Agent):
-            """Extracts structured data from text."""
+        import msgflux as mf
+        import msgflux.nn as nn
 
+        class Extractor(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = "text -> summary: str, topics: list[str], sentiment: str"
 
@@ -216,67 +218,42 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
         {'summary': '...', 'topics': ['iPhone', 'camera', 'battery'], 'sentiment': 'mixed'}
         ```
 
-    === "Class Signature"
 
-        For richer definitions, use `mf.Signature` with typed fields:
+    === "ReAct"
 
-        ```python linenums="1"
-        from typing import Literal
-
-        class ClassifySentiment(mf.Signature):
-            """Classify the sentiment of a sentence."""
-
-            sentence: str = mf.InputField(desc="Text to analyze")
-            sentiment: Literal["positive", "negative", "neutral"] = mf.OutputField()
-            confidence: float = mf.OutputField(desc="Score between 0 and 1")
-
-        class Classifier(nn.Agent):
-            """Sentiment classifier powered by a language model."""
-
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            signature = ClassifySentiment
-
-        classifier = Classifier()
-        result = classifier("I loved the movie, but the ending was disappointing.")
-        ```
-
-        **Possible Output:**
-        ```text
-        {'sentiment': 'positive', 'confidence': 0.75}
-        ```
-
-    === "Tools"
-
-        Any Python callable with type hints and a docstring becomes a tool:
+        Agents that reason step-by-step and use tools to find answers. `WebFetch` is a built-in tool that fetches web pages as Markdown:
 
         ```python linenums="1"
-        def get_weather(city: str) -> str:
-            """Get current weather for a city."""
-            return httpx.get(f"https://wttr.in/{city}?format=3").text
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.generation.reasoning import ReAct
+        from msgflux.tools.builtin import WebFetch
 
-        class WeatherAssistant(nn.Agent):
-            """Checks real-time weather using external APIs."""
-
+        class ResearchAgent(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            tools = [get_weather]
+            generation_schema = ReAct
+            tools = [WebFetch]
 
-        assistant = WeatherAssistant()
-        assistant("What's the weather like in Tokyo?")
+        agent = ResearchAgent()
+        agent("What is the mass of the Earth divided by the mass of the Moon?")
         ```
+
+        The agent iterates: **think** → **act** (call tools) → **observe** → repeat until `final_answer`.
 
     === "Vars"
 
         `vars` inject runtime context into the agent's Jinja2 **templates** and into tools via `inject_vars`. The model never sees injected vars directly — they flow through the system behind the scenes.
 
         ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
         @mf.tool_config(inject_vars=["customer_id"])
         def get_balance(customer_id: str) -> str:
             """Look up the customer's current balance."""
             return db.query(customer_id)
 
         class BankAgent(nn.Agent):
-            """Banking assistant that helps customers with their accounts."""
-
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             instructions = "You are helping customer {{customer_name}}."
             tools = [get_balance]
@@ -292,36 +269,36 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
         An agent can serve as a tool for another agent. Decorate with `@tool_config` and pass the **class** to `tools`:
 
         ```python linenums="1"
-        @mf.tool_config(return_direct=True)
-        class SentimentClassifier(nn.Agent):
-            """Classify the sentiment of a given text."""
+        import msgflux as mf
+        import msgflux.nn as nn
 
-            model = model
+        @mf.tool_config(return_direct=True)  # (2)!
+        class SentimentClassifier(nn.Agent):
+            """Classify the sentiment of a given text."""  # (1)!
+
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = "sentence: str -> sentiment: str, confidence: float"
 
         class Orchestrator(nn.Agent):
-            """Routes tasks to specialized sub-agents."""
-
-            model = model
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             tools = [SentimentClassifier]
 
         orchestrator = Orchestrator()
         orchestrator("Classify: 'This product is terrible'")
         ```
 
-        **Possible Output:**
-        ```text
-        {'sentiment': 'negative', 'confidence': 0.95}
-        ```
+        1. When an agent is used as a tool, the docstring becomes its **description** — this is what the parent agent sees when deciding which tool to call.
+        2. `return_direct=True` means the Orchestrator returns the list of tool calls and their results directly, instead of passing them back to the model for a final response.
 
     === "Message-driven"
 
         Bind inputs and outputs to fields on a shared `Message` — the preferred approach inside pipelines:
 
         ```python linenums="1"
-        class SentimentAnalyzer(nn.Agent):
-            """Analyzes the sentiment of a given text."""
+        import msgflux as mf
+        import msgflux.nn as nn
 
+        class SentimentAnalyzer(nn.Agent):
             model         = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature     = "text -> sentiment: str, confidence: float, reasoning: str"
             message_fields = {"task_inputs": "review"}
@@ -342,11 +319,11 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
     === "Chain of Thought"
 
         ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
         from msgflux.generation.reasoning import ChainOfThought
 
         class MathSolver(nn.Agent):
-            """Solves math problems with step-by-step reasoning."""
-
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             generation_schema = ChainOfThought
 
@@ -358,24 +335,6 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
         ```text
         {'reasoning': 'Each die has 6 faces → 36 outcomes. Only (1,1) sums to 2 → P = 1/36.', 'final_answer': '1/36 ≈ 0.0278'}
         ```
-
-    === "ReAct"
-
-        ```python linenums="1"
-        from msgflux.generation.reasoning import ReAct
-
-        class ResearchAgent(nn.Agent):
-            """Reasons step-by-step and uses tools to find answers."""
-
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            generation_schema = ReAct
-            tools = [search_web, calculator]
-
-        agent = ResearchAgent()
-        agent("What is the mass of the Earth divided by the mass of the Moon?")
-        ```
-
-        The agent iterates: **think** → **act** (call tools) → **observe** → repeat until `final_answer`.
 
 
 ---
