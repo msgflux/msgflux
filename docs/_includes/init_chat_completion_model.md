@@ -19,7 +19,7 @@
         import msgflux as mf
 
         mf.set_envs(GROQ_API_KEY="...")
-        model = mf.Model.chat_completion("groq/llama-3.3-70b-versatile")
+        model = mf.Model.chat_completion("groq/openai/gpt-oss-120b")
         ```
 
     === "Ollama"
@@ -27,13 +27,13 @@
         Install [Ollama](https://ollama.ai) and pull your model first:
 
         ```bash
-        ollama pull llama3.2
+        ollama pull gpt-oss
         ```
 
         ```python
         import msgflux as mf
 
-        model = mf.Model.chat_completion("ollama/llama3.2")
+        model = mf.Model.chat_completion("ollama/gpt-oss")
         ```
 
     === "OpenRouter"
@@ -44,7 +44,7 @@
         import msgflux as mf
 
         mf.set_envs(OPENROUTER_API_KEY="...")
-        model = mf.Model.chat_completion("openrouter/anthropic/claude-sonnet-4")
+        model = mf.Model.chat_completion("openrouter/anthropic/claude-opus-4-6")
         ```
 
     === "SambaNova"
@@ -55,7 +55,7 @@
         import msgflux as mf
 
         mf.set_envs(SAMBANOVA_API_KEY="...")
-        model = mf.Model.chat_completion("sambanova/Meta-Llama-3.1-8B-Instruct")
+        model = mf.Model.chat_completion("sambanova/openai/gpt-oss-120b")
         ```
 
     === "vLLM"
@@ -63,14 +63,14 @@
         Self-hosted with an OpenAI-compatible API:
 
         ```bash
-        vllm serve meta-llama/Llama-3.1-8B-Instruct
+        vllm serve openai/gpt-oss-120b
         ```
 
         ```python
         import msgflux as mf
 
         model = mf.Model.chat_completion(
-            "vllm/meta-llama/Llama-3.1-8B-Instruct",
+            "vllm/openai/gpt-oss-120b",
             base_url="http://localhost:8000/v1",
         )
         ```
@@ -83,8 +83,8 @@
         import msgflux as mf
 
         # Together AI
-        model = mf.Model.chat_completion("together/meta-llama/Llama-3.3-70B-Instruct-Turbo")
+        model = mf.Model.chat_completion("together/openai/gpt-oss-120b")
 
         # Cerebras
-        model = mf.Model.chat_completion("cerebras/llama-3.3-70b")
+        model = mf.Model.chat_completion("cerebras/openai/gpt-oss-120b")
         ```
