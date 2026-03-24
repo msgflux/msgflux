@@ -81,6 +81,8 @@ plugins:
             separate_signature: true
 
 markdown_extensions:
+  - markdown_include.include:
+      base_path: docs/_includes
   - attr_list
   - md_in_html
   - tables
@@ -121,7 +123,6 @@ nav:
   - Home: 
     - index.md
   - Learn:
-    - QuickStart: quickstart.md
     - ✧ Models:
       - learn/models/model.md
       - learn/models/model_gateway.md
@@ -201,7 +202,8 @@ nav:
           - api-reference/nn/functional.md
           - api-reference/nn/modules/agent.md       
   - Tutorials:
-    - tutorials/tutorials.md
+    #- tutorials/tutorials.md
+    - Payments Assistant: tutorials/payments-assistant.md
     - Product Poster Generator: tutorials/product-poster.md
     - Intent Router: tutorials/intent-router.md
     - Visit Report Assistant: tutorials/visit-report.md

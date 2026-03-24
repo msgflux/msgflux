@@ -135,6 +135,33 @@
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
 
+/* Default line highlight — green */
+.highlight .hll {
+    background-color: rgba(76, 175, 80, 0.18) !important;
+}
+
+[data-md-color-scheme="slate"] .highlight .hll {
+    background-color: rgba(76, 175, 80, 0.22) !important;
+}
+
+/* .hl-green — explicit green (same as default, for clarity) */
+.hl-green .highlight .hll {
+    background-color: rgba(76, 175, 80, 0.18) !important;
+}
+
+[data-md-color-scheme="slate"] .hl-green .highlight .hll {
+    background-color: rgba(76, 175, 80, 0.22) !important;
+}
+
+/* .hl-red — red highlight for removals / warnings */
+.hl-red .highlight .hll {
+    background-color: rgba(244, 67, 54, 0.15) !important;
+}
+
+[data-md-color-scheme="slate"] .hl-red .highlight .hll {
+    background-color: rgba(244, 67, 54, 0.20) !important;
+}
+
 /* ===========================
    NAVIGATION ENHANCEMENTS
    =========================== */
@@ -327,7 +354,7 @@
 }
 
 .md-typeset .hero-left img {
-    max-width: 260px;
+    max-width: 400px;
     height: auto;
     display: block;
 }

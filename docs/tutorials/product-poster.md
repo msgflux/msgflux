@@ -16,17 +16,17 @@ HTML Parser ──────────────► product text + image U
                             │                       │
                             └──────────┬────────────┘
                                        ▼
-                               Vision Agent
-                              (text + image)
+                                  Vision Agent
+                                 (text + image)
                                        │
                                        ▼
-                               poster_prompt
+                                 poster_prompt
                                        │
                                        ▼
-                               MediaMaker
+                                   MediaMaker
                                        │
                                        ▼
-                               poster.png
+                                   poster.png
 ```
 
 ---
