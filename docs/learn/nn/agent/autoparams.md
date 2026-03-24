@@ -25,4 +25,4 @@ The **preferred** way to define agents is using class attributes:
     print(agent.description)  # "Persuasive sales agent focused on customer needs."
     ```
 
-AutoParams captures the class name as the agent *name*. The class docstring then becomes the *description* of that agent, which is useful for using that **agent-as-a-tool**.
+AutoParams captures the class name as the agent *name*. The class docstring then becomes the *description* of that agent, which is useful for using that **agent-as-tool**.

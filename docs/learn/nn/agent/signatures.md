@@ -7,7 +7,7 @@ This [DSPy-inspired](https://dspy.ai/learn/programming/signatures/) feature auto
 - **System prompt** with task description (from docstring)
 - **Task template** with input placeholders
 - **Generation schema** for structured output
-- **Annotations** for agent-as-a-tool integration
+- **Annotations** for agent-as-tool integration
 
 ### Why Use Signatures?
 

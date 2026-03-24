@@ -31,7 +31,7 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [Generation Schemas](generation-schemas.md) | Structured outputs and reasoning strategies |
 | [Task and Context](task-and-context.md) | Input handling, templates, multimodal, chat history |
 | [Vars](vars.md) | Unified execution variable space |
-| [Tools](tools.md) | Tool calling, configuration, MCP, agent-as-a-tool |
+| [Tools](tools.md) | Tool calling, configuration, MCP, agent-as-tool |
 | [Signatures](signatures.md) | Declarative input/output specifications |
 | [Hooks & Guards](hooks.md) | Input and output safety checks with configurable policy |
 | [Model Gateway](model-gateway.md) | Multi-model routing |

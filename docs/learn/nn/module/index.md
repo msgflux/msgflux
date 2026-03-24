@@ -30,7 +30,6 @@ msgFlux provides ready-to-use modules:
 | Module | Description |
 |--------|-------------|
 | `nn.Agent` | Autonomous agents with tools and reasoning |
-| `nn.LM` | Language model wrapper |
 | `nn.Transcriber` | Speech-to-text |
 | `nn.Speaker` | Text-to-speech |
 | `nn.Retriever` | Document retrieval |

@@ -259,7 +259,7 @@ class Agent(Module, metaclass=AutoParams):
             Can be combined with standard generation_schemas like `ReAct` and
             `ChainOfThought`. Can also be combined with `typed_parser`.
         description:
-            The Agent description. It's useful when using an agent-as-a-tool.
+            The Agent description. It's useful when using an agent-as-tool.
         annotations
             Define the input and output annotations to use the agent-as-a-function.
         """

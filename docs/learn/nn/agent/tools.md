@@ -861,7 +861,7 @@ Use cases:
 
 ???+ example
 
-    === "Agent-as-a-Tool (Primary Use)"
+    === "Agent-as-Tool (Primary Use)"
 
         When an agent is used as a tool, `inject_messages` passes the conversation history so the specialist has full context:
 
@@ -971,7 +971,7 @@ When `handoff=True`, the tool is configured for seamless agent-to-agent handoff:
 - Changes tool name to `transfer_to_{original_name}`
 - Removes input parameters (conversation history is passed instead)
 
-Unlike Agent-as-a-Tool, the Specialist's response bypasses the Coordinator entirely and goes directly to the user. The Coordinator only decides *who* handles the request.
+Unlike Agent-as-Tool, the Specialist's response bypasses the Coordinator entirely and goes directly to the user. The Coordinator only decides *who* handles the request.
 
 ```
               Input
@@ -1187,7 +1187,7 @@ By default, all tools have automatic retry enabled using environment variables (
             return do_search(query)
         ```
 
-### Agent-as-a-Tool
+### Agent-as-Tool
 
 Agents can be used as tools for other agents, enabling hierarchical task delegation, also known as **SubAgents**. Using AutoParams makes this pattern especially clean: the class name becomes the tool name, and the docstring becomes the tool description.
 
@@ -1227,7 +1227,7 @@ The Coordinator calls the Specialist as any other tool. The result returns to th
                 Output
 ```
 
-???+ note "Agent-as-a-Tool Examples"
+???+ note "Agent-as-Tool Examples"
 
     === "Health Team"
 
