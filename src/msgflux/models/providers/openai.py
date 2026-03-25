@@ -299,6 +299,16 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         return None
 
     @staticmethod
+    def _process_stream_tool_calls(delta, stream_response, aggregator):
+        tool_call = delta.tool_calls[0]
+        if stream_response.response_type is None:
+            stream_response.set_response_type("tool_call")
+        aggregator.process(
+            tool_call.index, tool_call.id,
+            tool_call.function.name, tool_call.function.arguments,
+        )
+
+    @staticmethod
     def _stream_add_chunk(stream_response, chunk, response_type):
         if stream_response.response_type is None:
             stream_response.set_response_type(response_type)
@@ -517,14 +527,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         continue
 
                     if getattr(delta, "tool_calls", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("tool_call")
-                        tool_call = delta.tool_calls[0]
-                        call_index = tool_call.index
-                        tool_id = tool_call.id
-                        name = tool_call.function.name
-                        arguments = tool_call.function.arguments
-                        aggregator.process(call_index, tool_id, name, arguments)
+                        self._process_stream_tool_calls(
+                            delta, stream_response, aggregator,
+                        )
                         continue
 
                     annotations = self._extract_annotations(delta)
@@ -588,14 +593,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         continue
 
                     if getattr(delta, "tool_calls", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("tool_call")
-                        tool_call = delta.tool_calls[0]
-                        call_index = tool_call.index
-                        tool_id = tool_call.id
-                        name = tool_call.function.name
-                        arguments = tool_call.function.arguments
-                        aggregator.process(call_index, tool_id, name, arguments)
+                        self._process_stream_tool_calls(
+                            delta, stream_response, aggregator,
+                        )
                         continue
 
                     annotations = self._extract_annotations(delta)
