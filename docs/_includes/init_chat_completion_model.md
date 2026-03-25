@@ -2,7 +2,7 @@
 
     === "OpenAI"
 
-        Authenticate by setting the `OPENAI_API_KEY` env variable or using `set_envs`.
+        Authenticate by setting the `OPENAI_API_KEY` env variable.
 
         ```python
         import msgflux as mf
@@ -27,13 +27,13 @@
         Install [Ollama](https://ollama.ai) and pull your model first:
 
         ```bash
-        ollama pull gpt-oss
+        ollama pull gpt-oss:120b
         ```
 
         ```python
         import msgflux as mf
 
-        model = mf.Model.chat_completion("ollama/gpt-oss")
+        model = mf.Model.chat_completion("ollama/gpt-oss:120b")
         ```
 
     === "OpenRouter"
