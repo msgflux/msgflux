@@ -412,6 +412,10 @@
         justify-content: center;
     }
 
+    .md-typeset .hero-left img {
+        max-width: 320px;
+    }
+
     .md-typeset .hero-right .tagline {
         font-size: 2rem;
     }
@@ -424,6 +428,10 @@
 
     .hero h1 {
         font-size: 2rem !important;
+    }
+
+    .md-typeset .hero-left img {
+        max-width: 220px;
     }
 
     .md-typeset .hero-right .tagline {
