@@ -19,12 +19,6 @@ hide:
 | Together    | `msgflux[openai]` | `TOGETHER_API_KEY`   |
 | vLLM        | `msgflux[openai]` |                      |
 
-### Image Classifier
-
-| Provider    | Dependency       | Auth Env           |
-|-------------|------------------|--------------------|
-| JinaAI      | `msgflux[httpx]` | `JINAAI_API_KEY`   |
-
 ### Image Embedder
 
 | Provider    | Dependency       | Auth Env           |
@@ -60,7 +54,6 @@ hide:
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
 | vLLM        | `msgflux[openai]` |                    |
 
 ### Text Embedder
