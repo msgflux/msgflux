@@ -841,7 +841,7 @@ Not all reasoning providers behave the same way:
 
 | Provider | Exposes trace via `return_reasoning` | Reasoning tokens in metadata |
 |---|---|---|
-| **Groq** (`groq/openai/gpt-oss-20b`) | Yes — `response.data.think` | Yes |
+| **Groq** (`groq/openai/gpt-oss-20b`) | Yes — `response.data.reasoning` | Yes |
 | **OpenAI** (`openai/gpt-5-mini`) | No — reasoning is fully internal | Yes |
 
 ### 12.2 **Reasoning Effort**
@@ -885,7 +885,7 @@ Not all reasoning providers behave the same way:
 
 ### 12.3 **Inspecting the Reasoning Trace**
 
-Providers like Groq return the chain of thought as a separate field when `return_reasoning=True`. The response becomes a `dotdict` with `think` (the trace) and `answer` (the final response):
+Providers like Groq return the chain of thought as a separate field when `return_reasoning=True`. The response becomes a `dotdict` with `reasoning` (the trace) and `answer` (the final response):
 
 ???+ example
 
@@ -900,7 +900,7 @@ Providers like Groq return the chain of thought as a separate field when `return
     response = model("Prove that sqrt(2) is irrational.")
     result = response.consume()
 
-    print(result.think)
+    print(result.reasoning)
     # The user: "Prove that sqrt(2) is irrational." This is a classic proof.
     # Provide a proof by contradiction: Suppose sqrt(2)=a/b in lowest terms...
 
@@ -910,7 +910,7 @@ Providers like Groq return the chain of thought as a separate field when `return
     ```
 
 !!! tip
-    Comparing `result.think` with `result.answer` is a great debugging tool: if the final answer is wrong, the trace usually reveals where the reasoning went astray.
+    Comparing `result.reasoning` with `result.answer` is a great debugging tool: if the final answer is wrong, the trace usually reveals where the reasoning went astray.
 
 Providers that keep reasoning internal (like OpenAI) still report how many tokens were spent via `response.metadata`:
 
@@ -950,7 +950,7 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
 
     response = model("Solve: if 3x + 7 = 22, what is x?")
     result = response.consume()
-    print(result.think)   # Kept short by the token cap
+    print(result.reasoning)   # Kept short by the token cap
     print(result.answer)
     # x = 5
     ```

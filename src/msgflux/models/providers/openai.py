@@ -282,9 +282,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def _set_reasoning_fields(self, response_content: Any, reasoning_content: str):
         if response_content is None or isinstance(response_content, str):
             return
-        response_content.think = reasoning_content
-        response_content.reasoning_content = reasoning_content
-        response_content.reasoning_text = reasoning_content
+        response_content.reasoning = reasoning_content
 
     def _execute_model(self, **kwargs):
         prefilling = kwargs.pop("prefilling")
