@@ -173,16 +173,11 @@ nav:
         - learn/nn/agent/hooks.md
         - learn/nn/agent/model-gateway.md
         - learn/nn/agent/prefilling.md
-      - Functional:
-        - learn/nn/functional.md
-      - Transcriber:
-        - learn/nn/transcriber.md        
-      - Retriever:
-        - learn/nn/retriever.md
-      - Speaker:
-        - learn/nn/speaker.md
-      - MediaMaker:
-        - learn/nn/mediamaker.md
+      - Functional: learn/nn/functional.md
+      - Transcriber: learn/nn/transcriber.md
+      - Retriever: learn/nn/retriever.md
+      - Speaker: learn/nn/speaker.md
+      - MediaMaker: learn/nn/mediamaker.md
       #- Predictor:
       #  - learn/nn/predictor.md
     - ◎ Telemetry: learn/telemetry.md
