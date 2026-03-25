@@ -279,6 +279,14 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         if stop_reason is not None:
             metadata.stop_reason = stop_reason
 
+    @staticmethod
+    def _extract_reasoning(message) -> Optional[str]:
+        return (
+            getattr(message, "reasoning_content", None)
+            or getattr(message, "reasoning", None)
+            or getattr(message, "thinking", None)
+        )
+
     def _set_reasoning_fields(self, response_content: Any, reasoning_content: str):
         if response_content is None or isinstance(response_content, str):
             return
@@ -314,11 +322,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         finish_reason = getattr(choice, "finish_reason", None)
         self._set_stop_metadata(metadata, finish_reason=finish_reason)
 
-        reasoning = (
-            getattr(choice.message, "reasoning_content", None)
-            or getattr(choice.message, "reasoning", None)
-            or getattr(choice.message, "thinking", None)
-        )
+        reasoning = self._extract_reasoning(choice.message)
 
         reasoning_tool_call = reasoning if self.reasoning_in_tool_call else None
 
@@ -489,11 +493,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     if getattr(choice, "finish_reason", None) is not None:
                         finish_reason = choice.finish_reason
 
-                    reasoning_chunk = (
-                        getattr(delta, "reasoning_content", None)
-                        or getattr(delta, "reasoning", None)
-                        or getattr(delta, "thinking", None)
-                    )
+                    reasoning_chunk = self._extract_reasoning(delta)
 
                     if self.reasoning_in_tool_call and reasoning_chunk:
                         reasoning_tool_call += reasoning_chunk
@@ -567,11 +567,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     if getattr(choice, "finish_reason", None) is not None:
                         finish_reason = choice.finish_reason
 
-                    reasoning_chunk = (
-                        getattr(delta, "reasoning_content", None)
-                        or getattr(delta, "reasoning", None)
-                        or getattr(delta, "thinking", None)
-                    )
+                    reasoning_chunk = self._extract_reasoning(delta)
 
                     if self.reasoning_in_tool_call and reasoning_chunk:
                         reasoning_tool_call += reasoning_chunk
