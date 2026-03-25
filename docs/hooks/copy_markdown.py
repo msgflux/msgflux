@@ -119,6 +119,23 @@ def _build_button(markdown: str, button_text: str) -> str:
     )
 
 
+_HIDE_NAV_PAGES = {"CHANGELOG.md"}
+
+
+def on_page_context(
+    context: dict,
+    page: Page,
+    config: MkDocsConfig,
+    nav,
+) -> dict:
+    if page.file.src_path in _HIDE_NAV_PAGES:
+        page.meta.setdefault("hide", [])
+        for item in ("navigation", "toc"):
+            if item not in page.meta["hide"]:
+                page.meta["hide"].append(item)
+    return context
+
+
 def on_page_content(
     html: str,
     page: Page,
