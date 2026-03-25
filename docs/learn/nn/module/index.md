@@ -32,7 +32,7 @@ msgFlux provides ready-to-use modules:
 | `nn.Agent` | Autonomous agents with tools and reasoning |
 | `nn.Transcriber` | Speech-to-text |
 | `nn.Speaker` | Text-to-speech |
-| `nn.Retriever` | Document retrieval |
+| `nn.Searcher` | Document retrieval |
 | `nn.Embedder` | Text embeddings |
 | `nn.MediaMaker` | Image/video generation |
 | `nn.Predictor` | ML model wrapper (sklearn, etc.) |

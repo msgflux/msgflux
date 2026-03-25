@@ -28,7 +28,7 @@ class QAWorkflow(nn.Module):
         chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         # Sub-modules
-        self.retriever = nn.Retriever("wikipedia")
+        self.retriever = nn.Searcher("wikipedia")
         self.agent = nn.Agent(
             "qa-agent",
             chat_model,

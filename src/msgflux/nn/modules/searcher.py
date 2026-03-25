@@ -1,14 +1,14 @@
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from msgflux.auto import AutoParams
+from msgflux.core.dotdict import dotdict
+from msgflux.core.message import Message
 from msgflux.data.dbs.types import VectorDB
 from msgflux.data.retrievers.types import (
     LexicalRetriever,
     SemanticRetriever,
     WebRetriever,
 )
-from msgflux.core.dotdict import dotdict
-from msgflux.core.message import Message
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.types import (
     AudioEmbedderModel,
@@ -24,8 +24,11 @@ EMBEDDER_MODELS = Union[
 ]
 
 
-class Retriever(Module, metaclass=AutoParams):
-    """Retriever is a Module type that uses information retrivers."""
+class Searcher(Module, metaclass=AutoParams):
+    """Searcher is a Module type that uses information retrivers."""
+
+    _autoparams_use_docstring_for = "description"
+    _autoparams_use_classname_for = "name"
 
     def __init__(
         self,
@@ -37,12 +40,14 @@ class Retriever(Module, metaclass=AutoParams):
         templates: Optional[Dict[str, str]] = None,
         config: Optional[Dict[str, Any]] = None,
         name: Optional[str] = None,
+        description: Optional[str] = None,
+        annotations: Optional[Dict[str, type]] = None,
     ):
-        """Initialize the Retriever module.
+        """Initialize the Searcher module.
 
         Args:
         retriever:
-            Retriever client.
+            Retriever backend client.
         model:
             Embedding model for converting queries to embeddings. Can be either:
             - Embedder: Custom Embedder instance (for advanced usage with hooks)
@@ -79,11 +84,19 @@ class Retriever(Module, metaclass=AutoParams):
 
             Configuration options:
             - top_k: Maximum return of similar points (int)
-            - threshold: Retriever threshold (float)
+            - threshold: Search threshold (float)
             - return_score: If True, return similarity score (bool)
             - dict_key: Help to extract a value from task_inputs if dict (str)
         name:
-            Retriever name in snake case format.
+            Searcher name in snake case format.
+        description:
+            Searcher description. Used as tool description when plugging
+            into an Agent. With AutoParams, the class docstring is used
+            automatically.
+        annotations:
+            Type annotations for tool parameters. Defaults to
+            ``{"query": str, "return": str}`` so the Searcher can be
+            used directly as an Agent tool.
         """
         super().__init__()
         self._set_retriever(retriever)
@@ -94,6 +107,8 @@ class Retriever(Module, metaclass=AutoParams):
         self._set_config(config)
         if name:
             self.set_name(name)
+        self.set_description(description)
+        self.set_annotations(annotations or {"query": str, "return": str})
 
     def forward(
         self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs
@@ -140,21 +155,8 @@ class Retriever(Module, metaclass=AutoParams):
             queries_embed or queries
         )
         retriever_response = self.retriever(**retriever_execution_params)
-
-        results = []
-
-        for query, query_results in zip(queries, retriever_response):
-            formatted_result = {
-                "results": [
-                    {"data": item.get("data", None), "score": item.get("score", None)}
-                    for item in query_results
-                ],
-            }
-            if isinstance(query, str):
-                formatted_result["query"] = query
-            results.append(formatted_result)
-
-        return results
+        query_results_list = self._normalize_retriever_response(retriever_response)
+        return self._format_results(queries, query_results_list)
 
     async def _aexecute_retriever(
         self, queries: List[str], model_preference: Optional[str] = None
@@ -172,10 +174,32 @@ class Retriever(Module, metaclass=AutoParams):
             queries_embed or queries
         )
         retriever_response = self.retriever(**retriever_execution_params)
+        query_results_list = self._normalize_retriever_response(retriever_response)
+        return self._format_results(queries, query_results_list)
 
+    def _normalize_retriever_response(
+        self, response: Any
+    ) -> List[List[Dict[str, Any]]]:
+        """Normalize retriever response to a flat list of result lists.
+
+        Retrievers return dotdict(response_type=..., data=[dotdict(results=[...])]).
+        This method extracts the inner results into a simple list of lists.
+        """
+        if isinstance(response, dotdict) and "data" in response:
+            return [
+                item.results
+                if isinstance(item, dotdict) and "results" in item
+                else item
+                for item in response.data
+            ]
+        return response
+
+    def _format_results(
+        self, queries: List[str], query_results_list: List[List[Dict[str, Any]]]
+    ) -> List[Dict[str, Any]]:
+        """Format raw retriever results into a consistent output structure."""
         results = []
-
-        for query, query_results in zip(queries, retriever_response):
+        for query, query_results in zip(queries, query_results_list):
             formatted_result = {
                 "results": [
                     {"data": item.get("data", None), "score": item.get("score", None)}
@@ -185,8 +209,19 @@ class Retriever(Module, metaclass=AutoParams):
             if isinstance(query, str):
                 formatted_result["query"] = query
             results.append(formatted_result)
-
         return results
+
+    def _format_response_template(self, content: Any) -> str:
+        """Apply response template to retriever results.
+
+        Handles list results by applying the template to each result dict
+        individually and joining them.
+        """
+        template = self.templates.get("response")
+        if isinstance(content, list):
+            formatted = [self._format_template(item, template) for item in content]
+            return "\n\n".join(formatted)
+        return self._format_template(content, template)
 
     def _prepare_retriever_execution(
         self, queries: List[Union[str, List[float]]]
@@ -280,7 +315,7 @@ class Retriever(Module, metaclass=AutoParams):
 
     @model.setter
     def model(self, value: Optional[Union[EMBEDDER_MODELS, Embedder]]):
-        """Update the retriever's model."""
+        """Update the searcher's model."""
         self._set_model(value)
 
     def _set_config(self, config: Optional[Dict[str, Any]] = None):

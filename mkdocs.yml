@@ -175,7 +175,7 @@ nav:
         - learn/nn/agent/prefilling.md
       - Functional: learn/nn/functional.md
       - Transcriber: learn/nn/transcriber.md
-      - Retriever: learn/nn/retriever.md
+      - Searcher: learn/nn/searcher.md
       - Speaker: learn/nn/speaker.md
       - MediaMaker: learn/nn/mediamaker.md
       - Predictor: learn/nn/predictor.md

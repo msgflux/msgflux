@@ -37,7 +37,7 @@ for doc in documents:
 vectordb.add([{"text": doc, "embedding": emb} for doc, emb in zip(documents, embeddings)])
 
 
-class RAGRetriever(nn.Retriever):
+class RAGRetriever(nn.Searcher):
     """Retrieves relevant documents."""
     retriever = vectordb
     model = embedder

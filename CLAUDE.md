@@ -62,7 +62,7 @@ PyTorch-inspired API for composing AI systems:
 - `Tool` - Function calling and external tool integration
 - `LM` - Language model wrapper
 - `Embedder` - Text embedding models
-- `Retriever` - Document retrieval systems
+- `Searcher` - Document retrieval systems
 - `Speaker` - Text-to-speech synthesis
 - `Transcriber` - Speech-to-text transcription
 - `MediaMaker` - Image/video generation
@@ -308,7 +308,7 @@ msgflux/
 │   │       ├── tool.py        # Tool system
 │   │       ├── lm.py          # Language model
 │   │       ├── embedder.py    # Embeddings
-│   │       ├── retriever.py   # Retrieval
+│   │       ├── searcher.py    # Retrieval
 │   │       ├── speaker.py     # Text-to-speech
 │   │       ├── transcriber.py # Speech-to-text
 │   │       ├── mediamaker.py  # Media generation
@@ -725,7 +725,7 @@ from msgflux.nn import (
     ToolLibrary,     # Tool collection
 
     # Retrieval
-    Retriever,       # Retrieval module
+    Searcher,        # Retrieval module
     Embedder,        # Embedding module
 
     # Media
