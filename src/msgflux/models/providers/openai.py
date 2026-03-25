@@ -411,78 +411,64 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             model_output, typed_parser, generation_schema
         )
 
-    def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
-        typed_parser = kwargs.get("typed_parser")
-        generation_schema = kwargs.get("generation_schema")
-
-        # Check cache if enabled
+    def _check_cache(self, **kwargs):
         if self.enable_cache and self._response_cache:
             cache_key = generate_cache_key(**kwargs)
             hit, cached_response = self._response_cache.get(cache_key)
             if hit:
                 return cached_response
+        return None
 
-        # Pop after cache check to avoid modifying kwargs during cache key generation
+    def _store_cache(self, response, **kwargs):
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
+    def _prepare_generate_kwargs(self, kwargs):
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
 
         if generation_schema is not None and typed_parser is None:
-            response_format = response_format_from_msgspec_struct(generation_schema)
-            kwargs["response_format"] = response_format
+            kwargs["response_format"] = response_format_from_msgspec_struct(
+                generation_schema
+            )
+
+        return typed_parser, generation_schema
+
+    def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        cached = self._check_cache(**kwargs)
+        if cached:
+            return cached
+
+        typed_parser, generation_schema = self._prepare_generate_kwargs(kwargs)
 
         model_output = self._execute_model(**kwargs)
         response = self._process_model_output(
             model_output, typed_parser, generation_schema
         )
 
-        # Store in cache if enabled
-        if self.enable_cache and self._response_cache:
-            # Re-add popped values for cache key
-            cache_kwargs = {
-                **kwargs,
-                "typed_parser": typed_parser,
-                "generation_schema": generation_schema,
-            }
-            cache_key = generate_cache_key(**cache_kwargs)
-            self._response_cache.set(cache_key, response)
-
+        self._store_cache(
+            response, **kwargs,
+            typed_parser=typed_parser, generation_schema=generation_schema,
+        )
         return response
 
     async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
-        typed_parser = kwargs.get("typed_parser")
-        generation_schema = kwargs.get("generation_schema")
+        cached = self._check_cache(**kwargs)
+        if cached:
+            return cached
 
-        # Check cache if enabled
-        if self.enable_cache and self._response_cache:
-            cache_key = generate_cache_key(**kwargs)
-            hit, cached_response = self._response_cache.get(cache_key)
-            if hit:
-                return cached_response
-
-        # Pop after cache check to avoid modifying kwargs during cache key generation
-        typed_parser = kwargs.pop("typed_parser")
-        generation_schema = kwargs.pop("generation_schema")
-
-        if generation_schema is not None and typed_parser is None:
-            response_format = response_format_from_msgspec_struct(generation_schema)
-            kwargs["response_format"] = response_format
+        typed_parser, generation_schema = self._prepare_generate_kwargs(kwargs)
 
         model_output = await self._aexecute_model(**kwargs)
         response = self._process_model_output(
             model_output, typed_parser, generation_schema
         )
 
-        # Store in cache if enabled
-        if self.enable_cache and self._response_cache:
-            # Re-add popped values for cache key
-            cache_kwargs = {
-                **kwargs,
-                "typed_parser": typed_parser,
-                "generation_schema": generation_schema,
-            }
-            cache_key = generate_cache_key(**cache_kwargs)
-            self._response_cache.set(cache_key, response)
-
+        self._store_cache(
+            response, **kwargs,
+            typed_parser=typed_parser, generation_schema=generation_schema,
+        )
         return response
 
     def _stream_generate(  # noqa: C901
@@ -633,6 +619,39 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             stream_response.set_metadata(metadata)
             stream_response.add(None)
 
+    def _build_generation_params(
+        self,
+        messages: Union[str, List[Dict[str, Any]]],
+        system_prompt: Optional[str],
+        prefilling: Optional[str],
+        tool_schemas: Optional[Dict],
+        tool_choice: Optional[Union[str, Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        if isinstance(messages, str):
+            messages = [ChatBlock.user(messages)]
+        if isinstance(system_prompt, str):
+            messages.insert(0, ChatBlock.system(system_prompt))
+
+        if isinstance(tool_choice, str):
+            if tool_choice not in ["auto", "required", "none"]:
+                tool_choice = {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
+
+        generation_params = {
+            "messages": messages,
+            "prefilling": prefilling,
+            "model": self.model_id,
+        }
+
+        if tool_schemas:
+            generation_params["tools"] = tool_schemas
+            generation_params["tool_choice"] = tool_choice
+            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+
+        return generation_params
+
     def __call__(
         self,
         messages: Union[str, List[Dict[str, Any]]],
@@ -679,28 +698,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
-        if isinstance(messages, str):
-            messages = [ChatBlock.user(messages)]
-        if isinstance(system_prompt, str):
-            messages.insert(0, ChatBlock.system(system_prompt))
-
-        if isinstance(tool_choice, str):
-            if tool_choice not in ["auto", "required", "none"]:
-                tool_choice = {
-                    "type": "function",
-                    "function": {"name": tool_choice},
-                }
-
-        generation_params = {
-            "messages": messages,
-            "prefilling": prefilling,
-            "model": self.model_id,
-        }
-
-        if tool_schemas:
-            generation_params["tools"] = tool_schemas
-            generation_params["tool_choice"] = tool_choice
-            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+        generation_params = self._build_generation_params(
+            messages, system_prompt, prefilling, tool_schemas, tool_choice
+        )
 
         if stream is True:
             if typed_parser is not None:
@@ -776,28 +776,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
-        if isinstance(messages, str):
-            messages = [ChatBlock.user(messages)]
-        if isinstance(system_prompt, str):
-            messages.insert(0, ChatBlock.system(system_prompt))
-
-        if isinstance(tool_choice, str):
-            if tool_choice not in ["auto", "required", "none"]:
-                tool_choice = {
-                    "type": "function",
-                    "function": {"name": tool_choice},
-                }
-
-        generation_params = {
-            "messages": messages,
-            "prefilling": prefilling,
-            "model": self.model_id,
-        }
-
-        if tool_schemas:
-            generation_params["tools"] = tool_schemas
-            generation_params["tool_choice"] = tool_choice
-            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+        generation_params = self._build_generation_params(
+            messages, system_prompt, prefilling, tool_schemas, tool_choice
+        )
 
         if stream is True:
             if typed_parser is not None:
