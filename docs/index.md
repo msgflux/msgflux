@@ -289,7 +289,8 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
             config = {"verbose": True}
 
         agent = BankAgent()
-        agent("What's my balance?", vars={"customer_name": "Alice", "customer_id": "C-1234"})
+        vars = {"customer_name": "Alice", "customer_id": "C-1234"}
+        agent("What's my balance?", vars=vars)
         ```
 
         `customer_name` renders into the instructions template. `customer_id` is injected into `get_balance` via `kwargs["vars"]` — invisible to the model, but available to the tool.
@@ -401,11 +402,11 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
         import msgflux.nn as nn
 
         class MeetingTranscriber(nn.Transcriber):
-            model          = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
-            message_fields = {"task_multimodal_inputs": "audio_path"}
-            response_mode  = "transcript"
+            model           = mf.Model.speech_to_text("openai/whisper-1")
+            message_fields  = {"task_multimodal_inputs": {"audio": "audio_path"}}
+            response_mode   = "transcript"
             response_format = "text"
-            config         = {"language": "en"}
+            config          = {"language": "en"}
 
         transcriber = MeetingTranscriber()
 
@@ -425,11 +426,11 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
         import msgflux.nn as nn
 
         class Narrator(nn.Speaker):
-            model          = mf.Model.text_to_speech("openai/tts-1")
-            message_fields = {"task_inputs": "text"}
-            response_mode  = "audio"
-            response_format = "mp3"
-            prompt         = "Speak in a calm, professional tone."
+            model           = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            message_fields  = {"task_inputs": "text"}
+            response_mode   = "audio"
+            response_format = "pcm"
+            prompt          = "Speak in a calm, professional tone."
 
         narrator = Narrator()
 
@@ -474,6 +475,7 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
             model          = mf.Model.text_to_image("openai/gpt-image-1")
             message_fields = {"task_inputs": "prompt"}
             response_mode  = "image"
+            config         = {"background": "transparent"}
 
         generator = ImageGenerator()
 
@@ -605,7 +607,7 @@ A composition of modules is a **program** — each module handles one responsibi
 
 ---
 
-## **Inline** — dynamic workflows that flow and adapt.
+## **Inline**
 
 `Inline` is a lightweight DSL for declaring entire pipelines as a single expression. Sequential steps (`->`), parallel branches (`[a, b]`), conditionals (`{cond ? a, b}`), and loops (`@{cond}: a;`) — all in one readable string. Every module reads from and writes to a shared `dotdict` message. This is the *flux* — the dynamic flow that gives the library its name.
 
