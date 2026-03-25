@@ -27,7 +27,7 @@ class Predictor(Module, metaclass=AutoParams):
         hooks: Optional[list] = None,
         message_fields: Optional[Dict[str, Any]] = None,
         response_mode: Optional[str] = None,
-        response_template: Optional[str] = None,
+        templates: Optional[Dict[str, str]] = None,
         config: Optional[Dict[str, Any]] = None,
         name: Optional[str] = None,
     ):
@@ -56,8 +56,11 @@ class Predictor(Module, metaclass=AutoParams):
             * ``None`` (default): Returns the response directly.
             * ``"<path>"``: Writes to ``obj.<path>`` and returns ``None``
               (``dotdict`` or ``Message`` is mutated in place).
-        response_template:
-            A Jinja template to format response.
+        templates:
+            Dictionary mapping template types to Jinja template strings.
+            Valid keys: "response"
+            !!! example
+                templates={"response": "Label: {{ prediction }}"}
         config:
             Dictionary with configuration options. Accepts any keys without validation.
             All parameters will be passed directly to model execution.
@@ -71,7 +74,7 @@ class Predictor(Module, metaclass=AutoParams):
         self._set_hooks(hooks)
         self._set_message_fields(message_fields)
         self._set_response_mode(response_mode)
-        self._set_response_template(response_template)
+        self._set_templates(templates)
         self._set_config(config)
         if name:
             self.set_name(name)
@@ -229,14 +232,4 @@ class Predictor(Module, metaclass=AutoParams):
             raise TypeError(
                 f"`model_preference` requires a string or None, "
                 f"got `{type(model_preference)}`"
-            )
-
-    def _set_response_template(self, response_template: Optional[str] = None):
-        """Set response template."""
-        if isinstance(response_template, str) or response_template is None:
-            self.register_buffer("response_template", response_template)
-        else:
-            raise TypeError(
-                f"`response_template` requires a string or None, "
-                f"got `{type(response_template)}`"
             )

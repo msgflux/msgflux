@@ -25,7 +25,7 @@ print(result.safe)  # True
 | `model` | `BaseModel \| ModelGateway` | Any msgflux model or custom model |
 | `message_fields` | `dict \| None` | Map `Message` field names to inputs. Valid keys: `task_inputs`, `model_preference` |
 | `response_mode` | `str \| None` | Field path on the `Message` where the result is written. `None` returns the result directly |
-| `response_template` | `str \| None` | Jinja template to format the response |
+| `templates` | `dict[str, str] \| None` | Jinja templates dict. Valid keys: `response` |
 | `config` | `dict \| None` | Extra parameters passed directly to the model |
 | `hooks` | `list[Hook] \| None` | Hook instances registered on the module |
 | `name` | `str \| None` | Module name in snake_case |
