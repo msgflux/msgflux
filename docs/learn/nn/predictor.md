@@ -85,6 +85,22 @@ print(msg.sentiment)  # ["positive"]
 
 ---
 
+## Templates
+
+Format the raw prediction output with Jinja templates.
+
+```python
+class ContentModerator(nn.Predictor):
+    model     = mf.Model.moderation("openai/omni-moderation-latest")
+    templates = {"response": "safe={{ safe }}, flagged={{ results.flagged }}"}
+
+moderator = ContentModerator()
+result = moderator("Hello!")
+print(result)  # "safe=True, flagged=False"
+```
+
+---
+
 ## Custom Models
 
 Create custom models by inheriting from `BaseModel`. This allows integrating any ML framework (sklearn, XGBoost, PyTorch, etc.) into the msgflux module system.
