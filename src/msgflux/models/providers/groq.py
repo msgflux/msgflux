@@ -33,8 +33,10 @@ class GroqChatCompletion(_BaseGroq, OpenAIChatCompletion):
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         extra_body = params.get("extra_body", {})
         params["max_completion_tokens"] = params.pop("max_tokens")
-        if params["tool_choice"] is None:
-            if params["tools"] is not None:
+
+        tool_choice = params.get("tool_choice")
+        if tool_choice is None:
+            if params.get("tools") is not None:
                 params["tool_choice"] = "auto"
             else:
                 params["tool_choice"] = "none"
