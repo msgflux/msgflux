@@ -61,6 +61,16 @@ class ChatBlock(metaclass=ChatBlockMeta):
         return {"role": "assistant", "content": content}
 
     @classmethod
+    def assist_reasoning(cls, content: str, reasoning: str) -> Dict[str, str]:
+        """Creates an assistant message with reasoning embedded in <think> tags.
+
+        Args:
+            content: The main response content.
+            reasoning: The reasoning/thinking content to embed.
+        """
+        return {"role": "assistant", "content": f"<think>{reasoning}</think>\n\n{content}"}
+
+    @classmethod
     def system(cls, content: str) -> Dict[str, str]:
         return {"role": "system", "content": content}
 
@@ -73,8 +83,21 @@ class ChatBlock(metaclass=ChatBlockMeta):
         }
 
     @classmethod
-    def assist_tool_calls(cls, tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return {"role": "assistant", "tool_calls": tool_calls}
+    def assist_tool_calls(
+        cls,
+        tool_calls: List[Dict[str, Any]],
+        reasoning: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Creates an assistant message with tool calls.
+
+        Args:
+            tool_calls: List of tool call objects.
+            reasoning: Optional reasoning to embed in content with <think> tags.
+        """
+        msg: Dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+        if reasoning is not None:
+            msg["content"] = f"<think>{reasoning}</think>"
+        return msg
 
     @classmethod
     def tool(cls, tool_call_id: str, content: str) -> Dict[str, Any]:
