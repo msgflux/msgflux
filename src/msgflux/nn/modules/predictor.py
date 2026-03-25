@@ -5,20 +5,26 @@ from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.models.base import BaseModel
 from msgflux.models.gateway import ModelGateway
-from msgflux.models.response import ModelResponse
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 
 
 class Predictor(Module, metaclass=AutoParams):
-    """Predictor is a generic Module type that uses Classifier, Regressors,
-    Detectors and Segmenters to generate insights above data.
+    """Predictor is the most generic Module type — it feeds data to a model
+    and returns predictions.
+
+    Works with any msgflux model (classifiers, regressors, detectors, etc.)
+    or custom models that inherit from ``BaseModel``.
     """
+
+    # Configure AutoParams to use class name as 'name' parameter
+    _autoparams_use_classname_for = "name"
 
     def __init__(
         self,
         model: Union[BaseModel, ModelGateway],
         *,
+        hooks: Optional[list] = None,
         message_fields: Optional[Dict[str, Any]] = None,
         response_mode: Optional[str] = None,
         response_template: Optional[str] = None,
@@ -29,7 +35,9 @@ class Predictor(Module, metaclass=AutoParams):
 
         Args:
         model:
-            Predictor Model client.
+            Model client. Any msgflux ``BaseModel`` or ``ModelGateway``.
+        hooks:
+            List of Hook instances to register on the module.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
             Valid keys: "task_inputs", "model_preference"
@@ -60,6 +68,7 @@ class Predictor(Module, metaclass=AutoParams):
         """
         super().__init__()
         self._set_model(model)
+        self._set_hooks(hooks)
         self._set_message_fields(message_fields)
         self._set_response_mode(response_mode)
         self._set_response_template(response_template)
@@ -72,14 +81,14 @@ class Predictor(Module, metaclass=AutoParams):
 
         Args:
             message: The input message, which can be:
-                - Any: Direct data input for prediction (text, image, audio, etc.)
+                - Any: Direct data input for prediction (text, image, array, etc.)
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
                 - task_inputs: Override field path or direct value
                 - model_preference: Override model preference
 
         Returns:
-            Prediction results (type depends on model and response_mode)
+            Prediction results (type depends on model and response_mode).
         """
         inputs = self._prepare_task(message, **kwargs)
         model_response = self._execute_model(**inputs)
@@ -93,16 +102,14 @@ class Predictor(Module, metaclass=AutoParams):
         response = self._process_model_response(model_response, message)
         return response
 
-    def _execute_model(
-        self, data: Any, model_preference: Optional[str] = None
-    ) -> ModelResponse:
+    def _execute_model(self, data: Any, model_preference: Optional[str] = None) -> Any:
         model_execution_params = self._prepare_model_execution(data, model_preference)
         model_response = self.generator(**model_execution_params)
         return model_response
 
     async def _aexecute_model(
         self, data: Any, model_preference: Optional[str] = None
-    ) -> ModelResponse:
+    ) -> Any:
         model_execution_params = self._prepare_model_execution(data, model_preference)
         model_response = await self.generator.acall(**model_execution_params)
         return model_response
@@ -112,21 +119,16 @@ class Predictor(Module, metaclass=AutoParams):
     ) -> Dict[str, Any]:
         model_execution_params = dotdict(self.config) if self.config else dotdict()
         model_execution_params.data = data
-        if model_preference:
+        if isinstance(self.model, ModelGateway) and model_preference is not None:
             model_execution_params.model_preference = model_preference
         return model_execution_params
 
     def _process_model_response(
-        self, model_response: ModelResponse, message: Union[Any, Message]
+        self, model_response: Any, message: Union[Any, Message]
     ) -> Any:
-        if model_response.response_type == "audio_generation":
-            raw_response = self._extract_raw_response(model_response)
-            response = self._prepare_response(raw_response, message)
-            return response
-        else:
-            raise ValueError(
-                f"Unsupported model response type `{model_response.response_type}`"
-            )
+        raw_response = self._extract_raw_response(model_response)
+        response = self._prepare_response(raw_response, message)
+        return response
 
     def _prepare_task(self, message: Union[Any, Message], **kwargs) -> Dict[str, Any]:
         inputs = dotdict()
@@ -158,7 +160,8 @@ class Predictor(Module, metaclass=AutoParams):
             self.generator = Generator(model)
         else:
             raise TypeError(
-                f"`model` need be a `BaseModel` model, given `{type(model)}`"
+                f"`model` must be a `BaseModel` or `ModelGateway`, "
+                f"given `{type(model)}`"
             )
 
     @property
@@ -199,7 +202,6 @@ class Predictor(Module, metaclass=AutoParams):
                 f"`message_fields` must be a dict or None, got `{type(message_fields)}`"
             )
 
-        # Check for invalid keys
         invalid_keys = set(message_fields.keys()) - valid_keys
         if invalid_keys:
             raise ValueError(
@@ -207,7 +209,6 @@ class Predictor(Module, metaclass=AutoParams):
                 f"Valid keys are: {valid_keys}"
             )
 
-        # Set individual fields
         self._set_task_inputs(message_fields.get("task_inputs"))
         self._set_model_preference(message_fields.get("model_preference"))
 
@@ -226,7 +227,8 @@ class Predictor(Module, metaclass=AutoParams):
             self.register_buffer("model_preference", model_preference)
         else:
             raise TypeError(
-                f"`model_preference` requires a string or None, got `{type(model_preference)}`"  # noqa: E501
+                f"`model_preference` requires a string or None, "
+                f"got `{type(model_preference)}`"
             )
 
     def _set_response_template(self, response_template: Optional[str] = None):
@@ -235,5 +237,6 @@ class Predictor(Module, metaclass=AutoParams):
             self.register_buffer("response_template", response_template)
         else:
             raise TypeError(
-                f"`response_template` requires a string or None, got `{type(response_template)}`"  # noqa: E501
+                f"`response_template` requires a string or None, "
+                f"got `{type(response_template)}`"
             )

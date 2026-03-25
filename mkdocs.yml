@@ -178,8 +178,7 @@ nav:
       - Retriever: learn/nn/retriever.md
       - Speaker: learn/nn/speaker.md
       - MediaMaker: learn/nn/mediamaker.md
-      #- Predictor:
-      #  - learn/nn/predictor.md
+      - Predictor: learn/nn/predictor.md
     - ◎ Telemetry: learn/telemetry.md
     #- ⇄ Dependency Management: dependency-management.md
     - API Reference:

@@ -1,225 +1,234 @@
 # nn.Predictor
 
-The `nn.Predictor` module provides a unified interface for wrapping machine learning models (classifiers, regressors, object detectors) into msgFlux workflows. It normalizes inputs/outputs and provides integration with `Message` objects.
-
-All code examples use the recommended import pattern:
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-```
+`nn.Predictor` is the most generic Module type — it feeds data to a model and returns predictions. It works with any msgflux model (classifiers, regressors, detectors, moderators) or custom models that inherit from `BaseModel`.
 
 ## Quick Start
 
-### AutoParams Initialization (Recommended)
-
-Defines specialized predictors with clear semantics.
-
 ```python
 import msgflux as mf
 import msgflux.nn as nn
 
-class SentimentPredictor(nn.Predictor):
-    """Predicts sentiment (positive/negative) from text."""
-    response_mode = "plain_response"
+class ContentModerator(nn.Predictor):
+    model = mf.Model.moderation("openai/omni-moderation-latest")
 
-# Load your ML model (scikit-learn, pytorch, etc.)
-sentiment_model = load_pretrained_model("sentiment_v1.pkl")
-
-# Create predictor instance
-predictor = SentimentPredictor(
-    model=sentiment_model,
-    config={"threshold": 0.7}
-)
-
-# Predict
-sentiment = predictor("This product is amazing!")
-print(sentiment)
-```
-
-### Traditional Initialization
-
-```python
-predictor = nn.Predictor(
-    model=sentiment_model,
-    config={"threshold": 0.5}
-)
+moderator = ContentModerator()
+result = moderator("This is a great day!")
+print(result.safe)  # True
 ```
 
 ---
 
-## Use Cases
+## Parameters
 
-### 1. Text Classification
-
-Wrap NLP models for classification tasks.
-
-```python
-class SpamClassifier(nn.Predictor):
-    """Classifies emails as spam or not."""
-    response_mode = "plain_response"
-
-spam_detector = SpamClassifier(
-    model=load_model("spam_classifier.pkl"),
-    config={"threshold": 0.8}
-)
-
-is_spam = spam_detector("Congratulations! You've won $1,000,000!")
-```
-
-### 2. Computer Vision
-
-Wrap vision models for detection or classification.
-
-```python
-class ObjectDetector(nn.Predictor):
-    """Detects objects in images."""
-    response_mode = "plain_response"
-
-detector = ObjectDetector(
-    model=load_model("yolo_v8.pt"),
-    config={"confidence": 0.5}
-)
-
-objects = detector("image.jpg")
-```
-
-### 3. Regression & Time Series
-
-Wrap regression models for forecasting.
-
-```python
-class PricePredictor(nn.Predictor):
-    """Predicts prices based on features."""
-    response_mode = "plain_response"
-
-predictor = PricePredictor(model=load_model("price_regressor.pkl"))
-
-price = predictor({"sqft": 2000, "bedrooms": 3})
-```
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | `BaseModel \| ModelGateway` | Any msgflux model or custom model |
+| `message_fields` | `dict \| None` | Map `Message` field names to inputs. Valid keys: `task_inputs`, `model_preference` |
+| `response_mode` | `str \| None` | Field path on the `Message` where the result is written. `None` returns the result directly |
+| `response_template` | `str \| None` | Jinja template to format the response |
+| `config` | `dict \| None` | Extra parameters passed directly to the model |
+| `hooks` | `list[Hook] \| None` | Hook instances registered on the module |
+| `name` | `str \| None` | Module name in snake_case |
 
 ---
 
-## Advanced Configuration
+## Compatible Models
 
-### Message Field Mapping
+Any model that accepts `data` as input works with Predictor:
 
-Map specific fields from a `Message` object to your model inputs.
+| Type | Factory | Description |
+|------|---------|-------------|
+| `ModerationModel` | `Model.moderation()` | Content safety classification |
+| `TextClassifierModel` | `Model.text_classifier()` | Text classification |
+| `ImageClassifierModel` | `Model.image_classifier()` | Image classification |
+| Custom | Inherit from `BaseModel` | Any custom model (sklearn, etc.) |
+
+---
+
+## Content Moderation
 
 ```python
-class StructuredPredictor(nn.Predictor):
-    """Predictor that reads from message features."""
-    response_mode = "message"
+class ContentModerator(nn.Predictor):
+    model          = mf.Model.moderation("openai/omni-moderation-latest")
+    message_fields = {"task_inputs": "user_message"}
+    response_mode  = "moderation"
 
-predictor = StructuredPredictor(
-    model=model,
-    message_fields={
-        "task_inputs": "features.dense_vector"
-    }
-)
+moderator = ContentModerator()
 
 msg = mf.Message()
-msg.set("features.dense_vector", [0.1, 0.5, 0.9])
+msg.user_message = "I love programming in Python!"
 
-result_msg = predictor(msg)
-prediction = result_msg.get("predictor.result")
-```
-
-### Response Templates
-
-Format the prediction output using Jinja templates.
-
-```python
-class FormattedPredictor(nn.Predictor):
-    """Predictor with formatted string output."""
-    response_mode = "plain_response"
-
-predictor = FormattedPredictor(
-    model=model,
-    response_template="""
-    Result: {{ prediction }}
-    Confidence: {{ confidence }}%
-    """
-)
-
-print(predictor(input_data))
+moderator(msg)
+print(msg.moderation)
 ```
 
 ---
 
-## Creating Predictor Hierarchies
+## Text Classification
 
-Build a hierarchy of predictors to share configuration logic.
+Using vLLM with a self-hosted classifier:
 
 ```python
-# Base predictor for binary classification
-class BaseClassifier(nn.Predictor):
-    """Base class for classifiers."""
-    response_mode = "plain_response"
+class SentimentClassifier(nn.Predictor):
+    model          = mf.Model.text_classifier("vllm/my-sentiment-model")
+    message_fields = {"task_inputs": "text"}
+    response_mode  = "sentiment"
 
-class FraudDetector(BaseClassifier):
-    """Specialized fraud detector."""
+classifier = SentimentClassifier()
 
-class ChurnPredictor(BaseClassifier):
-    """Specialized churn predictor."""
+msg = mf.Message()
+msg.text = "This movie was absolutely wonderful"
 
-# Instantiate
-fraud_model = FraudDetector(
-    model=fraud_model,
-    config={"threshold": 0.9} # Strict
-)
+classifier(msg)
+print(msg.sentiment)  # ["positive"]
+```
 
-churn_model = ChurnPredictor(
-    model=churn_model,
-    config={"threshold": 0.5} # Balanced
-)
+---
+
+## Custom Models
+
+Create custom models by inheriting from `BaseModel`. This allows integrating any ML framework (sklearn, XGBoost, PyTorch, etc.) into the msgflux module system.
+
+### sklearn
+
+```python
+import joblib
+
+from msgflux.core.dotdict import dotdict
+from msgflux.models.base import BaseModel
+from msgflux.models.response import ModelResponse
+
+
+class SklearnClassifier(BaseModel):
+    """Wraps a scikit-learn classifier as a msgflux model."""
+
+    model_type = "tabular_classifier"
+    provider = "sklearn"
+
+    def __init__(self, path: str):
+        self.model_id = path
+        self._path = path
+        self._initialize()
+
+    def _initialize(self):
+        self.clf = joblib.load(self._path)
+
+    def __call__(self, *, data, **kwargs):
+        response = ModelResponse()
+        response.set_response_type("text_classification")
+        predictions = self.clf.predict(data)
+        labels = [self.clf.classes_[p] for p in predictions]
+        response.add(labels)
+        return response
+
+    async def acall(self, *, data, **kwargs):
+        return self(data=data, **kwargs)
+```
+
+Then use it like any other model:
+
+```python
+class ChurnPredictor(nn.Predictor):
+    model = SklearnClassifier("models/churn_v2.pkl")
+
+predictor = ChurnPredictor()
+result = predictor([[0.5, 1.2, 3.0, 0.8]])
+print(result)  # ["churn"]
+```
+
+---
+
+## With Message
+
+```python
+class SafetyFilter(nn.Predictor):
+    model          = mf.Model.moderation("openai/omni-moderation-latest")
+    message_fields = {"task_inputs": "content"}
+    response_mode  = "safety"
+
+filter = SafetyFilter()
+
+msg = mf.Message()
+msg.content = "Hello, how are you?"
+
+filter(msg)
+print(msg.safety.safe)  # True
 ```
 
 ---
 
 ## Integration with Agents
 
-Predictors are excellent tools for Agents. They allow agents to offload specialized tasks to ML models.
+Predictors work as preprocessing or guardrail steps in agent pipelines.
 
 ```python
-# Define predictor
-analyzer = SentimentPredictor(model=sentiment_model)
+class Moderator(nn.Predictor):
+    model          = mf.Model.moderation("openai/omni-moderation-latest")
+    message_fields = {"task_inputs": "user_input"}
+    response_mode  = "moderation"
 
-# Define as tool function
-def analyze_sentiment(text: str) -> str:
-    """Analyze sentiment of the customer message."""
-    return analyzer(text)
+class Assistant(nn.Agent):
+    model          = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    message_fields = {"task_inputs": "user_input"}
+    response_mode  = "response"
 
-# Agent with access to the predictor
-class SupportAgent(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4")
-    tools = [analyze_sentiment]
+class SafePipeline(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.moderator = Moderator()
+        self.assistant = Assistant()
 
-agent = SupportAgent()
-response = agent("Customer says: 'I love your service but hate the app.'")
+    def forward(self, msg):
+        self.moderator(msg)
+        if msg.moderation.safe:
+            self.assistant(msg)
+        else:
+            msg.response = "I can't process this request."
+        return msg
+
+pipeline = SafePipeline()
+
+msg = mf.Message()
+msg.user_input = "Tell me about machine learning"
+
+pipeline(msg)
+print(msg.response)
 ```
 
 ---
 
-## Batch & Async
+## Predictor Hierarchies
 
-Efficiently process batches of data using `aforward`.
+Share configuration across related predictors.
 
 ```python
-import asyncio
+class BaseClassifier(nn.Predictor):
+    """Base class for all text classifiers."""
+    model = mf.Model.text_classifier("vllm/my-model")
 
-async def predict_batch(inputs):
-    tasks = [predictor.aforward(inp) for inp in inputs]
-    return await asyncio.gather(*tasks)
+class SpamDetector(BaseClassifier):
+    message_fields = {"task_inputs": "email_body"}
+    response_mode  = "spam_result"
 
-inputs = ["text 1", "text 2", "text 3"]
-results = asyncio.run(predict_batch(inputs))
+class TopicClassifier(BaseClassifier):
+    message_fields = {"task_inputs": "article_text"}
+    response_mode  = "topic"
 ```
 
 ---
 
-## Best Practices
+## Async
 
-1.  **Task Specificity**: Create specific predictor classes (`FraudDetector`, `SpamClassifier`) instead of generic `Predictor` instances.
-2.  **Input Validation**: Use standard Python validation functions before passing data to the predictor if your model is sensitive to input types.
-3.  **Confidence Thresholds**: Expose thresholds in `config` to allow easy tuning without changing code.
+```python
+result = await predictor.acall("some input data")
+```
+
+---
+
+## Debugging
+
+```python
+# Inspect parameters before execution
+params = predictor.inspect_model_execution_params("test input")
+print(params)
+```
