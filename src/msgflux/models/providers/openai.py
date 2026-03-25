@@ -287,6 +287,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             or getattr(message, "thinking", None)
         )
 
+    @staticmethod
+    def _extract_finish_reason(choice) -> Optional[str]:
+        return getattr(choice, "finish_reason", None)
+
+    @staticmethod
+    def _extract_annotations(message) -> Optional[list]:
+        annotations = getattr(message, "annotations", None)
+        if annotations:
+            return [item.model_dump() for item in annotations]
+        return None
+
     def _set_reasoning_fields(self, response_content: Any, reasoning_content: str):
         if response_content is None or isinstance(response_content, str):
             return
@@ -319,8 +330,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         metadata = self._build_usage_metadata(model_output)
 
         choice = model_output.choices[0]
-        finish_reason = getattr(choice, "finish_reason", None)
-        self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        self._set_stop_metadata(
+            metadata, finish_reason=self._extract_finish_reason(choice)
+        )
 
         reasoning = self._extract_reasoning(choice.message)
 
@@ -332,10 +344,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             reasoning_content = reasoning
             prefix_response_type = "reasoning_"
 
-        if choice.message.annotations:
-            metadata.annotations = [
-                item.model_dump() for item in choice.message.annotations
-            ]
+        annotations = self._extract_annotations(choice.message)
+        if annotations:
+            metadata.annotations = annotations
 
         if choice.message.tool_calls:
             aggregator = ToolCallAggregator(reasoning_tool_call)
@@ -490,8 +501,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 if chunk.choices:
                     choice = chunk.choices[0]
                     delta = choice.delta
-                    if getattr(choice, "finish_reason", None) is not None:
-                        finish_reason = choice.finish_reason
+                    fr = self._extract_finish_reason(choice)
+                    if fr is not None:
+                        finish_reason = fr
 
                     reasoning_chunk = self._extract_reasoning(delta)
 
@@ -525,10 +537,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         aggregator.process(call_index, tool_id, name, arguments)
                         continue
 
-                    if hasattr(delta, "annotations") and delta.annotations is not None:
-                        metadata.annotations = [
-                            item.model_dump() for item in delta.annotations
-                        ]
+                    annotations = self._extract_annotations(delta)
+                    if annotations:
+                        metadata.annotations = annotations
                         continue
 
                 elif chunk.usage:
@@ -564,8 +575,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 if chunk.choices:
                     choice = chunk.choices[0]
                     delta = choice.delta
-                    if getattr(choice, "finish_reason", None) is not None:
-                        finish_reason = choice.finish_reason
+                    fr = self._extract_finish_reason(choice)
+                    if fr is not None:
+                        finish_reason = fr
 
                     reasoning_chunk = self._extract_reasoning(delta)
 
@@ -599,10 +611,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         aggregator.process(call_index, tool_id, name, arguments)
                         continue
 
-                    if hasattr(delta, "annotations") and delta.annotations is not None:
-                        metadata.annotations = [
-                            item.model_dump() for item in delta.annotations
-                        ]
+                    annotations = self._extract_annotations(delta)
+                    if annotations:
+                        metadata.annotations = annotations
                         continue
 
                 elif chunk.usage:
