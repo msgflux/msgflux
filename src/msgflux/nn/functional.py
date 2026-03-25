@@ -197,7 +197,7 @@ def scatter_gather(
 
 @Spans.instrument()
 def bcast_gather(
-    to_send: List[Callable], *args, timeout: Optional[float] = None, **kwargs
+    to_send: List[Callable], *args: Any, timeout: Optional[float] = None, **kwargs: Any
 ) -> Tuple[Any, ...]:
     """Broadcasts arguments to multiple callables and gathers the responses.
 
@@ -254,7 +254,7 @@ def bcast_gather(
 
 @Spans.instrument()
 def wait_for(
-    to_send: Callable, *args, timeout: Optional[float] = None, **kwargs
+    to_send: Callable, *args: Any, timeout: Optional[float] = None, **kwargs: Any
 ) -> Any:
     """Wait for a callable execution.
 
@@ -325,7 +325,7 @@ def wait_for_event(event: Any) -> None:
 
 
 @Spans.instrument()
-def spawn(to_send: Callable, *args, **kwargs) -> None:
+def spawn(to_send: Callable, *args: Any, **kwargs: Any) -> None:
     """Dispatches a task without waiting for a result.
     Uses the AsyncExecutorPool. The task is not tracked and no return is provided.
 

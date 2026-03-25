@@ -95,7 +95,7 @@ class Transcriber(Module, metaclass=AutoParams):
             self.set_name(name)
 
     def forward(
-        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
+        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message, ModelStreamResponse]:
         """Execute the transcriber with the given message.
 
@@ -120,7 +120,7 @@ class Transcriber(Module, metaclass=AutoParams):
         return response
 
     async def aforward(
-        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
+        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message, ModelStreamResponse]:
         """Async version of forward. Execute the transcriber asynchronously."""
         inputs = await self._aprepare_task(message, **kwargs)

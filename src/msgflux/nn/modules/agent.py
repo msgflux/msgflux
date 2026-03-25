@@ -360,7 +360,7 @@ class Agent(Module, metaclass=AutoParams):
             self._set_system_message(system_message)
 
     def forward(
-        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs
+        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs: Any
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Execute the agent with the given message.
 
@@ -426,7 +426,7 @@ class Agent(Module, metaclass=AutoParams):
         return response
 
     async def aforward(
-        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs
+        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs: Any
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
         inputs = await self._aprepare_task(message, **kwargs)

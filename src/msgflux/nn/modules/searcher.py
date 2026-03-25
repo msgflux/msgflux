@@ -111,7 +111,7 @@ class Searcher(Module, metaclass=AutoParams):
         self.set_annotations(annotations or {"query": str, "return": str})
 
     def forward(
-        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs
+        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message]:
         """Execute the retriever with the given message.
 
@@ -133,7 +133,7 @@ class Searcher(Module, metaclass=AutoParams):
         return response
 
     async def aforward(
-        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs
+        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message]:
         """Async version of forward. Execute the retriever asynchronously."""
         inputs = self._prepare_task(message, **kwargs)
@@ -303,11 +303,11 @@ class Searcher(Module, metaclass=AutoParams):
             self.embedder = Embedder(model=model)
 
     @property
-    def model(self):
+    def model(self) -> Any:
         """Access underlying model for convenience.
 
         Returns:
-            The wrapped model instance, or None if no embedder
+            The wrapped model instance, or None if no embedder.
         """
         if self.embedder is None:
             return None

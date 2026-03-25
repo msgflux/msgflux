@@ -79,7 +79,7 @@ class Predictor(Module, metaclass=AutoParams):
         if name:
             self.set_name(name)
 
-    def forward(self, message: Union[Any, Message], **kwargs) -> Any:
+    def forward(self, message: Union[Any, Message], **kwargs: Any) -> Any:
         """Execute the predictor with the given message.
 
         Args:

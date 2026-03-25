@@ -74,7 +74,7 @@ class Speaker(Module, metaclass=AutoParams):
             self.set_name(name)
 
     def forward(
-        self, message: Union[str, Message], **kwargs
+        self, message: Union[str, Message], **kwargs: Any
     ) -> Union[bytes, ModelStreamResponse]:
         """Execute the speaker with the given message.
 
@@ -105,7 +105,7 @@ class Speaker(Module, metaclass=AutoParams):
         return response
 
     async def aforward(
-        self, message: Union[str, Message], **kwargs
+        self, message: Union[str, Message], **kwargs: Any
     ) -> Union[bytes, ModelStreamResponse]:
         """Async version of forward. Execute the speaker asynchronously."""
         inputs = self._prepare_task(message, **kwargs)
