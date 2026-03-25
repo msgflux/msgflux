@@ -298,6 +298,13 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             return [item.model_dump() for item in annotations]
         return None
 
+    @staticmethod
+    def _stream_add_chunk(stream_response, chunk, response_type):
+        if stream_response.response_type is None:
+            stream_response.set_response_type(response_type)
+            stream_response.first_chunk_event.set()
+        stream_response.add(chunk)
+
     def _set_reasoning_fields(self, response_content: Any, reasoning_content: str):
         if response_content is None or isinstance(response_content, str):
             return
@@ -497,19 +504,16 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         reasoning_tool_call += reasoning_chunk
 
                     if self.return_reasoning and reasoning_chunk:
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type(
-                                "reasoning_text_generation"
-                            )
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(reasoning_chunk)
+                        self._stream_add_chunk(
+                            stream_response, reasoning_chunk,
+                            "reasoning_text_generation",
+                        )
                         continue
 
                     if getattr(delta, "content", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("text_generation")
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(delta.content)
+                        self._stream_add_chunk(
+                            stream_response, delta.content, "text_generation",
+                        )
                         continue
 
                     if getattr(delta, "tool_calls", None):
@@ -571,19 +575,16 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         reasoning_tool_call += reasoning_chunk
 
                     if self.return_reasoning and reasoning_chunk:
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type(
-                                "reasoning_text_generation"
-                            )
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(reasoning_chunk)
+                        self._stream_add_chunk(
+                            stream_response, reasoning_chunk,
+                            "reasoning_text_generation",
+                        )
                         continue
 
                     if getattr(delta, "content", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("text_generation")
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(delta.content)
+                        self._stream_add_chunk(
+                            stream_response, delta.content, "text_generation",
+                        )
                         continue
 
                     if getattr(delta, "tool_calls", None):
