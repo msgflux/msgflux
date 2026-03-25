@@ -1,0 +1,213 @@
+# Message
+
+`Message` is a structured container for **data flow between modules**. It extends [`dotdict`](../dotdict.md) with default fields tailored for AI workflows.
+
+For general `dotdict` features — dot access, nested paths, `get()`/`set()`, serialization, immutability, and hidden keys — see the [`dotdict` docs](../dotdict.md).
+
+## Quick Start
+
+```python
+from msgflux import Message
+
+msg = Message(
+    content="Analyze this text",
+)
+
+msg.set("context.data", {"key": "value"})
+print(msg.content)       # "Analyze this text"
+print(msg.context.data)  # {"key": "value"}
+```
+
+---
+
+## Default Fields
+
+`Message` pre-defines a set of fields that modules and agents expect:
+
+| Field | Description |
+|-------|-------------|
+| `content` | Main content (text, dict) |
+| `texts` | Text data container |
+| `context` | Context information |
+| `audios` | Audio data |
+| `images` | Image data |
+| `videos` | Video data |
+| `extra` | Extra data |
+| `outputs` | Module outputs |
+| `response` | Final response |
+
+---
+
+## With nn.Agent
+
+### message_fields
+
+`message_fields` controls which parts of the `Message` an agent reads as inputs:
+
+```python
+import msgflux.nn as nn
+
+class Analyzer(nn.Agent):
+    model = model
+    message_fields = {
+        "task_inputs": "content",                    # Read task
+        "task_multimodal_inputs": {"image": "images.user"},  # Read image
+        "context_inputs": "context.data",            # Read context
+        "vars": "extra.vars"                         # Read vars
+    }
+    response_mode = "outputs.analysis"               # Write response
+
+analyzer = Analyzer()
+
+msg = Message(
+    content="Analyze this image",
+    context={"data": {"type": "product"}}
+)
+msg.set("images.user", "https://example.com/image.jpg")
+
+analyzer(msg)
+
+print(msg.outputs.analysis)  # Agent's response
+```
+
+### response_mode Options
+
+`response_mode` controls how and where the module delivers its output:
+
+| Mode | Behavior |
+|------|----------|
+| `None` (default) | Return response directly |
+| `"<path>"` | Write to `msg.<path>` and return the `Message` |
+
+**Writing to a Message** — pass a string path *without* a trailing colon. The
+module writes to that field of the `Message` object and returns it:
+
+```python
+# Write response to msg.outputs.result, return the Message
+agent = nn.Agent(model, response_mode="outputs.result")
+msg = agent(Message(content="Hi"))
+print(msg.outputs.result)
+```
+
+**Returning a dotdict** — add a trailing colon (`:`). The module creates a new
+`dotdict` whose structure mirrors the path, without needing a `Message` at all:
+
+```python
+# Returns dotdict({"outputs": {"result": <response>}})
+agent = nn.Agent(model, response_mode="outputs.result:")
+result = agent("What is Python?")
+print(result.get("outputs.result"))
+
+# Simple key
+agent = nn.Agent(model, response_mode="answer:")
+result = agent("What is Python?")
+print(result.answer)
+```
+
+**Writing to extraction** (for signatures):
+
+```python
+agent = nn.Agent(model, signature="...", response_mode="extraction")
+agent(msg)
+print(msg.extraction)  # {"field1": value1, "field2": value2}
+```
+
+---
+
+## In Workflows
+
+### With inline DSL
+
+```python
+import msgflux.nn.functional as F
+
+
+def preprocess(msg):
+    msg.preprocessed_content = msg.content.upper()
+    return msg
+
+def analyze(msg):
+    msg.outputs.analysis = f"Analyzed: {msg.preprocessed_content}"
+    return msg
+
+modules = {"preprocess": preprocess, "analyze": analyze}
+
+msg = Message(content="hello world")
+F.inline("preprocess -> analyze", modules, msg)
+
+print(msg.outputs.analysis)  # "Analyzed: HELLO WORLD"
+```
+
+---
+
+## Multimodal Data
+
+Store multimodal inputs directly on the message:
+
+```python
+msg = Message()
+
+# Audio
+msg.set("user_audio", "/path/to/audio.mp3")
+
+# Images
+msg.set("user_image", "https://example.com/image.jpg")
+msg.set("images.product", ["img1.jpg", "img2.jpg"])
+
+# Files
+msg.set("user_file", "/path/to/document.pdf")
+```
+
+---
+
+## Complete Example
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+import msgflux.nn.functional as F
+from msgflux import Message
+
+
+class Speech2Text(nn.Transcriber):
+    model = mf.Model.speech_to_text("openai/whisper-1")
+    message_fields = {"task_multimodal_inputs": {"audio": "user_audio"}}
+    response_mode = "content"
+
+
+class Analyzer(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    message_fields = {"task_inputs": "content"}
+    response_mode = "outputs.analysis"
+
+
+class Pipeline(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transcriber = Speech2Text()
+        self.analyzer = Analyzer()
+        self.components = nn.ModuleDict({
+            "transcriber": self.transcriber,
+            "analyzer": self.analyzer
+        })
+        self.register_buffer("flux", "{user_audio is not None? transcriber} -> analyzer")
+
+    def forward(self, msg):
+        return F.inline(self.flux, self.components, msg)
+
+
+# Usage
+pipeline = Pipeline()
+
+# Text input
+msg = Message(content="Analyze this text for sentiment.")
+pipeline(msg)
+print(msg.outputs.analysis)
+
+# Audio input
+msg = Message()
+msg.user_audio = "/path/to/audio.mp3"
+pipeline(msg)
+print(msg.content)          # Transcription
+print(msg.outputs.analysis) # Analysis result
+```

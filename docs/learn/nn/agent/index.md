@@ -39,7 +39,6 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 
 ## See Also
 
-- [Module](../module.md) - Base class for all nn components
-- [Tool](../tool.md) - Tool system details
-- [Message](../../message.md) - Structured message passing
+- [Module](../module/index.md) - Base class for all nn components
+- [Message](../message.md) - Structured message passing
 - [Model](../../models/model.md) - Model factory and types

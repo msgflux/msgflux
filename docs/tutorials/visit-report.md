@@ -442,5 +442,5 @@ The result: the agent focuses on **what to ask**, not on **how to transport data
 
 ## Next Steps
 
-- **[Quickstart — PIX Assistant](../quickstart.md)** — `return_direct` for structured extraction
+- **[Quickstart — PIX Assistant](../learn/nn/agent/quickstart.md)** — `return_direct` for structured extraction
 - **[Intent Router](intent-router.md)** — multi-agent routing with typed Signatures
