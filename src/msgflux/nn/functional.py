@@ -11,6 +11,7 @@ from msgflux.logger import logger
 from msgflux.telemetry import Spans
 
 __all__ = [
+    "abcast_gather",
     "amap_gather",
     "ascatter_gather",
     "aspawn",
@@ -574,6 +575,56 @@ async def ascatter_gather(
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
         tasks.append(f(*args, **kwargs))
 
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results = []
+    for i, response in enumerate(responses):
+        if isinstance(response, Exception):
+            logger.error(str(response))
+            results.append(TaskError(exception=response, index=i))
+        else:
+            results.append(response)
+
+    return tuple(results)
+
+
+@Spans.instrument()
+async def abcast_gather(
+    to_send: List[Callable], *args: Any, **kwargs: Any
+) -> Tuple[Any, ...]:
+    """Async version of bcast_gather. Broadcasts the same arguments to multiple
+    async callables and gathers the responses concurrently.
+
+    Args:
+        to_send:
+            List of callable objects (e.g. async functions or `Module` instances
+            with acall).
+        *args:
+            Positional arguments broadcast to every callable.
+        **kwargs:
+            Named arguments broadcast to every callable.
+
+    Returns:
+        Tuple containing the responses for each callable. If an error occurs for a
+        specific callable, its corresponding response in the tuple will be a
+        `TaskError`.
+
+    Raises:
+        TypeError:
+            If `to_send` is not a list of callables.
+
+    Examples:
+        async def square(x): return x * x
+        async def cube(x): return x * x * x
+
+        # Example 1:
+        results = await F.abcast_gather([square, cube], 3)
+        print(results)  # (9, 27)
+    """
+    if not isinstance(to_send, list) or not all(callable(f) for f in to_send):
+        raise TypeError("`to_send` must be a non-empty list of callable objects")
+
+    tasks = [f(*args, **kwargs) for f in to_send]
     responses = await asyncio.gather(*tasks, return_exceptions=True)
 
     results = []
