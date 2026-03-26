@@ -198,14 +198,16 @@ class Searcher(Module, metaclass=AutoParams):
         self, queries: List[str], query_results_list: List[List[Dict[str, Any]]]
     ) -> List[Dict[str, Any]]:
         """Format raw retriever results into a consistent output structure."""
+        return_score = self.config.get("return_score", False)
         results = []
         for query, query_results in zip(queries, query_results_list):
-            formatted_result = {
-                "results": [
-                    {"data": item.get("data", None), "score": item.get("score", None)}
-                    for item in query_results
-                ],
-            }
+            formatted_results = []
+            for item in query_results:
+                entry = {"data": item.get("data", None)}
+                if return_score:
+                    entry["score"] = item.get("score", None)
+                formatted_results.append(entry)
+            formatted_result = {"results": formatted_results}
             if isinstance(query, str):
                 formatted_result["query"] = query
             results.append(formatted_result)
