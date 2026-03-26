@@ -210,6 +210,7 @@ nav:
     - Legal Document Review: tutorials/legal-document-review.md
     - Lead Scoring: tutorials/lead-scoring.md
     - README Generator: tutorials/readme-generator.md
+    - Ad Focus Group Simulator: tutorials/ad-focus-group.md
   - Dependency Management: dependency-management.md
   - Changelog: CHANGELOG.md
   - Blog:
