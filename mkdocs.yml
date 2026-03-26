@@ -159,7 +159,6 @@ nav:
       - Agent:
         - learn/nn/agent/index.md
         - learn/nn/agent/quickstart.md
-        - learn/nn/agent/autoparams.md
         - learn/nn/agent/async.md
         - learn/nn/agent/streaming.md
         - learn/nn/agent/reasoning.md

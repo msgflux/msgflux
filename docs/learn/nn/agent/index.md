@@ -22,8 +22,7 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 
 | Topic | Description |
 |-------|-------------|
-| [Quick Start](quickstart.md) | Get started with a minimal agent |
-| [AutoParams](autoparams.md) | Define agents using class attributes |
+| [Quick Start](quickstart.md) | Get started with a minimal agent, class-based definition (AutoParams) |
 | [Async](async.md) | Asynchronous agent execution |
 | [Streaming](streaming.md) | Real-time response streaming |
 | [Reasoning](reasoning.md) | Model-level reasoning, `reasoning_in_response`, dual-queue streaming |
