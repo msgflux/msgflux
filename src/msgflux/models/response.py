@@ -13,8 +13,6 @@ class ModelResponse(BaseResponse):
         "image_text_generation",
         "moderation",
         "structured",
-        "reasoning_structured",
-        "reasoning_text_generation",
         "tool_call",
         "transcript",
         "text_classification",
@@ -25,6 +23,4 @@ class ModelResponse(BaseResponse):
 
 
 class ModelStreamResponse(BaseStreamResponse):
-    response_type: Literal[
-        "audio_generation", "reasoning_text_generation", "text_generation", "tool_call"
-    ]
+    response_type: Literal["audio_generation", "text_generation", "tool_call"]

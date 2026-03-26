@@ -17,15 +17,16 @@ from typing import (
 import msgspec
 
 from msgflux.auto import AutoParams
-from msgflux.data.types import Audio, File, Image, Video
 from msgflux.core.dotdict import dotdict
+from msgflux.core.examples import Example, ExampleCollection
+from msgflux.core.message import Message
+from msgflux.data.types import Audio, File, Image, Video
 from msgflux.dsl.signature import (
     Signature,
     SignatureFactory,
     generate_annotations_from_signature,
 )
 from msgflux.dsl.typed_parsers.registry import typed_parser_registry
-from msgflux.core.examples import Example, ExampleCollection
 from msgflux.exceptions import _GuardInterrupt
 from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.generation.templates import (
@@ -33,10 +34,10 @@ from msgflux.generation.templates import (
     SYSTEM_PROMPT_TEMPLATE,
     PromptSpec,
 )
-from msgflux.core.message import Message
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import ChatCompletionModel
+from msgflux.nn.functional import await_for_event, wait_for_event
 from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
@@ -95,8 +96,6 @@ class Agent(Module, metaclass=AutoParams):
     _autoparams_use_classname_for = "name"
 
     _supported_outputs: List[str] = [
-        "reasoning_structured",
-        "reasoning_text_generation",
         "structured",
         "text_generation",
         "audio_generation",
@@ -360,7 +359,9 @@ class Agent(Module, metaclass=AutoParams):
             self._set_system_message(system_message)
 
     def forward(
-        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs: Any
+        self,
+        message: Optional[Union[str, Mapping[str, Any], Message]] = None,
+        **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Execute the agent with the given message.
 
@@ -417,16 +418,16 @@ class Agent(Module, metaclass=AutoParams):
         """
         inputs = self._prepare_task(message, **kwargs)
         try:
-            model_response = self._execute_model(
-                prefilling=self.prefilling, **inputs
-            )
+            model_response = self._execute_model(prefilling=self.prefilling, **inputs)
         except _GuardInterrupt as e:
             return self._define_response_mode(e.response, message)
         response = self._process_model_response(message, model_response, **inputs)
         return response
 
     async def aforward(
-        self, message: Optional[Union[str, Mapping[str, Any], Message]] = None, **kwargs: Any
+        self,
+        message: Optional[Union[str, Mapping[str, Any], Message]] = None,
+        **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
         inputs = await self._aprepare_task(message, **kwargs)
@@ -529,6 +530,9 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
+        if isinstance(model_response, ModelStreamResponse):
+            wait_for_event(model_response._response_type_event)
+
         if "tool_call" in model_response.response_type:
             model_response, messages = self._process_tool_call_response(
                 model_response, messages, vars, model_preference
@@ -541,13 +545,15 @@ class Agent(Module, metaclass=AutoParams):
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
             raw_response = self._extract_raw_response(model_response)
             response_type = model_response.response_type
+            reasoning = model_response.reasoning
         else:  # returns tool result as response or tool call as response
             raw_response = model_response
             response_type = "tool_responses"
+            reasoning = None
 
         if response_type in self._supported_outputs:
             response = self._prepare_response(
-                raw_response, response_type, messages, message, vars
+                raw_response, response_type, messages, message, vars, reasoning
             )
             return response
         else:
@@ -561,6 +567,9 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
+        if isinstance(model_response, ModelStreamResponse):
+            await await_for_event(model_response._response_type_event)
+
         if "tool_call" in model_response.response_type:
             model_response, messages = await self._aprocess_tool_call_response(
                 model_response, messages, vars, model_preference
@@ -576,13 +585,15 @@ class Agent(Module, metaclass=AutoParams):
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
             raw_response = self._extract_raw_response(model_response)
             response_type = model_response.response_type
+            reasoning = model_response.reasoning
         else:  # returns tool result as response or tool call as response
             raw_response = model_response
             response_type = "tool_responses"
+            reasoning = None
 
         if response_type in self._supported_outputs:
             response = self._prepare_response(
-                raw_response, response_type, messages, message, vars
+                raw_response, response_type, messages, message, vars, reasoning
             )
             return response
         else:
@@ -706,7 +717,7 @@ class Agent(Module, metaclass=AutoParams):
         while True:
             if model_response.response_type == "tool_call":
                 raw_response = model_response.data
-                reasoning = raw_response.reasoning
+                reasoning = model_response.reasoning
 
                 if self.config.get("verbose", False):
                     if reasoning:
@@ -753,7 +764,7 @@ class Agent(Module, metaclass=AutoParams):
         while True:
             if model_response.response_type == "tool_call":
                 raw_response = model_response.data
-                reasoning = raw_response.reasoning
+                reasoning = model_response.reasoning
 
                 if self.config.get("verbose", False):
                     if reasoning:
@@ -839,6 +850,11 @@ class Agent(Module, metaclass=AutoParams):
                 cprint(repr_str, ls="b")
         return tool_results
 
+    def _apply_reasoning_in_response(self, raw_response, reasoning):
+        if self.config.get("reasoning_in_response", False) and reasoning is not None:
+            return dotdict(answer=raw_response, reasoning=reasoning)
+        return raw_response
+
     def _prepare_response(
         self,
         raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
@@ -846,11 +862,18 @@ class Agent(Module, metaclass=AutoParams):
         messages: List[Mapping[str, Any]],
         message: Union[str, Mapping[str, Any], Message],
         vars: Mapping[str, Any],
+        reasoning: Optional[str] = None,
     ) -> Union[str, Mapping[str, Any], ModelStreamResponse]:
         formatted_response = None
         if not isinstance(raw_response, ModelStreamResponse):
+            raw_response = self._apply_reasoning_in_response(raw_response, reasoning)
+
             if response_type == "text_generation" or "structured" in response_type:
                 if self.config.get("verbose", False):
+                    if reasoning:
+                        cprint(
+                            f"[{self.name}][reasoning] {reasoning}", bc="br2", ls="b"
+                        )
                     cprint(f"[{self.name}][response] {raw_response}", bc="y", ls="b")
                 if self.templates.get("response"):
                     if isinstance(raw_response, str):
@@ -1535,6 +1558,7 @@ class Agent(Module, metaclass=AutoParams):
             "video_block_kwargs",
             "include_date",
             "execution",  # Added for execution settings
+            "reasoning_in_response",
         }
 
         if config is None:

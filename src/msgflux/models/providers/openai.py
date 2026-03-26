@@ -304,21 +304,21 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         if stream_response.response_type is None:
             stream_response.set_response_type("tool_call")
         aggregator.process(
-            tool_call.index, tool_call.id,
-            tool_call.function.name, tool_call.function.arguments,
+            tool_call.index,
+            tool_call.id,
+            tool_call.function.name,
+            tool_call.function.arguments,
         )
 
     @staticmethod
     def _stream_add_chunk(stream_response, chunk, response_type):
         if stream_response.response_type is None:
             stream_response.set_response_type(response_type)
-            stream_response.first_chunk_event.set()
         stream_response.add(chunk)
 
-    def _set_reasoning_fields(self, response_content: Any, reasoning_content: str):
-        if response_content is None or isinstance(response_content, str):
-            return
-        response_content.reasoning = reasoning_content
+    @staticmethod
+    def _stream_add_reasoning_chunk(stream_response, chunk):
+        stream_response.add_reasoning(chunk)
 
     def _execute_model(self, **kwargs):
         prefilling = kwargs.pop("prefilling")
@@ -355,11 +355,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
         reasoning_tool_call = reasoning if self.reasoning_in_tool_call else None
 
-        prefix_response_type = ""
         reasoning_content = None
         if self.return_reasoning is True and reasoning is not None:
             reasoning_content = reasoning
-            prefix_response_type = "reasoning_"
 
         annotations = self._extract_annotations(choice.message)
         if annotations:
@@ -379,23 +377,20 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 repr_str = f"[{self.model_id}][raw_response] {choice.message.content}"
                 cprint(repr_str, lc="r", ls="b")
             if typed_parser is not None:
-                response.set_response_type(f"{prefix_response_type}structured")
+                response.set_response_type("structured")
                 parser = typed_parser_registry[typed_parser]
                 response_content = dotdict(parser.decode(choice.message.content))
                 if generation_schema and self.validate_typed_parser_output:
                     decoder = self._get_decoder(generation_schema)
                     decoder.decode(self._encoder.encode(response_content))
             elif generation_schema is not None:
-                response.set_response_type(f"{prefix_response_type}structured")
+                response.set_response_type("structured")
                 decoder = self._get_decoder(generation_schema)
                 struct = decoder.decode(choice.message.content)
                 response_content = dotdict(struct_to_dict(struct))
             else:
-                response.set_response_type(f"{prefix_response_type}text_generation")
-                if reasoning_content is not None:
-                    response_content = dotdict({"answer": choice.message.content})
-                else:
-                    response_content = choice.message.content
+                response.set_response_type("text_generation")
+                response_content = choice.message.content
         elif choice.message.audio:
             response_content = dotdict(
                 {
@@ -412,11 +407,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             response.set_response_type("text_generation")
             response_content = ""
 
-        if reasoning_content is not None:
-            if isinstance(response_content, str):
-                response_content = dotdict({"answer": response_content})
-            self._set_reasoning_fields(response_content, reasoning_content)
-
+        response.reasoning = reasoning_content
         response.add(response_content)
         response.set_metadata(metadata)
         return response
@@ -465,8 +456,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         )
 
         self._store_cache(
-            response, **kwargs,
-            typed_parser=typed_parser, generation_schema=generation_schema,
+            response,
+            **kwargs,
+            typed_parser=typed_parser,
+            generation_schema=generation_schema,
         )
         return response
 
@@ -483,8 +476,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         )
 
         self._store_cache(
-            response, **kwargs,
-            typed_parser=typed_parser, generation_schema=generation_schema,
+            response,
+            **kwargs,
+            typed_parser=typed_parser,
+            generation_schema=generation_schema,
         )
         return response
 
@@ -494,6 +489,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         stream_response = kwargs.pop("stream_response")
         metadata = dotdict()
         reasoning_tool_call = ""
+        reasoning_accumulated = ""
 
         try:
             aggregator = ToolCallAggregator()
@@ -510,25 +506,30 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
                     reasoning_chunk = self._extract_reasoning(delta)
 
-                    if self.reasoning_in_tool_call and reasoning_chunk:
-                        reasoning_tool_call += reasoning_chunk
-
-                    if self.return_reasoning and reasoning_chunk:
-                        self._stream_add_chunk(
-                            stream_response, reasoning_chunk,
-                            "reasoning_text_generation",
-                        )
+                    if reasoning_chunk:
+                        if self.reasoning_in_tool_call:
+                            reasoning_tool_call += reasoning_chunk
+                        if self.return_reasoning:
+                            reasoning_accumulated += reasoning_chunk
+                            self._stream_add_reasoning_chunk(
+                                stream_response,
+                                reasoning_chunk,
+                            )
                         continue
 
                     if getattr(delta, "content", None):
                         self._stream_add_chunk(
-                            stream_response, delta.content, "text_generation",
+                            stream_response,
+                            delta.content,
+                            "text_generation",
                         )
                         continue
 
                     if getattr(delta, "tool_calls", None):
                         self._process_stream_tool_calls(
-                            delta, stream_response, aggregator,
+                            delta,
+                            stream_response,
+                            aggregator,
                         )
                         continue
 
@@ -547,11 +548,15 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     aggregator.reasoning = reasoning_tool_call
                 stream_response.data = aggregator
                 stream_response.first_chunk_event.set()
+            stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
+            if not stream_response._response_type_event.is_set():
+                stream_response._response_type_event.set()
             stream_response.set_metadata(metadata)
+            stream_response.add_reasoning(None)
             stream_response.add(None)
 
     async def _astream_generate(  # noqa: C901
@@ -560,6 +565,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         stream_response = kwargs.pop("stream_response")
         metadata = dotdict()
         reasoning_tool_call = ""
+        reasoning_accumulated = ""
 
         try:
             aggregator = ToolCallAggregator()
@@ -576,25 +582,30 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
                     reasoning_chunk = self._extract_reasoning(delta)
 
-                    if self.reasoning_in_tool_call and reasoning_chunk:
-                        reasoning_tool_call += reasoning_chunk
-
-                    if self.return_reasoning and reasoning_chunk:
-                        self._stream_add_chunk(
-                            stream_response, reasoning_chunk,
-                            "reasoning_text_generation",
-                        )
+                    if reasoning_chunk:
+                        if self.reasoning_in_tool_call:
+                            reasoning_tool_call += reasoning_chunk
+                        if self.return_reasoning:
+                            reasoning_accumulated += reasoning_chunk
+                            self._stream_add_reasoning_chunk(
+                                stream_response,
+                                reasoning_chunk,
+                            )
                         continue
 
                     if getattr(delta, "content", None):
                         self._stream_add_chunk(
-                            stream_response, delta.content, "text_generation",
+                            stream_response,
+                            delta.content,
+                            "text_generation",
                         )
                         continue
 
                     if getattr(delta, "tool_calls", None):
                         self._process_stream_tool_calls(
-                            delta, stream_response, aggregator,
+                            delta,
+                            stream_response,
+                            aggregator,
                         )
                         continue
 
@@ -613,11 +624,15 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     aggregator.reasoning = reasoning_tool_call
                 stream_response.data = aggregator
                 stream_response.first_chunk_event.set()
+            stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
+            if not stream_response._response_type_event.is_set():
+                stream_response._response_type_event.set()
             stream_response.set_metadata(metadata)
+            stream_response.add_reasoning(None)
             stream_response.add(None)
 
     def _build_generation_params(
@@ -883,7 +898,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
                 suffix=f".{kwargs.get('response_format')}", delete=False
             ) as temp_file:
                 temp_file_path = temp_file.name
-                await model_output.astream_to_file(temp_file_path)
+                await model_output.stream_to_file(temp_file_path)
 
             response.set_response_type("audio_generation")
             response.add(temp_file_path)
@@ -907,7 +922,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         stream_response.set_response_type("audio_generation")
 
         async with self._aexecute_model(**kwargs) as model_output:
-            async for chunk in model_output.aiter_bytes(chunk_size=1024):
+            async for chunk in model_output.iter_bytes(chunk_size=1024):
                 stream_response.add(chunk)
                 if not stream_response.first_chunk_event.is_set():
                     stream_response.first_chunk_event.set()
@@ -1315,18 +1330,17 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         else:
             if model_output.text:
                 transcript["text"] = model_output.text
-            if model_output.words:
-                words = [
-                    {"word": w.word, "start": w.start, "end": w.end}
-                    for w in model_output.words
+            words = getattr(model_output, "words", None)
+            if words:
+                transcript["words"] = [
+                    {"word": w.word, "start": w.start, "end": w.end} for w in words
                 ]
-                transcript["words"] = words
-            if model_output.segment:
-                segments = [
+            segments = getattr(model_output, "segments", None)
+            if segments:
+                transcript["segments"] = [
                     {"id": seg.id, "start": seg.start, "end": seg.end, "text": seg.text}
-                    for seg in model_output.segments
+                    for seg in segments
                 ]
-                transcript["segments"] = segments
 
         response.add(transcript)
 
@@ -1346,16 +1360,16 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         else:
             if model_output.text:
                 transcript["text"] = model_output.text
-            if model_output.words:
-                words = [
-                    {"word": w.word, "start": w.start, "end": w.end}
-                    for w in model_output.words
+            words = getattr(model_output, "words", None)
+            if words:
+                transcript["words"] = [
+                    {"word": w.word, "start": w.start, "end": w.end} for w in words
                 ]
-                transcript["words"] = words
-            if model_output.segment:
-                segments = [
+            segments = getattr(model_output, "segments", None)
+            if segments:
+                transcript["segments"] = [
                     {"id": seg.id, "start": seg.start, "end": seg.end, "text": seg.text}
-                    for seg in model_output.segments
+                    for seg in segments
                 ]
                 transcript["segments"] = segments
 
@@ -1370,12 +1384,13 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         model_output = self._execute_model(**kwargs)
 
         for event in model_output:
-            chunk = event.transcript.text.delta
-            if chunk:
-                stream_response.add(chunk)
-                if not stream_response.first_chunk_event.is_set():
-                    stream_response.first_chunk_event.set()
-            elif event.transcript.text.done:
+            if event.type == "transcript.text.delta":
+                chunk = event.delta
+                if chunk:
+                    stream_response.add(chunk)
+                    if not stream_response.first_chunk_event.is_set():
+                        stream_response.first_chunk_event.set()
+            elif event.type == "transcript.text.done":
                 stream_response.add(None)
 
         return stream_response
@@ -1387,12 +1402,13 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         model_output = await self._aexecute_model(**kwargs)
 
         async for event in model_output:
-            chunk = event.transcript.text.delta
-            if chunk:
-                stream_response.add(chunk)
-                if not stream_response.first_chunk_event.is_set():
-                    stream_response.first_chunk_event.set()
-            elif event.transcript.text.done:
+            if event.type == "transcript.text.delta":
+                chunk = event.delta
+                if chunk:
+                    stream_response.add(chunk)
+                    if not stream_response.first_chunk_event.is_set():
+                        stream_response.first_chunk_event.set()
+            elif event.type == "transcript.text.done":
                 stream_response.add(None)
 
         return stream_response
