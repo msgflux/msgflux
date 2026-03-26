@@ -825,26 +825,70 @@ Search responses include inline citations. The raw URLs are also available in `r
 
 Reasoning models "think before answering" — they generate an internal chain of thought before producing a final response. This improves accuracy on complex tasks such as multi-step math, code generation, and logical deduction, at the cost of additional latency and tokens.
 
-msgFlux exposes five parameters that control reasoning behaviour:
+In msgFlux, **reasoning is a first-class field on the response object**. The model's chain of thought lives in `response.reasoning`, completely separated from the content in `response.data`. This means `consume()` always returns the final answer in its natural type (`str` for text generation, `dict` for structured output) regardless of whether the model reasoned or not — there is no silent type change.
 
-| Parameter | Description |
-|---|---|
-| `reasoning_effort` | How much reasoning to do. One of `"minimal"`, `"low"`, `"medium"`, `"high"`. |
-| `reasoning_max_tokens` | Hard cap (in tokens) on the internal thinking budget. |
-| `return_reasoning` | Return the reasoning trace alongside the final answer (provider must support it). Defaults to `True`. |
-| `enable_thinking` | Activate extended model reasoning (provider-level switch, e.g. Anthropic). |
-| `reasoning_in_tool_call` | Preserve reasoning context across tool calls so the model keeps its chain of thought intact. |
+### 12.1 **Configuration Parameters**
 
-### 12.1 **Provider behaviour**
+msgFlux exposes five parameters that control reasoning behaviour at model initialization:
+
+| Parameter | Description | Default |
+|---|---|---|
+| `reasoning_effort` | How much reasoning to do. One of `"minimal"`, `"low"`, `"medium"`, `"high"`. | — |
+| `reasoning_max_tokens` | Hard cap (in tokens) on the internal thinking budget. | — |
+| `return_reasoning` | Store the reasoning trace in `response.reasoning`. When `False`, reasoning is discarded even if the provider returns it. | `True` |
+| `enable_thinking` | Activate extended model reasoning (provider-level switch, e.g. Anthropic). | `False` |
+| `reasoning_in_tool_call` | Preserve reasoning context across tool calls so the model keeps its chain of thought intact. When enabled, the `ToolCallAggregator` embeds the reasoning in `<think>` tags inside the assistant message history, allowing the model to see its previous reasoning when processing tool results. | `False` |
+
+???+ example "Initialization"
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion(
+        "groq/openai/gpt-oss-120b",
+        reasoning_effort="low",
+        return_reasoning=True,
+    )
+    ```
+
+### 12.2 **Response Anatomy**
+
+When a reasoning model responds, the response object has two independent data paths:
+
+```
+ModelResponse
+├── .data          ← final answer (str, dict, ToolCallAggregator)
+├── .reasoning     ← chain of thought (str or None)
+├── .has_reasoning ← True if reasoning is present (bool)
+├── .response_type ← "text_generation", "structured", "tool_call"
+└── .metadata      ← usage stats, annotations, etc.
+```
+
+The key methods on a non-streaming response:
+
+| Method / Property | Returns | Description |
+|---|---|---|
+| `response.consume()` | `str`, `dict`, or `ToolCallAggregator` | The final answer, always in its natural type. |
+| `response.consume_reasoning()` | `str` or `None` | The full reasoning trace, or `None` if the model didn't reason. |
+| `response.reasoning` | `str` or `None` | Same as `consume_reasoning()` — direct attribute access. |
+| `response.has_reasoning` | `bool` | `True` when `reasoning is not None`. Useful for conditional logic without inspecting the string. |
+
+!!! info "Why `consume()` never changes type"
+    In earlier versions, when a model reasoned, `consume()` returned a `dotdict(answer=..., reasoning=...)` instead of a plain `str`. This caused silent type changes that broke downstream code. Now `consume()` always returns the answer and `consume_reasoning()` returns the reasoning — two separate channels, predictable types.
+
+### 12.3 **Provider Behaviour**
 
 Not all reasoning providers behave the same way:
 
-| Provider | Exposes trace via `return_reasoning` | Reasoning tokens in metadata |
-|---|---|---|
-| **Groq** (`groq/openai/gpt-oss-20b`) | Yes — `response.data.reasoning` | Yes |
-| **OpenAI** (`openai/gpt-5-mini`) | No — reasoning is fully internal | Yes |
+| Provider | Exposes trace via `return_reasoning` | Reasoning tokens in metadata | Notes |
+|---|---|---|---|
+| **Groq** (`groq/openai/gpt-oss-*`) | Yes — `response.reasoning` | Yes | Reasoning returned as raw text in API response |
+| **OpenAI** (`openai/o*`, `openai/gpt-5-*`) | No — reasoning is fully internal | Yes | Only token counts available via `response.metadata` |
+| **Anthropic** (via `enable_thinking`) | Yes — `response.reasoning` | Yes | Uses `enable_thinking=True` instead of `reasoning_effort` |
 
-### 12.2 **Reasoning Effort**
+All providers that inherit from `OpenAIChatCompletion` (Groq, vLLM, Ollama, OpenRouter, Together, SambaNova, Cerebras) share the same reasoning extraction logic. When the provider returns a reasoning field, it is automatically separated from the content and placed in `response.reasoning`.
+
+### 12.4 **Reasoning Effort**
 
 `reasoning_effort` is the primary knob. Higher effort means the model spends more tokens on internal reasoning, which typically improves answer quality on hard problems.
 
@@ -855,15 +899,14 @@ Not all reasoning providers behave the same way:
         ```python
         import msgflux as mf
 
-        # Good for tasks where speed matters more than depth
         model = mf.Model.chat_completion(
-            "groq/openai/gpt-oss-20b",
+            "groq/openai/gpt-oss-120b",
             reasoning_effort="low",
         )
 
         response = model("What is the capital of France?")
-        print(response.consume())
-        # Paris
+        print(response.consume())       # "Paris"
+        print(response.has_reasoning)    # True (model still reasons, just briefly)
         ```
 
     === "High Effort — Hard Problems"
@@ -871,21 +914,21 @@ Not all reasoning providers behave the same way:
         ```python
         import msgflux as mf
 
-        # Maximum reasoning for complex, multi-step problems
         model = mf.Model.chat_completion(
-            "groq/openai/gpt-oss-20b",
+            "groq/openai/gpt-oss-120b",
             reasoning_effort="high",
         )
 
         response = model(
             "Prove that there are infinitely many prime numbers."
         )
-        print(response.consume())
+        print(response.consume())  # The proof
+        print(response.consume_reasoning())  # The full chain of thought
         ```
 
-### 12.3 **Inspecting the Reasoning Trace**
+### 12.5 **Inspecting the Reasoning Trace**
 
-Providers like Groq return the chain of thought as a separate field when `return_reasoning=True`. The response becomes a `dotdict` with `reasoning` (the trace) and `answer` (the final response):
+When `return_reasoning=True` (the default) and the provider exposes the reasoning trace, it is available as a separate field on the response object:
 
 ???+ example
 
@@ -893,24 +936,46 @@ Providers like Groq return the chain of thought as a separate field when `return
     import msgflux as mf
 
     model = mf.Model.chat_completion(
-        "groq/openai/gpt-oss-20b",
+        "groq/openai/gpt-oss-120b",
         reasoning_effort="high",
     )
 
     response = model("Prove that sqrt(2) is irrational.")
-    result = response.consume()
 
-    print(result.reasoning)
-    # The user: "Prove that sqrt(2) is irrational." This is a classic proof.
-    # Provide a proof by contradiction: Suppose sqrt(2)=a/b in lowest terms...
-
-    print(result.answer)
+    # The answer — always a plain str for text generation
+    answer = response.consume()
+    print(answer)
     # **Proof that √2 is irrational**
     # We prove the statement by contradiction...
+
+    # The reasoning trace — separate field
+    reasoning = response.consume_reasoning()
+    print(reasoning)
+    # The user asks to prove sqrt(2) is irrational. This is a classic proof.
+    # I'll use proof by contradiction: Suppose sqrt(2)=a/b in lowest terms...
     ```
 
 !!! tip
-    Comparing `result.reasoning` with `result.answer` is a great debugging tool: if the final answer is wrong, the trace usually reveals where the reasoning went astray.
+    Comparing `response.reasoning` with `response.consume()` is a great debugging tool: if the final answer is wrong, the trace usually reveals where the reasoning went astray.
+
+When `return_reasoning=False`, the reasoning is discarded even if the provider sends it:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion(
+        "groq/openai/gpt-oss-120b",
+        reasoning_effort="low",
+        return_reasoning=False,  # Discard reasoning
+    )
+
+    response = model("What is 2+2?")
+    print(response.consume())             # "4"
+    print(response.has_reasoning)          # False
+    print(response.consume_reasoning())    # None
+    ```
 
 Providers that keep reasoning internal (like OpenAI) still report how many tokens were spent via `response.metadata`:
 
@@ -928,12 +993,16 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
     print(response.consume())
     # Average speed = distance / time = 120 km ÷ 1.5 h = 80 km/h.
 
+    # No reasoning trace (OpenAI keeps it internal)
+    print(response.has_reasoning)  # False
+
+    # But token counts are available
     usage = response.metadata.usage
     print(f"Reasoning tokens used: {usage['completion_tokens_details']['reasoning_tokens']}")
     # Reasoning tokens used: 64
     ```
 
-### 12.4 **Controlling the Reasoning Budget**
+### 12.6 **Controlling the Reasoning Budget**
 
 `reasoning_max_tokens` caps how many tokens the model can use for internal thinking. Use it to bound latency and cost while still enabling reasoning:
 
@@ -943,21 +1012,211 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
     import msgflux as mf
 
     model = mf.Model.chat_completion(
-        "groq/openai/gpt-oss-20b",
+        "groq/openai/gpt-oss-120b",
         reasoning_effort="high",
         reasoning_max_tokens=512,   # Cap the thinking budget
     )
 
     response = model("Solve: if 3x + 7 = 22, what is x?")
-    result = response.consume()
-    print(result.reasoning)   # Kept short by the token cap
-    print(result.answer)
+    print(response.consume_reasoning())   # Kept short by the token cap
+    print(response.consume())
     # x = 5
     ```
 
-### 12.5 **Reasoning Across Tool Calls**
+### 12.7 **Streaming with Reasoning**
 
-When a reasoning model uses tools it normally loses its chain of thought between calls. `reasoning_in_tool_call=True` preserves the reasoning context so the model can continue thinking coherently after each tool result:
+Streaming introduces a dual-queue architecture. Content and reasoning flow through independent queues, allowing consumers to process them in parallel or sequentially.
+
+#### How it works internally
+
+When `stream=True`, the model returns a `ModelStreamResponse` instead of a `ModelResponse`. Internally, two separate `asyncio.Queue` instances handle the data flow:
+
+```
+Provider stream thread
+│
+├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
+├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
+├── content chunk   → stream_response.add(chunk)           → content queue
+├── content chunk   → stream_response.add(chunk)           → content queue
+├── ...
+├── stream_response.add_reasoning(None)  ← reasoning sentinel (end of reasoning)
+└── stream_response.add(None)            ← content sentinel (end of content)
+```
+
+At the end of the stream, the provider also sets `stream_response.reasoning` with the full accumulated reasoning text, so it is available as a single string after the stream completes.
+
+#### The two-event system
+
+Streaming responses use two events to signal different stages of the stream:
+
+| Event | Fires when | Purpose |
+|---|---|---|
+| `first_chunk_event` | First token arrives (reasoning **or** content) | Lets callers know the stream is alive. Fires early — often on the first reasoning token, before any content appears. |
+| `_response_type_event` | `response_type` is determined (`"text_generation"` or `"tool_call"`) | Lets callers that need to branch on response type (like `Agent`) wait for this signal before proceeding. |
+
+This separation exists because reasoning models often emit reasoning tokens before any content. Without it, a caller waiting for the response type would have to block until content arrives, defeating the purpose of streaming. With the two-event system, `first_chunk_event` fires immediately on the first reasoning token, while `_response_type_event` fires later when the actual content type becomes clear.
+
+```
+Timeline:
+  ┌─ reasoning tokens ──────────────────┐┌── content tokens ───────────┐
+  │  think think think think think ...   ││  Hello, the answer is ...   │
+  ▲                                      ▲                              ▲
+  │                                      │                              │
+  first_chunk_event                      _response_type_event           metadata set
+  (fires here)                           (fires here)                   (stream done)
+```
+
+#### Consuming streams
+
+The `consume()` and `consume_reasoning()` methods become async generators in streaming mode:
+
+???+ example
+
+    === "Async Streaming — Content + Reasoning"
+
+        ```python
+        import msgflux as mf
+
+        model = mf.Model.chat_completion(
+            "groq/openai/gpt-oss-120b",
+            reasoning_effort="low",
+            return_reasoning=True,
+        )
+
+        response = await model.acall(
+            "What is 2+2? Explain your reasoning.", stream=True
+        )
+
+        # Consume content chunks
+        async for chunk in response.consume():
+            print(chunk, end="", flush=True)
+
+        print()  # newline
+
+        # Consume reasoning chunks
+        async for chunk in response.consume_reasoning():
+            print(chunk, end="", flush=True)
+
+        # After stream completes, accumulated reasoning is also available
+        print(response.reasoning)
+        print(response.has_reasoning)  # True
+        ```
+
+    === "Reasoning First"
+
+        The queues are independent — you can consume reasoning before content. This is useful when you want to display the chain of thought first:
+
+        ```python
+        import msgflux as mf
+
+        model = mf.Model.chat_completion(
+            "groq/openai/gpt-oss-120b",
+            reasoning_effort="low",
+            return_reasoning=True,
+        )
+
+        response = await model.acall("Solve: 15 × 7 + 3", stream=True)
+
+        # Read reasoning first
+        print("Thinking:")
+        async for chunk in response.consume_reasoning():
+            print(chunk, end="", flush=True)
+
+        # Then read the answer
+        print("\n\nAnswer:")
+        async for chunk in response.consume():
+            print(chunk, end="", flush=True)
+        ```
+
+    === "Sync Streaming (polling)"
+
+        In sync contexts, the stream runs in a background thread. Content and reasoning accumulate in pending buffers until an async consumer binds. For sync-only code, you can poll the response after the stream completes:
+
+        ```python
+        import time
+        import msgflux as mf
+
+        model = mf.Model.chat_completion(
+            "groq/openai/gpt-oss-120b",
+            reasoning_effort="low",
+            return_reasoning=True,
+        )
+
+        response = model("What is 2+2?", stream=True)
+
+        # first_chunk_event fires on the first token (often reasoning)
+        response.first_chunk_event.wait(timeout=10)
+
+        # Wait for stream to complete
+        for _ in range(50):
+            if response.metadata is not None:
+                break
+            time.sleep(0.1)
+
+        # After completion, the accumulated fields are available
+        print(response.reasoning)       # Full reasoning text
+        print(response.has_reasoning)   # True
+        ```
+
+    === "FastAPI — Dual Stream"
+
+        ```python
+        from fastapi import FastAPI
+        from fastapi.responses import StreamingResponse
+        import msgflux as mf
+
+        app = FastAPI()
+        model = mf.Model.chat_completion(
+            "groq/openai/gpt-oss-120b",
+            reasoning_effort="low",
+            return_reasoning=True,
+        )
+
+        @app.get("/chat")
+        async def chat(query: str):
+            response = await model.acall(
+                messages=[{"role": "user", "content": query}],
+                stream=True,
+            )
+            return StreamingResponse(
+                response.consume(),
+                media_type="text/plain",
+            )
+
+        @app.get("/chat/reasoning")
+        async def chat_reasoning(query: str):
+            response = await model.acall(
+                messages=[{"role": "user", "content": query}],
+                stream=True,
+            )
+            return StreamingResponse(
+                response.consume_reasoning(),
+                media_type="text/plain",
+            )
+        ```
+
+#### Thread safety
+
+Both queues use `threading.Lock` to protect the bind/pending-flush operations. The producer (provider stream thread) calls `add()` / `add_reasoning()` safely from any thread via `loop.call_soon_threadsafe()`. Pending chunks are buffered in a `deque` until a consumer binds the queue to an event loop — at that point all pending chunks are flushed into the `asyncio.Queue` atomically under the lock.
+
+### 12.8 **Reasoning Across Tool Calls**
+
+When a reasoning model uses tools it normally loses its chain of thought between calls. `reasoning_in_tool_call=True` preserves the reasoning context so the model can continue thinking coherently after each tool result.
+
+Internally, when this flag is enabled, the `ToolCallAggregator` embeds the reasoning in `<think>` tags inside the assistant message that gets appended to the conversation history:
+
+```
+# Message history with reasoning_in_tool_call=True:
+[
+    {"role": "user", "content": "What is (14 + 28) × 3 − 7?"},
+    {"role": "assistant", "content": "<think>I need to break this into steps...</think>",
+     "tool_calls": [{"function": {"name": "calculate", "arguments": {"expression": "14 + 28"}}}]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "42"},
+    # Model sees its previous reasoning and can continue the chain
+]
+```
+
+This is separate from the response-level `reasoning` field. The `ToolCallAggregator` keeps its own copy of the reasoning for message formatting, while `response.reasoning` on the final `ModelResponse` reflects the reasoning from the last model call in the loop.
 
 ???+ example
 
@@ -981,9 +1240,9 @@ When a reasoning model uses tools it normally loses its chain of thought between
     }]
 
     model = mf.Model.chat_completion(
-        "groq/openai/gpt-oss-20b",
+        "groq/openai/gpt-oss-120b",
         reasoning_effort="high",
-        reasoning_in_tool_call=True,   # Keep reasoning across tool calls
+        reasoning_in_tool_call=True,
     )
 
     response = model(
@@ -996,9 +1255,9 @@ When a reasoning model uses tools it normally loses its chain of thought between
     print(calls)
     ```
 
-### 12.6 **Structured Output with Reasoning**
+### 12.9 **Structured Output with Reasoning**
 
-Reasoning models pair well with `generation_schema` — the model uses its thinking budget to produce more accurate structured output:
+Reasoning models pair well with `generation_schema` — the model uses its thinking budget to produce more accurate structured output. The reasoning stays in `response.reasoning` while the structured data lives in `response.consume()`:
 
 ???+ example
 
@@ -1012,7 +1271,7 @@ Reasoning models pair well with `generation_schema` — the model uses its think
         explanation: str
 
     model = mf.Model.chat_completion(
-        "openai/gpt-5-mini",
+        "groq/openai/gpt-oss-120b",
         reasoning_effort="high",
     )
 
@@ -1022,12 +1281,18 @@ Reasoning models pair well with `generation_schema` — the model uses its think
         generation_schema=MathSolution,
     )
 
+    # Structured output — always a dict, never wrapped with reasoning
     result = response.consume()
     print(result)
     # {'answer': 80.0, 'confidence': 'high', 'explanation': '120 km / 1.5 h = 80 km/h'}
+
+    # Reasoning trace — separate field
+    print(response.consume_reasoning())
+    # The user asks about average speed. Formula: speed = distance / time.
+    # distance = 120 km, time = 1.5 h, so speed = 120 / 1.5 = 80 km/h.
     ```
 
-### 12.7 **Choosing the Right Effort Level**
+### 12.10 **Choosing the Right Effort Level**
 
 | Task | Recommended effort |
 |---|---|
@@ -1036,6 +1301,83 @@ Reasoning models pair well with `generation_schema` — the model uses its think
 | Code generation, debugging | `"medium"` – `"high"` |
 | Complex math / formal proofs | `"high"` |
 | Multi-step planning with tools | `"high"` + `reasoning_in_tool_call=True` |
+
+### 12.11 **Internal Architecture**
+
+This section explains how reasoning flows through the system for readers who want to understand or extend the internals.
+
+#### Response classes
+
+Reasoning lives on two response base classes in `msgflux._private.response`:
+
+| Class | Used when | Reasoning storage |
+|---|---|---|
+| `BaseResponse` | Non-streaming (`stream=False`) | `self.reasoning: str \| None` — set once by the provider after the full API response arrives. `has_reasoning` is a `@property` that checks `self.reasoning is not None`. |
+| `BaseStreamResponse` | Streaming (`stream=True`) | `self.reasoning: str \| None` — accumulated by the provider as chunks arrive. `has_reasoning` is a mutable `bool` flag, flipped to `True` on the first non-None reasoning chunk via `add_reasoning()`. |
+
+Both classes inherit from `CoreResponse`, which provides `set_metadata()` and `set_response_type()`.
+
+#### Provider flow (non-streaming)
+
+```
+model("prompt")
+  │
+  ├── OpenAIChatCompletion._generate()
+  │     └── client.chat.completions.create(**params)
+  │           └── API response
+  │
+  └── _process_completion_model_output(model_output)
+        ├── reasoning = _extract_reasoning(message)
+        ├── response.reasoning = reasoning       # ← set directly on response
+        ├── response.add(content)                # ← data is pure content
+        └── response.set_response_type("text_generation")
+```
+
+The `_extract_reasoning()` method checks for provider-specific reasoning fields in the API response (e.g., `message.reasoning_content` for Groq/OpenAI-compatible providers). If `return_reasoning=False`, it skips extraction entirely.
+
+#### Provider flow (streaming)
+
+```
+model("prompt", stream=True)
+  │
+  ├── OpenAIChatCompletion._stream_generate()  # runs in background thread
+  │     └── for chunk in client.chat.completions.create(stream=True):
+  │           ├── reasoning_chunk? → stream_response.add_reasoning(chunk)
+  │           │                      ├── has_reasoning = True (first time)
+  │           │                      └── first_chunk_event.set() (first time)
+  │           │
+  │           └── content_chunk?   → stream_response.add(chunk)
+  │                                  ├── set_response_type("text_generation")
+  │                                  │   └── _response_type_event.set()
+  │                                  └── first_chunk_event.set() (if not already)
+  │
+  │     finally:
+  │           ├── stream_response.reasoning = accumulated_reasoning
+  │           ├── stream_response.add_reasoning(None)  # sentinel
+  │           ├── stream_response.add(None)             # sentinel
+  │           ├── _response_type_event.set()            # safety net
+  │           └── stream_response.set_metadata(usage)
+  │
+  └── returns stream_response immediately (stream runs in background)
+```
+
+The `None` sentinels signal end-of-stream to the `consume()` / `consume_reasoning()` async generators. The safety net `_response_type_event.set()` in the `finally` block ensures the event is always fired, even if the stream errors out or the model returns no content chunks (e.g., a pure tool call response).
+
+#### Agent integration
+
+The `Agent` module waits on `_response_type_event` before deciding how to process the response:
+
+```python
+# Inside Agent._process_model_response():
+if isinstance(model_response, ModelStreamResponse):
+    wait_for_event(model_response._response_type_event)
+
+# Now response_type is guaranteed to be set
+if "tool_call" in model_response.response_type:
+    # process tool calls...
+```
+
+The Agent reads `model_response.reasoning` to pass it downstream. If the Agent's `config["reasoning_in_response"]` is `True`, the final output is wrapped as `dotdict(answer=raw_response, reasoning=reasoning)` — this is an explicit opt-in at the Agent level, not a silent model-level behaviour.
 
 ## 13. **Response Metadata**
 

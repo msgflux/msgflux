@@ -12,8 +12,8 @@ repo_name: msgflux/msgflux
 theme:
   name: material
   language: en
-  logo: assets/logo-msgFlux-S.png
-  favicon: assets/favicon.png
+  logo: assets/logo.png
+  favicon: assets/logo.png
   icon:
     repo: fontawesome/brands/github
   features:
@@ -134,7 +134,6 @@ nav:
       - learn/models/text_to_image.md
       - learn/models/image_text_to_image.md
       - learn/models/text_classifier.md
-      - learn/models/image_embedder.md
       - learn/models/text_reranker.md
     #- ⛁ DataBases:
     #  - core/database.md
@@ -163,6 +162,7 @@ nav:
         - learn/nn/agent/autoparams.md
         - learn/nn/agent/async.md
         - learn/nn/agent/streaming.md
+        - learn/nn/agent/reasoning.md
         - learn/nn/agent/debug.md
         - learn/nn/agent/system-prompt.md
         - learn/nn/agent/generation-schemas.md
