@@ -149,7 +149,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 | Template | Purpose | Data Source |
 |----------|---------|-------------|
 | `task` | Format the task/question sent to the model | `task` dict + [vars](vars.md) |
-| `context` | Format background context | `task_context` dict + [vars](vars.md) |
+| `task_context` | Format background context | `task_context` dict + [vars](vars.md) |
 | `response` | Format the model's output before returning | Model output fields + [vars](vars.md) |
 
 !!! tip "Response Template + Generation Schema"
@@ -188,9 +188,9 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         )
         ```
 
-    === "Context Template"
+    === "Task Context Template"
 
-        Use `templates={"context": ...}` to format structured context:
+        Use `templates={"task_context": ...}` to format structured task context:
 
         ```python
         # pip install msgflux[openai]
@@ -202,7 +202,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         class SalesAgent(nn.Module):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             templates = {
-                "context": """
+                "task_context": """
                 The client is **{{ client_name }}** in the **{{ industry }}** sector.
 
                 Challenges:

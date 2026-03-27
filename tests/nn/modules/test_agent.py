@@ -917,11 +917,11 @@ class TestAgentMessagePreparation:
         agent = Agent(
             name="agent",
             model=mock_model,
-            templates={"context": "Context: {{context}}"},
+            templates={"task_context": "Context: {{context}}"},
         )
 
         # Context preparation should use custom template
-        assert agent.templates["context"] == "Context: {{context}}"
+        assert agent.templates["task_context"] == "Context: {{context}}"
 
 
 class TestAgentProperties:

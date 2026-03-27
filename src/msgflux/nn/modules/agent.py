@@ -204,19 +204,19 @@ class Agent(Module, metaclass=AutoParams):
               (bool). Format: "Weekday, Month DD, YYYY"
         templates:
             Dictionary mapping template types to Jinja template strings.
-            Valid keys: "task", "response", "context", "system_prompt"
+            Valid keys: "task", "response", "task_context", "system_prompt"
             !!! example
                 templates={
                     "task": "Who was {{person}}?",
                     "response": "{{final_answer}}",
-                    "context": "Context: {{context}}",
+                    "task_context": "Context: {{context}}",
                     "system_prompt": "Custom system prompt: ..."
                 }
 
             Template descriptions:
             - task: Formats the task/prompt sent to the model
             - response: Formats the model's response
-            - context: Formats context (does NOT apply to context_cache)
+            - task_context: Formats task context (does NOT apply to context_cache)
             - system_prompt: Overrides the default system prompt
               template. If not provided, uses SYSTEM_PROMPT_TEMPLATE.
               Available variables: system_message, instructions,
@@ -1235,15 +1235,15 @@ class Agent(Module, metaclass=AutoParams):
             context = self._extract_message_values(self.task_context, message)
 
         if context is not None:
-            if self.templates.get("context"):
+            if self.templates.get("task_context"):
                 if isinstance(context, Mapping):
                     context.update(vars)
                     msg_context = self._format_template(
-                        context, self.templates.get("context")
+                        context, self.templates.get("task_context")
                     )
                 else:
                     pre_msg_context = self._format_template(
-                        vars, self.templates.get("context")
+                        vars, self.templates.get("task_context")
                     )
                     msg_context = self._format_template(context, pre_msg_context)
             elif isinstance(context, str):

@@ -203,7 +203,7 @@ class BankingAssistant(nn.Agent):
         "task_context": "payments.pix",
     }
     templates = {
-        "context": (
+        "task_context": (
             "PIX data already extracted:\n"
             "- amount: {{amount}}\n"
             "- key_type: {{key_type}}\n"
@@ -396,7 +396,7 @@ class BankingAssistant(nn.Agent):
         "task_context": "payments.pix",
     }
     templates = {
-        "context": (
+        "task_context": (
             "PIX data already extracted:\n"
             "- amount: {{amount}}\n"
             "- key_type: {{key_type}}\n"
