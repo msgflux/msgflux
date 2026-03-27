@@ -62,6 +62,7 @@ class TestToolConfig:
         assert config.spawn is False
         assert config.handoff is False
         assert config.call_as_response is False
+        assert config.disable_input is False
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
@@ -271,17 +272,30 @@ class TestToolConfigCombinations:
 
         assert sample.tool_config.inject_message is True
 
+    def test_disable_input_true(self):
+        """Test disable_input=True configuration."""
+
+        @tool_config(disable_input=True)
+        def sample():
+            pass
+
+        assert sample.tool_config.disable_input is True
+
     def test_multiple_parameters(self):
         """Test multiple parameters set simultaneously."""
 
         @tool_config(
-            return_direct=True, inject_vars=["var1", "var2"], inject_messages=True
+            return_direct=True,
+            disable_input=True,
+            inject_vars=["var1", "var2"],
+            inject_messages=True,
         )
         def sample():
             pass
 
         config = sample.tool_config
         assert config.return_direct is True
+        assert config.disable_input is True
         assert config.inject_vars == ["var1", "var2"]
         assert config.inject_messages is True
 
@@ -293,7 +307,9 @@ class TestToolConfigCombinations:
             spawn=False,
             handoff=False,
             call_as_response=False,
+            disable_input=False,
             inject_vars=False,
+            inject_message=False,
             inject_messages=False,
         )
         def sample():
@@ -304,7 +320,9 @@ class TestToolConfigCombinations:
         assert config.spawn is False
         assert config.handoff is False
         assert config.call_as_response is False
+        assert config.disable_input is False
         assert config.inject_vars is False
+        assert config.inject_message is False
         assert config.inject_messages is False
 
 

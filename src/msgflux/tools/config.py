@@ -10,6 +10,7 @@ def tool_config(
     return_direct: Optional[bool] = False,
     call_as_response: Optional[bool] = False,
     spawn: Optional[bool] = False,
+    disable_input: Optional[bool] = False,
     inject_message: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
     inject_vars: Optional[Union[bool, List[str]]] = False,
@@ -40,6 +41,11 @@ def tool_config(
         spawn:
             If True, the tool will be dispatched without waiting for a result.
             The model receives a confirmation that the task was started.
+        disable_input:
+            If True, removes public input parameters from the tool schema. The model
+            will call the tool with no explicit arguments, and any arguments supplied
+            by the model are ignored at runtime. This does not inject any runtime
+            context by itself.
         inject_message:
             If True, the tool receives the original `message` passed to the Agent
             at runtime. This injected parameter does not become part of the tool
@@ -129,6 +135,7 @@ def tool_config(
                     "spawn": spawn,
                     "call_as_response": call_as_response,
                     "handoff": handoff,
+                    "disable_input": disable_input,
                     "inject_message": _inject_message,
                     "inject_messages": _inject_messages,
                     "inject_vars": inject_vars,

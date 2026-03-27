@@ -288,6 +288,8 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
 
     if tool_config.get("handoff", False):
         name = "transfer_to_" + name
+
+    if tool_config.get("handoff", False) or tool_config.get("disable_input", False):
         annotations = {}  # pass only the model state
 
     if tool_config.get("spawn"):
@@ -553,6 +555,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
             config = self.tool_configs.get(tool_name, {})
             tool_params = tool_params or {}
 
+            if config.get("handoff", False) or config.get("disable_input", False):
+                tool_params = {}
+
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
             if inject_vars:
@@ -689,6 +694,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
             tool_params = tool_params or {}
+
+            if config.get("handoff", False) or config.get("disable_input", False):
+                tool_params = {}
 
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)

@@ -848,6 +848,36 @@ Use cases:
         print(user_vars)  # {"favorite_color": "blue"}
         ```
 
+#### disable_input
+
+With `disable_input=True`, the tool exposes no public input parameters to the
+model. The tool is called as `tool_name()`, and any arguments supplied by the
+model are ignored at runtime.
+
+This is useful for:
+
+- Specialist subagents that should be triggered without a task payload
+- Tools that work only with injected context such as `message`, `messages`, or `vars`
+- Internal routing tools where the coordinator should only decide whether to call
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    @mf.tool_config(disable_input=True, inject_messages=True)
+    class Specialist(nn.Agent):
+        """Specialist that works only from conversation context."""
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        system_message = "You are a specialist. Use the conversation history."
+
+    class Coordinator(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        tools = [Specialist]
+    ```
+
 #### inject_message
 
 With `inject_message=True`, the tool receives the original `message` passed to the
@@ -995,7 +1025,7 @@ When `handoff=True`, the tool is configured for seamless agent-to-agent handoff:
 
 - Sets `return_direct=True` and `inject_messages=True`
 - Changes tool name to `transfer_to_{original_name}`
-- Removes input parameters (conversation history is passed instead)
+- Removes input parameters (equivalent to `disable_input=True`)
 
 Unlike Agent-as-Tool, the Specialist's response bypasses the Coordinator entirely and goes directly to the user. The Coordinator only decides *who* handles the request.
 

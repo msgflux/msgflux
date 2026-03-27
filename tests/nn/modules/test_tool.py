@@ -351,6 +351,19 @@ class TestConvertModuleToNNTool:
         assert tool.name.startswith("transfer_to_")
         assert tool.annotations == {}
 
+    def test_convert_with_disable_input_config(self):
+        """Test converting with disable_input configuration."""
+
+        def background_tool(task: str) -> str:
+            """Run with runtime-only context."""
+            return task
+
+        background_tool.tool_config = {"disable_input": True}
+        tool = _convert_module_to_nn_tool(background_tool)
+
+        assert tool.name == "background_tool"
+        assert tool.annotations == {}
+
     def test_convert_with_spawn_config(self):
         """Test converting with spawn configuration."""
 
@@ -746,6 +759,25 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
+    def test_tool_library_with_disable_input_ignores_model_params(self):
+        """Test ToolLibrary ignores model-supplied params when input is disabled."""
+
+        def stateful_tool(messages: dict) -> str:
+            """Tool that relies only on injected runtime state."""
+            return messages.get("key", "none")
+
+        stateful_tool.tool_config = {
+            "disable_input": True,
+            "inject_messages": True,
+        }
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        tool_callings = [("call_1", "stateful_tool", {"x": 5})]
+        result = library(tool_callings, messages={"key": "value"})
+
+        assert result.tool_calls[0].result == "value"
+        assert "x" not in result.tool_calls[0].parameters
+
     @pytest.mark.asyncio
     async def test_tool_library_aforward_tool_not_found(self):
         """Test async ToolLibrary forward with non-existent tool."""
@@ -896,6 +928,28 @@ class TestToolLibrary:
         result = await library.aforward(tool_callings, message={"key": "state_value"})
 
         assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_disable_input_ignores_model_params(self):
+        """Test async ToolLibrary ignores model params when input is disabled."""
+
+        async def async_tool(messages: dict) -> str:
+            """Tool that relies only on injected runtime state."""
+            return messages["key"]
+
+        async_tool.tool_config = {
+            "disable_input": True,
+            "inject_messages": True,
+        }
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        tool_callings = [("call_1", "async_tool", {"x": 8})]
+        result = await library.aforward(
+            tool_callings, messages={"key": "state_value"}
+        )
+
+        assert result.tool_calls[0].result == "state_value"
+        assert "x" not in result.tool_calls[0].parameters
 
     def test_tool_library_forward_spawn(self):
         """Test ToolLibrary spawn execution in sync mode."""
