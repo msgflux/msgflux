@@ -44,7 +44,7 @@ One of the core ideas in msgFlux is that **interaction style is a module-level d
 
 - **Imperative**: the module receives inputs and vars explicitly and returns outputs directly.
 
-- **Declarative**: the module declares where it reads data — including *vars* — from a shared message object.
+- **Declarative**: the module declares where it reads data from a shared message object.
 
 === "Imperative"
 
@@ -114,7 +114,7 @@ One of the core ideas in msgFlux is that **interaction style is a module-level d
 
 In the imperative model, a module behaves like a regular Python callable. Inputs and vars are passed directly, execution is explicit, and outputs are immediately returned. This is ideal for simple pipelines, scripts, or cases where control flow is clear and localized.
 
-In the declarative model, a module is configured with knowledge about the structure of the message it operates on. Instead of receiving arguments, it knows *which fields to read* — including vars — and *which fields to populate*. This enables complex workflows where data flows through multiple modules without manual wiring, making composition and orchestration significantly easier.
+In the declarative model, a module is configured with knowledge about the structure of the message it operates on. Instead of receiving arguments, it knows *which fields to read* and *which fields to populate*. This enables complex workflows where data flows through multiple modules without manual wiring, making composition and orchestration significantly easier.
 
 ## **Prompting and Programming**
 
@@ -180,7 +180,9 @@ On top of this interaction model, msgFlux deliberately distinguishes between **p
 
 In this model, prompts are not loose strings passed around arbitrarily. They are written artifacts that live inside well-defined modules, constrained by signatures and executed within a programmed architecture.
 
-By combining imperative and declarative modules with a clear separation between programming (signatures and structure) and prompting (written intent), msgFlux bridges classic software engineering and modern LLM-based development. The result is a system that scales from simple experiments to complex, production-ready AI applications while remaining explicit, composable, and maintainable.
+The portability of declarative signatures allows your system to survive a model update without needing to rewrite its behavior, shifting from defining *how* to defining *what*.
+
+By combining imperative and declarative modules with a clear separation between programming (signatures and structure) and prompting (written intent), msgFlux bridges classic software engineering and modern LM-based development. The result is a system that scales from simple experiments to complex, production-ready AI applications while remaining explicit, composable, and maintainable.
 
 ## Modules
 
@@ -191,11 +193,9 @@ By combining imperative and declarative modules with a clear separation between 
 
 ### Agent
 
-msgFlux supports multiple styles for defining what an agent does. You can write explicit prompts for full control, use **signatures** to declare typed inputs and outputs, bind to fields on a shared **message** for pipeline composition, or give agents access to **tools** and **vars** that flow through the system. You can even use one agent as a **tool** for another. These styles compose freely — pick the right one for each component.
+Agents in msgFlux are flexible — prompt them directly, use **signatures** for typed I/O, bind to a shared **message**, inject **tools** and **vars**, or nest one agent inside another as a tool. Mix and match as needed.
 
 !!! info "Build Agents"
-
-    Try the examples below after configuring your model above. Each tab demonstrates a different style or capability.
 
     === "Context"
 
@@ -232,7 +232,7 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
 
         class Extractor(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            signature = "text -> summary: str, topics: list[str], sentiment: str"
+            signature = "text -> summary, topics: list[str], sentiment"
             config = {"verbose": True}
 
         extractor = Extractor()
@@ -262,14 +262,14 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
             config = {"verbose": True}
 
         agent = ResearchAgent()
-        agent("What is the mass of the Earth divided by the mass of the Moon?")
+        agent("Fetch https://en.wikipedia.org/wiki/Earth and summarize the key facts about Earth's mass and composition.")
         ```
 
         The agent iterates: **think** → **act** (call tools) → **observe** → repeat until `final_answer`.
 
     === "Vars"
 
-        `vars` inject runtime context into the agent's Jinja2 **templates** and into tools via `inject_vars`. The model never sees injected vars directly — they flow through the system behind the scenes.
+        `vars` inject runtime context into the agent's Jinja2 **templates** and into tools via `inject_vars`. The model never sees injected vars directly, they flow through the system behind the scenes.
 
         ```python linenums="1"
         import msgflux as mf
@@ -323,7 +323,7 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
         1. When an agent is used as a tool, the docstring becomes its **description** — this is what the parent agent sees when deciding which tool to call.
         2. `return_direct=True` means the Orchestrator returns the list of tool calls and their results directly, instead of passing them back to the model for a final response.
 
-    === "Message-driven"
+    === "Structed Output"
 
         Bind inputs and outputs to fields on a shared `Message` — the preferred approach inside pipelines:
 
@@ -387,7 +387,7 @@ msgFlux supports multiple styles for defining what an agent does. You can write 
 
 ### **Other Modules**
 
-Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities — all sharing the same `nn.Module` API:
+Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities:
 
 !!! info "Built-in modules"
 
@@ -503,21 +503,21 @@ A composition of modules is a **program** — each module handles one responsibi
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
+        class Researcher(nn.Agent):
+            model = model
+            instructions = "Research the given topic thoroughly."
+            config = {"verbose": True}
+
+        class Writer(nn.Agent):
+            model = model
+            instructions = "Write a clear summary based on the research."
+            config = {"verbose": True}
+
         class ResearchPipeline(nn.Module):
             def __init__(self):
                 super().__init__()
-                self.researcher = nn.Agent(
-                    name="researcher",
-                    model=model,
-                    instructions="Research the given topic thoroughly.",
-                    config={"verbose": True},
-                )
-                self.writer = nn.Agent(
-                    name="writer",
-                    model=model,
-                    instructions="Write a clear summary based on the research.",
-                    config={"verbose": True},
-                )
+                self.researcher = Researcher()
+                self.writer = Writer()
 
             def forward(self, topic):
                 research = self.researcher(topic)
@@ -536,18 +536,30 @@ A composition of modules is a **program** — each module handles one responsibi
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
+        class Classifier(nn.Agent):
+            model = model
+            signature = "text -> intent: Literal['billing', 'technical', 'general']"
+
+        class BillingAgent(nn.Agent):
+            model = model
+            instructions = "Handle billing queries."
+
+        class TechnicalAgent(nn.Agent):
+            model = model
+            instructions = "Handle technical support."
+
+        class GeneralAgent(nn.Agent):
+            model = model
+            instructions = "Handle general queries."
+
         class Router(nn.Module):
             def __init__(self):
                 super().__init__()
-                self.classifier = nn.Agent(
-                    name="classifier",
-                    model=model,
-                    signature="text -> intent: Literal['billing', 'technical', 'general']",
-                )
+                self.classifier = Classifier()
                 self.agents = nn.ModuleDict({
-                    "billing": nn.Agent(name="billing", model=model, instructions="Handle billing queries."),
-                    "technical": nn.Agent(name="technical", model=model, instructions="Handle technical support."),
-                    "general": nn.Agent(name="general", model=model, instructions="Handle general queries."),
+                    "billing": BillingAgent(),
+                    "technical": TechnicalAgent(),
+                    "general": GeneralAgent(),
                 })
 
             def forward(self, message):
@@ -566,27 +578,27 @@ A composition of modules is a **program** — each module handles one responsibi
         import msgflux as mf
         import msgflux.nn as nn
 
+        class Transcriber(nn.Transcriber):
+            model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
+            config = {"language": "en"}
+
+        class Summarizer(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            instructions = "Generate a concise meeting summary with action items."
+            config = {"verbose": True}
+
+        class Narrator(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "pcm"
+
         class MeetingAssistant(nn.Module):
             """Transcribes audio, generates meeting notes, and narrates the summary."""
 
             def __init__(self):
                 super().__init__()
-                self.transcriber = nn.Transcriber(
-                    name="transcriber",
-                    model=mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe"),
-                    config={"language": "en"},
-                )
-                self.summarizer = nn.Agent(
-                    name="summarizer",
-                    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-                    instructions="Generate a concise meeting summary with action items.",
-                    config={"verbose": True},
-                )
-                self.narrator = nn.Speaker(
-                    name="narrator",
-                    model=mf.Model.text_to_speech("openai/tts-1"),
-                    response_format="mp3",
-                )
+                self.transcriber = Transcriber()
+                self.summarizer = Summarizer()
+                self.narrator = Narrator()
 
             def forward(self, audio_path):
                 transcript = self.transcriber(audio_path)
@@ -595,7 +607,7 @@ A composition of modules is a **program** — each module handles one responsibi
                 return audio
 
         assistant = MeetingAssistant()
-        audio_summary = assistant("meeting.mp3")
+        audio_summary = assistant("./meeting.mp3")
         ```
 
 ??? info "Why a PyTorch-like API?"
@@ -670,3 +682,16 @@ A composition of modules is a **program** — each module handles one responsibi
     ```
 
     The `Router` agent classifies the intent at runtime, and `Inline` **conditionally routes** to the right expert — the pipeline adapts to the input. No `if/else` in Python, just a declarative expression.
+
+---
+
+## Acknowledgements
+
+msgFlux is built around a select set of exceptional libraries that make the whole thing possible:
+
+- **[msgspec](https://jcristharif.com/msgspec/)** — ultra-fast serialization and validation that underpins all data contracts in msgFlux
+- **[Jinja2](https://jinja.palletsprojects.com/)** — the templating engine powering prompt composition, vars injection, and pipeline expressions
+- **[Tenacity](https://tenacity.readthedocs.io/)** — reliable retry logic with exponential backoff for resilient model calls
+- **[OpenTelemetry](https://opentelemetry.io/)** — the observability standard behind msgFlux's built-in tracing and telemetry
+
+We are grateful to the authors and maintainers of these projects.
