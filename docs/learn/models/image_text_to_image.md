@@ -38,9 +38,9 @@ Image editing models take an existing image and modify it based on text prompts.
         image="path/to/image.png"
     )
 
-    # Get edited image URL
-    edited_url = response.consume()
-    print(edited_url)  # https://...
+    # Get edited image as base64 string
+    image_b64 = response.consume()
+    print(image_b64[:30])  # iVBORw0KGgoAAAANSUhEUg...
     ```
 
 ### With Mask (Inpainting)
@@ -59,7 +59,7 @@ Image editing models take an existing image and modify it based on text prompts.
         mask="table_mask.png"  # Transparent areas will be edited
     )
 
-    edited_url = response.consume()
+    image_b64 = response.consume()
     ```
 
 ## 2. **Supported Providers**
@@ -184,33 +184,10 @@ The `image` parameter accepts multiple formats:
 
 ## 5. **Response Formats**
 
-### URL Response (Default)
+!!! info "gpt-image-1 always returns base64"
+    `gpt-image-1` does not support the `response_format` parameter in the edit endpoint — it always returns a **base64 string**. The `response_format` parameter is only supported by legacy models (`dall-e-2`).
 
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
-
-    response = model(
-        prompt="Add flowers in foreground",
-        image="garden.png",
-        response_format="url"  # Default
-    )
-
-    # Get URL
-    url = response.consume()
-    print(url)  # https://...
-
-    # Download
-    import requests
-    img_data = requests.get(url).content
-    with open("edited.png", "wb") as f:
-        f.write(img_data)
-    ```
-
-### Base64 Response
+### Base64 (default for gpt-image-1)
 
 ???+ example
 
@@ -222,15 +199,11 @@ The `image` parameter accepts multiple formats:
 
     response = model(
         prompt="Change to evening lighting",
-        image="scene.png",
-        response_format="base64"
+        image="scene.png"
     )
 
-    # Get base64 data
-    b64_data = response.consume()
-
     # Decode and save
-    img_data = base64.b64decode(b64_data)
+    img_data = base64.b64decode(response.consume())
     with open("edited.png", "wb") as f:
         f.write(img_data)
     ```
@@ -253,12 +226,12 @@ Generate multiple edited versions:
         n=4  # Number of variations
     )
 
-    # Get all URLs
+    # Get all variations as base64 strings
     edited_images = response.consume()
     print(f"Generated {len(edited_images)} variations")
 
-    for i, url in enumerate(edited_images):
-        print(f"Variation {i+1}: {url}")
+    for i, b64 in enumerate(edited_images):
+        print(f"Variation {i+1}: {b64[:30]}...")
     ```
 
 ## 7. **Image Size Requirements**
@@ -274,12 +247,12 @@ Generate multiple edited versions:
     # - PNG, WEBP, or JPEG format
     # - Less than 25MB
     # - If using mask, same dimensions as the image
-    # Supported output sizes: 1024x1024, 1536x1024, 1024x1536, auto
 
+    # Note: the edit endpoint does not support a `size` parameter —
+    # output dimensions match the input image.
     response = model(
         prompt="Edit the background",
-        image="photo.png",
-        size="1024x1024"
+        image="photo.png"
     )
     ```
 
@@ -421,7 +394,8 @@ Edit images asynchronously:
     )
 
     for (img, prompt), result in zip(edits, results):
-        print(f"{img} ({prompt}): {result.consume()}")
+        b64 = result.consume()
+        print(f"{img} ({prompt}): {b64[:30]}...")
     ```
 
 ## 11. **Batch Processing**
@@ -447,11 +421,11 @@ Edit multiple images:
         ]
     )
 
-    # Get all edited URLs
-    edited_urls = [r.consume() for r in results]
+    # Get all edited images as base64 strings
+    edited_b64s = [r.consume() for r in results]
 
-    for original, edited in zip(images, edited_urls):
-        print(f"{original} -> {edited}")
+    for original, b64 in zip(images, edited_b64s):
+        print(f"{original} -> {b64[:30]}...")
     ```
 
 ## 12. **Error Handling**
@@ -469,7 +443,7 @@ Edit multiple images:
             image="photo.png",
             mask="mask.png"
         )
-        url = response.consume()
+        image_b64 = response.consume()
     except ImportError:
         print("Provider not installed")
     except ValueError as e:
@@ -490,5 +464,6 @@ Edit multiple images:
 
 - **Format**: PNG, WEBP, or JPEG for input; PNG for masks
 - **File Size**: Up to 25MB per image
-- **Output sizes**: 1024x1024, 1536x1024, 1024x1536, or `auto`
+- **Output size**: Matches input image dimensions — `size` parameter is not supported in editing
+- **Response format**: Always base64 for `gpt-image-1` — `response_format` is not accepted
 - **Masking**: Prompt-based — complex pixel-perfect edits may need multiple iterations

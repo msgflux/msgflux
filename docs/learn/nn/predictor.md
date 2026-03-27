@@ -1,24 +1,44 @@
 # nn.Predictor
 
+## ✦₊⁺ Overview
+
 `nn.Predictor` is the most generic Module type — it feeds data to a model and returns predictions. It works with any msgflux model (classifiers, regressors, detectors, moderators) or custom models that inherit from `BaseModel`.
-
-## Quick Start
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-
-class ContentModerator(nn.Predictor):
-    model = mf.Model.moderation("openai/omni-moderation-latest")
-
-moderator = ContentModerator()
-result = moderator("This is a great day!")
-print(result.safe)  # True
-```
 
 ---
 
-## Parameters
+## 1. **Quick Start**
+
+!!! info "Initialization styles"
+
+    === "Declarative (recommended)"
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class ContentModerator(nn.Predictor):
+            model = mf.Model.moderation("openai/omni-moderation-latest")
+
+        moderator = ContentModerator()
+        result = moderator("This is a great day!")
+        print(result.safe)  # True
+        ```
+
+    === "Direct"
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        predictor = nn.Predictor(
+            model=mf.Model.moderation("openai/omni-moderation-latest")
+        )
+        result = predictor("This is a great day!")
+        ```
+
+---
+
+## 2. **Parameters**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -32,7 +52,7 @@ print(result.safe)  # True
 
 ---
 
-## Compatible Models
+## 3. **Compatible Models**
 
 Any model that accepts `data` as input works with Predictor:
 
@@ -45,195 +65,171 @@ Any model that accepts `data` as input works with Predictor:
 
 ---
 
-## Content Moderation
+## 4. **Usage Examples**
 
-```python
-class ContentModerator(nn.Predictor):
-    model          = mf.Model.moderation("openai/omni-moderation-latest")
-    message_fields = {"task_inputs": "user_message"}
-    response_mode  = "moderation"
+!!! info "Examples by use case"
 
-moderator = ContentModerator()
+    === "Content Moderation"
 
-msg = mf.Message()
-msg.user_message = "I love programming in Python!"
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
 
-moderator(msg)
-print(msg.moderation)
-```
+        class ContentModerator(nn.Predictor):
+            model          = mf.Model.moderation("openai/omni-moderation-latest")
+            message_fields = {"task_inputs": "user_message"}
+            response_mode  = "moderation"
 
----
+        moderator = ContentModerator()
 
-## Text Classification
+        msg = mf.dotdict(user_message="I love programming in Python!")
+        moderator(msg)
+        print(msg.moderation.safe)  # True
+        ```
 
-Using vLLM with a self-hosted classifier:
+    === "Text Classification"
 
-```python
-class SentimentClassifier(nn.Predictor):
-    model          = mf.Model.text_classifier("vllm/my-sentiment-model")
-    message_fields = {"task_inputs": "text"}
-    response_mode  = "sentiment"
+        Using vLLM with a self-hosted classifier:
 
-classifier = SentimentClassifier()
+        ```python
+        class SentimentClassifier(nn.Predictor):
+            model          = mf.Model.text_classifier("vllm/my-sentiment-model")
+            message_fields = {"task_inputs": "text"}
+            response_mode  = "sentiment"
 
-msg = mf.Message()
-msg.text = "This movie was absolutely wonderful"
+        classifier = SentimentClassifier()
 
-classifier(msg)
-print(msg.sentiment)  # ["positive"]
-```
+        msg = mf.dotdict(text="This movie was absolutely wonderful")
+        classifier(msg)
+        print(msg.sentiment)  # ["positive"]
+        ```
 
----
+    === "Templates"
 
-## Templates
+        Format the raw prediction output with Jinja templates:
 
-Format the raw prediction output with Jinja templates.
+        ```python
+        class ContentModerator(nn.Predictor):
+            model     = mf.Model.moderation("openai/omni-moderation-latest")
+            templates = {"response": "safe={{ safe }}, flagged={{ results.flagged }}"}
 
-```python
-class ContentModerator(nn.Predictor):
-    model     = mf.Model.moderation("openai/omni-moderation-latest")
-    templates = {"response": "safe={{ safe }}, flagged={{ results.flagged }}"}
+        moderator = ContentModerator()
+        result = moderator("Hello!")
+        print(result)  # "safe=True, flagged=False"
+        ```
 
-moderator = ContentModerator()
-result = moderator("Hello!")
-print(result)  # "safe=True, flagged=False"
-```
+    === "Hierarchies"
 
----
+        Share configuration across related predictors via inheritance:
 
-## Custom Models
+        ```python
+        class BaseClassifier(nn.Predictor):
+            """Base class for all text classifiers."""
+            model = mf.Model.text_classifier("vllm/my-model")
 
-Create custom models by inheriting from `BaseModel`. This allows integrating any ML framework (sklearn, XGBoost, PyTorch, etc.) into the msgflux module system.
+        class SpamDetector(BaseClassifier):
+            message_fields = {"task_inputs": "email_body"}
+            response_mode  = "spam_result"
 
-### sklearn
-
-```python
-import joblib
-
-from msgflux.core.dotdict import dotdict
-from msgflux.models.base import BaseModel
-from msgflux.models.response import ModelResponse
-
-
-class SklearnClassifier(BaseModel):
-    """Wraps a scikit-learn classifier as a msgflux model."""
-
-    model_type = "tabular_classifier"
-    provider = "sklearn"
-
-    def __init__(self, path: str):
-        self.model_id = path
-        self._path = path
-        self._initialize()
-
-    def _initialize(self):
-        self.clf = joblib.load(self._path)
-
-    def __call__(self, *, data, **kwargs):
-        response = ModelResponse()
-        response.set_response_type("text_classification")
-        predictions = self.clf.predict(data)
-        labels = [self.clf.classes_[p] for p in predictions]
-        response.add(labels)
-        return response
-
-    async def acall(self, *, data, **kwargs):
-        return self(data=data, **kwargs)
-```
-
-Then use it like any other model:
-
-```python
-class ChurnPredictor(nn.Predictor):
-    model = SklearnClassifier("models/churn_v2.pkl")
-
-predictor = ChurnPredictor()
-result = predictor([[0.5, 1.2, 3.0, 0.8]])
-print(result)  # ["churn"]
-```
+        class TopicClassifier(BaseClassifier):
+            message_fields = {"task_inputs": "article_text"}
+            response_mode  = "topic"
+        ```
 
 ---
 
-## With Message
+## 5. **Custom Models**
 
-```python
-class SafetyFilter(nn.Predictor):
-    model          = mf.Model.moderation("openai/omni-moderation-latest")
-    message_fields = {"task_inputs": "content"}
-    response_mode  = "safety"
+Integrate any ML framework (sklearn, XGBoost, PyTorch, etc.) by inheriting from `BaseModel`:
 
-filter = SafetyFilter()
+!!! info "Custom model examples"
 
-msg = mf.Message()
-msg.content = "Hello, how are you?"
+    === "sklearn"
 
-filter(msg)
-print(msg.safety.safe)  # True
-```
+        ```python
+        import joblib
+        from msgflux.models.base import BaseModel
+        from msgflux.models.response import ModelResponse
+
+        class SklearnClassifier(BaseModel):
+            """Wraps a scikit-learn classifier as a msgflux model."""
+
+            model_type = "tabular_classifier"
+            provider = "sklearn"
+
+            def __init__(self, path: str):
+                self.model_id = path
+                self._path = path
+                self._initialize()
+
+            def _initialize(self):
+                self.clf = joblib.load(self._path)
+
+            def __call__(self, *, data, **kwargs):
+                response = ModelResponse()
+                response.set_response_type("text_classification")
+                predictions = self.clf.predict(data)
+                labels = [self.clf.classes_[p] for p in predictions]
+                response.add(labels)
+                return response
+
+            async def acall(self, *, data, **kwargs):
+                return self(data=data, **kwargs)
+
+        class ChurnPredictor(nn.Predictor):
+            model = SklearnClassifier("models/churn_v2.pkl")
+
+        predictor = ChurnPredictor()
+        result = predictor([[0.5, 1.2, 3.0, 0.8]])
+        print(result)  # ["churn"]
+        ```
 
 ---
 
-## Integration with Agents
+## 6. **Integration with Agents**
 
 Predictors work as preprocessing or guardrail steps in agent pipelines.
 
-```python
-class Moderator(nn.Predictor):
-    model          = mf.Model.moderation("openai/omni-moderation-latest")
-    message_fields = {"task_inputs": "user_input"}
-    response_mode  = "moderation"
+!!! info "Predictor + Agent pipeline"
 
-class Assistant(nn.Agent):
-    model          = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    message_fields = {"task_inputs": "user_input"}
-    response_mode  = "response"
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
 
-class SafePipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.moderator = Moderator()
-        self.assistant = Assistant()
+    class Moderator(nn.Predictor):
+        model          = mf.Model.moderation("openai/omni-moderation-latest")
+        message_fields = {"task_inputs": "user_input"}
+        response_mode  = "moderation"
 
-    def forward(self, msg):
-        self.moderator(msg)
-        if msg.moderation.safe:
-            self.assistant(msg)
-        else:
-            msg.response = "I can't process this request."
-        return msg
+    class Assistant(nn.Agent):
+        model          = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        message_fields = {"task_inputs": "user_input"}
+        response_mode  = "response"
 
-pipeline = SafePipeline()
+    class SafePipeline(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.moderator = Moderator()
+            self.assistant = Assistant()
 
-msg = mf.Message()
-msg.user_input = "Tell me about machine learning"
+        def forward(self, msg):
+            self.moderator(msg)
+            if msg.moderation.safe:
+                self.assistant(msg)
+            else:
+                msg.response = "I can't process this request."
+            return msg
 
-pipeline(msg)
-print(msg.response)
-```
+    pipeline = SafePipeline()
 
----
-
-## Predictor Hierarchies
-
-Share configuration across related predictors.
-
-```python
-class BaseClassifier(nn.Predictor):
-    """Base class for all text classifiers."""
-    model = mf.Model.text_classifier("vllm/my-model")
-
-class SpamDetector(BaseClassifier):
-    message_fields = {"task_inputs": "email_body"}
-    response_mode  = "spam_result"
-
-class TopicClassifier(BaseClassifier):
-    message_fields = {"task_inputs": "article_text"}
-    response_mode  = "topic"
-```
+    msg = mf.dotdict(user_input="Tell me about machine learning")
+    pipeline(msg)
+    print(msg.response)
+    ```
 
 ---
 
-## Async
+## 7. **Async**
 
 ```python
 result = await predictor.acall("some input data")
@@ -241,10 +237,9 @@ result = await predictor.acall("some input data")
 
 ---
 
-## Debugging
+## 8. **Debugging**
 
 ```python
-# Inspect parameters before execution
 params = predictor.inspect_model_execution_params("test input")
 print(params)
 ```

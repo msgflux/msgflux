@@ -42,51 +42,52 @@ The return type is the same — `acall` is the async equivalent of `__call__`, b
 
 ## Concurrent Agents
 
-The real power of async is running multiple agents concurrently. Use `asyncio.gather` to dispatch several calls at once:
-
-```python
-import asyncio
-import msgflux as mf
-import msgflux.nn as nn
-
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-class Summarizer(nn.Agent):
-    model = model
-    instructions = "Summarize the text in one sentence."
-
-class Translator(nn.Agent):
-    model = model
-    instructions = "Translate the text to Portuguese."
-
-summarizer = Summarizer()
-translator = Translator()
-
-text = "Quantum computing uses qubits that can exist in superposition..."
-
-# Both run concurrently — total time ≈ max(summarizer, translator)
-summary, translation = await asyncio.gather(
-    summarizer.acall(text),
-    translator.acall(text),
-)
-
-print(summary)
-print(translation)
-```
-
-## Functional Concurrency
-
-`msgflux.nn.functional` provides higher-level concurrency primitives that handle threading and error collection:
+The real power of async is running multiple agents concurrently. `msgflux.nn.functional` provides concurrency primitives that handle error collection and integrate with telemetry:
 
 ???+ example
+
+    === "abcast_gather — same input, multiple agents"
+
+        Broadcast the same input to several agents and gather the results. Total time is roughly the slowest agent, not the sum:
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+        import msgflux.nn.functional as F
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        class Summarizer(nn.Agent):
+            model = model
+            instructions = "Summarize the text in one sentence."
+
+        class Translator(nn.Agent):
+            model = model
+            instructions = "Translate the text to Portuguese."
+
+        summarizer = Summarizer()
+        translator = Translator()
+
+        text = "Quantum computing uses qubits that can exist in superposition..."
+
+        summary, translation = await F.abcast_gather(
+            [summarizer.acall, translator.acall], text
+        )
+
+        print(summary)
+        print(translation)
+        ```
 
     === "amap_gather — same agent, multiple inputs"
 
         Apply one agent to a list of inputs concurrently:
 
         ```python
+        import msgflux as mf
         import msgflux.nn as nn
         import msgflux.nn.functional as F
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         class Classifier(nn.Agent):
             model = model
@@ -114,8 +115,19 @@ print(translation)
         Dispatch different agents with different inputs concurrently:
 
         ```python
+        import msgflux as mf
         import msgflux.nn as nn
         import msgflux.nn.functional as F
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        class Summarizer(nn.Agent):
+            model = model
+            instructions = "Summarize the text in one sentence."
+
+        class Translator(nn.Agent):
+            model = model
+            instructions = "Translate the text to Portuguese."
 
         summarizer = Summarizer()
         translator = Translator()
@@ -161,4 +173,4 @@ print(translation)
 ## See Also
 
 - [Streaming](streaming.md) — Async streaming with `consume()` and `consume_reasoning()`
-- [Functional API](../functional.md) — `amap_gather`, `ascatter_gather`, `aspawn`
+- [Functional API](../functional.md) — `abcast_gather`, `amap_gather`, `ascatter_gather`, `aspawn`

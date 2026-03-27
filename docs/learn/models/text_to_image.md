@@ -34,9 +34,9 @@ Text-to-image models transform textual descriptions into visual content. They en
     # Generate image
     response = model(prompt="A serene lake at sunset with mountains")
 
-    # Get image URL
-    image_url = response.consume()
-    print(image_url)  # https://...
+    # Get image as base64 string
+    image_b64 = response.consume()
+    print(image_b64[:30])  # iVBORw0KGgoAAAANSUhEUg...
     ```
 
 ### With Custom Parameters
@@ -55,7 +55,7 @@ Text-to-image models transform textual descriptions into visual content. They en
         n=1                # Number of images
     )
 
-    image_url = response.consume()
+    image_b64 = response.consume()
     ```
 
 ## 2. **Supported Providers**
@@ -142,32 +142,10 @@ Text-to-image models transform textual descriptions into visual content. They en
 
 ## 5. **Response Formats**
 
-### URL Response (Default)
+!!! info "gpt-image-1 always returns base64"
+    `gpt-image-1` does not support the `response_format` parameter — it always returns a **base64 string**. The `response_format` parameter (`"url"` / `"base64"`) is only supported by legacy models (`dall-e-2`, `dall-e-3`).
 
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-
-    response = model(
-        prompt="A sunset over the ocean",
-        response_format="url"  # Default
-    )
-
-    # Get URL
-    image_url = response.consume()
-    print(image_url)  # https://...
-
-    # Download image
-    import requests
-    img_data = requests.get(image_url).content
-    with open("image.png", "wb") as f:
-        f.write(img_data)
-    ```
-
-### Base64 Response
+### Base64 (default for gpt-image-1)
 
 ???+ example
 
@@ -177,15 +155,31 @@ Text-to-image models transform textual descriptions into visual content. They en
 
     model = mf.Model.text_to_image("openai/gpt-image-1")
 
-    response = model(
-        prompt="A colorful abstract painting",
-        response_format="base64"
-    )
+    response = model(prompt="A colorful abstract painting")
 
     # Decode and save
     img_data = base64.b64decode(response.consume())
     with open("image.png", "wb") as f:
         f.write(img_data)
+    ```
+
+### URL Response (legacy models only)
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    # response_format="url" only works with dall-e-2 / dall-e-3
+    model = mf.Model.text_to_image("openai/dall-e-3")
+
+    response = model(
+        prompt="A sunset over the ocean",
+        response_format="url"
+    )
+
+    image_url = response.consume()
+    print(image_url)  # https://...
     ```
 
 ## 6. **Multiple Images**
@@ -205,12 +199,12 @@ Generate multiple variations in a single call:
         size="1024x1024"
     )
 
-    # Get all image URLs
+    # Get all images as base64 strings
     images = response.consume()
     print(f"Generated {len(images)} images")
 
-    for i, url in enumerate(images):
-        print(f"Image {i+1}: {url}")
+    for i, b64 in enumerate(images):
+        print(f"Image {i+1}: {b64[:30]}...")
     ```
 
 ## 7. **Background Control**
@@ -390,7 +384,7 @@ Generate images concurrently with `F.map_gather`:
 
     try:
         response = model(prompt="A landscape")
-        image_url = response.consume()
+        image_b64 = response.consume()
     except ImportError:
         print("Provider not installed")
     except ValueError as e:

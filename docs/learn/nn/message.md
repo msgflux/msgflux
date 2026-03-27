@@ -1,10 +1,12 @@
 # Message
 
+## ✦₊⁺ Overview
+
 `Message` is a structured container for **data flow between modules**. It extends [`dotdict`](../dotdict.md) with default fields tailored for AI workflows.
 
 For general `dotdict` features — dot access, nested paths, `get()`/`set()`, serialization, immutability, and hidden keys — see the [`dotdict` docs](../dotdict.md).
 
-## Quick Start
+## 1. **Quick Start**
 
 ```python
 from msgflux import Message
@@ -20,7 +22,7 @@ print(msg.context.data)  # {"key": "value"}
 
 ---
 
-## Default Fields
+## 2. **Default Fields**
 
 `Message` pre-defines a set of fields that modules and agents expect:
 
@@ -38,7 +40,7 @@ print(msg.context.data)  # {"key": "value"}
 
 ---
 
-## With nn.Agent
+## 3. **With nn.Agent**
 
 ### message_fields
 
@@ -89,32 +91,9 @@ msg = agent(Message(content="Hi"))
 print(msg.outputs.result)
 ```
 
-**Returning a dotdict** — add a trailing colon (`:`). The module creates a new
-`dotdict` whose structure mirrors the path, without needing a `Message` at all:
-
-```python
-# Returns dotdict({"outputs": {"result": <response>}})
-agent = nn.Agent(model, response_mode="outputs.result:")
-result = agent("What is Python?")
-print(result.get("outputs.result"))
-
-# Simple key
-agent = nn.Agent(model, response_mode="answer:")
-result = agent("What is Python?")
-print(result.answer)
-```
-
-**Writing to extraction** (for signatures):
-
-```python
-agent = nn.Agent(model, signature="...", response_mode="extraction")
-agent(msg)
-print(msg.extraction)  # {"field1": value1, "field2": value2}
-```
-
 ---
 
-## In Workflows
+## 4. **In Workflows**
 
 ### With inline DSL
 
@@ -140,7 +119,7 @@ print(msg.outputs.analysis)  # "Analyzed: HELLO WORLD"
 
 ---
 
-## Multimodal Data
+## 5. **Multimodal Data**
 
 Store multimodal inputs directly on the message:
 
@@ -160,7 +139,7 @@ msg.set("user_file", "/path/to/document.pdf")
 
 ---
 
-## Complete Example
+## 6. **Complete Example**
 
 ```python
 import msgflux as mf

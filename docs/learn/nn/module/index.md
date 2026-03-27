@@ -2,7 +2,7 @@
 
 ## ✦₊⁺ Overview
 
-The `nn.Module` class is the foundation for all AI components in msgFlux, inspired by **PyTorch's `torch.nn.Module`**.
+The `nn.Module` class is the foundation for all AI components in msgFlux, inspired by `torch.nn.Module`**.
 
 It provides a structured way to build, compose, and manage AI workflows with features like parameter serialization, hooks, and async support.
 
@@ -21,6 +21,8 @@ class MyWorkflow(nn.Module):
 
 workflow = MyWorkflow()
 result = workflow("World")  # "Hello! World"
+print(result)
+print(workflow.state_dict())
 ```
 
 ## 2. **Built-in Modules**
@@ -29,27 +31,16 @@ msgFlux provides ready-to-use modules:
 
 | Module | Description |
 |--------|-------------|
-| `nn.Agent` | Autonomous agents with tools and reasoning |
+| `nn.Sequential` | Chain modules in sequence |
+| `nn.ModuleDict` | Dictionary of named modules |
+| `nn.ModuleList` | Ordered list of modules |
+| `nn.Agent` | LM with tools and reasoning |
 | `nn.Transcriber` | Speech-to-text |
 | `nn.Speaker` | Text-to-speech |
-| `nn.Searcher` | Document retrieval |
+| `nn.Searcher` | Data retrieval |
 | `nn.Embedder` | Text embeddings |
 | `nn.MediaMaker` | Image/video generation |
 | `nn.Predictor` | ML model wrapper (sklearn, etc.) |
-
-## 3. **Naming and Description**
-
-Set module metadata:
-
-```python
-class MyAgent(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.set_name("my-agent")
-        self.set_description("An agent that helps with X")
-```
-
-This is useful when using modules as tools.
 
 ## 4. **Contents**
 

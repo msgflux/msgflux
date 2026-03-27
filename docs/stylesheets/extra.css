@@ -376,6 +376,7 @@
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    padding-right: 0.1em;
 }
 
 [data-md-color-scheme="slate"] .md-typeset .hero-right .tagline em {

@@ -144,6 +144,7 @@ Generate and play audio in real-time:
 
         ```python
         import msgflux as mf
+        import asyncio
 
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
@@ -152,40 +153,48 @@ Generate and play audio in real-time:
             stream=True
         )
 
-        # Process chunks as they arrive
-        for chunk in response.consume():
-            if chunk is None:  # End of stream
-                break
-            # chunk is bytes - play or save incrementally
-            process_audio_chunk(chunk)
+        # consume() returns an async generator
+        async def handle():
+            async for chunk in response.consume():
+                if chunk is None:  # End of stream
+                    break
+                # chunk is bytes - play or save incrementally
+                process_audio_chunk(chunk)
+
+        asyncio.run(handle())
         ```
 
     === "To File"
 
         ```python
         import msgflux as mf
+        import asyncio
 
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
-        response = model(
-            "This will be streamed to a file.",
-            stream=True,
-            response_format="mp3"
-        )
+        async def save():
+            response = model(
+                "This will be streamed to a file.",
+                stream=True,
+                response_format="mp3"
+            )
 
-        with open("output.mp3", "wb") as f:
-            for chunk in response.consume():
-                if chunk is None:
-                    break
-                f.write(chunk)
+            with open("output.mp3", "wb") as f:
+                async for chunk in response.consume():
+                    if chunk is None:
+                        break
+                    f.write(chunk)
 
-        print("Audio saved to output.mp3")
+            print("Audio saved to output.mp3")
+
+        asyncio.run(save())
         ```
 
     === "Together AI"
 
         ```python
         import msgflux as mf
+        import asyncio
 
         model = mf.Model.text_to_speech(
             "together/canopylabs/orpheus-3b-0.1-ft",
@@ -193,49 +202,55 @@ Generate and play audio in real-time:
             response_format="mp3"
         )
 
-        response = model(
-            "Today is a wonderful day to build something people love!",
-            stream=True
-        )
+        async def save():
+            response = model(
+                "Today is a wonderful day to build something people love!",
+                stream=True
+            )
 
-        with open("output.mp3", "wb") as f:
-            for chunk in response.consume():
-                if chunk is None:
-                    break
-                f.write(chunk)
+            with open("output.mp3", "wb") as f:
+                async for chunk in response.consume():
+                    if chunk is None:
+                        break
+                    f.write(chunk)
+
+        asyncio.run(save())
         ```
 
     === "Playback"
 
         ```python
         import msgflux as mf
+        import asyncio
         import pyaudio  # pip install pyaudio
 
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
-        # Setup audio playback
-        p = pyaudio.PyAudio()
-        stream = p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=24000,  # 24kHz for TTS
-            output=True
-        )
+        async def play():
+            p = pyaudio.PyAudio()
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=24000,  # 24kHz for TTS
+                output=True
+            )
 
-        response = model(
-            "This will be played in real-time.",
-            stream=True,
-            response_format="pcm"
-        )
+            response = model(
+                "This will be played in real-time.",
+                stream=True,
+                response_format="pcm"
+            )
 
-        for chunk in response.consume():
-            if chunk is None:
-                break
-            stream.write(chunk)
+            async for chunk in response.consume():
+                if chunk is None:
+                    break
+                stream.write(chunk)
 
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+
+        asyncio.run(play())
         ```
 
 ## 6. **Async Support**
@@ -253,7 +268,7 @@ Generate audio asynchronously:
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
         async def main():
-            response = await model.acall("Hello, how are you today?", voice="nova")
+            response = await model.acall("Hello, how are you today?")
             audio_path = response.consume()
             print(audio_path)
 

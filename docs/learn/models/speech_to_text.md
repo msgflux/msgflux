@@ -425,18 +425,20 @@ Process transcription in real-time:
 
     ```python
     import msgflux as mf
+    import asyncio
 
     # Streaming only works with the gpt-4o-transcribe family
     model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
 
-    # Stream transcription
-    response = model("long_audio.mp3", stream=True)
+    # Stream transcription — consume() returns an async generator
+    async def transcribe():
+        response = model("long_audio.mp3", stream=True)
+        async for chunk in response.consume():
+            if chunk is None:
+                break
+            print(chunk, end="", flush=True)
 
-    # Process chunks as they arrive
-    for chunk in response.consume():
-        if chunk is None:
-            break
-        print(chunk, end="", flush=True)
+    asyncio.run(transcribe())
     ```
 
 ## 10. **Speaker Diarization**

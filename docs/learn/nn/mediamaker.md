@@ -4,40 +4,39 @@
 
 `nn.MediaMaker` is a Module for **generating visual and audio content** (images, videos, 3D models, audio) from prompts.
 
+---
+
 ## 1. **Quick Start**
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
+!!! info "Initialization styles"
 
-model = mf.Model.text_to_image("openai/gpt-image-1")
+    === "Declarative (recommended)"
 
-maker = nn.MediaMaker(model=model)
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
 
-# Returns base64 string (gpt-image-1 default)
-image_b64 = maker("A futuristic city at sunset, cyberpunk style")
-```
+        class ImageGenerator(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            config = {"quality": "high"}
 
----
+        generator = ImageGenerator()
+        image_b64 = generator("A futuristic city at sunset, cyberpunk style")
+        ```
 
-## 2. **Declarative Style**
+    === "Direct"
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
 
-class ImageGenerator(nn.MediaMaker):
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    message_fields = {"task_inputs": "prompt"}
-    response_mode = "generated_image"
-    config = {"quality": "high"}  # size, quality, n, background go in config
-
-generator = ImageGenerator()
-```
+        maker = nn.MediaMaker(model=mf.Model.text_to_image("openai/gpt-image-1"))
+        image_b64 = maker("A futuristic city at sunset, cyberpunk style")
+        ```
 
 ---
 
-## 3. **Parameters**
+## 2. **Parameters**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -52,232 +51,234 @@ generator = ImageGenerator()
 
 ---
 
-## 4. **Text to Image**
+## 3. **Generation Modes**
 
-```python
-# OpenAI — superior detail and prompt adherence
-model = mf.Model.text_to_image("openai/gpt-image-1.5")
+!!! info "Examples by modality"
 
-# Replicate — FLUX 2 Flex open model
-model = mf.Model.text_to_image("replicate/black-forest-labs/flux-2-flex")
+    === "Text to Image"
 
-maker = nn.MediaMaker(model=mf.Model.text_to_image("openai/gpt-image-1"))
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
 
-# Returns base64 string
-image_b64 = maker("A serene Japanese garden with cherry blossoms")
-```
+        class PhotoMaker(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            config = {
+                "size": "1536x1024",   # landscape
+                "quality": "high",
+                "background": "transparent",
+            }
 
-### Sizes, Quality & Background
+        maker = PhotoMaker()
+        image_b64 = maker("A serene Japanese garden with cherry blossoms")
+        ```
 
-`size`, `quality`, `background`, and `n` are **not** call kwargs on `MediaMaker` — pass them via `config`:
+        !!! note
+            `size`, `quality`, `background`, and `n` are not call kwargs — pass them via `config`.
 
-```python
+    === "Multiple Images"
 
-class Maker(nn.MediaMaker):
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    config = {
-        "size": "1536x1024",   # landscape
-        "quality": "high",
-        "background": "transparent",  # useful for product shots
-    }
+        ```python
+        class Maker(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            config = {"n": 4, "size": "1024x1024", "quality": "low"}
 
-maker = Maker()
-image_b64 = maker("A panoramic mountain view")
-```
+        maker = Maker()
+        images = maker("A cute robot")  # returns list of base64 strings when n > 1
+        ```
 
-### Multiple Images
+    === "Image Editing"
 
-```python
-class Maker(nn.MediaMaker):
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    config = {"n": 4, "size": "1024x1024", "quality": "low"}
+        ```python
+        class Editor(nn.MediaMaker):
+            model = mf.Model.image_text_to_image("openai/gpt-image-1")
 
-maker = Maker()
+        editor = Editor()
 
-# Returns list of base64 strings when n > 1
-images = maker("A cute robot")
+        # Edit with reference image
+        edited = editor(
+            "Make it look like sunset",
+            task_multimodal_inputs={"image": "/path/to/photo.jpg"}
+        )
 
----
+        # Edit with mask
+        edited = editor(
+            "Add a flamingo in the pool",
+            task_multimodal_inputs={
+                "image": "/path/to/pool.jpg",
+                "mask": "/path/to/mask.png"
+            }
+        )
+        ```
 
-## 5. **Image Editing**
+    === "Video"
 
-```python
-model = mf.Model.image_text_to_image("openai/gpt-image-1.5")
-maker = nn.MediaMaker(model=model)
+        ```python
+        class VideoMaker(nn.MediaMaker):
+            model = mf.Model.text_to_video("sora/text-to-video")
+            config = {
+                "duration_seconds": 5,
+                "aspect_ratio": "16:9",
+                "fps": 24,
+            }
 
-# Edit with reference image
-edited = maker(
-    "Make it look like sunset",
-    task_multimodal_inputs={"image": "/path/to/photo.jpg"}
-)
+        maker = VideoMaker()
+        video = maker("A timelapse of a blooming flower")
+        ```
 
-# Edit with mask
-edited = maker(
-    "Add a flamingo in the pool",
-    task_multimodal_inputs={
-        "image": "/path/to/pool.jpg",
-        "mask": "/path/to/mask.png"
-    }
-)
-```
+    === "With Message"
 
----
+        Bind inputs and outputs to fields on a shared `Message` for pipeline composition:
 
-## 6. **Negative Prompts**
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
 
-Specify what to avoid:
+        class Maker(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            message_fields = {"task_inputs": "prompt"}
+            response_mode = "generated_image"
 
-```python
-class Designer(nn.MediaMaker):
-    model = model
-    negative_prompt = "blurry, low quality, distorted, watermark"
+        maker = Maker()
 
-maker = Designer()
-
-image = maker("A professional portrait photo")
-```
-
----
-
-## 7. **With Message**
-
-```python
-from msgflux import Message
-
-msg = Message()
-msg.prompt = "A cozy cabin in the mountains during winter"
-
-class Maker(nn.MediaMaker):
-    model = model
-    message_fields = {"task_inputs": "prompt"}
-    response_mode = "generated_image"
-
-maker(msg)
-# msg.generated_image contains the base64 string
-```
+        msg = mf.dotdict(prompt="A cozy cabin in the mountains during winter")
+        maker(msg)
+        # msg.generated_image contains the base64 string
+        ```
 
 ---
 
-## 8. **Config Options**
+## 4. **Configuration**
 
-Pass extra generation parameters via `config`:
+!!! info "Controlling generation"
 
-```python
-# Video generation with specific settings
-video_model = mf.Model.text_to_video("sora/text-to-video")
+    === "Negative Prompt"
 
-class Maker(nn.MediaMaker):
-    model = video_model
-    config = {
-        "duration_seconds": 5,
-        "aspect_ratio": "16:9",
-        "fps": 24,
-    }
+        Specify what to avoid in the output:
 
-maker = Maker()
+        ```python
+        class Designer(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            negative_prompt = "blurry, low quality, distorted, watermark"
 
-video = maker("A timelapse of a blooming flower")
-```
+        maker = Designer()
+        image_b64 = maker("A professional portrait photo")
+        ```
 
----
+    === "Providers"
 
-## 9. **Creative Pipeline**
+        ```python
+        # OpenAI — superior detail and prompt adherence
+        model = mf.Model.text_to_image("openai/gpt-image-1")
 
-Chain an `Agent` (prompt engineer) and a `MediaMaker` (image generator) using `Inline`:
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from msgflux import Message, Inline
-
-
-class StoryToPrompt(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    instructions = """
-    Create a detailed image generation prompt from the story scene.
-    Focus on visual elements, lighting, style, and composition.
-    """
-    message_fields = {"task_inputs": "scene"}
-    response_mode = "prompt"
-
-
-class ImageGenerator(nn.MediaMaker):
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    message_fields = {"task_inputs": "prompt"}
-    response_mode = "illustration"
-
-
-prompter = StoryToPrompt()
-generator = ImageGenerator()
-
-pipeline = Inline(
-    "prompter -> generator",
-    {"prompter": prompter, "generator": generator},
-)
-
-msg = Message()
-msg.scene = """
-Chapter 3: The hero stood at the edge of the cliff,
-watching the dragon descend from the storm clouds.
-Lightning illuminated the ancient castle behind them.
-"""
-
-pipeline(msg)
-print(msg.prompt)       # Detailed image prompt
-# msg.illustration contains the base64 string
-```
+        # Replicate — FLUX 2 Flex open model
+        model = mf.Model.text_to_image("replicate/black-forest-labs/flux-2-flex")
+        ```
 
 ---
 
-## 10. **Guardrails**
+## 5. **Guardrails**
 
 Use `Guard` hooks to validate prompts before generation — useful for blocking unsafe content or enforcing prompt policies.
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from msgflux.nn.hooks import Guard
-from msgflux.exceptions import UnsafeUserInputError
+!!! info "Guard patterns"
 
-BLOCKED = {"violence", "explicit", "nsfw"}
+    === "Short-circuit (with message)"
 
-def content_policy(data):
-    text = str(data).lower()
-    return {"safe": not any(w in text for w in BLOCKED)}
+        When `message` is provided, the guard returns it directly — the model is never called:
 
-# With message: short-circuits and returns the message directly (model never called)
-class SafeImageMaker(nn.MediaMaker):
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    hooks = [
-        Guard(
-            validator=content_policy,
-            on="pre",
-            message="Prompt violates content policy.",
-        )
-    ]
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
-maker = SafeImageMaker()
-result = maker("explicit content")  # → "Prompt violates content policy."
-```
+        BLOCKED = {"violence", "explicit", "nsfw"}
 
-Without `message`, a `UnsafeUserInputError` is raised instead:
+        def content_policy(data):
+            text = str(data).lower()
+            return {"safe": not any(w in text for w in BLOCKED)}
 
-```python
-class StrictMaker(nn.MediaMaker):
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    hooks = [Guard(validator=content_policy, on="pre")]
+        class SafeImageMaker(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            hooks = [
+                Guard(
+                    validator=content_policy,
+                    on="pre",
+                    message="Prompt violates content policy.",
+                )
+            ]
 
-maker = StrictMaker()
+        maker = SafeImageMaker()
+        result = maker("explicit content")  # → "Prompt violates content policy."
+        ```
 
-try:
-    maker("violence scene")
-except UnsafeUserInputError:
-    print("Prompt blocked.")
-```
+    === "Raises exception"
+
+        Without `message`, a `UnsafeUserInputError` is raised instead:
+
+        ```python
+        from msgflux.exceptions import UnsafeUserInputError
+
+        class StrictMaker(nn.MediaMaker):
+            model = mf.Model.text_to_image("openai/gpt-image-1")
+            hooks = [Guard(validator=content_policy, on="pre")]
+
+        maker = StrictMaker()
+
+        try:
+            maker("violence scene")
+        except UnsafeUserInputError:
+            print("Prompt blocked.")
+        ```
 
 ---
 
-## 11. **Async**
+## 6. **Creative Pipeline**
+
+Chain an `Agent` (prompt engineer) and a `MediaMaker` (image generator) using `Inline`:
+
+!!! info "Story → Image pipeline"
+
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    class StoryToPrompt(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        instructions = """
+        Create a detailed image generation prompt from the story scene.
+        Focus on visual elements, lighting, style, and composition.
+        """
+        message_fields = {"task_inputs": "scene"}
+        response_mode = "prompt"
+
+    class ImageGenerator(nn.MediaMaker):
+        model = mf.Model.text_to_image("openai/gpt-image-1")
+        message_fields = {"task_inputs": "prompt"}
+        response_mode = "illustration"
+
+    prompter = StoryToPrompt()
+    generator = ImageGenerator()
+
+    pipeline = mf.Inline(
+        "prompter -> generator",
+        {"prompter": prompter, "generator": generator},
+    )
+
+    msg = mf.dotdict(scene="""
+    Chapter 3: The hero stood at the edge of the cliff,
+    watching the dragon descend from the storm clouds.
+    Lightning illuminated the ancient castle behind them.
+    """)
+
+    pipeline(msg)
+    print(msg.prompt)       # Detailed image prompt
+    # msg.illustration contains the base64 string
+    ```
+
+---
+
+## 7. **Async**
 
 ```python
 image = await maker.acall("A colorful abstract painting")
@@ -285,10 +286,9 @@ image = await maker.acall("A colorful abstract painting")
 
 ---
 
-## 12. **Debugging**
+## 8. **Debugging**
 
 ```python
-# Inspect parameters before execution
 params = maker.inspect_model_execution_params("test prompt")
 print(params)
 ```
