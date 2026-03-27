@@ -16,17 +16,17 @@ A `Guard` validates inputs and/or outputs of a Module. Each Guard wraps a **vali
 The validator receives `data=...` and returns a dict with `"safe"` (bool).
 
 ```python
-import msgflux as mf
+from msgflux.nn.hooks import Guard
 
 def my_validator(data):
     text = str(data).lower()
     return {"safe": "hack" not in text}
 
 # Returns message as response when safe=False
-guard = mf.Guard(validator=my_validator, on="pre", message="Not allowed.")
+guard = Guard(validator=my_validator, on="pre", message="Not allowed.")
 
 # Raises exception when safe=False
-guard = mf.Guard(validator=my_validator, on="pre")
+guard = Guard(validator=my_validator, on="pre")
 ```
 
 ???+ note "Guard Examples"
@@ -38,6 +38,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
         BLOCKED = {"hack", "exploit", "malware"}
 
@@ -50,7 +51,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=keyword_filter,
                     on="pre",
                     message="Sorry, that content is not allowed.",
@@ -73,6 +74,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
         from msgflux.exceptions import UnsafeUserInputError
 
         def keyword_filter(data):
@@ -82,7 +84,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
             """A bot that raises on unsafe input."""
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            hooks = [mf.Guard(validator=keyword_filter, on="pre")]
+            hooks = [Guard(validator=keyword_filter, on="pre")]
 
         agent = StrictBot()
 
@@ -99,6 +101,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
         moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
 
@@ -111,12 +114,12 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=moderation_validator,
                     on="pre",
                     message="Your message was flagged by our safety system.",
                 ),
-                mf.Guard(validator=moderation_validator, on="post"),
+                Guard(validator=moderation_validator, on="post"),
             ]
 
         agent = ModeratedBot()
@@ -131,6 +134,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
         def keyword_filter(data):
             return {"safe": "forbidden" not in str(data).lower()}
@@ -144,12 +148,12 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=keyword_filter,
                     on="pre",
                     message="That topic is not allowed.",
                 ),
-                mf.Guard(validator=toxicity_check, on="post"),
+                Guard(validator=toxicity_check, on="post"),
             ]
 
         agent = MultiGuardBot()
@@ -165,6 +169,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
         from msgflux.exceptions import UnsafeUserInputError
 
         def keyword_filter(data):
@@ -175,7 +180,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=keyword_filter,
                     on="pre",
                     include_data=True,  # opt-in: attach data to exception
@@ -314,6 +319,7 @@ You can also register hooks manually via `hook.register()`:
 ```python
 import msgflux as mf
 import msgflux.nn as nn
+from msgflux.nn.hooks import Guard
 
 class Bot(nn.Agent):
     model = model
@@ -323,7 +329,7 @@ agent = Bot()
 def my_validator(data):
     return {"safe": "blocked" not in str(data).lower()}
 
-guard = mf.Guard(validator=my_validator, on="pre", message="Nope.")
+guard = Guard(validator=my_validator, on="pre", message="Nope.")
 handle = guard.register(agent.generator)  # returns RemovableHandle
 handle.remove()  # unregister when done
 ```

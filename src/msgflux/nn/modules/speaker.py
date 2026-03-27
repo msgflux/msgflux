@@ -3,6 +3,7 @@ from typing import Any, Dict, Literal, Mapping, Optional, Union
 from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.exceptions import _GuardInterrupt
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import TextToSpeechModel
@@ -100,7 +101,10 @@ class Speaker(Module, metaclass=AutoParams):
             speaker(msg, task_inputs="custom.path")
         """
         inputs = self._prepare_task(message, **kwargs)
-        model_response = self._execute_model(**inputs)
+        try:
+            model_response = self._execute_model(**inputs)
+        except _GuardInterrupt as e:
+            return e.response
         response = self._process_model_response(model_response, message)
         return response
 
@@ -109,7 +113,10 @@ class Speaker(Module, metaclass=AutoParams):
     ) -> Union[bytes, ModelStreamResponse]:
         """Async version of forward. Execute the speaker asynchronously."""
         inputs = self._prepare_task(message, **kwargs)
-        model_response = await self._aexecute_model(**inputs)
+        try:
+            model_response = await self._aexecute_model(**inputs)
+        except _GuardInterrupt as e:
+            return e.response
         response = self._process_model_response(model_response, message)
         return response
 
