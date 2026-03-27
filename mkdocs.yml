@@ -135,10 +135,7 @@ nav:
       - learn/models/image_text_to_image.md
       - learn/models/text_classifier.md
       - learn/models/text_reranker.md
-    #- ⛁ DataBases:
-    #  - core/database.md
-    #  - Vector: databases/vector.md
-    - ⟳ Retriever:
+    - ⟳ Retrievers:
       - learn/retrievers/retriever.md
       - learn/retrievers/bm25.md
       - learn/retrievers/wikipedia.md
