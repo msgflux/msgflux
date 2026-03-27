@@ -222,6 +222,40 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         agent("Can I upgrade my storage?", context_inputs=account_info)
         ```
 
+    === "Multimodal"
+
+        Pass PDFs directly to the agent — from a URL or a local file. The agent reads and reasons over the document content:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class AnalyzerAgent(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1")
+            config = {"verbose": True}
+
+        agent = AnalyzerAgent()
+
+        # From URL
+        response = agent(
+            "Summarize the key contributions of this paper.",
+            task_multimodal_inputs={"file": "https://arxiv.org/pdf/2106.09685.pdf"}
+        )
+
+        # From local file
+        response = agent(
+            "Summarize the key contributions of this paper.",
+            task_multimodal_inputs={"file": "./lora.pdf"}
+        )
+        ```
+
+        **Possible Output:**
+        ```text
+        The paper proposes LoRA (Low-Rank Adaptation), an efficient fine-tuning method
+        that injects trainable low-rank matrices into frozen pre-trained weights.
+        It reduces trainable parameters by up to 10,000x with no inference latency overhead.
+        ```
+
     === "Signature"
 
         Use `signature` to define inputs and outputs — msgFlux generates the prompt and parses structured output:
@@ -323,7 +357,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         1. When an agent is used as a tool, the docstring becomes its **description** — this is what the parent agent sees when deciding which tool to call.
         2. `return_direct=True` means the Orchestrator returns the list of tool calls and their results directly, instead of passing them back to the model for a final response.
 
-    === "Structed Output"
+    === "Structured Output"
 
         Bind inputs and outputs to fields on a shared `Message` — the preferred approach inside pipelines:
 
