@@ -339,7 +339,7 @@ class TestSearcher:
         assert "results" in result[0]
         assert "query" in result[0]
         assert "data" in result[0]["results"][0]
-        assert "score" in result[0]["results"][0]
+        assert "score" not in result[0]["results"][0]
 
     def test_with_name(self):
         """Test Searcher initialization with name."""
@@ -497,13 +497,13 @@ class TestSearcherWithRealBM25:
         assert "Google" in result
 
     def test_without_scores(self):
-        """Test real BM25 without return_score returns None scores."""
+        """Test real BM25 without return_score omits score field."""
         bm25 = self._make_bm25()
         searcher = Searcher(retriever=bm25, config={"top_k": 1})
 
         result = searcher("Python")
 
-        assert result[0]["results"][0]["score"] is None
+        assert "score" not in result[0]["results"][0]
 
     def test_with_factory_method(self):
         """Test creating BM25 via Retriever.lexical() factory."""
