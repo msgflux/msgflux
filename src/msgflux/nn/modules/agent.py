@@ -55,7 +55,7 @@ _RESERVED_KWARGS = {
     "vars",
     "messages",
     "task_multimodal",
-    "context",
+    "task_context",
     "model_preference",
 }
 
@@ -156,13 +156,13 @@ class Agent(Module, metaclass=AutoParams):
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
             Valid keys: "task", "task_multimodal", "messages",
-            "context", "model_preference", "vars"
+            "task_context", "model_preference", "vars"
             !!! example
                 message_fields={
                     "task": "input.user",
                     "task_multimodal": {"audio": "audio.user"},
                     "messages": "messages.history",
-                    "context": "context.data",
+                    "task_context": "context.data",
                     "model_preference": "model.preference",
                     "vars": "vars.data"
                 }
@@ -172,7 +172,7 @@ class Agent(Module, metaclass=AutoParams):
             - task_multimodal: Map datatype (image, video, audio, file)
               to field paths
             - messages: Field path for list of chats in ChatML format
-            - context: Field path for context (str or list of str)
+            - task_context: Field path for task context (str or list of str)
             - model_preference: Field path for model preference (str, only valid
               with ModelGateway)
             - vars: Field path for inputs to templates and tools (str)
@@ -381,7 +381,7 @@ class Agent(Module, metaclass=AutoParams):
                 - Reserved kwargs (runtime overrides for message_fields):
                     - task_multimodal: Override multimodal inputs
                     - messages: Override chat messages (chat history)
-                    - context: Override context
+                    - task_context: Override task context
                     - model_preference: Override model preference
                     - vars: Override template/tool variables
                 - Named task arguments: When message=None and a task template is
@@ -1228,11 +1228,11 @@ class Agent(Module, metaclass=AutoParams):
             context_content += self.context_cache
 
         context = None
-        runtime_context = kwargs.pop("context", None)
+        runtime_context = kwargs.pop("task_context", None)
         if runtime_context is not None:
             context = runtime_context
         elif isinstance(message, dotdict):
-            context = self._extract_message_values(self.context, message)
+            context = self._extract_message_values(self.task_context, message)
 
         if context is not None:
             if self.templates.get("context"):
@@ -1423,25 +1423,25 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Configuration ---
 
-    def _set_context(
-        self, context: Optional[Union[str, List[str]]] = None
+    def _set_task_context(
+        self, task_context: Optional[Union[str, List[str]]] = None
     ):
-        if isinstance(context, (str, list)) or context is None:
-            if isinstance(context, str) and context == "":
+        if isinstance(task_context, (str, list)) or task_context is None:
+            if isinstance(task_context, str) and task_context == "":
                 raise ValueError(
-                    "`context` requires a string not empty"
-                    f"given `{context}`"
+                    "`task_context` requires a string not empty"
+                    f"given `{task_context}`"
                 )
-            if isinstance(context, list) and not context:
+            if isinstance(task_context, list) and not task_context:
                 raise ValueError(
-                    "`context` requires a list not empty"
-                    f"given `{context}`"
+                    "`task_context` requires a list not empty"
+                    f"given `{task_context}`"
                 )
-            self.register_buffer("context", context)
+            self.register_buffer("task_context", task_context)
         else:
             raise TypeError(
-                "`context` requires a string, list or None"
-                f"given `{type(context)}`"
+                "`task_context` requires a string, list or None"
+                f"given `{type(task_context)}`"
             )
 
     def _set_context_cache(self, context_cache: Optional[str] = None):
@@ -1675,7 +1675,7 @@ class Agent(Module, metaclass=AutoParams):
         Args:
             message_fields: Dictionary mapping field names to their values.
                 Valid keys: "task", "task_multimodal", "messages",
-                "context", "model_preference", "vars"
+                "task_context", "model_preference", "vars"
 
         Raises:
             TypeError: If message_fields is not a dict or None
@@ -1686,7 +1686,7 @@ class Agent(Module, metaclass=AutoParams):
             "task",
             "task_multimodal",
             "messages",
-            "context",
+            "task_context",
             "model_preference",
             "vars",
         }
@@ -1696,7 +1696,7 @@ class Agent(Module, metaclass=AutoParams):
             self._set_task(None)
             self._set_task_multimodal(None)
             self._set_model_preference(None)
-            self._set_context(None)
+            self._set_task_context(None)
             self._set_messages(None)
             self._set_vars(None)
             return
@@ -1719,7 +1719,7 @@ class Agent(Module, metaclass=AutoParams):
         self._set_task(message_fields.get("task"))
         self._set_task_multimodal(message_fields.get("task_multimodal"))
         self._set_model_preference(message_fields.get("model_preference"))
-        self._set_context(message_fields.get("context"))
+        self._set_task_context(message_fields.get("task_context"))
         self._set_messages(message_fields.get("messages"))
         self._set_vars(message_fields.get("vars"))
 

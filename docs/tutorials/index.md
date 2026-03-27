@@ -242,7 +242,7 @@ class Validator(nn.Module):
         self.synthesizer = nn.Agent(
             model, 
             instructions="Synthesize all reports into a Go/No-Go recommendation.",
-            message_fields={"context": "reports"}
+            message_fields={"task_context": "reports"}
         )
 
     def forward(self, msg):

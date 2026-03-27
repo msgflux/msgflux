@@ -54,7 +54,7 @@ class Analyzer(nn.Agent):
     message_fields = {
         "task": "content",                    # Read task
         "task_multimodal": {"image": "images.user"},  # Read image
-        "context": "context.data",            # Read context
+        "task_context": "context.data",       # Read task context
         "vars": "extra.vars"                         # Read vars
     }
     response_mode = "outputs.analysis"               # Write response

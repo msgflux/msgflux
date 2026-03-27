@@ -146,7 +146,7 @@ msgFlux provides several inspection mechanisms to help you debug and understand 
             "task": None,
             "task_multimodal": None,
             "model_preference": None,
-            "context": None,
+            "task_context": None,
             "messages": None,
             "vars": None,
             "prefilling": None,

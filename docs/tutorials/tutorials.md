@@ -52,7 +52,7 @@ class RAGGenerator(nn.Agent):
     instructions = "If the answer is not in the context, say you don't know."
     message_fields = {
         "task": "question",
-        "context": "context"
+        "task_context": "context"
     }
     response_mode = "answer"
 
@@ -395,7 +395,7 @@ class CustomerServiceBot(nn.Module):
         
         msg.response = self.agent(
             msg.content,
-            context=context
+            task_context=context
         )
         
         return msg

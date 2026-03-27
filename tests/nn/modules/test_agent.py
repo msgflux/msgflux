@@ -28,7 +28,7 @@ class TestAgentReservedKwargs:
         assert "vars" in _RESERVED_KWARGS
         assert "messages" in _RESERVED_KWARGS
         assert "task_multimodal" in _RESERVED_KWARGS
-        assert "context" in _RESERVED_KWARGS
+        assert "task_context" in _RESERVED_KWARGS
         assert "model_preference" in _RESERVED_KWARGS
 
 
@@ -823,9 +823,28 @@ class TestAgentExecutionPaths:
 
         agent.generator.forward = Mock(return_value=mock_response)
 
-        result = agent(query="Test", context="Some context")
+        result = agent(query="Test", task_context="Some context")
 
         assert result is not None
+
+    def test_agent_signature_context_is_not_reserved(self):
+        """Test that signature fields named context work as normal task inputs."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            signature="query, context -> response",
+        )
+
+        params = agent.inspect_model_execution_params(
+            query="What is AI?", context="ML context"
+        )
+
+        content = str(params["messages"])
+        assert "What is AI?" in content
+        assert "ML context" in content
 
 
 class TestAgentSystemPrompt:

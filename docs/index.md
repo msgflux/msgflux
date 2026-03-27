@@ -199,7 +199,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
 
     === "Context"
 
-        Pass additional context alongside the task — the agent grounds its answer on the provided information:
+        Pass additional task context alongside the task — the agent grounds its answer on the provided information:
 
         ```python linenums="1"
         import msgflux as mf
@@ -219,7 +219,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         Storage used: 45GB / 100GB
         """
 
-        agent("Can I upgrade my storage?", context=account_info)
+        agent("Can I upgrade my storage?", task_context=account_info)
         ```
 
     === "Multimodal"

@@ -368,9 +368,9 @@ When using signatures, you can pass inputs in multiple ways:
         response = agent({"english": "hello world"})
         ```
 
-    === "With Context"
+    === "With Task Context"
 
-        Combine with `context`:
+        Combine with `task_context`:
 
         ```python
         # pip install msgflux[openai]
@@ -393,7 +393,7 @@ When using signatures, you can pass inputs in multiple ways:
         response = agent(
             text="Long article...",
             style="casual",
-            context="Focus on the key takeaways"
+            task_context="Focus on the key takeaways"
         )
         ```
 

@@ -48,7 +48,7 @@ class ScriptWriter(nn.Agent):
     
     Format as: [ALEX] or [JORDAN] followed by their lines.
     """
-    message_fields = {"context": "research"}
+    message_fields = {"task_context": "research"}
     response_mode = "script"
 
 
@@ -300,7 +300,7 @@ class IntelligenceSystem(nn.Module):
         
         # Generate report
         msg.executive_report = self.reporter(
-            context={
+            task_context={
                 "analyses": msg.competitor_analyses,
                 "assessment": msg.threat_assessment
             }
@@ -402,7 +402,7 @@ class TutorAgent(nn.Module):
         if msg.get("learn_topic"):
             adapted = self.adapter(
                 task=msg.learn_topic,
-                context={"learner_profile": msg.get("profile", {})}
+                task_context={"learner_profile": msg.get("profile", {})}
             )
             msg.lesson = adapted
             

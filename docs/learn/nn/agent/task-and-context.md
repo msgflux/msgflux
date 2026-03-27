@@ -1,6 +1,8 @@
 # Task and Context
 
-The agent receives input through **task** (what to do) and **context** (background information). When both are provided, they're combined using XML-like tags in the final prompt.
+The agent receives input through **task** (what to do) and **task_context**
+(background information). When both are provided, they're combined using
+XML-like tags in the final prompt.
 
 ## Imperative vs Declarative
 
@@ -18,7 +20,7 @@ The **declarative approach** with `message_fields` shines when designing complex
 | Parameter | Description | Init | Runtime |
 |-----------|-------------|:----:|:-------:|
 | `task` | Main task input (string or dict for templates) | | ✅ |
-| `context` | Dynamic context passed at call time | | ✅ |
+| `task_context` | Dynamic task context passed at call time | | ✅ |
 | `context_cache` | Fixed context stored in the agent | ✅ | |
 | `task_multimodal` | Multimodal inputs (image, audio, file) | | ✅ |
 | `messages` | Conversation history (ChatML format) | | ✅ |
@@ -26,7 +28,7 @@ The **declarative approach** with `message_fields` shines when designing complex
 
 ## How Task and Context are Combined
 
-When you pass `context`, the context is injected **inside the task** using XML-like tags:
+When you pass `task_context`, the context is injected **inside the task** using XML-like tags:
 
 ```xml
 <context>
@@ -40,13 +42,14 @@ Create a pitch for this client
 </task>
 ```
 
-This structure helps the model clearly distinguish between background information (context) and what it needs to do (task).
+This structure helps the model clearly distinguish between background
+information (task context) and what it needs to do (task).
 
 ???+ example
 
-    === "Context Inputs (str)"
+    === "Task Context Inputs"
 
-        Pass task as first argument and context via `context`:
+        Pass task as first argument and task context via `task_context`:
 
         ```python
         # pip install msgflux[openai]
@@ -61,14 +64,14 @@ This structure helps the model clearly distinguish between background informatio
 
         agent = SalesAgent()
 
-        context = """
+        task_context = """
         Company: FinData Analytics
         Industry: FinTech
         Product: AI-powered risk analysis
         """
 
         params = agent.inspect_model_execution_params(
-            "Create a pitch for this client", context=context
+            "Create a pitch for this client", task_context=task_context
         )
         print(params)
         ```
@@ -95,8 +98,9 @@ This structure helps the model clearly distinguish between background informatio
             config = {"verbose": True}
 
         agent = CompanyAgent()
+        task_context = "Customer tier: enterprise\nIssue: invoice delay"
         params = agent.inspect_model_execution_params(
-            "Write a response to a customer complaint", context=context
+            "Write a response to a customer complaint", task_context=task_context
         )
         print(params)
         ```
@@ -145,7 +149,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 | Template | Purpose | Data Source |
 |----------|---------|-------------|
 | `task` | Format the task/question sent to the model | `task` dict + [vars](vars.md) |
-| `context` | Format background context | `context` dict + [vars](vars.md) |
+| `context` | Format background context | `task_context` dict + [vars](vars.md) |
 | `response` | Format the model's output before returning | Model output fields + [vars](vars.md) |
 
 !!! tip "Response Template + Generation Schema"
@@ -213,7 +217,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 
         response = agent(
             "Create a pitch",
-            context={
+            task_context={
                 "client_name": "EcoSupply Ltd.",
                 "industry": "Sustainable packaging",
                 "pain_points": ["High costs", "Certification needs"]
@@ -739,8 +743,8 @@ In declarative mode, you configure the agent once with `message_fields` and `res
 class MyAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     message_fields = {
-        "task": "user.query",            # Read task from msg.user.query
-        "context": "context.background"  # Read context from msg.context.background
+        "task": "user.query",                 # Read task from msg.user.query
+        "task_context": "context.background"  # Read context from msg.context.background
     }
     response_mode = "agent.output"              # Write response to msg.agent.output
 ```
