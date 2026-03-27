@@ -153,3 +153,46 @@ class TestSpeaker:
             mock_model = MockTTSModel()
             speaker = Speaker(model=mock_model, response_format=fmt)
             assert speaker.response_format == fmt
+
+    def test_speaker_guard_short_circuit_returns_message(self):
+        """Guard with message= short-circuits forward and returns the message."""
+        from msgflux.nn.hooks import Guard
+
+        mock_model = MockTTSModel()
+        guard = Guard(
+            validator=lambda data: {"safe": False},
+            on="pre",
+            message="Blocked.",
+        )
+        speaker = Speaker(model=mock_model, hooks=[guard])
+
+        result = speaker("some input")
+        assert result == "Blocked."
+
+    def test_speaker_guard_raises_without_message(self):
+        """Guard without message= raises UnsafeUserInputError."""
+        from msgflux.nn.hooks import Guard
+        from msgflux.exceptions import UnsafeUserInputError
+
+        mock_model = MockTTSModel()
+        guard = Guard(validator=lambda data: {"safe": False}, on="pre")
+        speaker = Speaker(model=mock_model, hooks=[guard])
+
+        with pytest.raises(UnsafeUserInputError):
+            speaker("some input")
+
+    @pytest.mark.asyncio
+    async def test_speaker_guard_short_circuit_aforward(self):
+        """Guard short-circuit also works in aforward."""
+        from msgflux.nn.hooks import Guard
+
+        mock_model = MockTTSModel()
+        guard = Guard(
+            validator=lambda data: {"safe": False},
+            on="pre",
+            message="Blocked async.",
+        )
+        speaker = Speaker(model=mock_model, hooks=[guard])
+
+        result = await speaker.aforward("some input")
+        assert result == "Blocked async."

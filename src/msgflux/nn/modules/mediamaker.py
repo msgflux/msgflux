@@ -15,6 +15,7 @@ from msgflux.models.types import (
     VideoTextToAudioModel,
     VideoTextToVideoModel,
 )
+from msgflux.exceptions import _GuardInterrupt
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 
@@ -116,7 +117,10 @@ class MediaMaker(Module, metaclass=AutoParams):
             Generated media content (str or Message depending on response_mode).
         """
         inputs = self._prepare_task(message, **kwargs)
-        model_response = self._execute_model(**inputs)
+        try:
+            model_response = self._execute_model(**inputs)
+        except _GuardInterrupt as e:
+            return e.response
         response = self._process_model_response(model_response, message)
         return response
 
@@ -125,7 +129,10 @@ class MediaMaker(Module, metaclass=AutoParams):
     ) -> Union[str, Message]:
         """Async version of forward. Execute the media maker asynchronously."""
         inputs = self._prepare_task(message, **kwargs)
-        model_response = await self._aexecute_model(**inputs)
+        try:
+            model_response = await self._aexecute_model(**inputs)
+        except _GuardInterrupt as e:
+            return e.response
         response = self._process_model_response(model_response, message)
         return response
 
