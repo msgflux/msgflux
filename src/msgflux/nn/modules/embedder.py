@@ -42,15 +42,15 @@ class Embedder(Module, metaclass=AutoParams):
             Embedding model client (supports batch or single).
         message_fields:
             Dictionary mapping Message field names to paths.
-            Valid keys: "task_inputs", "model_preference"
+            Valid keys: "task", "model_preference"
             !!! example
                 message_fields={
-                    "task_inputs": "texts",
+                    "task": "texts",
                     "model_preference": "model.preference"
                 }
 
             Field descriptions:
-            - task_inputs: Field path for input data (str, list of str, or other
+            - task: Field path for input data (str, list of str, or other
               data types)
             - model_preference: Field path for model preference (str, only valid
               with ModelGateway)
@@ -82,13 +82,13 @@ class Embedder(Module, metaclass=AutoParams):
                 - List[str]: Multiple texts to embed
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
-                - task_inputs: Override field path or direct value
+                - task: Override field path or direct value
                 - model_preference: Override model preference
 
         Returns:
             Embeddings as list(s) of floats, or Message depending on response_mode.
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         embeddings = self._execute_model(**inputs)
         response = self._prepare_response(embeddings, message)
         return response
@@ -97,7 +97,7 @@ class Embedder(Module, metaclass=AutoParams):
         self, message: Union[str, List[str], Message], **kwargs
     ) -> Union[List[float], List[List[float]], Message]:
         """Async version of forward. Execute the embedder asynchronously."""
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         embeddings = await self._aexecute_model(**inputs)
         response = self._prepare_response(embeddings, message)
         return response
@@ -209,12 +209,12 @@ class Embedder(Module, metaclass=AutoParams):
             model_execution_params.model_preference = model_preference
         return model_execution_params
 
-    def _prepare_task(
+    def _prepare_inputs(
         self, message: Union[str, List[str], Message], **kwargs
     ) -> Dict[str, Any]:
         """Prepare task inputs."""
         if isinstance(message, dotdict):
-            data = self._extract_message_values(self.task_inputs, message)
+            data = self._extract_message_values(self.task, message)
         else:
             data = message
 
@@ -226,7 +226,7 @@ class Embedder(Module, metaclass=AutoParams):
 
     def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
         """Debug model input parameters."""
-        inputs = self._prepare_task(*args, **kwargs)
+        inputs = self._prepare_inputs(*args, **kwargs)
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 

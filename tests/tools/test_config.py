@@ -63,6 +63,7 @@ class TestToolConfig:
         assert config.handoff is False
         assert config.call_as_response is False
         assert config.inject_vars is False
+        assert config.inject_message is False
         assert config.inject_messages is False
 
     def test_tool_config_call_as_response_sets_return_direct(self):
@@ -260,6 +261,15 @@ class TestToolConfigCombinations:
             pass
 
         assert sample.tool_config.inject_messages is True
+
+    def test_inject_message_true(self):
+        """Test inject_message=True configuration."""
+
+        @tool_config(inject_message=True)
+        def sample():
+            pass
+
+        assert sample.tool_config.inject_message is True
 
     def test_multiple_parameters(self):
         """Test multiple parameters set simultaneously."""

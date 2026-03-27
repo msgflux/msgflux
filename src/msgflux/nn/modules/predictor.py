@@ -40,15 +40,15 @@ class Predictor(Module, metaclass=AutoParams):
             List of Hook instances to register on the module.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task_inputs", "model_preference"
+            Valid keys: "task", "model_preference"
             !!! example
                 message_fields={
-                    "task_inputs": "data.input",
+                    "task": "data.input",
                     "model_preference": "model.preference"
                 }
 
             Field descriptions:
-            - task_inputs: Field path for task input (str)
+            - task: Field path for task input (str)
             - model_preference: Field path for model preference (str, only valid
               with ModelGateway)
         response_mode:
@@ -87,20 +87,20 @@ class Predictor(Module, metaclass=AutoParams):
                 - Any: Direct data input for prediction (text, image, array, etc.)
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
-                - task_inputs: Override field path or direct value
+                - task: Override field path or direct value
                 - model_preference: Override model preference
 
         Returns:
             Prediction results (type depends on model and response_mode).
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         model_response = self._execute_model(**inputs)
         response = self._process_model_response(model_response, message)
         return response
 
     async def aforward(self, message: Union[Any, Message], **kwargs) -> Any:
         """Async version of forward. Execute the predictor asynchronously."""
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         model_response = await self._aexecute_model(**inputs)
         response = self._process_model_response(model_response, message)
         return response
@@ -133,11 +133,11 @@ class Predictor(Module, metaclass=AutoParams):
         response = self._prepare_response(raw_response, message)
         return response
 
-    def _prepare_task(self, message: Union[Any, Message], **kwargs) -> Dict[str, Any]:
+    def _prepare_inputs(self, message: Union[Any, Message], **kwargs) -> Dict[str, Any]:
         inputs = dotdict()
 
         if isinstance(message, dotdict):
-            data = self._extract_message_values(self.task_inputs, message)
+            data = self._extract_message_values(self.task, message)
         else:
             data = message
 
@@ -154,7 +154,7 @@ class Predictor(Module, metaclass=AutoParams):
 
     def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
         """Debug model input parameters."""
-        inputs = self._prepare_task(*args, **kwargs)
+        inputs = self._prepare_inputs(*args, **kwargs)
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 
@@ -187,16 +187,16 @@ class Predictor(Module, metaclass=AutoParams):
 
         Args:
             message_fields: Dictionary mapping field names to their values.
-                Valid keys: "task_inputs", "model_preference"
+                Valid keys: "task", "model_preference"
 
         Raises:
             TypeError: If message_fields is not a dict or None
             ValueError: If invalid keys are provided
         """
-        valid_keys = {"task_inputs", "model_preference"}
+        valid_keys = {"task", "model_preference"}
 
         if message_fields is None:
-            self._set_task_inputs(None)
+            self._set_task(None)
             self._set_model_preference(None)
             return
 
@@ -212,16 +212,16 @@ class Predictor(Module, metaclass=AutoParams):
                 f"Valid keys are: {valid_keys}"
             )
 
-        self._set_task_inputs(message_fields.get("task_inputs"))
+        self._set_task(message_fields.get("task"))
         self._set_model_preference(message_fields.get("model_preference"))
 
-    def _set_task_inputs(self, task_inputs: Optional[str] = None):
-        """Set task_inputs field mapping."""
-        if isinstance(task_inputs, str) or task_inputs is None:
-            self.register_buffer("task_inputs", task_inputs)
+    def _set_task(self, task: Optional[str] = None):
+        """Set task field mapping."""
+        if isinstance(task, str) or task is None:
+            self.register_buffer("task", task)
         else:
             raise TypeError(
-                f"`task_inputs` requires a string or None, given `{type(task_inputs)}`"
+                f"`task` requires a string or None, given `{type(task)}`"
             )
 
     def _set_model_preference(self, model_preference: Optional[str] = None):

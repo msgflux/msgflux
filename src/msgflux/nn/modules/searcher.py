@@ -55,12 +55,12 @@ class Searcher(Module, metaclass=AutoParams):
             Optional - only needed for semantic retrieval.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task_inputs"
+            Valid keys: "task"
             !!! example
-                message_fields={"task_inputs": "query.user"}
+                message_fields={"task": "query.user"}
 
             Field description:
-            - task_inputs: Field path for query input (str or dict)
+            - task: Field path for query input (str or dict)
         response_mode:
             Controls how the response is returned.
             * ``None`` (default): Returns the response directly.
@@ -86,7 +86,7 @@ class Searcher(Module, metaclass=AutoParams):
             - top_k: Maximum return of similar points (int)
             - threshold: Search threshold (float)
             - return_score: If True, return similarity score (bool)
-            - dict_key: Help to extract a value from task_inputs if dict (str)
+            - dict_key: Help to extract a value from task if dict (str)
         name:
             Searcher name in snake case format.
         description:
@@ -122,12 +122,12 @@ class Searcher(Module, metaclass=AutoParams):
                 - List[Dict[str, Any]]: List of query dictionaries
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
-                - task_inputs: Override field path or direct value
+                - task: Override field path or direct value
 
         Returns:
             Retrieved results (str, dict, or Message depending on response_mode)
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         retriever_response = self._execute_retriever(**inputs)
         response = self._prepare_response(retriever_response, message)
         return response
@@ -136,7 +136,7 @@ class Searcher(Module, metaclass=AutoParams):
         self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message]:
         """Async version of forward. Execute the retriever asynchronously."""
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         retriever_response = await self._aexecute_retriever(**inputs)
         response = self._prepare_response(retriever_response, message)
         return response
@@ -238,11 +238,11 @@ class Searcher(Module, metaclass=AutoParams):
             retriever_execution_params.threshold = threshold
         return retriever_execution_params
 
-    def _prepare_task(
+    def _prepare_inputs(
         self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs
     ) -> List[str]:
         if isinstance(message, dotdict):
-            queries = self._extract_message_values(self.task_inputs, message)
+            queries = self._extract_message_values(self.task, message)
         else:
             queries = message
 
@@ -276,7 +276,7 @@ class Searcher(Module, metaclass=AutoParams):
         Returns the parameters that would be passed to the embedder module.
         """
         if self.embedder:
-            inputs = self._prepare_task(*args, **kwargs)
+            inputs = self._prepare_inputs(*args, **kwargs)
             return {
                 "queries": inputs["queries"],
                 "model_preference": inputs.get("model_preference"),

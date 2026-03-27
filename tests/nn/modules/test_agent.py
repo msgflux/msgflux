@@ -24,10 +24,11 @@ class TestAgentReservedKwargs:
     def test_reserved_kwargs_set(self):
         """Test that _RESERVED_KWARGS is a set with expected values."""
         assert isinstance(_RESERVED_KWARGS, set)
+        assert "task" in _RESERVED_KWARGS
         assert "vars" in _RESERVED_KWARGS
         assert "messages" in _RESERVED_KWARGS
-        assert "task_multimodal_inputs" in _RESERVED_KWARGS
-        assert "context_inputs" in _RESERVED_KWARGS
+        assert "task_multimodal" in _RESERVED_KWARGS
+        assert "context" in _RESERVED_KWARGS
         assert "model_preference" in _RESERVED_KWARGS
 
 
@@ -119,7 +120,7 @@ class TestAgentInitialization:
         mock_model.model_type = "chat_completion"
 
         agent = Agent(
-            name="agent", model=mock_model, message_fields={"task_inputs": "input.user"}
+            name="agent", model=mock_model, message_fields={"task": "input.user"}
         )
 
         # message_fields is unpacked, not stored as single attribute
@@ -415,8 +416,8 @@ class TestAgentSetters:
 class TestAgentProcessing:
     """Test Agent processing methods."""
 
-    def test_prepare_task(self):
-        """Test _prepare_task method."""
+    def test_prepare_inputs(self):
+        """Test _prepare_inputs method."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
         agent = Agent(
@@ -426,7 +427,7 @@ class TestAgentProcessing:
             signature="input -> output",
         )
 
-        result = agent._prepare_task(input="Test input")
+        result = agent._prepare_inputs(input="Test input")
 
         assert isinstance(result, dict)
 
@@ -794,7 +795,7 @@ class TestAgentExecutionPaths:
             name="agent",
             model=mock_model,
             signature="query -> response",
-            message_fields={"task_inputs": "query"},
+            message_fields={"task": "query"},
         )
 
         agent.generator.forward = Mock(return_value=mock_response)
@@ -807,8 +808,8 @@ class TestAgentExecutionPaths:
 
         assert result is not None
 
-    def test_agent_with_context_inputs(self):
-        """Test Agent with context_inputs."""
+    def test_agent_with_context(self):
+        """Test Agent with context."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
         mock_response = ModelResponse()
@@ -822,7 +823,7 @@ class TestAgentExecutionPaths:
 
         agent.generator.forward = Mock(return_value=mock_response)
 
-        result = agent(query="Test", context_inputs="Some context")
+        result = agent(query="Test", context="Some context")
 
         assert result is not None
 
@@ -878,14 +879,14 @@ class TestAgentSystemPrompt:
 class TestAgentMessagePreparation:
     """Test Agent message preparation."""
 
-    def test_agent_prepare_task_with_vars(self):
-        """Test _prepare_task with vars parameter."""
+    def test_agent_prepare_inputs_with_vars(self):
+        """Test _prepare_inputs with vars parameter."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
         agent = Agent(name="agent", model=mock_model, signature="query -> response")
 
-        result = agent._prepare_task(query="Test {{var}}", vars={"var": "value"})
+        result = agent._prepare_inputs(query="Test {{var}}", vars={"var": "value"})
 
         assert isinstance(result, dict)
 

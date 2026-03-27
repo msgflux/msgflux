@@ -173,7 +173,7 @@ def test_no_signature_no_annotations_uses_default():
     agent = Agent(name="test", model=model)
 
     # Should use default annotations
-    assert agent.annotations == {"message": str, "return": str}
+    assert agent.annotations == {"task": str, "return": str}
     print("✓ Test 8 passed: Default annotations when neither signature nor annotations")
 
 

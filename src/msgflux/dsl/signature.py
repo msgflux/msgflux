@@ -358,7 +358,7 @@ def generate_annotations_from_signature(
     """Generate annotations dict from signature inputs.
 
     Excludes multimodal types (Image, Audio, Video, File) as they are
-    handled separately in task_multimodal_inputs.
+    handled separately in task_multimodal.
 
     Args:
         inputs_info: List of input field information

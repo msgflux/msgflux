@@ -115,6 +115,7 @@ def test_tool_config_values_are_correct():
         return_direct=True,
         call_as_response=False,
         spawn=False,
+        inject_message=False,
         inject_messages=False,
         inject_vars=["var1", "var2"],
         handoff=False,
@@ -131,6 +132,7 @@ def test_tool_config_values_are_correct():
     assert config.return_direct is True
     assert config.call_as_response is False
     assert config.spawn is False
+    assert config.inject_message is False
     assert config.inject_messages is False
     assert config.inject_vars == ["var1", "var2"]
     assert config.handoff is False

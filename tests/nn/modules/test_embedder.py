@@ -111,7 +111,7 @@ class TestEmbedder:
     def test_embedder_forward_with_message(self):
         """Test Embedder forward with Message object."""
         mock_model = MockEmbedderModel()
-        embedder = Embedder(model=mock_model, message_fields={"task_inputs": "text"})
+        embedder = Embedder(model=mock_model, message_fields={"task": "text"})
 
         msg = Message()
         msg.text = "Hello world"

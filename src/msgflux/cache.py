@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 def response_cache(
     db: "BaseDB",
-    task_inputs: Optional[str] = None,
+    task: Optional[str] = None,
     response_mode: Optional[str] = None,
     model: Optional["TextEmbedderModel"] = None,
 ):
@@ -18,11 +18,11 @@ def response_cache(
         @wraps(func)
         def wrapper(msg):
             if isinstance(msg, Message):
-                if task_inputs is None:
+                if task is None:
                     raise ValueError(
-                        "`task_inputs` is required when input is a Message instance"
+                        "`task` is required when input is a Message instance"
                     )
-                key = msg.get(task_inputs)
+                key = msg.get(task)
             else:
                 key = msg
 

@@ -107,7 +107,7 @@ class TestMediaMaker:
         """Test MediaMaker raises ValueError for None prompt."""
         mock_model = MockMediaModel()
         mediamaker = MediaMaker(
-            model=mock_model, message_fields={"task_inputs": "nonexistent"}
+            model=mock_model, message_fields={"task": "nonexistent"}
         )
         msg = Message()
 

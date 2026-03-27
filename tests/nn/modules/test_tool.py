@@ -729,6 +729,23 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
+    def test_tool_library_with_inject_message(self):
+        """Test ToolLibrary with inject_message config."""
+
+        def stateful_tool(x: int, message: dict) -> str:
+            """Tool that uses the original message envelope."""
+            return f"{x}-{message.get('key', 'none')}"
+
+        stateful_tool.tool_config = {"inject_message": True}
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        tool_callings = [("call_1", "stateful_tool", {"x": 5})]
+        message = {"key": "value"}
+
+        result = library(tool_callings, message=message)
+
+        assert result.tool_calls[0].result == "5-value"
+
     @pytest.mark.asyncio
     async def test_tool_library_aforward_tool_not_found(self):
         """Test async ToolLibrary forward with non-existent tool."""
@@ -861,6 +878,22 @@ class TestToolLibrary:
 
         tool_callings = [("call_1", "async_tool", {"x": 8})]
         result = await library.aforward(tool_callings, messages={"key": "state_value"})
+
+        assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_inject_message(self):
+        """Test async ToolLibrary inject_message."""
+
+        async def async_tool(x: int, message: dict) -> str:
+            """Tool with original message envelope."""
+            return f"{x}-{message['key']}"
+
+        async_tool.tool_config = {"inject_message": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        tool_callings = [("call_1", "async_tool", {"x": 8})]
+        result = await library.aforward(tool_callings, message={"key": "state_value"})
 
         assert "8-state_value" in result.tool_calls[0].result
 

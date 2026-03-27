@@ -168,7 +168,7 @@ class TestSearcher:
         """Test Searcher forward with Message object."""
         mock_retriever = MockLexicalRetriever()
         ret = Searcher(
-            retriever=mock_retriever, message_fields={"task_inputs": "query"}
+            retriever=mock_retriever, message_fields={"task": "query"}
         )
 
         msg = Message()
@@ -415,7 +415,7 @@ class TestSearcherResponseMode:
         mock_retriever = MockLexicalRetriever()
         ret = Searcher(
             retriever=mock_retriever,
-            message_fields={"task_inputs": "question"},
+            message_fields={"task": "question"},
             response_mode="context",
         )
 
@@ -534,7 +534,7 @@ class TestSearcherWithRealBM25:
         bm25 = self._make_bm25()
         searcher = Searcher(
             retriever=bm25,
-            message_fields={"task_inputs": "question"},
+            message_fields={"task": "question"},
             response_mode="context",
             config={"top_k": 1},
         )

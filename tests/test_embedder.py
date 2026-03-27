@@ -150,7 +150,7 @@ def test_embedder_with_non_batch_model_single_text():
 def test_embedder_with_message_object():
     """Test Embedder with Message object using message_fields."""
     model = MockBatchEmbedder()
-    embedder = Embedder(model=model, message_fields={"task_inputs": "texts"})
+    embedder = Embedder(model=model, message_fields={"task": "texts"})
 
     # Create message with texts field
     msg = Message(texts=["text1", "text2"])

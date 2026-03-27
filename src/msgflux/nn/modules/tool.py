@@ -501,6 +501,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def forward(  # noqa: C901
         self,
         tool_callings: List[Tuple[str, str, Any]],
+        message: Optional[Any] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
@@ -514,6 +515,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     ('322', 'tool_name2', '')]
             messages:
                 The current messages (chat history) for the `handoff` functionality.
+            message:
+                The original message/envelope passed to the parent Agent.
             vars:
                 Extra kwargs to be used in tools.
 
@@ -548,6 +551,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
+            tool_params = tool_params or {}
 
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
@@ -589,10 +593,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
             if config.get("inject_messages", False):  # Add messages
                 tool_params["messages"] = messages
 
+            if config.get("inject_message", False):  # Add original message/envelope
+                tool_params["message"] = message
+
             if not config.get("return_direct", False):
                 return_directly = False
 
-            final_tool_params = tool_params or {}
+            final_tool_params = tool_params
             # Add tool_call_id for telemetry
             final_tool_params["tool_call_id"] = tool_id
             prepared_calls.append(partial(tool, **final_tool_params))
@@ -630,6 +637,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
     async def aforward(  # noqa: C901
         self,
         tool_callings: List[Tuple[str, str, Any]],
+        message: Optional[Any] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
@@ -644,6 +652,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     ('322', 'tool_name2', '')]
             messages:
                 The current messages (chat history) for the `handoff` functionality.
+            message:
+                The original message/envelope passed to the parent Agent.
             vars:
                 Extra kwargs to be used in tools.
 
@@ -678,6 +688,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
+            tool_params = tool_params or {}
 
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
@@ -719,10 +730,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
             if config.get("inject_messages", False):  # Add messages
                 tool_params["messages"] = messages
 
+            if config.get("inject_message", False):  # Add original message/envelope
+                tool_params["message"] = message
+
             if not config.get("return_direct", False):
                 return_directly = False
 
-            final_tool_params = tool_params or {}
+            final_tool_params = tool_params
             # Add tool_call_id for telemetry
             final_tool_params["tool_call_id"] = tool_id
             prepared_calls.append(partial(tool.acall, **final_tool_params))

@@ -47,17 +47,17 @@ class TestPredictorInit:
 
         assert predictor.model == model
         assert predictor.config == {}
-        assert predictor.task_inputs is None
+        assert predictor.task is None
 
     def test_init_with_message_fields(self):
         model = MockModel()
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
+            message_fields={"task": "content"},
         )
 
-        assert predictor.task_inputs == "content"
+        assert predictor.task == "content"
 
     def test_init_with_config(self):
         model = MockModel()
@@ -117,13 +117,13 @@ class TestPredictorInit:
 
 
 class TestPredictorPrepareTask:
-    """Test _prepare_task method."""
+    """Test _prepare_inputs method."""
 
     def test_with_plain_data(self):
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
-        inputs = predictor._prepare_task("plain data")
+        inputs = predictor._prepare_inputs("plain data")
 
         assert inputs.data == "plain data"
 
@@ -132,11 +132,11 @@ class TestPredictorPrepareTask:
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
+            message_fields={"task": "content"},
         )
 
         message = Message(content="test input")
-        inputs = predictor._prepare_task(message)
+        inputs = predictor._prepare_inputs(message)
 
         assert inputs.data == "test input"
 
@@ -144,7 +144,7 @@ class TestPredictorPrepareTask:
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
-        inputs = predictor._prepare_task([1.0, 2.0, 3.0])
+        inputs = predictor._prepare_inputs([1.0, 2.0, 3.0])
 
         assert inputs.data == [1.0, 2.0, 3.0]
 
@@ -159,7 +159,7 @@ class TestPredictorPrepareTask:
         message = Message(content="test")
         message.context["preferred_model"] = "gpt-4"
 
-        inputs = predictor._prepare_task(message)
+        inputs = predictor._prepare_inputs(message)
 
         assert inputs.model_preference == "gpt-4"
 
@@ -221,7 +221,7 @@ class TestPredictorForward:
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
+            message_fields={"task": "content"},
             response_mode="prediction",
         )
 
@@ -258,7 +258,7 @@ class TestPredictorForward:
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
+            message_fields={"task": "content"},
             response_mode="prediction",
         )
 
@@ -273,7 +273,7 @@ class TestPredictorForward:
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
+            message_fields={"task": "content"},
             config={"temperature": 0.7},
         )
 
@@ -304,7 +304,7 @@ class TestPredictorProcessResponse:
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "text"},
+            message_fields={"task": "text"},
             response_mode="result",
         )
 

@@ -51,12 +51,16 @@ from msgflux.utils.xml import apply_xml_tags
 
 # Reserved kwargs that should not be treated as task inputs
 _RESERVED_KWARGS = {
+    "task",
     "vars",
     "messages",
-    "task_multimodal_inputs",
-    "context_inputs",
+    "task_multimodal",
+    "context",
     "model_preference",
 }
+
+_UNSET = object()
+_DEFAULT_AGENT_ANNOTATIONS = {"task": str, "return": str}
 
 
 def _prepare_agent_guard_input(model_execution_params):
@@ -151,24 +155,24 @@ class Agent(Module, metaclass=AutoParams):
                 hooks=[Guard(validator=checker, on="pre", message="Blocked.")]
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task_inputs", "task_multimodal_inputs", "messages",
-            "context_inputs", "model_preference", "vars"
+            Valid keys: "task", "task_multimodal", "messages",
+            "context", "model_preference", "vars"
             !!! example
                 message_fields={
-                    "task_inputs": "input.user",
-                    "task_multimodal_inputs": {"audio": "audio.user"},
+                    "task": "input.user",
+                    "task_multimodal": {"audio": "audio.user"},
                     "messages": "messages.history",
-                    "context_inputs": "context.data",
+                    "context": "context.data",
                     "model_preference": "model.preference",
                     "vars": "vars.data"
                 }
 
             Field descriptions:
-            - task_inputs: Field path for task input (str, dict, or tuple)
-            - task_multimodal_inputs: Map datatype (image, video, audio, file)
+            - task: Field path for task input (str, dict, or tuple)
+            - task_multimodal: Map datatype (image, video, audio, file)
               to field paths
             - messages: Field path for list of chats in ChatML format
-            - context_inputs: Field path for context (str or list of str)
+            - context: Field path for context (str or list of str)
             - model_preference: Field path for model preference (str, only valid
               with ModelGateway)
             - vars: Field path for inputs to templates and tools (str)
@@ -212,7 +216,7 @@ class Agent(Module, metaclass=AutoParams):
             Template descriptions:
             - task: Formats the task/prompt sent to the model
             - response: Formats the model's response
-            - context: Formats context_inputs (does NOT apply to context_cache)
+            - context: Formats context (does NOT apply to context_cache)
             - system_prompt: Overrides the default system prompt
               template. If not provided, uses SYSTEM_PROMPT_TEMPLATE.
               Available variables: system_message, instructions,
@@ -263,10 +267,10 @@ class Agent(Module, metaclass=AutoParams):
             Define the input and output annotations to use the agent-as-a-function.
         """
         if annotations is None:
-            annotations = {"message": str, "return": str}
+            annotations = _DEFAULT_AGENT_ANNOTATIONS.copy()
 
         # Validate that signature and custom annotations are not both provided
-        if signature is not None and annotations != {"message": str, "return": str}:
+        if signature is not None and annotations != _DEFAULT_AGENT_ANNOTATIONS:
             raise ValueError(
                 "Cannot specify both 'signature' and custom 'annotations'. "
                 "When using a signature, annotations are generated automatically "
@@ -299,7 +303,7 @@ class Agent(Module, metaclass=AutoParams):
             self.set_annotations(annotations)
         else:
             # Set default temporarily, will be overridden by _set_signature
-            self.set_annotations({"message": str, "return": str})
+            self.set_annotations(_DEFAULT_AGENT_ANNOTATIONS.copy())
 
         self._set_config(config)
 
@@ -367,17 +371,17 @@ class Agent(Module, metaclass=AutoParams):
 
         Args:
             message: The input message, which can be:
-                - str: Direct task input (used as task_inputs)
+                - str: Direct task input (used as task)
                 - Message: Message object with fields mapped via message_fields.
                   Requires message_fields configuration, e.g.:
-                  message_fields={"task_inputs": "input.user"}
+                  message_fields={"task": "input.user"}
                 - dict: Task inputs as a dictionary
                 - None: When using named task arguments (see below)
             **kwargs: Can include:
                 - Reserved kwargs (runtime overrides for message_fields):
-                    - task_multimodal_inputs: Override multimodal inputs
+                    - task_multimodal: Override multimodal inputs
                     - messages: Override chat messages (chat history)
-                    - context_inputs: Override context
+                    - context: Override context
                     - model_preference: Override model preference
                     - vars: Override template/tool variables
                 - Named task arguments: When message=None and a task template is
@@ -403,7 +407,7 @@ class Agent(Module, metaclass=AutoParams):
             >>> # Message input (requires message_fields configuration)
             >>> agent_with_message = Agent(
             ...     model=model,
-            ...     message_fields={"task_inputs": "user.query"}
+            ...     message_fields={"task": "user.query"}
             ... )
             >>> msg = Message()
             >>> msg.set("user.query", "Hello")
@@ -416,7 +420,7 @@ class Agent(Module, metaclass=AutoParams):
             ... )
             >>> agent(name="Vilson", age=27)
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         try:
             model_response = self._execute_model(prefilling=self.prefilling, **inputs)
         except _GuardInterrupt as e:
@@ -430,7 +434,7 @@ class Agent(Module, metaclass=AutoParams):
         **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
-        inputs = await self._aprepare_task(message, **kwargs)
+        inputs = await self._aprepare_inputs(message, **kwargs)
         try:
             model_response = await self._aexecute_model(
                 prefilling=self.prefilling, **inputs
@@ -535,11 +539,11 @@ class Agent(Module, metaclass=AutoParams):
 
         if "tool_call" in model_response.response_type:
             model_response, messages = self._process_tool_call_response(
-                model_response, messages, vars, model_preference
+                message, model_response, messages, vars, model_preference
             )
         elif is_subclass_of(self.generation_schema, ToolFlowControl):
             model_response, messages = self._process_tool_flow_control_response(
-                model_response, messages, vars, model_preference
+                message, model_response, messages, vars, model_preference
             )
 
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
@@ -572,14 +576,14 @@ class Agent(Module, metaclass=AutoParams):
 
         if "tool_call" in model_response.response_type:
             model_response, messages = await self._aprocess_tool_call_response(
-                model_response, messages, vars, model_preference
+                message, model_response, messages, vars, model_preference
             )
         elif is_subclass_of(self.generation_schema, ToolFlowControl):
             (
                 model_response,
                 messages,
             ) = await self._aprocess_tool_flow_control_response(
-                model_response, messages, vars, model_preference
+                message, model_response, messages, vars, model_preference
             )
 
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
@@ -603,6 +607,7 @@ class Agent(Module, metaclass=AutoParams):
 
     def _process_tool_flow_control_response(
         self,
+        message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
         messages: Mapping[str, Any],
         vars: Mapping[str, Any],
@@ -630,7 +635,7 @@ class Agent(Module, metaclass=AutoParams):
 
             if flow_result.tool_calls:
                 tool_results = self._process_tool_call(
-                    flow_result.tool_calls, messages, vars
+                    flow_result.tool_calls, message, messages, vars
                 )
 
                 if tool_results.return_directly:
@@ -651,6 +656,7 @@ class Agent(Module, metaclass=AutoParams):
 
     async def _aprocess_tool_flow_control_response(
         self,
+        message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
         messages: Mapping[str, Any],
         vars: Mapping[str, Any],
@@ -680,7 +686,7 @@ class Agent(Module, metaclass=AutoParams):
 
             if flow_result.tool_calls:
                 tool_results = await self._aprocess_tool_call(
-                    flow_result.tool_calls, messages, vars
+                    flow_result.tool_calls, message, messages, vars
                 )
 
                 if tool_results.return_directly:
@@ -703,6 +709,7 @@ class Agent(Module, metaclass=AutoParams):
 
     def _process_tool_call_response(
         self,
+        message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
         messages: Mapping[str, Any],
         vars: Mapping[str, Any],
@@ -725,7 +732,9 @@ class Agent(Module, metaclass=AutoParams):
                         cprint(repr_str, bc="br2", ls="b")
 
                 tool_callings = raw_response.get_calls()
-                tool_results = self._process_tool_call(tool_callings, messages, vars)
+                tool_results = self._process_tool_call(
+                    tool_callings, message, messages, vars
+                )
 
                 if tool_results.return_directly:
                     tool_calls = tool_results.to_dict()
@@ -750,6 +759,7 @@ class Agent(Module, metaclass=AutoParams):
 
     async def _aprocess_tool_call_response(
         self,
+        message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
         messages: Mapping[str, Any],
         vars: Mapping[str, Any],
@@ -773,7 +783,7 @@ class Agent(Module, metaclass=AutoParams):
 
                 tool_callings = raw_response.get_calls()
                 tool_results = await self._aprocess_tool_call(
-                    tool_callings, messages, vars
+                    tool_callings, message, messages, vars
                 )
 
                 if tool_results.return_directly:
@@ -800,6 +810,7 @@ class Agent(Module, metaclass=AutoParams):
     def _process_tool_call(
         self,
         tool_callings: Mapping[str, Any],
+        message: Union[str, Mapping[str, Any], Message],
         messages: List[Mapping[str, Any]],
         vars: Mapping[str, Any],
     ) -> ToolResponses:
@@ -809,6 +820,7 @@ class Agent(Module, metaclass=AutoParams):
                 cprint(repr_str, bc="br2", ls="b")
         tool_results = self.tool_library(
             tool_callings=tool_callings,
+            message=message,
             messages=messages,
             vars=vars,
         )
@@ -826,6 +838,7 @@ class Agent(Module, metaclass=AutoParams):
     async def _aprocess_tool_call(
         self,
         tool_callings: Mapping[str, Any],
+        message: Union[str, Mapping[str, Any], Message],
         messages: List[Mapping[str, Any]],
         vars: Mapping[str, Any],
     ) -> ToolResponses:
@@ -836,6 +849,7 @@ class Agent(Module, metaclass=AutoParams):
                 cprint(repr_str, bc="br2", ls="b")
         tool_results = await self.tool_library.acall(
             tool_callings=tool_callings,
+            message=message,
             messages=messages,
             vars=vars,
         )
@@ -897,11 +911,12 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Task Preparation ---
 
-    def _prepare_task(  # noqa: C901
+    def _prepare_inputs(  # noqa: C901
         self, message: Optional[Union[str, Message, Mapping[str, Any]]] = None, **kwargs
     ) -> Mapping[str, Any]:
         """Prepare model input in ChatML format and execution params."""
         # Extract reserved kwargs
+        task = kwargs.pop("task", _UNSET)
         vars = kwargs.pop("vars", {})
         messages = kwargs.pop("messages", [])
         model_preference = kwargs.pop("model_preference", None)
@@ -911,27 +926,39 @@ class Agent(Module, metaclass=AutoParams):
             k: v for k, v in kwargs.items() if k not in _RESERVED_KWARGS
         }
 
-        # Handle named task arguments
-        if message is None and remaining_kwargs:
-            if not self.templates.get("task"):
+        is_message_envelope = isinstance(message, dotdict)
+        is_direct_message = message is not None and not is_message_envelope
+
+        if task is not _UNSET and remaining_kwargs:
+            raise ValueError(
+                f"Cannot pass both 'task' and named task arguments. "
+                f"Received task={type(task).__name__} and "
+                f"kwargs={list(remaining_kwargs.keys())}. "
+                f"Use either agent(task=...) or agent(key1=value1, key2=value2)"
+            )
+
+        # Handle explicit task argument and named task arguments
+        if task is not _UNSET:
+            if is_direct_message:
                 raise ValueError(
-                    f"Named task arguments require a 'task' template to be configured. "
-                    f"Received kwargs: {list(remaining_kwargs.keys())}. "
-                    f"Either configure a task template or pass arguments as: "
-                    f"agent({{'key': 'value'}}) or agent(Message(...))"
+                    f"Cannot pass both 'message' and 'task'. "
+                    f"Received message={type(message).__name__} and "
+                    f"task={type(task).__name__}. "
+                    f"Use either agent(message) or agent(task=...)"
                 )
-            # Convert named kwargs to dict for template rendering
-            message = remaining_kwargs
-            # Clear kwargs to avoid passing them down
+        elif remaining_kwargs:
+            if is_direct_message:
+                raise ValueError(
+                    f"Cannot pass both 'message' argument and named task arguments. "
+                    f"Received message={type(message).__name__} and "
+                    f"kwargs={list(remaining_kwargs.keys())}. "
+                    f"Use either agent(message) or agent(key1=value1, key2=value2)"
+                )
+            task = remaining_kwargs
             for key in remaining_kwargs:
                 kwargs.pop(key)
-        elif message is not None and remaining_kwargs:
-            raise ValueError(
-                f"Cannot pass both 'message' argument and named task arguments. "
-                f"Received message={type(message).__name__} and "
-                f"kwargs={list(remaining_kwargs.keys())}. "
-                f"Use either agent(message) or agent(key1=value1, key2=value2)"
-            )
+        elif not is_message_envelope:
+            task = message
 
         # Extract vars from Message if not provided
         if not vars and isinstance(message, dotdict) and self.vars is not None:
@@ -945,7 +972,7 @@ class Agent(Module, metaclass=AutoParams):
         ):
             messages = self._get_content_from_message(self.messages, message)
 
-        content = self._process_task_inputs(message, vars=vars, **kwargs)
+        content = self._render_task(message, task=task, vars=vars, **kwargs)
 
         if content is None and messages == []:
             raise ValueError(
@@ -953,7 +980,8 @@ class Agent(Module, metaclass=AutoParams):
                 "  - agent('your text')\n"
                 "  - agent({'key': 'value'})\n"
                 "  - agent(message=Message(...))\n"
-                "  - agent(param1=..., param2=...) with task template configured"
+                "  - agent(task=...)\n"
+                "  - agent(param1=..., param2=...)"
             )
 
         if content is not None:
@@ -972,13 +1000,14 @@ class Agent(Module, metaclass=AutoParams):
             "vars": vars,
         }
 
-    async def _aprepare_task(  # noqa: C901
+    async def _aprepare_inputs(  # noqa: C901
         self, message: Optional[Union[str, Message, Mapping[str, Any]]] = None, **kwargs
     ) -> Mapping[str, Any]:
-        """Async version of _prepare_task.
+        """Async version of _prepare_inputs.
         Prepare model input in ChatML format and execution params.
         """
         # Extract reserved kwargs
+        task = kwargs.pop("task", _UNSET)
         vars = kwargs.pop("vars", {})
         messages = kwargs.pop("messages", [])
         model_preference = kwargs.pop("model_preference", None)
@@ -988,27 +1017,39 @@ class Agent(Module, metaclass=AutoParams):
             k: v for k, v in kwargs.items() if k not in _RESERVED_KWARGS
         }
 
-        # Handle named task arguments
-        if message is None and remaining_kwargs:
-            if not self.templates.get("task"):
+        is_message_envelope = isinstance(message, dotdict)
+        is_direct_message = message is not None and not is_message_envelope
+
+        if task is not _UNSET and remaining_kwargs:
+            raise ValueError(
+                f"Cannot pass both 'task' and named task arguments. "
+                f"Received task={type(task).__name__} and "
+                f"kwargs={list(remaining_kwargs.keys())}. "
+                f"Use either agent(task=...) or agent(key1=value1, key2=value2)"
+            )
+
+        # Handle explicit task argument and named task arguments
+        if task is not _UNSET:
+            if is_direct_message:
                 raise ValueError(
-                    f"Named task arguments require a 'task' template to be configured. "
-                    f"Received kwargs: {list(remaining_kwargs.keys())}. "
-                    f"Either configure a task template or pass arguments as: "
-                    f"agent({{'key': 'value'}}) or agent(Message(...))"
+                    f"Cannot pass both 'message' and 'task'. "
+                    f"Received message={type(message).__name__} and "
+                    f"task={type(task).__name__}. "
+                    f"Use either agent(message) or agent(task=...)"
                 )
-            # Convert named kwargs to dict for template rendering
-            message = remaining_kwargs
-            # Clear kwargs to avoid passing them down
+        elif remaining_kwargs:
+            if is_direct_message:
+                raise ValueError(
+                    f"Cannot pass both 'message' argument and named task arguments. "
+                    f"Received message={type(message).__name__} and "
+                    f"kwargs={list(remaining_kwargs.keys())}. "
+                    f"Use either agent(message) or agent(key1=value1, key2=value2)"
+                )
+            task = remaining_kwargs
             for key in remaining_kwargs:
                 kwargs.pop(key)
-        elif message is not None and remaining_kwargs:
-            raise ValueError(
-                f"Cannot pass both 'message' argument and named task arguments. "
-                f"Received message={type(message).__name__} and "
-                f"kwargs={list(remaining_kwargs.keys())}. "
-                f"Use either agent(message) or agent(key1=value1, key2=value2)"
-            )
+        elif not is_message_envelope:
+            task = message
 
         # Extract vars from Message if not provided
         if not vars and isinstance(message, dotdict) and self.vars is not None:
@@ -1022,7 +1063,7 @@ class Agent(Module, metaclass=AutoParams):
         ):
             messages = self._get_content_from_message(self.messages, message)
 
-        content = await self._aprocess_task_inputs(message, vars=vars, **kwargs)
+        content = await self._arender_task(message, task=task, vars=vars, **kwargs)
 
         if content is None and messages == []:
             raise ValueError(
@@ -1030,7 +1071,8 @@ class Agent(Module, metaclass=AutoParams):
                 "  - agent('your text')\n"
                 "  - agent({'key': 'value'})\n"
                 "  - agent(message=Message(...))\n"
-                "  - agent(param1=..., param2=...) with task template configured"
+                "  - agent(task=...)\n"
+                "  - agent(param1=..., param2=...)"
             )
 
         if content is not None:
@@ -1050,10 +1092,11 @@ class Agent(Module, metaclass=AutoParams):
             "vars": vars,
         }
 
-    def _process_task_inputs(  # noqa: C901
+    def _render_task(  # noqa: C901
         self,
         message: Union[str, Message, Mapping[str, Any]],
         vars: Mapping[str, Any],
+        task: Any = _UNSET,
         **kwargs,
     ) -> Optional[Union[str, Mapping[str, Any]]]:
         content = ""
@@ -1062,90 +1105,109 @@ class Agent(Module, metaclass=AutoParams):
         if context_content:
             content += context_content
 
-        if isinstance(message, dotdict):
-            task_inputs = self._extract_message_values(self.task_inputs, message)
-        else:
-            task_inputs = message
+        if task is _UNSET:
+            if isinstance(message, dotdict):
+                task = self._extract_message_values(self.task, message)
+            else:
+                task = message
 
-        if task_inputs is None and self.templates.get("task") is None:
+        if task is None and self.templates.get("task") is None:
             return None
 
         if self.templates.get("task"):
-            if task_inputs:
-                if isinstance(task_inputs, str):
+            if task:
+                if isinstance(task, str):
                     pre_task = self._format_task_template(vars)
-                    task_content = self._format_template(task_inputs, pre_task)
-                elif isinstance(task_inputs, dict):
-                    task_inputs.update(vars)
-                    task_content = self._format_task_template(task_inputs)
+                    task_content = self._format_template(task, pre_task)
+                elif isinstance(task, Mapping):
+                    task_data = dotdict(task)
+                    task_data.update(vars)
+                    task_content = self._format_task_template(task_data)
+                else:
+                    task_content = str(task)
             # It's possible to use `task_template` as the default task message
-            # if no `task_inputs` is selected. This can be useful for multimodal
+            # if no `task` is selected. This can be useful for multimodal
             # models that require a text message to be sent along with the data
             elif vars:
                 task_content = self._format_task_template(vars)
             else:
                 task_content = self.templates.get("task")
         else:
-            task_content = task_inputs
-            if isinstance(task_content, Mapping):  # dict -> str
-                task_content = "\n".join(f"{k}: {v}" for k, v in task_content.items())
+            task_content = task
+            if isinstance(task_content, Mapping):
+                raise ValueError(
+                    "Dict task requires a 'task' template to be configured. "
+                    "Pass a string task or configure templates['task']."
+                )
+            if task_content is not None and not isinstance(task_content, str):
+                task_content = str(task_content)
 
         task_content = apply_xml_tags("task", task_content)
         content += task_content
         content = content.strip()  # Remove whitespace
 
-        multimodal_content = self._process_task_multimodal_inputs(message, **kwargs)
+        multimodal_content = self._render_task_multimodal(message, **kwargs)
         if multimodal_content:
             multimodal_content.append(ChatBlock.text(content))
             return multimodal_content
         return content
 
-    async def _aprocess_task_inputs(  # noqa: C901
+    async def _arender_task(  # noqa: C901
         self,
         message: Union[str, Message, Mapping[str, Any]],
         vars: Mapping[str, Any],
+        task: Any = _UNSET,
         **kwargs,
     ) -> Optional[Union[str, Mapping[str, Any]]]:
-        """Async version of _process_task_inputs."""
+        """Async version of _render_task."""
         content = ""
 
         context_content = self._context_manager(message, vars=vars, **kwargs)
         if context_content:
             content += context_content
 
-        if isinstance(message, dotdict):
-            task_inputs = self._extract_message_values(self.task_inputs, message)
-        else:
-            task_inputs = message
+        if task is _UNSET:
+            if isinstance(message, dotdict):
+                task = self._extract_message_values(self.task, message)
+            else:
+                task = message
 
-        if task_inputs is None and self.templates.get("task") is None:
+        if task is None and self.templates.get("task") is None:
             return None
 
         if self.templates.get("task"):
-            if task_inputs:
-                if isinstance(task_inputs, str):
+            if task:
+                if isinstance(task, str):
                     pre_task = self._format_task_template(vars)
-                    task_content = self._format_template(task_inputs, pre_task)
-                elif isinstance(task_inputs, dict):
-                    task_inputs.update(vars)
-                    task_content = self._format_task_template(task_inputs)
+                    task_content = self._format_template(task, pre_task)
+                elif isinstance(task, Mapping):
+                    task_data = dotdict(task)
+                    task_data.update(vars)
+                    task_content = self._format_task_template(task_data)
+                else:
+                    task_content = str(task)
             # It's possible to use `task_template` as the default task message
-            # if no `task_inputs` is selected. This can be useful for multimodal
+            # if no `task` is selected. This can be useful for multimodal
             # models that require a text message to be sent along with the data
             elif vars:
                 task_content = self._format_task_template(vars)
             else:
                 task_content = self.templates.get("task")
         else:
-            task_content = task_inputs
-            if isinstance(task_content, Mapping):  # dict -> str
-                task_content = "\n".join(f"{k}: {v}" for k, v in task_content.items())
+            task_content = task
+            if isinstance(task_content, Mapping):
+                raise ValueError(
+                    "Dict task requires a 'task' template to be configured. "
+                    "Pass a string task or configure templates['task']."
+                )
+            if task_content is not None and not isinstance(task_content, str):
+                task_content = str(task_content)
 
         task_content = apply_xml_tags("task", task_content)
         content += task_content
         content = content.strip()  # Remove whitespace
 
-        multimodal_content = await self._aprocess_task_multimodal_inputs(
+        multimodal_content = await self._arender_task_multimodal(
             message, **kwargs
         )
         if multimodal_content:
@@ -1165,33 +1227,33 @@ class Agent(Module, metaclass=AutoParams):
         if self.context_cache:  # Fixed Context Cache
             context_content += self.context_cache
 
-        context_inputs = None
-        runtime_context_inputs = kwargs.pop("context_inputs", None)
-        if runtime_context_inputs is not None:
-            context_inputs = runtime_context_inputs
+        context = None
+        runtime_context = kwargs.pop("context", None)
+        if runtime_context is not None:
+            context = runtime_context
         elif isinstance(message, dotdict):
-            context_inputs = self._extract_message_values(self.context_inputs, message)
+            context = self._extract_message_values(self.context, message)
 
-        if context_inputs is not None:
+        if context is not None:
             if self.templates.get("context"):
-                if isinstance(context_inputs, Mapping):
-                    context_inputs.update(vars)
+                if isinstance(context, Mapping):
+                    context.update(vars)
                     msg_context = self._format_template(
-                        context_inputs, self.templates.get("context")
+                        context, self.templates.get("context")
                     )
                 else:
                     pre_msg_context = self._format_template(
                         vars, self.templates.get("context")
                     )
-                    msg_context = self._format_template(context_inputs, pre_msg_context)
-            elif isinstance(context_inputs, str):
-                msg_context = context_inputs
-            elif isinstance(context_inputs, list):
-                msg_context = " ".join(str(v) for v in context_inputs if v is not None)
-            elif isinstance(context_inputs, dict):
+                    msg_context = self._format_template(context, pre_msg_context)
+            elif isinstance(context, str):
+                msg_context = context
+            elif isinstance(context, list):
+                msg_context = " ".join(str(v) for v in context if v is not None)
+            elif isinstance(context, dict):
                 msg_context = "\n".join(
                     f"{k}: {v if not isinstance(v, list) else ', '.join(v)}"
-                    for k, v in context_inputs.items()
+                    for k, v in context.items()
                 )
             context_content += msg_context
 
@@ -1203,7 +1265,7 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Multimodal Inputs ---
 
-    def _process_task_multimodal_inputs(
+    def _render_task_multimodal(
         self, message: Union[str, Message, Mapping[str, Any]], **kwargs
     ) -> Optional[List[Mapping[str, Any]]]:
         """Processes multimodal inputs (image, audio, video, file) via kwargs or
@@ -1211,12 +1273,12 @@ class Agent(Module, metaclass=AutoParams):
         Returns a list of multimodal content in ChatML format.
         """
         multimodal_paths = None
-        task_multimodal_inputs = kwargs.get("task_multimodal_inputs", None)
-        if task_multimodal_inputs is not None:
-            multimodal_paths = task_multimodal_inputs
-        elif isinstance(message, dotdict) and self.task_multimodal_inputs is not None:
+        task_multimodal = kwargs.get("task_multimodal", None)
+        if task_multimodal is not None:
+            multimodal_paths = task_multimodal
+        elif isinstance(message, dotdict) and self.task_multimodal is not None:
             multimodal_paths = self._extract_message_values(
-                self.task_multimodal_inputs, message
+                self.task_multimodal, message
             )
 
         if multimodal_paths is None:
@@ -1243,20 +1305,20 @@ class Agent(Module, metaclass=AutoParams):
 
         return content
 
-    async def _aprocess_task_multimodal_inputs(
+    async def _arender_task_multimodal(
         self, message: Union[str, Message, Mapping[str, Any]], **kwargs
     ) -> Optional[List[Mapping[str, Any]]]:
-        """Async version of _process_task_multimodal_inputs.
+        """Async version of _render_task_multimodal.
         Processes multimodal inputs (image, audio, video, file) via kwargs or message.
         Returns a list of multimodal content in ChatML format.
         """
         multimodal_paths = None
-        task_multimodal_inputs = kwargs.get("task_multimodal_inputs", None)
-        if task_multimodal_inputs is not None:
-            multimodal_paths = task_multimodal_inputs
-        elif isinstance(message, dotdict) and self.task_multimodal_inputs is not None:
+        task_multimodal = kwargs.get("task_multimodal", None)
+        if task_multimodal is not None:
+            multimodal_paths = task_multimodal
+        elif isinstance(message, dotdict) and self.task_multimodal is not None:
             multimodal_paths = self._extract_message_values(
-                self.task_multimodal_inputs, message
+                self.task_multimodal, message
             )
 
         if multimodal_paths is None:
@@ -1353,7 +1415,7 @@ class Agent(Module, metaclass=AutoParams):
         Accepts the same arguments as forward() to inspect what would be sent to
         the model.
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         model_execution_params = self._prepare_model_execution(
             prefilling=self.prefilling, **inputs
         )
@@ -1361,25 +1423,25 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Configuration ---
 
-    def _set_context_inputs(
-        self, context_inputs: Optional[Union[str, List[str]]] = None
+    def _set_context(
+        self, context: Optional[Union[str, List[str]]] = None
     ):
-        if isinstance(context_inputs, (str, list)) or context_inputs is None:
-            if isinstance(context_inputs, str) and context_inputs == "":
+        if isinstance(context, (str, list)) or context is None:
+            if isinstance(context, str) and context == "":
                 raise ValueError(
-                    "`context_inputs` requires a string not empty"
-                    f"given `{context_inputs}`"
+                    "`context` requires a string not empty"
+                    f"given `{context}`"
                 )
-            if isinstance(context_inputs, list) and not context_inputs:
+            if isinstance(context, list) and not context:
                 raise ValueError(
-                    "`context_inputs` requires a list not empty"
-                    f"given `{context_inputs}`"
+                    "`context` requires a list not empty"
+                    f"given `{context}`"
                 )
-            self.register_buffer("context_inputs", context_inputs)
+            self.register_buffer("context", context)
         else:
             raise TypeError(
-                "`context_inputs` requires a string, list or None"
-                f"given `{type(context_inputs)}`"
+                "`context` requires a string, list or None"
+                f"given `{type(context)}`"
             )
 
     def _set_context_cache(self, context_cache: Optional[str] = None):
@@ -1612,8 +1674,8 @@ class Agent(Module, metaclass=AutoParams):
 
         Args:
             message_fields: Dictionary mapping field names to their values.
-                Valid keys: "task_inputs", "task_multimodal_inputs", "messages",
-                "context_inputs", "model_preference", "vars"
+                Valid keys: "task", "task_multimodal", "messages",
+                "context", "model_preference", "vars"
 
         Raises:
             TypeError: If message_fields is not a dict or None
@@ -1621,20 +1683,20 @@ class Agent(Module, metaclass=AutoParams):
         """
         # Define valid keys for Agent class
         valid_keys = {
-            "task_inputs",
-            "task_multimodal_inputs",
+            "task",
+            "task_multimodal",
             "messages",
-            "context_inputs",
+            "context",
             "model_preference",
             "vars",
         }
 
         if message_fields is None:
             # Set all fields to None
-            self._set_task_inputs(None)
-            self._set_task_multimodal_inputs(None)
+            self._set_task(None)
+            self._set_task_multimodal(None)
             self._set_model_preference(None)
-            self._set_context_inputs(None)
+            self._set_context(None)
             self._set_messages(None)
             self._set_vars(None)
             return
@@ -1654,10 +1716,10 @@ class Agent(Module, metaclass=AutoParams):
             )
 
         # Set each field using its setter, defaulting to None if not provided
-        self._set_task_inputs(message_fields.get("task_inputs"))
-        self._set_task_multimodal_inputs(message_fields.get("task_multimodal_inputs"))
+        self._set_task(message_fields.get("task"))
+        self._set_task_multimodal(message_fields.get("task_multimodal"))
         self._set_model_preference(message_fields.get("model_preference"))
-        self._set_context_inputs(message_fields.get("context_inputs"))
+        self._set_context(message_fields.get("context"))
         self._set_messages(message_fields.get("messages"))
         self._set_vars(message_fields.get("vars"))
 

@@ -57,16 +57,16 @@ class MediaMaker(Module, metaclass=AutoParams):
             List of Hook instances to register on the model.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task_inputs", "task_multimodal_inputs"
+            Valid keys: "task", "task_multimodal"
             !!! example
                 message_fields={
-                    "task_inputs": "prompt.text",
-                    "task_multimodal_inputs": {"image": "image.input"}
+                    "task": "prompt.text",
+                    "task_multimodal": {"image": "image.input"}
                 }
 
             Field descriptions:
-            - task_inputs: Field path for task input (str)
-            - task_multimodal_inputs: Map datatypes to field paths (dict)
+            - task: Field path for task input (str)
+            - task_multimodal: Map datatypes to field paths (dict)
         response_format:
             Data output format.
         response_mode:
@@ -109,14 +109,14 @@ class MediaMaker(Module, metaclass=AutoParams):
                 - str: Direct prompt for media generation
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
-                - task_inputs: Override field path or direct value
-                - task_multimodal_inputs: Override multimodal inputs
+                - task: Override field path or direct value
+                - task_multimodal: Override multimodal inputs
                   (e.g., {"image": "path"})
 
         Returns:
             Generated media content (str or Message depending on response_mode).
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         try:
             model_response = self._execute_model(**inputs)
         except _GuardInterrupt as e:
@@ -128,7 +128,7 @@ class MediaMaker(Module, metaclass=AutoParams):
         self, message: Union[str, Message], **kwargs
     ) -> Union[str, Message]:
         """Async version of forward. Execute the media maker asynchronously."""
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         try:
             model_response = await self._aexecute_model(**inputs)
         except _GuardInterrupt as e:
@@ -188,18 +188,18 @@ class MediaMaker(Module, metaclass=AutoParams):
         response = self._prepare_response(raw_response, message)
         return response
 
-    def _prepare_task(self, message: Union[str, Message], **kwargs) -> Dict[str, Any]:
+    def _prepare_inputs(self, message: Union[str, Message], **kwargs) -> Dict[str, Any]:
         inputs = dotdict()
 
         if isinstance(message, dotdict):
-            prompt = self._extract_message_values(self.task_inputs, message)
+            prompt = self._extract_message_values(self.task, message)
         else:
             prompt = message
 
         if prompt is None:
             raise ValueError(
                 "`prompt` cannot be None, pass `message` as str or"
-                "set `task_inputs` and pass a Message"
+                "set `task` and pass a Message"
             )
         else:
             inputs.prompt = prompt
@@ -211,27 +211,27 @@ class MediaMaker(Module, metaclass=AutoParams):
         if model_preference:
             inputs.model_preference = model_preference
 
-        multimodal_content = self._process_task_multimodal_inputs(message, **kwargs)
+        multimodal_content = self._process_task_multimodal(message, **kwargs)
         if multimodal_content:
             inputs.update(multimodal_content)
 
         return inputs
 
-    def _process_task_multimodal_inputs(
+    def _process_task_multimodal(
         self, message: Union[str, Message, Dict[str, str]], **kwargs
     ) -> Dict[str, Any]:
         """Processes multimodal image inputs."""
-        task_multimodal_inputs = kwargs.pop("task_multimodal_inputs", None)
-        if task_multimodal_inputs is None and isinstance(message, dotdict):
-            task_multimodal_inputs = self._extract_message_values(
-                self.task_multimodal_inputs, message
+        task_multimodal = kwargs.pop("task_multimodal", None)
+        if task_multimodal is None and isinstance(message, dotdict):
+            task_multimodal = self._extract_message_values(
+                self.task_multimodal, message
             )
 
         content = {}
 
-        if task_multimodal_inputs:
+        if task_multimodal:
             for media_source in ["image", "mask"]:
-                data = task_multimodal_inputs.get(media_source, None)
+                data = task_multimodal.get(media_source, None)
                 if data:
                     content[media_source] = data
 
@@ -239,7 +239,7 @@ class MediaMaker(Module, metaclass=AutoParams):
 
     def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
         """Debug model input parameters."""
-        inputs = self._prepare_task(*args, **kwargs)
+        inputs = self._prepare_inputs(*args, **kwargs)
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 
