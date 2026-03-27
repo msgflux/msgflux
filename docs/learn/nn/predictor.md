@@ -43,7 +43,7 @@
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `model` | `BaseModel \| ModelGateway` | Any msgflux model or custom model |
-| `message_fields` | `dict \| None` | Map `Message` field names to inputs. Valid keys: `task_inputs`, `model_preference` |
+| `message_fields` | `dict \| None` | Map `Message` field names to inputs. Valid keys: `task`, `model_preference` |
 | `response_mode` | `str \| None` | Field path on the `Message` where the result is written. `None` returns the result directly |
 | `templates` | `dict[str, str] \| None` | Jinja templates dict. Valid keys: `response` |
 | `config` | `dict \| None` | Extra parameters passed directly to the model |
@@ -77,7 +77,7 @@ Any model that accepts `data` as input works with Predictor:
 
         class ContentModerator(nn.Predictor):
             model          = mf.Model.moderation("openai/omni-moderation-latest")
-            message_fields = {"task_inputs": "user_message"}
+            message_fields = {"task": "user_message"}
             response_mode  = "moderation"
 
         moderator = ContentModerator()
@@ -94,7 +94,7 @@ Any model that accepts `data` as input works with Predictor:
         ```python
         class SentimentClassifier(nn.Predictor):
             model          = mf.Model.text_classifier("vllm/my-sentiment-model")
-            message_fields = {"task_inputs": "text"}
+            message_fields = {"task": "text"}
             response_mode  = "sentiment"
 
         classifier = SentimentClassifier()
@@ -128,11 +128,11 @@ Any model that accepts `data` as input works with Predictor:
             model = mf.Model.text_classifier("vllm/my-model")
 
         class SpamDetector(BaseClassifier):
-            message_fields = {"task_inputs": "email_body"}
+            message_fields = {"task": "email_body"}
             response_mode  = "spam_result"
 
         class TopicClassifier(BaseClassifier):
-            message_fields = {"task_inputs": "article_text"}
+            message_fields = {"task": "article_text"}
             response_mode  = "topic"
         ```
 
@@ -198,12 +198,12 @@ Predictors work as preprocessing or guardrail steps in agent pipelines.
 
     class Moderator(nn.Predictor):
         model          = mf.Model.moderation("openai/omni-moderation-latest")
-        message_fields = {"task_inputs": "user_input"}
+        message_fields = {"task": "user_input"}
         response_mode  = "moderation"
 
     class Assistant(nn.Agent):
         model          = mf.Model.chat_completion("openai/gpt-4.1-mini")
-        message_fields = {"task_inputs": "user_input"}
+        message_fields = {"task": "user_input"}
         response_mode  = "response"
 
     class SafePipeline(nn.Module):

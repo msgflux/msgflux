@@ -182,7 +182,7 @@ Use Jinja2 templates to format results into readable strings. When a `response` 
         ```python
         class StructuredSearcher(nn.Searcher):
             retriever      = bm25
-            message_fields = {"task_inputs": "query.user"}
+            message_fields = {"task": "query.user"}
             config         = {"top_k": 3}
 
         searcher = StructuredSearcher()
@@ -200,7 +200,7 @@ Use Jinja2 templates to format results into readable strings. When a `response` 
         class PipelineSearcher(nn.Searcher):
             """Writes results into msg.context for downstream modules."""
             retriever      = bm25
-            message_fields = {"task_inputs": "question"}
+            message_fields = {"task": "question"}
             response_mode  = "context"
             config         = {"top_k": 3}
 

@@ -48,7 +48,7 @@ class ScriptWriter(nn.Agent):
     
     Format as: [ALEX] or [JORDAN] followed by their lines.
     """
-    message_fields = {"context_inputs": "research"}
+    message_fields = {"context": "research"}
     response_mode = "script"
 
 
@@ -156,7 +156,7 @@ class ConceptArtist(nn.Agent):
 
 class ImageGenerator(nn.MediaMaker):
     model = image_model
-    message_fields = {"task_inputs": "prompt"}
+    message_fields = {"task": "prompt"}
 
 
 class ArtDirector(nn.Module):
@@ -300,7 +300,7 @@ class IntelligenceSystem(nn.Module):
         
         # Generate report
         msg.executive_report = self.reporter(
-            context_inputs={
+            context={
                 "analyses": msg.competitor_analyses,
                 "assessment": msg.threat_assessment
             }
@@ -401,8 +401,8 @@ class TutorAgent(nn.Module):
         # If asking about a topic
         if msg.get("learn_topic"):
             adapted = self.adapter(
-                task_inputs=msg.learn_topic,
-                context_inputs={"learner_profile": msg.get("profile", {})}
+                task=msg.learn_topic,
+                context={"learner_profile": msg.get("profile", {})}
             )
             msg.lesson = adapted
             
@@ -508,10 +508,10 @@ class SceneAnalyzer(nn.Module):
         visual_result, narrative_result = F.bcast_gather(
             [
                 lambda img: self.visual(
-                    task_multimodal_inputs={"image": img}
+                    task_multimodal={"image": img}
                 ),
                 lambda img: self.narrative(
-                    task_multimodal_inputs={"image": img},
+                    task_multimodal={"image": img},
                     context=msg.get("scene_context", "")
                 )
             ],

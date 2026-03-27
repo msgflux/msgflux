@@ -20,7 +20,7 @@ The `nn.Transcriber` module wraps speech-to-text models to **transcribe audio** 
             """Transcribes user voice notes."""
             model          = mf.Model.speech_to_text("openai/whisper-1")
             response_mode  = "content"
-            message_fields = {"task_multimodal_inputs": {"audio": "user_audio"}}
+            message_fields = {"task_multimodal": {"audio": "user_audio"}}
 
         transcriber = Speech2Text()
         result = transcriber("/path/to/audio.mp3")
@@ -75,7 +75,7 @@ The `nn.Transcriber` module wraps speech-to-text models to **transcribe audio** 
 
         class Speech2Text(nn.Transcriber):
             model          = mf.Model.speech_to_text("openai/whisper-1")
-            message_fields = {"task_multimodal_inputs": {"audio": "user_audio"}}
+            message_fields = {"task_multimodal": {"audio": "user_audio"}}
             response_mode  = "transcription"
 
         transcriber = Speech2Text()
@@ -161,13 +161,13 @@ Transcribers are often the first step in a voice processing pipeline.
 
     class Speech2Text(nn.Transcriber):
         model          = mf.Model.speech_to_text("openai/whisper-1")
-        message_fields = {"task_multimodal_inputs": {"audio": "user_audio"}}
+        message_fields = {"task_multimodal": {"audio": "user_audio"}}
         response_mode  = "content"
 
     class Analyzer(nn.Agent):
         """Analyzes the transcribed text."""
         model          = mf.Model.chat_completion("openai/gpt-4.1-mini")
-        message_fields = {"task_inputs": "content"}
+        message_fields = {"task": "content"}
         response_mode  = "analysis"
 
     transcriber = Speech2Text()

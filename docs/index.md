@@ -92,7 +92,7 @@ One of the core ideas in msgFlux is that **interaction style is a module-level d
         You are assisting {{ user_name }}.
         {% if is_vip %} Prioritize this customer.{% endif %}
         """
-        message_fields = {"task_inputs": "issue", "vars": "variables"}  # (1)!
+        message_fields = {"task": "issue", "vars": "variables"}  # (1)!
         response_mode  = "solution"  # (2)!
 
     agent = SupportAgent()
@@ -219,7 +219,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         Storage used: 45GB / 100GB
         """
 
-        agent("Can I upgrade my storage?", context_inputs=account_info)
+        agent("Can I upgrade my storage?", context=account_info)
         ```
 
     === "Multimodal"
@@ -374,7 +374,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         class SentimentAnalyzer(nn.Agent):
             model            = mf.Model.chat_completion("openai/gpt-4.1-mini")
             generation_schema = Sentiment
-            message_fields   = {"task_inputs": "review"}
+            message_fields   = {"task": "review"}
             response_mode    = "sentiment"
             config           = {"verbose": True}
 
@@ -407,7 +407,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         analyzer = VisionAnalyzer()
         result = analyzer(
             "What is happening in this image?",
-            task_multimodal_inputs={"image": "https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg"},
+            task_multimodal={"image": "https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg"},
         )
         ```
 
@@ -437,7 +437,7 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
 
         class MeetingTranscriber(nn.Transcriber):
             model           = mf.Model.speech_to_text("openai/whisper-1")
-            message_fields  = {"task_multimodal_inputs": {"audio": "audio_path"}}
+            message_fields  = {"task_multimodal": {"audio": "audio_path"}}
             response_mode   = "transcript"
             response_format = "text"
             config          = {"language": "en"}
@@ -461,7 +461,7 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
 
         class Narrator(nn.Speaker):
             model           = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
-            message_fields  = {"task_inputs": "text"}
+            message_fields  = {"task": "text"}
             response_mode   = "audio"
             response_format = "pcm"
             prompt          = "Speak in a calm, professional tone."
@@ -485,7 +485,7 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
 
         class TextEmbedder(nn.Embedder):
             model          = mf.Model.text_embedding("openai/text-embedding-3-small")
-            message_fields = {"task_inputs": "texts"}
+            message_fields = {"task": "texts"}
             response_mode  = "vectors"
 
         embedder = TextEmbedder()
@@ -507,7 +507,7 @@ Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities
 
         class ImageGenerator(nn.MediaMaker):
             model          = mf.Model.text_to_image("openai/gpt-image-1")
-            message_fields = {"task_inputs": "prompt"}
+            message_fields = {"task": "prompt"}
             response_mode  = "image"
             config         = {"background": "transparent"}
 

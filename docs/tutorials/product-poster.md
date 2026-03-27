@@ -113,8 +113,8 @@ class PosterPromptAgent(nn.Agent):
     Return only the image generation prompt — nothing else.
     """
     message_fields = {
-        "task_inputs": "product_text",
-        "task_multimodal_inputs": {"image": "product_image"},
+        "task": "product_text",
+        "task_multimodal": {"image": "product_image"},
     }
     response_mode = "poster_prompt"
 ```
@@ -129,7 +129,7 @@ A `MediaMaker` takes the prompt and calls an image model to produce the poster b
 class PosterMaker(nn.MediaMaker):
     """Generates a marketing poster from a descriptive prompt."""
     model = mf.Model.text_to_image("openai/gpt-image-1.5")
-    message_fields = {"task_inputs": "poster_prompt"}
+    message_fields = {"task": "poster_prompt"}
     response_mode = "poster"
     negative_prompt = "blurry, distorted, low quality, pixelated, watermark, text artifacts"
 ```
@@ -212,8 +212,8 @@ class PosterPromptAgent(nn.Agent):
     typography hints. Return only the image generation prompt.
     """
     message_fields = {
-        "task_inputs": "product_text",
-        "task_multimodal_inputs": {"image": "product_image"},
+        "task": "product_text",
+        "task_multimodal": {"image": "product_image"},
     }
     response_mode = "poster_prompt"
 
@@ -221,7 +221,7 @@ class PosterPromptAgent(nn.Agent):
 class PosterMaker(nn.MediaMaker):
     """Generates a marketing poster from a descriptive prompt."""
     model = mf.Model.text_to_image("openai/gpt-image-1.5")
-    message_fields = {"task_inputs": "poster_prompt"}
+    message_fields = {"task": "poster_prompt"}
     response_mode = "poster"
     negative_prompt = "blurry, distorted, low quality, pixelated, watermark"
 

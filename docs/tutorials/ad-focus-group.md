@@ -191,7 +191,7 @@ class Refiner(nn.Agent):
     Rewrite the ad to address their concerns while keeping the core message.
     Return only the new ad text — nothing else.
     """
-    message_fields = {"task_inputs": "refinement_input"}
+    message_fields = {"task": "refinement_input"}
     response_mode = "ad_text"
 
 
@@ -277,7 +277,7 @@ class CreativeDirector(nn.Agent):
 
     Return only the ad text.
     """
-    message_fields = {"task_inputs": "product_description"}
+    message_fields = {"task": "product_description"}
     response_mode = "ad_text"
 
 
@@ -285,7 +285,7 @@ class PosterMaker(nn.MediaMaker):
     """Generates a poster image from ad text."""
 
     model = mf.Model.text_to_image("openai/gpt-image-1")
-    message_fields = {"task_inputs": "poster_prompt"}
+    message_fields = {"task": "poster_prompt"}
     response_mode = "poster"
     config = {"size": "1536x1024", "quality": "high"}
 
@@ -411,7 +411,7 @@ class CreativeDirector(nn.Agent):
 
     Return only the ad text.
     """
-    message_fields = {"task_inputs": "product_description"}
+    message_fields = {"task": "product_description"}
     response_mode = "ad_text"
 
 
@@ -426,7 +426,7 @@ class Refiner(nn.Agent):
     Rewrite the ad to address their concerns while keeping the core message.
     Return only the new ad text — nothing else.
     """
-    message_fields = {"task_inputs": "refinement_input"}
+    message_fields = {"task": "refinement_input"}
     response_mode = "ad_text"
 
 
@@ -436,7 +436,7 @@ class PosterMaker(nn.MediaMaker):
     """Generates a poster image from ad text."""
 
     model = mf.Model.text_to_image("openai/gpt-image-1")
-    message_fields = {"task_inputs": "poster_prompt"}
+    message_fields = {"task": "poster_prompt"}
     response_mode = "poster"
     config = {"size": "1536x1024", "quality": "high"}
 

@@ -41,7 +41,7 @@
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `model` | `MEDIA_MODEL_TYPES` | Media generation model |
-| `message_fields` | `dict` | Map `Message` field names to inputs. Valid keys: `task_inputs`, `task_multimodal_inputs` |
+| `message_fields` | `dict` | Map `Message` field names to inputs. Valid keys: `task`, `task_multimodal` |
 | `response_mode` | `str \| None` | Field path on the `Message` where the result is written. `None` returns the result directly |
 | `response_format` | `"base64" \| "url" \| None` | Output format for the generated media |
 | `negative_prompt` | `str \| None` | What to avoid in generation |
@@ -98,13 +98,13 @@
         # Edit with reference image
         edited = editor(
             "Make it look like sunset",
-            task_multimodal_inputs={"image": "/path/to/photo.jpg"}
+            task_multimodal={"image": "/path/to/photo.jpg"}
         )
 
         # Edit with mask
         edited = editor(
             "Add a flamingo in the pool",
-            task_multimodal_inputs={
+            task_multimodal={
                 "image": "/path/to/pool.jpg",
                 "mask": "/path/to/mask.png"
             }
@@ -136,7 +136,7 @@
 
         class Maker(nn.MediaMaker):
             model = mf.Model.text_to_image("openai/gpt-image-1")
-            message_fields = {"task_inputs": "prompt"}
+            message_fields = {"task": "prompt"}
             response_mode = "generated_image"
 
         maker = Maker()
@@ -249,12 +249,12 @@ Chain an `Agent` (prompt engineer) and a `MediaMaker` (image generator) using `I
         Create a detailed image generation prompt from the story scene.
         Focus on visual elements, lighting, style, and composition.
         """
-        message_fields = {"task_inputs": "scene"}
+        message_fields = {"task": "scene"}
         response_mode = "prompt"
 
     class ImageGenerator(nn.MediaMaker):
         model = mf.Model.text_to_image("openai/gpt-image-1")
-        message_fields = {"task_inputs": "prompt"}
+        message_fields = {"task": "prompt"}
         response_mode = "illustration"
 
     prompter = StoryToPrompt()

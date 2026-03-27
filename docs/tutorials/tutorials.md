@@ -41,7 +41,7 @@ class RAGRetriever(nn.Searcher):
     """Retrieves relevant documents."""
     retriever = vectordb
     model = embedder
-    message_fields = {"task_inputs": "question"}
+    message_fields = {"task": "question"}
     response_mode = "context"
 
 
@@ -51,8 +51,8 @@ class RAGGenerator(nn.Agent):
     system_message = "Answer questions using only the provided context."
     instructions = "If the answer is not in the context, say you don't know."
     message_fields = {
-        "task_inputs": "question",
-        "context_inputs": "context"
+        "task": "question",
+        "context": "context"
     }
     response_mode = "answer"
 
@@ -395,7 +395,7 @@ class CustomerServiceBot(nn.Module):
         
         msg.response = self.agent(
             msg.content,
-            context_inputs=context
+            context=context
         )
         
         return msg
@@ -444,7 +444,7 @@ agent = ConversationalAgent()
 user_msg = "Hi! My name is Alice and I'm a software engineer."
 chat.add_user_message(user_msg)
 
-response = agent(task_messages=chat.get_messages())
+response = agent(messages=chat.get_messages())
 chat.add_assist_message(response.model_response)
 print(f"User: {user_msg}")
 print(f"Agent: {response.model_response}\n")
@@ -453,7 +453,7 @@ print(f"Agent: {response.model_response}\n")
 user_msg = "What frameworks should I learn for web development?"
 chat.add_user_message(user_msg)
 
-response = agent(task_messages=chat.get_messages())
+response = agent(messages=chat.get_messages())
 chat.add_assist_message(response.model_response)
 print(f"User: {user_msg}")
 print(f"Agent: {response.model_response}\n")
@@ -462,7 +462,7 @@ print(f"Agent: {response.model_response}\n")
 user_msg = "Which one would be best for someone like me?"
 chat.add_user_message(user_msg)
 
-response = agent(task_messages=chat.get_messages())
+response = agent(messages=chat.get_messages())
 print(f"User: {user_msg}")
 print(f"Agent: {response.model_response}")
 

@@ -17,16 +17,16 @@ The **declarative approach** with `message_fields` shines when designing complex
 
 | Parameter | Description | Init | Runtime |
 |-----------|-------------|:----:|:-------:|
-| `task_inputs` | Main task input (string or dict for templates) | | ✅ |
-| `context_inputs` | Dynamic context passed at call time | | ✅ |
+| `task` | Main task input (string or dict for templates) | | ✅ |
+| `context` | Dynamic context passed at call time | | ✅ |
 | `context_cache` | Fixed context stored in the agent | ✅ | |
-| `task_multimodal_inputs` | Multimodal inputs (image, audio, file) | | ✅ |
-| `task_messages` | Conversation history (ChatML format) | | ✅ |
+| `task_multimodal` | Multimodal inputs (image, audio, file) | | ✅ |
+| `messages` | Conversation history (ChatML format) | | ✅ |
 | `vars` | Variables for Agent, Templates and Tools | | ✅ |
 
 ## How Task and Context are Combined
 
-When you pass `context_inputs`, the context is injected **inside the task** using XML-like tags:
+When you pass `context`, the context is injected **inside the task** using XML-like tags:
 
 ```xml
 <context>
@@ -46,7 +46,7 @@ This structure helps the model clearly distinguish between background informatio
 
     === "Context Inputs (str)"
 
-        Pass task as first argument and context via `context_inputs`:
+        Pass task as first argument and context via `context`:
 
         ```python
         # pip install msgflux[openai]
@@ -68,7 +68,7 @@ This structure helps the model clearly distinguish between background informatio
         """
 
         params = agent.inspect_model_execution_params(
-            "Create a pitch for this client", context_inputs=context
+            "Create a pitch for this client", context=context
         )
         print(params)
         ```
@@ -96,7 +96,7 @@ This structure helps the model clearly distinguish between background informatio
 
         agent = CompanyAgent()
         params = agent.inspect_model_execution_params(
-            "Write a response to a customer complaint", context_inputs=context
+            "Write a response to a customer complaint", context=context
         )
         print(params)
         ```
@@ -117,7 +117,7 @@ This structure helps the model clearly distinguish between background informatio
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             tools = [scrape_website]
             templates = {"task": "Summarize the news on this site: {}"}
-            message_fields = {"task_inputs": "content"} # Where to read
+            message_fields = {"task": "content"} # Where to read
             response_mode = "summary"                   # Where to write
 
         scraper = Scraper()
@@ -144,8 +144,8 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 
 | Template | Purpose | Data Source |
 |----------|---------|-------------|
-| `task` | Format the task/question sent to the model | `task_inputs` dict + [vars](vars.md) |
-| `context` | Format background context | `context_inputs` dict + [vars](vars.md) |
+| `task` | Format the task/question sent to the model | `task` dict + [vars](vars.md) |
+| `context` | Format background context | `context` dict + [vars](vars.md) |
 | `response` | Format the model's output before returning | Model output fields + [vars](vars.md) |
 
 !!! tip "Response Template + Generation Schema"
@@ -179,7 +179,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         agent = Assistant()
 
         response = agent(
-            task_inputs={"user_input": "Who was Nikola Tesla?"},
+            task={"user_input": "Who was Nikola Tesla?"},
             vars={"user_name": "Bruce Wayne"}
         )
         ```
@@ -213,7 +213,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 
         response = agent(
             "Create a pitch",
-            context_inputs={
+            context={
                 "client_name": "EcoSupply Ltd.",
                 "industry": "Sustainable packaging",
                 "pain_points": ["High costs", "Certification needs"]
@@ -283,7 +283,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
                 {% endif %}
                 """
             }
-            message_fields = {"task_inputs": "content"}
+            message_fields = {"task": "content"}
             response_mode = "assistant.output"
             config = {"verbose": True}
 
@@ -427,12 +427,12 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         # Output: "The sentence was classified as positive, with a confidence of 92.5%."
         ```
 
-!!! info "Task Template Without task_inputs"
-    When you configure a `task` template but don't pass `task_inputs`, the rendered template itself becomes the task. This is useful for scenarios where the prompt is fixed and only some component changes (like images or [vars](vars.md)).
+!!! info "Task Template Without task"
+    When you configure a `task` template but don't pass `task`, the rendered template itself becomes the task. This is useful for scenarios where the prompt is fixed and only some component changes (like images or [vars](vars.md)).
 
 ## Multimodal Inputs
 
-Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal model (e.g., `gpt-4.1`, `gpt-4.1-mini`).
+Pass images, audio, or files via `task_multimodal`. Requires a multimodal model (e.g., `gpt-4.1`, `gpt-4.1-mini`).
 
 | Media | Single | Multiple |
 |-------|:------:|:--------:|
@@ -466,7 +466,7 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
         # Single image (URL)
         response = agent(
             "Describe this image",
-            task_multimodal_inputs={
+            task_multimodal={
                 "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
             }
         )
@@ -474,7 +474,7 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
         # Multiple images for comparison
         response = agent(
             "Compare these two images",
-            task_multimodal_inputs={
+            task_multimodal={
                 "image": [
                     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/280px-PNG_transparency_demonstration_1.png",
                     "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/320px-Camponotus_flavomarginatus_ant.jpg"
@@ -483,7 +483,7 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
         )
 
         # With task template (fixed prompt, variable image)
-        # When task_inputs is not passed, the rendered template becomes the task
+        # When task is not passed, the rendered template becomes the task
         class DescribeAgent(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             templates = {"task": "Describe this image in {{ language }}."}
@@ -492,7 +492,7 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
 
         # Inspect what the model would receive
         params = describe_agent.inspect_model_execution_params(
-            task_multimodal_inputs={
+            task_multimodal={
                 "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
             },
             vars={"language": "Portuguese"}
@@ -502,7 +502,7 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
 
         # Execute the agent
         response = describe_agent(
-            task_multimodal_inputs={
+            task_multimodal={
                 "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
             },
             vars={"language": "Portuguese"}
@@ -527,8 +527,8 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
         class VisionAgent(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             message_fields = {
-                "task_inputs": "user.query",
-                "task_multimodal_inputs": {"image": "user.image_url"}
+                "task": "user.query",
+                "task_multimodal": {"image": "user.image_url"}
             }
 
         agent = VisionAgent()
@@ -544,8 +544,8 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
         class ComparisonAgent(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             message_fields = {
-                "task_inputs": "user.query",
-                "task_multimodal_inputs": {"image": "user.images"}
+                "task": "user.query",
+                "task_multimodal": {"image": "user.images"}
             }
 
         comparison_agent = ComparisonAgent()
@@ -578,7 +578,7 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
 
         response = agent(
             "Transcribe this audio and identify the speaker's emotion",
-            task_multimodal_inputs={"audio": "/path/to/recording.wav"}
+            task_multimodal={"audio": "/path/to/recording.wav"}
         )
         ```
 
@@ -601,13 +601,13 @@ Pass images, audio, or files via `task_multimodal_inputs`. Requires a multimodal
         # From URL
         response = agent(
             "Summarize the key findings of this paper",
-            task_multimodal_inputs={"file": "https://arxiv.org/pdf/1706.03762.pdf"}
+            task_multimodal={"file": "https://arxiv.org/pdf/1706.03762.pdf"}
         )
 
         # From local file
         response = agent(
             "Extract the main conclusions",
-            task_multimodal_inputs={"file": "./report.pdf"}
+            task_multimodal={"file": "./report.pdf"}
         )
         ```
 
@@ -739,8 +739,8 @@ In declarative mode, you configure the agent once with `message_fields` and `res
 class MyAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     message_fields = {
-        "task_inputs": "user.query",            # Read task from msg.user.query
-        "context_inputs": "context.background"  # Read context from msg.context.background
+        "task": "user.query",            # Read task from msg.user.query
+        "context": "context.background"  # Read context from msg.context.background
     }
     response_mode = "agent.output"              # Write response to msg.agent.output
 ```
@@ -763,21 +763,21 @@ It is especially powerful in dynamic pipelines where the same agent may receive 
 class QAAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     message_fields = {
-        "task_inputs": ("refined.question", "user.question", "user.raw_input")
+        "task": ("refined.question", "user.question", "user.raw_input")
     }
     response_mode = "qa.answer"
 ```
 
 If `refined.question` is present in the message, it is used. Otherwise the agent falls back to `user.question`, and then to `user.raw_input`.
 
-OR inputs also work inside dict-valued fields (e.g. `task_multimodal_inputs`):
+OR inputs also work inside dict-valued fields (e.g. `task_multimodal`):
 
 ```python
 class VisionAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     message_fields = {
-        "task_inputs": ("user.query", "user.raw_input"),        # OR on task
-        "task_multimodal_inputs": {
+        "task": ("user.query", "user.raw_input"),        # OR on task
+        "task_multimodal": {
             "image": ("user.photo_url", "user.image")           # OR on image
         }
     }
@@ -798,14 +798,14 @@ class VisionAgent(nn.Agent):
     class Refiner(nn.Agent):
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
         instructions = "Rewrite the question to be clearer and more specific."
-        message_fields = {"task_inputs": "user.question"}
+        message_fields = {"task": "user.question"}
         response_mode = "refined.question"
 
     class Answerer(nn.Agent):
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
         message_fields = {
             # Use refined question if available, fall back to original
-            "task_inputs": ("refined.question", "user.question")
+            "task": ("refined.question", "user.question")
         }
         response_mode = "answer"
 
@@ -825,4 +825,3 @@ class VisionAgent(nn.Agent):
     answerer(msg_b)  # uses user.question directly
     print(msg_b.answer)
     ```
-

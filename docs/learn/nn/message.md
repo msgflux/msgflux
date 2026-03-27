@@ -52,9 +52,9 @@ import msgflux.nn as nn
 class Analyzer(nn.Agent):
     model = model
     message_fields = {
-        "task_inputs": "content",                    # Read task
-        "task_multimodal_inputs": {"image": "images.user"},  # Read image
-        "context_inputs": "context.data",            # Read context
+        "task": "content",                    # Read task
+        "task_multimodal": {"image": "images.user"},  # Read image
+        "context": "context.data",            # Read context
         "vars": "extra.vars"                         # Read vars
     }
     response_mode = "outputs.analysis"               # Write response
@@ -150,13 +150,13 @@ from msgflux import Message
 
 class Speech2Text(nn.Transcriber):
     model = mf.Model.speech_to_text("openai/whisper-1")
-    message_fields = {"task_multimodal_inputs": {"audio": "user_audio"}}
+    message_fields = {"task_multimodal": {"audio": "user_audio"}}
     response_mode = "content"
 
 
 class Analyzer(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    message_fields = {"task_inputs": "content"}
+    message_fields = {"task": "content"}
     response_mode = "outputs.analysis"
 
 

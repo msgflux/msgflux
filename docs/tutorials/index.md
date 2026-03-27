@@ -34,7 +34,7 @@ class ScriptWriter(nn.Agent):
     Output the script as a list of turns.
     """
     signature = "topic -> script: list[dict[str, str]]"
-    message_fields = {"task_inputs": "topic"}
+    message_fields = {"task": "topic"}
     response_mode = "script"
 
 class AudioProducer(nn.Module):
@@ -117,7 +117,7 @@ class ArtDirector(nn.Module):
             # Production
             "artist": nn.MediaMaker(
                 model=mf.Model.text_to_image("openai/dall-e-3"),
-                message_fields={"task_inputs": "selected_concept"},
+                message_fields={"task": "selected_concept"},
                 response_mode="artwork"
             ),
             # Quality Control
@@ -125,7 +125,7 @@ class ArtDirector(nn.Module):
                 model=mf.Model.chat_completion("openai/gpt-4-vision-preview"),
                 instructions="Rate this image 1-10 on composition and relevance.",
                 signature="image -> score: int, critique: str",
-                message_fields={"task_multimodal_inputs": {"image": "artwork"}},
+                message_fields={"task_multimodal": {"image": "artwork"}},
                 response_mode="review"
             )
         })
@@ -242,7 +242,7 @@ class Validator(nn.Module):
         self.synthesizer = nn.Agent(
             model, 
             instructions="Synthesize all reports into a Go/No-Go recommendation.",
-            message_fields={"context_inputs": "reports"}
+            message_fields={"context": "reports"}
         )
 
     def forward(self, msg):

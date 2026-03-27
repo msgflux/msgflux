@@ -275,7 +275,7 @@ Speakers typically sit at the end of a voice pipeline (Agent → Speaker).
             """Reads notifications."""
             model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
             response_mode = "audio"
-            message_fields = {"task_inputs": "notification.text"}
+            message_fields = {"task": "notification.text"}
             response_format = "mp3"
 
         speaker = NotificationSpeaker()

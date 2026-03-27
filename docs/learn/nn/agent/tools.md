@@ -848,9 +848,35 @@ Use cases:
         print(user_vars)  # {"favorite_color": "blue"}
         ```
 
+#### inject_message
+
+With `inject_message=True`, the tool receives the original `message` passed to the
+agent. This is useful when the tool needs access to the full envelope object,
+including `Message` fields that should not be part of the public tool schema.
+
+Use cases:
+
+- Agent-as-a-tool with declarative `Message` envelopes
+- Tools that need `response_mode` side effects on the original message
+- Access to `vars`, metadata, or other fields outside the public task schema
+
+???+ example
+
+    ```python
+    @mf.tool_config(inject_message=True)
+    def inspect_original_message(message, **kwargs) -> str:
+        """Inspect the original message envelope."""
+        if isinstance(message, mf.Message):
+            return str(message.get("meta.trace_id"))
+        return "No structured message available."
+    ```
+
 #### inject_messages
 
-With `inject_messages=True`, the tool receives the agent's internal state (conversation history) as `task_messages` in kwargs. This is particularly useful for **agent-as-a-tool** patterns where you want to pass the full conversation context to a specialist agent.
+With `inject_messages=True`, the tool receives the agent's internal state
+(conversation history) as `messages` in kwargs. This is particularly useful for
+**agent-as-a-tool** patterns where you want to pass the full conversation context
+to a specialist agent.
 
 Use cases:
 
@@ -875,7 +901,7 @@ Use cases:
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         # With inject_messages, the specialist receives
-        # the coordinator's conversation as task_messages
+        # the coordinator's conversation as messages
         @mf.tool_config(inject_messages=True)
         class Specialist(nn.Agent):
             """Expert that needs conversation context."""
@@ -892,7 +918,7 @@ Use cases:
         coordinator = Coordinator()
 
         # When coordinator calls specialist, the full conversation
-        # is passed via task_messages parameter
+        # is passed via messages parameter
         response = coordinator("Help me with a complex problem")
         ```
 
@@ -910,7 +936,7 @@ Use cases:
         @mf.tool_config(inject_messages=True)
         def check_safety(**kwargs) -> dict:
             """Check if the conversation is safe to continue."""
-            messages = kwargs.get("task_messages", [])
+            messages = kwargs.get("messages", [])
             last_message = messages[-1]["content"] if messages else ""
 
             # Simple keyword-based safety check
@@ -947,7 +973,7 @@ Use cases:
         @mf.tool_config(inject_messages=True)
         def analyze_shared_images(**kwargs) -> str:
             """Analyze all images shared in the conversation."""
-            messages = kwargs.get("task_messages", [])
+            messages = kwargs.get("messages", [])
 
             images = []
             for msg in messages:

@@ -89,15 +89,15 @@ class PIX(nn.Module):
                 name="transcriber",
                 model=stt_model,
                 response_mode="content",
-                task_multimodal_inputs={"audio": "user_audio"},
+                task_multimodal={"audio": "user_audio"},
             ),
             "extractor": nn.Agent(
                 name="extractor",
                 model=chat_model,
                 signature=pix_signature,
                 response_mode="extraction",
-                task_inputs="content",
-                task_multimodal_inputs={"image": "user_image"},
+                task="content",
+                task_multimodal={"image": "user_image"},
             ),
         })
         self.register_buffer(
@@ -263,15 +263,15 @@ class PIX(nn.Module):
                 name="transcriber",
                 model=stt_model,
                 response_mode="content",
-                task_multimodal_inputs={"audio": "user_audio"},
+                task_multimodal={"audio": "user_audio"},
             ),
             "extractor": nn.Agent(
                 name="extractor",
                 model=chat_model,
                 signature="text -> amount: float, key_type: Literal['cpf', 'cnpj', 'email', 'phone_number', 'name'], key_id: str",
                 response_mode="extraction",
-                task_inputs="content",
-                task_multimodal_inputs={"image": "user_image"},
+                task="content",
+                task_multimodal={"image": "user_image"},
             ),
         })
         self.register_buffer(

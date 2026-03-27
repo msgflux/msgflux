@@ -291,7 +291,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
         # Task template automatically includes image placeholder
         print(agent.task_template)
 
-        response = agent(task_multimodal_inputs={
+        response = agent(task_multimodal={
             "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
         })
         print(response.label)        # "Nature boardwalk"
@@ -317,7 +317,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
         # Task template automatically includes image placeholder
         print(agent.task_template)
 
-        response = agent(task_multimodal_inputs={
+        response = agent(task_multimodal={
             "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
         })
         print(response.label)        # "Nature boardwalk"
@@ -370,7 +370,7 @@ When using signatures, you can pass inputs in multiple ways:
 
     === "With Context"
 
-        Combine with `context_inputs`:
+        Combine with `context`:
 
         ```python
         # pip install msgflux[openai]
@@ -393,7 +393,7 @@ When using signatures, you can pass inputs in multiple ways:
         response = agent(
             text="Long article...",
             style="casual",
-            context_inputs="Focus on the key takeaways"
+            context="Focus on the key takeaways"
         )
         ```
 
@@ -547,11 +547,11 @@ When an agent has a signature, its annotations are automatically configured base
 
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-    # Without signature: default annotation is "message: str"
+    # Without signature: default annotation is "task: str"
     class BasicAgent(nn.Agent):
         model = model
 
-    print(BasicAgent().annotations)  # {"message": str}
+    print(BasicAgent().annotations)  # {"task": str}
 
     # With signature: annotations match the input fields
     class AnalyzeSentiment(mf.Signature):
