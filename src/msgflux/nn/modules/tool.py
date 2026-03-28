@@ -553,10 +553,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
-            tool_params = tool_params or {}
 
             if config.get("handoff", False) or config.get("disable_input", False):
-                tool_params = {}
+                call_params = {}
+            else:
+                call_params = tool_params or {}
 
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
@@ -568,13 +569,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
                                 f"The tool `{tool_name}` requires the injected "
                                 f"parameter `{key}`, but it was not found."
                             )
-                        tool_params[key] = vars[key]
+                        call_params[key] = vars[key]
                 elif inject_vars is True:
-                    tool_params["vars"] = vars
+                    call_params["vars"] = vars
 
             if config.get("spawn", False):
                 return_directly = False
-                F.spawn(tool, **(tool_params or {}))
+                F.spawn(tool, **call_params)
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
@@ -596,25 +597,24 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 continue
 
             if config.get("inject_messages", False):  # Add messages
-                tool_params["messages"] = messages
+                call_params["messages"] = messages
 
             if config.get("inject_message", False):  # Add original message/envelope
-                tool_params["message"] = message
+                call_params["message"] = message
 
             if not config.get("return_direct", False):
                 return_directly = False
 
-            final_tool_params = tool_params
             # Add tool_call_id for telemetry
-            final_tool_params["tool_call_id"] = tool_id
-            prepared_calls.append(partial(tool, **final_tool_params))
+            call_params["tool_call_id"] = tool_id
+            prepared_calls.append(partial(tool, **call_params))
 
             call_metadata.append(
                 dotdict(
                     id=tool_id,
                     name=tool_name,
                     config=config,
-                    params=final_tool_params,
+                    params=call_params,
                 )
             )
 
@@ -693,10 +693,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
-            tool_params = tool_params or {}
 
             if config.get("handoff", False) or config.get("disable_input", False):
-                tool_params = {}
+                call_params = {}
+            else:
+                call_params = tool_params or {}
 
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
@@ -708,13 +709,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
                                 f"The tool `{tool_name}` requires the injected "
                                 f"parameter `{key}`, but it was not found."
                             )
-                        tool_params[key] = vars[key]
+                        call_params[key] = vars[key]
                 elif inject_vars is True:
-                    tool_params["vars"] = vars
+                    call_params["vars"] = vars
 
             if config.get("spawn", False):
                 return_directly = False
-                await F.aspawn(tool.acall, **(tool_params or {}))
+                await F.aspawn(tool.acall, **call_params)
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
@@ -736,25 +737,24 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 continue
 
             if config.get("inject_messages", False):  # Add messages
-                tool_params["messages"] = messages
+                call_params["messages"] = messages
 
             if config.get("inject_message", False):  # Add original message/envelope
-                tool_params["message"] = message
+                call_params["message"] = message
 
             if not config.get("return_direct", False):
                 return_directly = False
 
-            final_tool_params = tool_params
             # Add tool_call_id for telemetry
-            final_tool_params["tool_call_id"] = tool_id
-            prepared_calls.append(partial(tool.acall, **final_tool_params))
+            call_params["tool_call_id"] = tool_id
+            prepared_calls.append(partial(tool.acall, **call_params))
 
             call_metadata.append(
                 dotdict(
                     id=tool_id,
                     name=tool_name,
                     config=config,
-                    params=final_tool_params,
+                    params=call_params,
                 )
             )
 
