@@ -277,6 +277,17 @@ class Agent(Module, metaclass=AutoParams):
                 "from the signature inputs. Remove the 'annotations' parameter."
             )
 
+        # Validate custom annotations don't use reserved kwargs
+        if annotations != _DEFAULT_AGENT_ANNOTATIONS:
+            input_names = {k for k in annotations if k != "return"}
+            conflicts = input_names & _RESERVED_KWARGS
+            if conflicts:
+                raise ValueError(
+                    f"Annotation input names {conflicts} conflict with reserved "
+                    f"Agent kwargs. Reserved names: {_RESERVED_KWARGS}. "
+                    f"Rename these inputs to avoid conflicts."
+                )
+
         # Validate that signature and expected_output are not both provided
         if signature is not None and expected_output is not None:
             raise ValueError(
@@ -1775,6 +1786,16 @@ class Agent(Module, metaclass=AutoParams):
                 raise TypeError(
                     "`signature` requires a string, `Signature` or None "
                     f"given `{type(signature)}`"
+                )
+
+            # Validate signature input names don't conflict with reserved kwargs
+            input_names = {field.name for field in inputs_info}
+            conflicts = input_names & _RESERVED_KWARGS
+            if conflicts:
+                raise ValueError(
+                    f"Signature input names {conflicts} conflict with reserved "
+                    f"Agent kwargs. Reserved names: {_RESERVED_KWARGS}. "
+                    f"Rename these inputs to avoid conflicts."
                 )
 
             # typed_parser

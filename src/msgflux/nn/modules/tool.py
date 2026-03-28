@@ -208,7 +208,7 @@ class LocalTool(Tool):
 
 def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
     """Convert a callable in nn.Tool."""
-    tool_config = impl.__dict__.get("tool_config", dotdict())
+    tool_config = getattr(impl, "tool_config", dotdict())
 
     name_overridden = tool_config.pop("name_overridden", None)
 
@@ -624,6 +624,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 if isinstance(meta.params, dict):
                     parameters = meta.params.to_dict()
                     parameters.pop("vars", None)
+                    parameters.pop("messages", None)
+                    parameters.pop("message", None)
                     parameters.pop("tool_call_id", None)
                 else:
                     parameters = None
@@ -764,6 +766,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 if isinstance(meta.params, dict):
                     parameters = meta.params.to_dict()
                     parameters.pop("vars", None)
+                    parameters.pop("messages", None)
+                    parameters.pop("message", None)
                     parameters.pop("tool_call_id", None)
                 else:
                     parameters = None

@@ -31,6 +31,49 @@ class TestAgentReservedKwargs:
         assert "task_context" in _RESERVED_KWARGS
         assert "model_preference" in _RESERVED_KWARGS
 
+    @pytest.mark.parametrize("name", sorted(_RESERVED_KWARGS))
+    def test_signature_rejects_reserved_input_names(self, name):
+        """Signature inputs must not clash with reserved kwargs."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        sig = f"{name}: str -> answer: str"
+        with pytest.raises(ValueError, match="conflict with reserved"):
+            Agent(name="agent", model=mock_model, signature=sig)
+
+    @pytest.mark.parametrize("name", sorted(_RESERVED_KWARGS - {"task"}))
+    def test_annotations_reject_reserved_input_names(self, name):
+        """Custom annotations must not use reserved kwargs as input names."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        annotations = {name: str, "return": str}
+        with pytest.raises(ValueError, match="conflict with reserved"):
+            Agent(name="agent", model=mock_model, annotations=annotations)
+
+    def test_default_annotations_are_accepted(self):
+        """The default {"task": str, "return": str} annotations must be valid."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(name="agent", model=mock_model)
+        assert agent.annotations == {"task": str, "return": str}
+
+    def test_non_reserved_annotations_are_accepted(self):
+        """Custom annotations with non-reserved names must work."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent", model=mock_model, annotations={"query": str, "return": str}
+        )
+        assert "query" in agent.annotations
+
+    def test_non_reserved_signature_is_accepted(self):
+        """Signature with non-reserved input names must work."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent", model=mock_model, signature="query: str -> answer: str"
+        )
+        assert agent.annotations is not None
+
 
 class TestAgentInitialization:
     """Test Agent initialization."""
