@@ -1,6 +1,6 @@
-# Intent Router: Resolving Agent Tool Sprawl with Signatures
+# Solving Agent Tool Sprawl with Intent Routing
 
-Build an orchestrated system where a planner decomposes queries into typed intents and routes each sub-task to a specialized agent — keeping every agent small, observable, and focused.
+Stop letting LLMs improvise across your tools. Use typed signatures and intent-based orchestration for routing that is observable, debuggable, and structured.
 
 > **Inspired by**: [Solving Agent Tool Sprawl with DSPy](https://viksit.substack.com/p/solving-agent-tool-sprawl-with-dspy)
 
@@ -8,18 +8,39 @@ Build an orchestrated system where a planner decomposes queries into typed inten
 
 ## The Problem
 
-When you give a single agent access to many tools, things break in subtle ways:
+Here is the architecture most teams build first.
+
+```
+User query
+    │
+    ▼
+┌──────────────────────────────────────────┐
+│               SupportAgent               │
+│                                          │
+│  what to do?  ←──────→  how to do it?   │
+└────────────────────┬─────────────────────┘
+                     │ picks one (maybe wrong)
+         ┌───────────┼───────────┬───────────┐
+         ▼           ▼           ▼           ▼
+    search_docs  get_doc_by_id  metrics  list_tickets  ...
+```
+
+You expose all your tools to the agent. The model sees everything and decides which tools to call. But you have no control layer. When it picks wrong, you add examples to the prompt — then more examples, then ALL CAPS WARNINGS. The model keeps improvising because the fundamental issue is not the prompt. You have delegated architectural decisions to a general-purpose model that does not know your system.
+
+- The model cannot learn from mistakes.
+- You cannot see why it chose Tool X over Tool Y.
+- You cannot A/B test routing strategies.
+
+You are debugging by vibes.
 
 ```python
-# ❌ Naive approach — one agent, every tool
+# Naive approach — one agent, every tool
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     tools = [search_docs, get_doc_by_id, get_incident_metrics, list_open_tickets, ...]
 ```
 
-The agent must simultaneously decide *what* to do and *how* to do it. Under load it picks the wrong tool, skips steps, or combines calls in the wrong order. When it fails, you can only fix the prompt — there is no structure to improve.
-
-**The fix**: separate *planning* (what intents does this query need?) from *execution* (which agent handles each intent?). A typed `Signature` makes the planner's contract explicit and debuggable.
+**The fix**: add an orchestration layer that decides which tools to call, in what order, and how to combine results. Separate *planning* (what intents does this query need?) from *execution* (which agent handles each intent?). A typed `Signature` makes the planner's contract explicit and debuggable.
 
 ---
 
@@ -29,7 +50,7 @@ The agent must simultaneously decide *what* to do and *how* to do it. Under load
 User query
     │
     ▼
-QueryPlanner (Signature)
+QueryPlanner (Signature + ChainOfThought)
     │
     └─ plan: [{subquery, intent}, ...]
             │
@@ -43,36 +64,31 @@ QueryPlanner (Signature)
     context threaded between steps
             │
             ▼
-    Final answer assembled
+    Final context assembled
 ```
 
-Each sub-agent has access **only** to the tools relevant to its intent. Results from earlier steps flow into later ones through a shared `context` field.
+Each sub-agent has access **only** to the tools relevant to its intent. Results from earlier steps flow into later ones through a shared `context` field. The orchestration layer is:
+
+- **Observable** — every routing decision is a typed plan you can log and inspect
+- **Programmable** — routing logic lives in code, not buried in a prompt
+- **Debuggable** — `verbose=True` shows every tool call and its result
 
 ---
 
 ## Setup
 
-```bash
-pip install msgflux[openai]
-```
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
+--8<-- "docs/_includes/init_chat_completion_model.md"
 
 ---
 
 ## Step 1: Define Tools
 
-Each tool is a plain Python function. Keeping them small and single-purpose makes routing decisions easier for the planner.
+Each tool is a plain Python function organized by intent. Keeping them small and single-purpose makes routing decisions easier for the planner.
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import Message, Signature, InputField, OutputField
 
-
-# ── Tools ───────────────────────────────────────────────────────────────────
 
 def search_docs(query: str) -> str:
     """Search the knowledge base by keyword. Returns matching article titles and IDs."""
@@ -112,7 +128,7 @@ def get_incident_metrics(severity: str = "all", last_days: int = 7) -> str:
 
 ## Step 2: Specialized Agents
 
-Each agent gets only the tools it needs. `config = {"verbose": True}` prints every tool call and its result — invaluable for debugging routing decisions.
+Each agent gets only the tools it needs. `config = {"verbose": True}` prints every tool call and its result, making every routing decision visible.
 
 ```python
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
@@ -146,13 +162,14 @@ class AnalyzeAgent(nn.Agent):
 
 ## Step 3: Query Planner with a Signature
 
-The planner is the heart of the system. A `Signature` makes its contract explicit: here are the inputs, here are the typed outputs, here is the docstring that becomes its instruction.
+The planner is the heart of the system. A `Signature` makes its contract explicit: here are the inputs, here are the typed outputs, here is the docstring that becomes its instruction. `ChainOfThought` adds a reasoning step before the model commits to a plan.
 
 ```python
-from typing import List
+from msgflux.generation.reasoning import ChainOfThought
+from typing import Dict, List
 
 
-class QueryPlanner(Signature):
+class QueryPlanner(mf.Signature):
     """Decompose the user question into an ordered list of sub-tasks.
 
     Each step must be assigned one of the available intents.
@@ -160,36 +177,51 @@ class QueryPlanner(Signature):
     so the next agent has all the context it needs.
     """
 
-    question: str = InputField(desc="The full user question")
-    available_intents: str = InputField(
+    question: str = mf.InputField(desc="The full user question")
+    available_intents: str = mf.InputField(
         desc="Comma-separated intents the system can handle, with one-line descriptions"
     )
 
-    plan: List[dict] = OutputField(
+    plan: List[Dict[str, str]] = mf.OutputField(
         desc=(
             "Ordered list of steps. Each step is a dict with keys: "
             "'subquery' (str) and 'intent' (one of the available intents)."
         )
     )
-```
 
-Wire it to a `LM` module — a lightweight wrapper that calls the model with the signature's prompt:
 
-```python
+class PlannerAgent(nn.Agent):
+    model = model
+    signature = QueryPlanner
+    generation_schema = ChainOfThought
+    config = {"verbose": True}
+
+
 class Planner(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lm = nn.LM(model=model, signature=QueryPlanner)
+        self.agent = PlannerAgent()
 
     def forward(self, msg):
-        msg.plan = self.lm(
+        msg.plan = self.agent(
             question=msg.question,
             available_intents=(
                 "search: find articles by keyword, "
                 "lookup: retrieve a specific document by ID, "
                 "analyze: compute incident metrics and trends"
             ),
-        )["plan"]
+        )["final_answer"]["plan"]
+        return msg
+
+    async def aforward(self, msg):
+        msg.plan = (await self.agent.acall(
+            question=msg.question,
+            available_intents=(
+                "search: find articles by keyword, "
+                "lookup: retrieve a specific document by ID, "
+                "analyze: compute incident metrics and trends"
+            ),
+        ))["final_answer"]["plan"]
         return msg
 ```
 
@@ -211,16 +243,13 @@ class IntentRouter(nn.Module):
         })
 
     def forward(self, msg):
-        # 1. Decompose query into a typed plan
         self.planner(msg)
 
-        # 2. Execute each step, threading context forward
         context_parts = []
-
         for i, step in enumerate(msg.plan):
-            intent  = step["intent"]
+            intent   = step["intent"]
             subquery = step["subquery"]
-            agent   = self.agents.get(intent)
+            agent    = self.agents.get(intent)
 
             if agent is None:
                 print(f"[step {i}] Unknown intent {intent!r}, skipping.")
@@ -229,8 +258,26 @@ class IntentRouter(nn.Module):
             context = "\n".join(context_parts) or "No prior context."
             result  = agent(query=subquery, context=context)
 
-            # Accumulate context for the next step
             step_summary = f"Step {i} ({intent}): {result}"
+            context_parts.append(step_summary)
+            print(step_summary)
+
+        msg.context = "\n".join(context_parts)
+        return msg
+
+    async def aforward(self, msg):
+        await self.planner.acall(msg)
+
+        context_parts = []
+        for i, step in enumerate(msg.plan):
+            agent = self.agents.get(step["intent"])
+            if agent is None:
+                continue
+
+            context = "\n".join(context_parts) or "No prior context."
+            result  = await agent.acall(query=step["subquery"], context=context)
+
+            step_summary = f"Step {i} ({step['intent']}): {result}"
             context_parts.append(step_summary)
             print(step_summary)
 
@@ -243,13 +290,15 @@ class IntentRouter(nn.Module):
 ## Complete Example
 
 ```python
+import asyncio
+
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import Message, Signature, InputField, OutputField
-from typing import List
+from msgflux.generation.reasoning import ChainOfThought
+from typing import Dict, List
 
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-# ── Tools ────────────────────────────────────────────────────────────────────
 
 def search_docs(query: str) -> str:
     """Search the knowledge base by keyword."""
@@ -284,31 +333,24 @@ def get_incident_metrics(severity: str = "all", last_days: int = 7) -> str:
     return data.get(severity, data["all"])
 
 
-# ── Signature ─────────────────────────────────────────────────────────────────
-
-class QueryPlanner(Signature):
+class QueryPlanner(mf.Signature):
     """Decompose the user question into an ordered list of sub-tasks.
 
     Each step must be assigned one of the available intents.
     Include earlier results in later subqueries so context flows forward.
     """
 
-    question: str = InputField(desc="The full user question")
-    available_intents: str = InputField(
+    question: str = mf.InputField(desc="The full user question")
+    available_intents: str = mf.InputField(
         desc="Comma-separated intents with one-line descriptions"
     )
 
-    plan: List[dict] = OutputField(
+    plan: List[Dict[str, str]] = mf.OutputField(
         desc=(
             "Ordered list of steps. Each step: "
             "'subquery' (str) and 'intent' (search | lookup | analyze)."
         )
     )
-
-
-# ── Modules ───────────────────────────────────────────────────────────────────
-
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
 class SearchAgent(nn.Agent):
@@ -335,20 +377,38 @@ class AnalyzeAgent(nn.Agent):
     config = {"verbose": True}
 
 
+class PlannerAgent(nn.Agent):
+    model = model
+    signature = QueryPlanner
+    generation_schema = ChainOfThought
+    config = {"verbose": True}
+
+
 class Planner(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lm = nn.LM(model=model, signature=QueryPlanner)
+        self.agent = PlannerAgent()
 
     def forward(self, msg):
-        msg.plan = self.lm(
+        msg.plan = self.agent(
             question=msg.question,
             available_intents=(
                 "search: find articles by keyword, "
                 "lookup: retrieve a specific document by ID, "
                 "analyze: compute incident metrics and trends"
             ),
-        )["plan"]
+        )["final_answer"]["plan"]
+        return msg
+
+    async def aforward(self, msg):
+        msg.plan = (await self.agent.acall(
+            question=msg.question,
+            available_intents=(
+                "search: find articles by keyword, "
+                "lookup: retrieve a specific document by ID, "
+                "analyze: compute incident metrics and trends"
+            ),
+        ))["final_answer"]["plan"]
         return msg
 
 
@@ -381,12 +441,29 @@ class IntentRouter(nn.Module):
         msg.context = "\n".join(context_parts)
         return msg
 
+    async def aforward(self, msg):
+        await self.planner.acall(msg)
 
-# ── Run ───────────────────────────────────────────────────────────────────────
+        context_parts = []
+        for i, step in enumerate(msg.plan):
+            agent = self.agents.get(step["intent"])
+            if agent is None:
+                continue
+
+            context = "\n".join(context_parts) or "No prior context."
+            result  = await agent.acall(query=step["subquery"], context=context)
+
+            step_summary = f"Step {i} ({step['intent']}): {result}"
+            context_parts.append(step_summary)
+            print(step_summary)
+
+        msg.context = "\n".join(context_parts)
+        return msg
+
 
 router = IntentRouter()
 
-msg = Message()
+msg = mf.Message()
 msg.question = "What is our deployment process and how many critical incidents happened this week?"
 
 router(msg)
@@ -397,6 +474,17 @@ for step in msg.plan:
 
 print("\n--- Final Context ---")
 print(msg.context)
+
+
+async def main():
+    router = IntentRouter()
+    msg = mf.Message()
+    msg.question = "Walk me through authentication and show any performance issues this week."
+    await router.acall(msg)
+    print(msg.context)
+
+
+asyncio.run(main())
 ```
 
 **Sample output** (plan generated by the model, tool calls logged by `verbose`):
@@ -424,62 +512,20 @@ Step 2 (analyze): Last 7d — 3 critical incidents · MTTR 2.1 h
 
 ---
 
-## Async Version
+## Why This Works
 
-Replace `forward` with `aforward` and use `acall` to run the full pipeline without blocking:
+| Without intent routing | With intent routing |
+|---|---|
+| All tools in one prompt | Each agent has at most 2 tools |
+| Model picks wrong tool, you rewrite the prompt | Planner contract is typed and logged |
+| No visibility into routing decisions | Every plan is structured data you can inspect |
+| Cannot improve routing without changing the prompt | Swap `QueryPlanner` logic without touching agents |
 
-```python
-import asyncio
-
-
-class IntentRouter(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.planner = Planner()
-        self.agents  = nn.ModuleDict({
-            "search":  SearchAgent(),
-            "lookup":  LookupAgent(),
-            "analyze": AnalyzeAgent(),
-        })
-
-    async def aforward(self, msg):
-        await self.planner.acall(msg)
-
-        context_parts = []
-        for i, step in enumerate(msg.plan):
-            agent = self.agents.get(step["intent"])
-            if agent is None:
-                continue
-
-            context = "\n".join(context_parts) or "No prior context."
-            result  = await agent.acall(query=step["subquery"], context=context)
-
-            context_parts.append(f"Step {i} ({step['intent']}): {result}")
-
-        msg.context = "\n".join(context_parts)
-        return msg
-
-
-async def main():
-    router = IntentRouter()
-    msg = Message()
-    msg.question = "Walk me through authentication and show any performance issues this week."
-    await router.acall(msg)
-    print(msg.context)
-
-
-asyncio.run(main())
-```
+Routing is code, not hope. The `Signature` docstring becomes the planner's instruction, its `InputField`/`OutputField` types constrain the output, and `ChainOfThought` gives the model a reasoning step before it commits to a plan. When routing breaks, you have structure to improve — not just a prompt to rewrite.
 
 ---
 
-## Why This Works
+## Further Reading
 
-| Naive agent | Intent Router |
-|---|---|
-| All tools in one prompt | Each agent has ≤ 2 tools |
-| Fails silently on wrong tool choice | Planner contract is typed and logged |
-| No way to improve routing | Swap `QueryPlanner` logic without touching agents |
-| Debugging = prompt rewriting | `verbose=True` shows every tool call |
-
-The `Signature` class is the key: its docstring becomes the planner's instruction, its `InputField`/`OutputField` types constrain the output, and future improvements to the planner do not require touching any agent.
+- [Generation Schemas](../learn/nn/agent/generation-schemas.md) — structuring model output with `msgspec.Struct`
+- [Signatures](../learn/nn/agent/signatures.md) — declarative input/output contracts for agents
