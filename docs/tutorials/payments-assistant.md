@@ -1,324 +1,382 @@
 # Payments Assistant
 
-**PIX** is Brazil's instant payment system. A transfer usually needs two things:
-the **amount** and a **PIX key**.
+**PIX** is Brazil's instant payment system. A transfer needs two things: the **amount** and a **PIX key**.
 
-The hard part is not the extraction itself. The hard part is that users do not
-always describe a payment as clean text:
+The hard part is that users do not always describe a payment cleanly:
 
 - they type a message;
 - they send an audio note;
 - they attach an image with a key or QR code;
-- they carry useful metadata in the same `Message`.
+- they refer to a recipient by name ("send R$50 to Maria") without knowing the key.
 
-This tutorial builds a **Payments Assistant** that keeps the root agent simple
-while delegating extraction to a specialist tool that receives the **original
-`Message` envelope**.
-
-That is the key design change in this version:
-
-- the model sees a small tool schema: `collect_pix_data()`;
-- the runtime injects the full `Message` into that tool;
-- the specialist tool can run its own submodules on top of the same `Message`.
-
-You end up with a tool that is **zero-input for the model** and
-**message-aware at runtime**.
+This tutorial builds a **Payments Assistant** that handles all four cases and runs as a multi-turn conversation. The root assistant coordinates two tools: `pix_extractor` (extraction + contact lookup) and `transfer_pix` (payment execution). `PIXAssistant` sits above both, routing audio and flagging multimodal content before the chat assistant sees the message.
 
 ---
 
 ## Architecture
 
-```text
+```
 User Message
-(content, user_audio, user_image, payments.*, extra.*)
+(user.text, audio_content, image_content, file_content)
                 │
                 ▼
-        BankingAssistant
-        (tools: [collect_pix_data])
+         PIXAssistant
                 │
-                │ detects payment intent
-                │ calls collect_pix_data()
-                ▼
-   CollectPIXData                      ← submodule that is also a tool
-   @tool_config(
-       return_direct=True,
-       inject_message=True,
-       disable_input=True,
-   )
+                ├── has audio?  → STT → user.text
                 │
-                │ receives the original Message
+                ├── has image or file? → msg.vars.has_mm_content = True
+                │
                 ▼
-        ┌───────────────────────┐
-        │  if audio:            │
-        │     Transcriber       │
-        │  Extractor Agent      │
-        │  writes payments.pix  │
-        └──────────┬────────────┘
-                   │
-                   ▼
-      {"amount": 50.0, "key_type": "phone_number", "key_id": "..."}
-                   │
-                   │ return_direct=True
-                   ▼
-             BankingHub
-                   │
-                   │ calls assistant again with:
-                   │ - the same Message
-                   │ - a new explicit task
-                   ▼
-    "I'll transfer R$ 50,00 to ... Confirm?"
+           Assistant
+        (tools: [PIXExtractor, transfer_pix])
+                │
+    ┌───────────┴───────────┐
+    │  task_context (vars)  │
+    │  "user sent a file —  │
+    │  call pix_extractor"  │  ← rendered only when has_mm_content is True
+    └───────────────────────┘
+                │
+                │ calls pix_extractor()
+                ▼
+         PIXExtractor
+         @tool_config(
+             inject_message=True,
+             disable_input=True,
+         )
+                │
+                ├── image present? → pyzbar → msg.vars.qr_content
+                │
+                ├─── ExtractorAgent ──→ {amount, key_type, key_id}
+                │    (ChainOfThought)
+                │    task_context: qr_content (when present)
+                │    task_multimodal: image_content
+                │
+                └─── intent detected?
+                          │
+                          ▼
+                   ContactSearcher ──→ top-3 BM25 matches
+                          │
+                          ▼
+               "## Extracted PIX data\n..."
+               "## Matching contacts\n..."
+                          │
+                          ▼ (tool result → back to Assistant)
+                     Assistant
+               confirms contact with user
+                          │
+                          │ user confirms
+                          │ calls transfer_pix()
+                          ▼
+               "Transfer submitted. TX: ..."
 ```
 
-The important point is that the specialist does **not** receive a flattened
-string like `user_message: str`. It receives the same `Message` object the root
-assistant received, including audio, image, extracted outputs, and any
-bank-specific metadata.
+The `task_context` template is the key design detail: instead of hardcoding multimodal handling in the static `system_message`, the hint is injected dynamically from `msg.vars` only when relevant. Without `return_direct`, the extraction result flows back to the `Assistant` as a tool response — the agent presents the contacts and asks for confirmation before calling `transfer_pix`.
 
 ---
 
 ## Setup
 
-```bash
-pip install msgflux[openai]
-```
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
+--8<-- "docs/_includes/init_chat_completion_model.md"
 
 ---
 
-## Step 1 — Build a Specialist Tool That Works on `Message`
-
-Instead of wrapping extraction in a plain function like
-`collect_pix_data(user_message: str)`, we will create a **tool module**.
-
-This module does three jobs:
-
-1. optionally transcribes audio into `message.content`;
-2. extracts PIX fields from text and image;
-3. writes the structured result to `message.payments.pix`.
-
-Because it is also a tool, the root agent can call it directly.
+## Step 1 — Models
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import tool_config
+from msgflux import tool_config, ChatBlock
+from msgflux.nn.hooks import Guard
+from msgflux.generation.reasoning import ChainOfThought
+from typing import Optional
 
-
-chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-stt_model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
-
-
-pix_signature = """
-text ->
-amount: float,
-key_type: Literal['cpf', 'cnpj', 'email', 'phone_number', 'random_key'],
-key_id: str
-"""
-
-
-@tool_config(
-    return_direct=True,
-    inject_message=True,
-    disable_input=True,
-)
-class CollectPIXData(nn.Module):
-    """Extract PIX payment data from the current Message."""
-
-    name = "collect_pix_data"
-    annotations = {"return": dict}
-
-    def __init__(self):
-        super().__init__()
-        self.transcriber = nn.Transcriber(
-            name="transcriber",
-            model=stt_model,
-            message_fields={"task_multimodal": {"audio": "user_audio"}},
-            response_mode="content",
-        )
-        self.extractor = nn.Agent(
-            name="pix_extractor",
-            model=chat_model,
-            signature=pix_signature,
-            message_fields={
-                "task": "content",
-                "task_multimodal": {"image": "user_image"},
-            },
-            response_mode="payments.pix",
-        )
-
-    def forward(self, message: mf.Message) -> dict:
-        if message.get("user_audio") is not None:
-            self.transcriber(message)
-
-        self.extractor(message)
-        return message.payments.pix
+chat_model       = mf.Model.chat_completion("openai/gpt-4.1-mini")
+mm_model         = mf.Model.chat_completion("openai/gpt-4.1-mini")
+stt_model        = mf.Model.speech_to_text("openai/whisper-1")
+moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
 ```
 
-### Why this shape matters
-
-- `disable_input=True` removes public tool parameters from the schema.
-- `inject_message=True` still passes the original `Message` at runtime.
-- `return_direct=True` returns the structured extraction result without another
-  LLM pass in between.
-
-So the model sees this:
-
-```text
-collect_pix_data()
-```
-
-But the implementation still receives:
-
-```python
-def forward(self, message: mf.Message) -> dict:
-    ...
-```
-
-That is exactly the sweet spot for multimodal banking flows.
+Use a vision-capable model for `mm_model` when you need the extractor to read images and QR codes directly.
 
 ---
 
-## Step 2 — Root Agent With a Small Tool Surface
+## Step 2 — Synthetic Contacts
 
-Now create the general assistant.
+[Faker](https://faker.readthedocs.io) generates realistic fake data. Install it along with the QR decoder and BM25 retriever:
 
-It should:
+```bash
+# system dependency for pyzbar (Ubuntu/Debian)
+apt-get install libzbar0
 
-- answer normal banking questions;
-- call `collect_pix_data()` when the user wants to transfer via PIX;
-- later reuse the extracted data from the same `Message`.
+pip install faker rank-bm25 pyzbar Pillow
+```
 
-To make the second step clean, we map `payments.pix` as `task_context`.
+Generate a registry of 30 contacts with randomized PIX keys. This becomes the BM25 corpus.
 
 ```python
-class BankingAssistant(nn.Agent):
-    """General banking assistant."""
+import random
+from faker import Faker
 
-    model = chat_model
+fake = Faker("pt_BR")
+
+
+def generate_contacts(n: int = 30) -> list[dict]:
+    key_types = ["cpf", "phone_number", "email"]
+    contacts = []
+    for _ in range(n):
+        kt    = random.choice(key_types)
+        cpf   = fake.cpf()
+        phone = fake.cellphone_number()
+        email = fake.email()
+        contacts.append({
+            "name":     fake.name(),
+            "key_type": kt,
+            "pix_key":  {"cpf": cpf, "phone_number": phone, "email": email}[kt],
+        })
+    return contacts
+
+
+def build_corpus(contacts: list[dict]) -> list[str]:
+    return [
+        f"{c['name']} | chave {c['key_type']}: {c['pix_key']}"
+        for c in contacts
+    ]
+
+
+contacts = generate_contacts(30)
+corpus   = build_corpus(contacts)
+
+bm25 = mf.Retriever.lexical("rank_bm25")
+bm25.add(corpus)
+```
+
+Each corpus entry is a single searchable string: `"Maria Silva | chave cpf: 123.456.789-00"`. BM25 ranks entries by relevance to the user's message — a query like "send money to Maria" will surface contacts named Maria at the top.
+
+---
+
+## Step 3 — STT, Extractor and Contact Searcher
+
+```python
+class STT(nn.Transcriber):
+    """Transcribes user audio into msg.user.text."""
+    model = stt_model
+    message_fields = {"task_multimodal": {"audio": "audio_content"}}
+    response_mode = "user.text"
+
+
+class ExtractorAgent(nn.Agent):
+    """Extracts PIX payment fields from text and image."""
+    model = mm_model
+    system_message = """
+    You are a specialist in Brazilian PIX payments.
+    Extract payment data precisely. When a field is not present, return null.
+    """
+    instructions = """
+    Extract the PIX transfer details from the user message.
+    The key_type must be one of: cpf, cnpj, email, phone_number, random_key.
+    If the amount or key are not clearly stated, return null for that field.
+    """
+    generation_schema = ChainOfThought
+    signature = """
+    text ->
+    amount: Optional[float],
+    key_type: Optional[Literal['cpf', 'cnpj', 'email', 'phone_number', 'random_key']],
+    key_id: Optional[str]
+    """
     message_fields = {
-        "task": "content",
-        "task_context": "payments.pix",
+        "task": "user",
+        "task_context": "vars",
+        "task_multimodal": {"image": "image_content"},
     }
     templates = {
         "task_context": (
-            "PIX data already extracted:\n"
-            "- amount: {{amount}}\n"
-            "- key_type: {{key_type}}\n"
-            "- key_id: {{key_id}}"
+            "{% if qr_content %}"
+            "QR code decoded from the image:\n{{ qr_content }}\n"
+            "{% endif %}"
         )
     }
+    response_mode = "payments.pix"
+
+
+class ContactSearcher(nn.Searcher):
+    """Searches the contact registry by name or message fragment."""
+    retriever = bm25
+    message_fields = {"task": "user.text"}
+    response_mode = "contact_results"
+    config = {"top_k": 10}
+```
+
+`message_fields = {"task": "user"}` passes `msg.user` as the task dict. The signature's `text` input is populated from `msg.user.text` — which `STT` writes to after transcription. Optional fields reflect reality: the user might send only a name or only an amount.
+
+---
+
+## Step 4 — PIXExtractor Tool
+
+`PIXExtractor` wraps both `ExtractorAgent` and `ContactSearcher`. When payment intent is detected (at least one PIX field is non-null), it runs `ContactSearcher` and returns both results as a structured string. The `Assistant` receives this as a regular tool response and continues the conversation.
+
+`pyzbar` decodes QR codes from the image before the multimodal model runs, giving it the PIX payload as plain text.
+
+```python
+import io
+from PIL import Image
+from pyzbar import pyzbar
+
+
+def decode_qr_codes(image_bytes: bytes) -> list[str]:
+    """Decode all QR codes in an image. Returns a list of decoded payloads."""
+    img = Image.open(io.BytesIO(image_bytes))
+    return [obj.data.decode("utf-8") for obj in pyzbar.decode(img)]
+
+
+@tool_config(
+    inject_message=True,
+    disable_input=True,
+)
+class PIXExtractor(nn.Module):
+    """Extract PIX payment data and look up matching contacts from the registry."""
+
+    def __init__(self):
+        super().__init__()
+        self.set_name("pix_extractor")
+        self.set_annotations({"return": str})
+        self.extractor_agent = ExtractorAgent()
+        self.contact_searcher = ContactSearcher()
+
+    def _format_result(self, pix: dict, contacts: list) -> str:
+        lines = [
+            "## Extracted PIX data",
+            f"- amount: {pix.get('amount')}",
+            f"- key_type: {pix.get('key_type')}",
+            f"- key_id: {pix.get('key_id')}",
+        ]
+        if contacts:
+            lines += ["", "## Matching contacts in registry"]
+            for i, entry in enumerate(contacts, 1):
+                lines.append(f"{i}. {entry['data']}")
+        return "\n".join(lines)
+
+    def forward(self, message: mf.Message) -> str:
+        if message.get("image_content"):
+            qr_codes = decode_qr_codes(message.image_content)
+            if qr_codes:
+                message.vars.qr_content = "\n".join(qr_codes)
+
+        self.extractor_agent(message)
+        raw = message.payments.pix
+        pix = raw.get("final_answer", raw)  # unwrap ChainOfThought envelope
+
+        contacts = []
+        if any(pix.get(k) for k in ("amount", "key_type", "key_id")):
+            self.contact_searcher(message)
+            raw = message.get("contact_results") or []
+            contacts = raw[0]["results"] if raw else []
+
+        return self._format_result(pix, contacts)
+```
+
+---
+
+## Step 5 — Transfer Tool
+
+A plain function that executes the transfer after user confirmation.
+
+```python
+def transfer_pix(amount: float, key_type: str, key_id: str) -> str:
+    """Execute a PIX transfer. Call only after the user has confirmed the recipient and amount."""
+    tx_id = fake.uuid4()[:8].upper()
+    return (
+        f"PIX transfer of R${amount:.2f} to {key_type} '{key_id}' submitted successfully. "
+        f"Transaction ID: {tx_id}"
+    )
+```
+
+---
+
+## Step 6 — Root Assistant
+
+The `system_message` stays clean — no hardcoded multimodal references. When the user attaches a file, `PIXAssistant` sets `msg.vars.has_mm_content = True` and the `task_context` template injects the extraction hint dynamically.
+
+A `Guard` with `on="pre"` runs OpenAI's free moderation API before every model call. If the input is flagged, the guard short-circuits the pipeline and returns the message directly — the model is never called.
+
+```python
+def moderation_validator(data):
+    result = moderation_model(str(data)).consume()
+    return {"safe": result.safe}
+
+
+class Assistant(nn.Agent):
+    """Banking assistant with PIX extraction and payment execution."""
+    model = chat_model
     system_message = """
     You are a helpful banking assistant.
 
     Answer general banking and PIX questions naturally.
 
-    When the user wants to make a PIX payment or transfer,
-    call collect_pix_data().
+    When the user wants to make a PIX transfer, call pix_extractor().
+    The tool receives the full message automatically — do not pass arguments.
 
-    The tool already receives the original Message envelope.
-    Do not try to serialize the user message into tool arguments.
+    The tool returns extracted PIX fields and a numbered list of matching contacts.
+    Present the list to the user and ask which contact they want to use.
+    If the amount is missing, ask for it.
+
+    After the user confirms the recipient and amount, call transfer_pix() to execute.
     """
-    tools = [CollectPIXData]
+    message_fields = {
+        "task": "user.text",
+        "task_context": "vars",
+    }
+    templates = {
+        "task_context": (
+            "{% if has_mm_content %}"
+            "The user attached an image or file — call pix_extractor() "
+            "to extract payment data from it.\n"
+            "{% endif %}"
+        )
+    }
+    tools = [PIXExtractor, transfer_pix]
+    hooks = [
+        Guard(
+            validator=moderation_validator,
+            on="pre",
+            message="Não posso responder a essa mensagem.",
+        )
+    ]
     config = {"verbose": True}
 ```
 
-Notice the model instruction: the agent should call `collect_pix_data()`, not
-`collect_pix_data(user_message=...)`.
-
-That is one of the main benefits of the new design: the tool schema stays
-minimal, while the runtime still has the complete `Message`.
-
 ---
 
-## Step 3 — BankingHub Orchestrates the Two-Step Flow
+## Step 7 — PIXAssistant
 
-The assistant still behaves like a normal agent. The difference is that a
-`return_direct=True` tool produces a structured `tool_responses` object.
-
-`BankingHub` intercepts that, stores the extracted PIX data on the `Message`,
-and asks the assistant to generate a confirmation.
-
-The second call is where the current API becomes especially useful:
-
-- `message` is still the same `Message` envelope;
-- `task=...` overrides the original `message_fields["task"]`;
-- `payments.pix` is still available through `message_fields["task_context"]`.
+`PIXAssistant` is the entry point. It normalises the message and passes the accumulated `history` into each `Assistant` call so the agent remembers prior turns.
 
 ```python
-class BankingHub(nn.Module):
+class PIXAssistant(nn.Module):
     def __init__(self):
         super().__init__()
-        self.assistant = BankingAssistant()
+        self.chat_assistant = Assistant()
+        self.stt = STT()
 
-    def forward(self, message: mf.Message) -> mf.Message:
-        response = self.assistant(message)
+    def _check_mm_content(self, msg: mf.Message) -> None:
+        if msg.get("image_content") or msg.get("file_content"):
+            msg.vars.has_mm_content = True
 
-        if isinstance(response, dict) and "tool_responses" in response:
-            tool_call = response.tool_responses.tool_calls[0]
-            pix_data = tool_call["result"]
+    def forward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
+        self._check_mm_content(msg)
+        if msg.get("audio_content"):
+            self.stt(msg)
+        msg.response = self.chat_assistant(msg, messages=history or [])
+        return msg
 
-            message.set("payments.pix", pix_data)
-            message.response = self.assistant(
-                message,
-                task=(
-                    "Confirm the PIX transfer to the user. "
-                    "Use the extracted PIX data from context, "
-                    "format the amount in BRL, and ask for explicit confirmation. "
-                    "Do not call collect_pix_data again."
-                ),
-            )
-        else:
-            message.response = response
-
-        return message
-```
-
-This is a good pattern whenever you want:
-
-- deterministic structured extraction;
-- natural language confirmation;
-- reuse of the same `Message` across multiple agent passes.
-
----
-
-## Running
-
-```python
-hub = BankingHub()
+    async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
+        self._check_mm_content(msg)
+        if msg.get("audio_content"):
+            await self.stt.acall(msg)
+        msg.response = await self.chat_assistant.acall(msg, messages=history or [])
+        return msg
 
 
-# 1. Normal banking conversation
-msg = mf.Message(content="What's the PIX transfer limit at night?")
-hub(msg)
-print(msg.response)
-
-
-# 2. Payment via text
-msg = mf.Message(content="Transfer R$ 22,40 to CPF 123.456.789-00")
-hub(msg)
-print(msg.payments.pix)
-# {'amount': 22.4, 'key_type': 'cpf', 'key_id': '123.456.789-00'}
-print(msg.response)
-# "I'll transfer R$ 22,40 to CPF 123.456.789-00 via PIX. Confirm?"
-
-
-# 3. Payment via audio
-msg = mf.Message(content="Please process the transfer from this audio.")
-msg.user_audio = "audio_pix.ogg"
-hub(msg)
-print(msg.payments.pix)
-print(msg.response)
-
-
-# 4. Payment via image or QR code
-msg = mf.Message(content="Pay this PIX QR code")
-msg.user_image = "pix_qr.png"
-hub(msg)
-print(msg.payments.pix)
-print(msg.response)
+assistant = PIXAssistant()
 ```
 
 ---
@@ -326,185 +384,316 @@ print(msg.response)
 ## Complete Example
 
 ```python
+import io
+import random
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import tool_config
+from msgflux import tool_config, ChatBlock
+from msgflux.nn.hooks import Guard
+from msgflux.generation.reasoning import ChainOfThought
+from faker import Faker
+from PIL import Image
+from pyzbar import pyzbar
+from typing import Optional
+
+chat_model       = mf.Model.chat_completion("openai/gpt-4.1-mini")
+mm_model         = mf.Model.chat_completion("openai/gpt-4.1-mini")
+stt_model        = mf.Model.speech_to_text("openai/whisper-1")
+moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
+
+fake = Faker("pt_BR")
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
-
-chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-stt_model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
-
-
-# ── Specialist Tool ───────────────────────────────────────────────────────────
-
-pix_signature = """
-text ->
-amount: float,
-key_type: Literal['cpf', 'cnpj', 'email', 'phone_number', 'random_key'],
-key_id: str
-"""
+def decode_qr_codes(image_bytes: bytes) -> list[str]:
+    """Decode all QR codes in an image. Returns a list of decoded payloads."""
+    img = Image.open(io.BytesIO(image_bytes))
+    return [obj.data.decode("utf-8") for obj in pyzbar.decode(img)]
 
 
-@tool_config(
-    return_direct=True,
-    inject_message=True,
-    disable_input=True,
-)
-class CollectPIXData(nn.Module):
-    """Extract PIX payment data from the current Message."""
-
-    name = "collect_pix_data"
-    annotations = {"return": dict}
-
-    def __init__(self):
-        super().__init__()
-        self.transcriber = nn.Transcriber(
-            name="transcriber",
-            model=stt_model,
-            message_fields={"task_multimodal": {"audio": "user_audio"}},
-            response_mode="content",
-        )
-        self.extractor = nn.Agent(
-            name="pix_extractor",
-            model=chat_model,
-            signature=pix_signature,
-            message_fields={
-                "task": "content",
-                "task_multimodal": {"image": "user_image"},
-            },
-            response_mode="payments.pix",
-        )
-
-    def forward(self, message: mf.Message) -> dict:
-        if message.get("user_audio") is not None:
-            self.transcriber(message)
-
-        self.extractor(message)
-        return message.payments.pix
+def generate_contacts(n: int = 30) -> list[dict]:
+    key_types = ["cpf", "phone_number", "email"]
+    contacts = []
+    for _ in range(n):
+        kt    = random.choice(key_types)
+        cpf   = fake.cpf()
+        phone = fake.cellphone_number()
+        email = fake.email()
+        contacts.append({
+            "name":     fake.name(),
+            "key_type": kt,
+            "pix_key":  {"cpf": cpf, "phone_number": phone, "email": email}[kt],
+        })
+    return contacts
 
 
-# ── Root Assistant ────────────────────────────────────────────────────────────
+def build_corpus(contacts: list[dict]) -> list[str]:
+    return [
+        f"{c['name']} | chave {c['key_type']}: {c['pix_key']}"
+        for c in contacts
+    ]
 
-class BankingAssistant(nn.Agent):
-    """General banking assistant."""
 
-    model = chat_model
+contacts = generate_contacts(30)
+corpus   = build_corpus(contacts)
+
+bm25 = mf.Retriever.lexical("rank_bm25")
+bm25.add(corpus)
+
+
+class STT(nn.Transcriber):
+    """Transcribes user audio into msg.user.text."""
+    model = stt_model
+    message_fields = {"task_multimodal": {"audio": "audio_content"}}
+    response_mode = "user.text"
+
+
+class ExtractorAgent(nn.Agent):
+    """Extracts PIX payment fields from text and image."""
+    model = mm_model
+    system_message = """
+    You are a specialist in Brazilian PIX payments.
+    Extract payment data precisely. When a field is not present, return null.
+    """
+    instructions = """
+    Extract the PIX transfer details from the user message.
+    The key_type must be one of: cpf, cnpj, email, phone_number, random_key.
+    If the amount or key are not clearly stated, return null for that field.
+    """
+    generation_schema = ChainOfThought
+    signature = """
+    text ->
+    amount: Optional[float],
+    key_type: Optional[Literal['cpf', 'cnpj', 'email', 'phone_number', 'random_key']],
+    key_id: Optional[str]
+    """
     message_fields = {
-        "task": "content",
-        "task_context": "payments.pix",
+        "task": "user",
+        "task_context": "vars",
+        "task_multimodal": {"image": "image_content"},
     }
     templates = {
         "task_context": (
-            "PIX data already extracted:\n"
-            "- amount: {{amount}}\n"
-            "- key_type: {{key_type}}\n"
-            "- key_id: {{key_id}}"
+            "{% if qr_content %}"
+            "QR code decoded from the image:\n{{ qr_content }}\n"
+            "{% endif %}"
         )
     }
+    response_mode = "payments.pix"
+
+
+class ContactSearcher(nn.Searcher):
+    """Searches the contact registry by name or message fragment."""
+    retriever = bm25
+    message_fields = {"task": "user.text"}
+    response_mode = "contact_results"
+    config = {"top_k": 10}
+
+
+@tool_config(
+    inject_message=True,
+    disable_input=True,
+)
+class PIXExtractor(nn.Module):
+    """Extract PIX payment data and look up matching contacts from the registry."""
+
+    def __init__(self):
+        super().__init__()
+        self.set_name("pix_extractor")
+        self.set_annotations({"return": str})
+        self.extractor_agent = ExtractorAgent()
+        self.contact_searcher = ContactSearcher()
+
+    def _format_result(self, pix: dict, contacts: list) -> str:
+        lines = [
+            "## Extracted PIX data",
+            f"- amount: {pix.get('amount')}",
+            f"- key_type: {pix.get('key_type')}",
+            f"- key_id: {pix.get('key_id')}",
+        ]
+        if contacts:
+            lines += ["", "## Matching contacts in registry"]
+            for i, entry in enumerate(contacts, 1):
+                lines.append(f"{i}. {entry['data']}")
+        return "\n".join(lines)
+
+    def forward(self, message: mf.Message) -> str:
+        if message.get("image_content"):
+            qr_codes = decode_qr_codes(message.image_content)
+            if qr_codes:
+                message.vars.qr_content = "\n".join(qr_codes)
+
+        self.extractor_agent(message)
+        raw = message.payments.pix
+        pix = raw.get("final_answer", raw)  # unwrap ChainOfThought envelope
+
+        contacts = []
+        if any(pix.get(k) for k in ("amount", "key_type", "key_id")):
+            self.contact_searcher(message)
+            raw = message.get("contact_results") or []
+            contacts = raw[0]["results"] if raw else []
+
+        return self._format_result(pix, contacts)
+
+
+def transfer_pix(amount: float, key_type: str, key_id: str) -> str:
+    """Execute a PIX transfer. Call only after the user has confirmed the recipient and amount."""
+    tx_id = fake.uuid4()[:8].upper()
+    return (
+        f"PIX transfer of R${amount:.2f} to {key_type} '{key_id}' submitted successfully. "
+        f"Transaction ID: {tx_id}"
+    )
+
+
+def moderation_validator(data):
+    result = moderation_model(str(data)).consume()
+    return {"safe": result.safe}
+
+
+class Assistant(nn.Agent):
+    """Banking assistant with PIX extraction and payment execution."""
+    model = chat_model
     system_message = """
     You are a helpful banking assistant.
 
     Answer general banking and PIX questions naturally.
 
-    When the user wants to make a PIX payment or transfer,
-    call collect_pix_data().
+    When the user wants to make a PIX transfer, call pix_extractor().
+    The tool receives the full message automatically — do not pass arguments.
 
-    The tool already receives the original Message envelope.
-    Do not try to serialize the user message into tool arguments.
+    The tool returns extracted PIX fields and a numbered list of matching contacts.
+    Present the list to the user and ask which contact they want to use.
+    If the amount is missing, ask for it.
+
+    After the user confirms the recipient and amount, call transfer_pix() to execute.
     """
-    tools = [CollectPIXData]
+    message_fields = {
+        "task": "user.text",
+        "task_context": "vars",
+    }
+    templates = {
+        "task_context": (
+            "{% if has_mm_content %}"
+            "The user attached an image or file — call pix_extractor() "
+            "to extract payment data from it.\n"
+            "{% endif %}"
+        )
+    }
+    tools = [PIXExtractor, transfer_pix]
+    hooks = [
+        Guard(
+            validator=moderation_validator,
+            on="pre",
+            message="Não posso responder a essa mensagem.",
+        )
+    ]
     config = {"verbose": True}
 
 
-# ── Orchestrator ──────────────────────────────────────────────────────────────
-
-class BankingHub(nn.Module):
+class PIXAssistant(nn.Module):
     def __init__(self):
         super().__init__()
-        self.assistant = BankingAssistant()
+        self.chat_assistant = Assistant()
+        self.stt = STT()
 
-    def forward(self, message: mf.Message) -> mf.Message:
-        response = self.assistant(message)
+    def _check_mm_content(self, msg: mf.Message) -> None:
+        if msg.get("image_content") or msg.get("file_content"):
+            msg.vars.has_mm_content = True
 
-        if isinstance(response, dict) and "tool_responses" in response:
-            tool_call = response.tool_responses.tool_calls[0]
-            pix_data = tool_call["result"]
+    def forward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
+        self._check_mm_content(msg)
+        if msg.get("audio_content"):
+            self.stt(msg)
+        msg.response = self.chat_assistant(msg, messages=history or [])
+        return msg
 
-            message.set("payments.pix", pix_data)
-            message.response = self.assistant(
-                message,
-                task=(
-                    "Confirm the PIX transfer to the user. "
-                    "Use the extracted PIX data from context, "
-                    "format the amount in BRL, and ask for explicit confirmation. "
-                    "Do not call collect_pix_data again."
-                ),
-            )
-        else:
-            message.response = response
-
-        return message
+    async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
+        self._check_mm_content(msg)
+        if msg.get("audio_content"):
+            await self.stt.acall(msg)
+        msg.response = await self.chat_assistant.acall(msg, messages=history or [])
+        return msg
 
 
-# ── Run ───────────────────────────────────────────────────────────────────────
-
-hub = BankingHub()
-
-msg = mf.Message(content="Transfer R$ 22,40 to CPF 123.456.789-00")
-hub(msg)
-print(msg.payments.pix)
-print(msg.response)
-
-msg = mf.Message(content="Please process the transfer from this audio.")
-msg.user_audio = "audio_pix.ogg"
-hub(msg)
-print(msg.payments.pix)
-print(msg.response)
+assistant = PIXAssistant()
 ```
 
 ---
 
-## Why This Version Is Better
+## Examples
 
-The old shape of this tutorial usually looked like this:
+???+ example
 
-```python
-def collect_pix_data(user_message: str) -> dict:
-    msg = mf.Message(content=user_message)
-    ...
-```
+    === "Payment by name (multi-turn)"
 
-That works for simple text, but it quietly throws away most of what makes
-`Message` useful:
+        ```python
+        assistant = PIXAssistant()
+        history = []
 
-- audio attachments;
-- images and QR codes;
-- extracted intermediate outputs;
-- extra state and metadata.
+        # Turn 1: agent extracts amount, searches contacts, asks which one
+        msg = mf.Message()
+        msg.set("user.text", "Send R$50 to Maria")
+        assistant.forward(msg, history=history)
+        history.extend([
+            ChatBlock.user(msg.user.text),
+            ChatBlock.assist(str(msg.response)),
+        ])
+        print("User:", msg.user.text)
+        print("Assistant:", msg.response)
 
-The new design keeps those pieces intact.
+        # Turn 2: user confirms — agent calls transfer_pix
+        msg = mf.Message()
+        msg.set("user.text", "Contact number 1")
+        assistant.forward(msg, history=history)
+        history.extend([
+            ChatBlock.user(msg.user.text),
+            ChatBlock.assist(str(msg.response)),
+        ])
+        print("User:", msg.user.text)
+        print("Assistant:", msg.response)
+        ```
 
-You get three important properties at once:
+    === "Payment via image / QR code"
 
-1. **Small tool schema for the model**
-   `collect_pix_data()` is easier for the model to call than a large envelope.
-2. **Rich runtime context for the specialist**
-   the tool still receives the full `Message`.
-3. **Clean multi-step orchestration**
-   the same `Message` flows from extraction to confirmation.
+        ```python
+        assistant = PIXAssistant()
 
-This pattern is especially strong for:
+        msg = mf.Message()
+        msg.image_content = open("pix_qr.png", "rb").read()
+        assistant.forward(msg)
+        print("User: [image attached]")
+        print("Assistant:", msg.response)
+        ```
 
-- multimodal banking assistants;
-- specialist subagents used as tools;
-- workflows where structured data must stay exact before confirmation.
+    === "Payment via audio"
+
+        ```python
+        assistant = PIXAssistant()
+
+        msg = mf.Message()
+        msg.audio_content = open("audio_pix.ogg", "rb").read()
+        assistant.forward(msg)
+        print("User: [audio attached]")
+        print("Assistant:", msg.response)
+        ```
+
+    === "Unsafe input (guard)"
+
+        ```python
+        assistant = PIXAssistant()
+
+        msg = mf.Message()
+        msg.set("user.text", "how do I make a bomb")
+        assistant.forward(msg)
+        print("User:", msg.user.text)
+        print("Assistant:", msg.response)
+        # → "Não posso responder a essa mensagem."
+        ```
 
 ---
 
-## Next Steps
+## Further Reading
 
-- **[Tutorials](tutorials.md)** — more complete examples
-- **[Product Poster Generator](product-poster.md)** — multimodal pipeline with image generation
-- **[Intent Router](intent-router.md)** — multi-agent routing with Signatures
+- [nn.Agent](../learn/nn/agent/index.md) — signatures, message fields, and tool use
+- [nn.Searcher](../learn/nn/searcher.md) — BM25 and semantic retrieval modules
+- [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts
+- [Generation Schemas](../learn/nn/agent/generation-schemas.md) — `ChainOfThought` and structured output
