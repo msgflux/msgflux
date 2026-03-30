@@ -1,8 +1,11 @@
 """Tests for msgflux.models.providers.openai module."""
 
 import os
+from types import SimpleNamespace
+from typing import Dict, List
 from unittest.mock import MagicMock, Mock, patch
 
+import msgspec
 import pytest
 
 
@@ -129,6 +132,73 @@ class TestOpenAIChatCompletion:
 
         assert "max_completion_tokens" in adapted
         assert "max_tokens" not in adapted
+
+    def test_prepare_generate_kwargs_lowers_dict_schema(self, mock_openai_client):
+        """Test OpenAI transport schema lowering for dict-based structured outputs."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class DictOutput(msgspec.Struct):
+            entities: List[Dict[str, str]]
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        kwargs = {"typed_parser": None, "generation_schema": DictOutput}
+
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = model._prepare_generate_kwargs(kwargs)
+
+        assert typed_parser is None
+        assert generation_schema is DictOutput
+        assert transport_generation_schema is not DictOutput
+        assert kwargs["response_format"]["json_schema"]["schema"]["properties"][
+            "entities"
+        ]["items"]["properties"]["entries"]["type"] == "array"
+
+    def test_process_completion_model_output_restores_dict_shape(
+        self, mock_openai_client
+    ):
+        """Test transport-schema decoding is restored to the logical dict shape."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class DictOutput(msgspec.Struct):
+            entities: List[Dict[str, str]]
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {"typed_parser": None, "generation_schema": DictOutput}
+        )[2]
+
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"entities":[{"entries":[{"key":"name","value":"Apple"},{"key":"type","value":"Organization"}]}]}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=DictOutput,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.data == {
+            "entities": [{"name": "Apple", "type": "Organization"}]
+        }
 
 
 class TestOpenAITextToSpeech:

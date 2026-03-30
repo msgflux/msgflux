@@ -2,6 +2,8 @@ import ast
 import os
 import re
 from collections import OrderedDict
+from collections.abc import Mapping as ABCMapping
+from enum import Enum
 from typing import (
     Any,
     Dict,
@@ -578,6 +580,399 @@ def struct_to_dict(obj: object):
         return dotdict({k: struct_to_dict(v) for k, v in obj.items()})
     else:  # Returns the value as is for simple types
         return obj
+
+
+def lower_msgspec_struct_for_openai(  # noqa: C901
+    struct_class: Type[Struct],
+) -> Type[Struct]:
+    """Build an OpenAI-compatible transport struct from a logical msgspec schema.
+
+    OpenAI Structured Outputs reject open-ended JSON objects such as
+    ``dict[str, T]``. This helper lowers those types to a closed object shape
+    using ``entries: list[{key, value}]`` while keeping the logical schema
+    untouched for the rest of msgflux.
+    """
+
+    def _is_struct_type(type_hint: Any) -> bool:
+        return isinstance(type_hint, type) and issubclass(type_hint, msgspec.Struct)
+
+    def _to_camel_case(name: str) -> str:
+        sanitized = re.sub(r"[^0-9A-Za-z]+", "_", name).strip("_") or "Generated"
+        parts = [part for part in sanitized.split("_") if part]
+        camel = "".join(part[:1].upper() + part[1:] for part in parts) or "Generated"
+        if camel[0].isdigit():
+            camel = f"T{camel}"
+        return camel
+
+    def _wrap_annotated(base_type: Any, metadata: Tuple[Any, ...]) -> Any:
+        if not metadata:
+            return base_type
+        return Annotated.__class_getitem__((base_type, *metadata))
+
+    def _format_type_hint(type_hint: Any) -> str:
+        if isinstance(type_hint, type):
+            return type_hint.__name__
+        return str(type_hint).replace("typing.", "")
+
+    class _Compiler:
+        def __init__(self):
+            self.cache: Dict[Any, Any] = {}
+
+        def _unsupported(self, path: str, type_hint: Any, reason: str) -> None:
+            path_str = path or "<root>"
+            msg = (
+                "Unsupported OpenAI structured output type "
+                f"at `{path_str}`: `{_format_type_hint(type_hint)}`. {reason}"
+            )
+            raise TypeError(msg)
+
+        def _validate_dict_key_type(self, key_type: Any, path: str) -> None:  # noqa: C901
+            origin = get_origin(key_type)
+
+            if origin is Annotated:
+                self._validate_dict_key_type(get_args(key_type)[0], path)
+                return
+
+            if key_type is Any:
+                self._unsupported(
+                    path,
+                    key_type,
+                    "`Any` is too broad for OpenAI structured outputs.",
+                )
+
+            if key_type in {str, int, float, bool, type(None)}:
+                return
+
+            if isinstance(key_type, type) and issubclass(key_type, Enum):
+                return
+
+            if origin is Literal:
+                if all(
+                    isinstance(item, (str, int, float, bool, type(None)))
+                    for item in get_args(key_type)
+                ):
+                    return
+                self._unsupported(
+                    path,
+                    key_type,
+                    "Dict keys must resolve to hashable scalar values.",
+                )
+
+            if origin is Union:
+                non_none_args = [
+                    arg for arg in get_args(key_type) if arg is not type(None)
+                ]
+                if len(non_none_args) != 1:
+                    self._unsupported(
+                        path,
+                        key_type,
+                        "Dict keys only support Optional[T] style unions.",
+                    )
+                self._validate_dict_key_type(non_none_args[0], path)
+                return
+
+            if origin in (tuple, Tuple):
+                tuple_args = get_args(key_type)
+                if len(tuple_args) == 2 and tuple_args[1] is Ellipsis:
+                    self._validate_dict_key_type(tuple_args[0], f"{path}[]")
+                    return
+                for index, item_type in enumerate(tuple_args):
+                    self._validate_dict_key_type(item_type, f"{path}[{index}]")
+                return
+
+            self._unsupported(
+                path,
+                key_type,
+                "Dict keys must be hashable scalar, Literal, Enum, or Tuple values.",
+            )
+
+        def lower_struct(
+            self, schema_type: Type[Struct], name_hint: str, path_hint: str = ""
+        ) -> Type[Struct]:
+            cache_key = ("struct", schema_type)
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+            fields = []
+            changed = False
+
+            for field in msgspec.structs.fields(schema_type):
+                field_path = f"{path_hint}.{field.name}" if path_hint else field.name
+                lowered_type = self.lower_type(
+                    field.type, f"{name_hint}_{field.name}", field_path
+                )
+                changed = changed or lowered_type is not field.type
+
+                if field.default_factory is not msgspec.NODEFAULT:
+                    fields.append(
+                        (
+                            field.name,
+                            lowered_type,
+                            msgspec.field(default_factory=field.default_factory),
+                        )
+                    )
+                elif field.default is not msgspec.NODEFAULT:
+                    fields.append((field.name, lowered_type, field.default))
+                else:
+                    fields.append((field.name, lowered_type))
+
+            if not changed:
+                self.cache[cache_key] = schema_type
+                return schema_type
+
+            lowered_struct = defstruct(
+                _to_camel_case(name_hint),
+                fields,
+                kw_only=True,
+                module=__name__,
+            )
+            self.cache[cache_key] = lowered_struct
+            return lowered_struct
+
+        def lower_type(self, type_hint: Any, name_hint: str, path: str) -> Any:  # noqa: C901
+            origin = get_origin(type_hint)
+            metadata: Tuple[Any, ...] = ()
+            base_type = type_hint
+
+            if origin is Annotated:
+                args = get_args(type_hint)
+                base_type = args[0]
+                metadata = tuple(args[1:])
+                origin = get_origin(base_type)
+
+            if base_type is Any:
+                self._unsupported(
+                    path,
+                    base_type,
+                    "`Any` is too broad for OpenAI structured outputs.",
+                )
+
+            if base_type in (dict, Dict):
+                self._unsupported(
+                    path,
+                    base_type,
+                    "Use `Dict[K, V]` with explicit key and value types.",
+                )
+
+            if base_type in (list, List):
+                self._unsupported(
+                    path,
+                    base_type,
+                    "Use `List[T]` with an explicit item type.",
+                )
+
+            if base_type in (tuple, Tuple):
+                self._unsupported(
+                    path,
+                    base_type,
+                    "Use `Tuple[...]` with explicit item types.",
+                )
+
+            if base_type in (set, Set, frozenset):
+                self._unsupported(
+                    path,
+                    base_type,
+                    "Sets are not supported by OpenAI structured outputs.",
+                )
+
+            if _is_struct_type(base_type):
+                lowered = self.lower_struct(
+                    base_type, name_hint or base_type.__name__, path
+                )
+                return _wrap_annotated(lowered, metadata)
+
+            if origin in (list, List):
+                if len(get_args(base_type)) != 1:
+                    self._unsupported(
+                        path,
+                        base_type,
+                        "Lists require exactly one item type.",
+                    )
+                (item_type,) = get_args(base_type)
+                lowered = List[
+                    self.lower_type(item_type, f"{name_hint}_item", f"{path}[]")
+                ]
+                return _wrap_annotated(lowered, metadata)
+
+            if origin in (dict, Dict):
+                if len(get_args(base_type)) != 2:
+                    self._unsupported(
+                        path,
+                        base_type,
+                        "Dicts require explicit key and value types.",
+                    )
+                key_type, value_type = get_args(base_type)
+                self._validate_dict_key_type(key_type, f"{path}.<key>")
+                lowered_key_type = self.lower_type(
+                    key_type, f"{name_hint}_key", f"{path}.<key>"
+                )
+                lowered_value_type = self.lower_type(
+                    value_type, f"{name_hint}_value", f"{path}.<value>"
+                )
+
+                entry_struct = defstruct(
+                    f"{_to_camel_case(name_hint)}Entry",
+                    [
+                        ("key", lowered_key_type),
+                        ("value", lowered_value_type),
+                    ],
+                    kw_only=True,
+                    module=__name__,
+                )
+                lowered = defstruct(
+                    f"{_to_camel_case(name_hint)}Map",
+                    [("entries", List[entry_struct])],
+                    kw_only=True,
+                    module=__name__,
+                )
+                return _wrap_annotated(lowered, metadata)
+
+            if origin is Union:
+                non_none_args = [
+                    arg for arg in get_args(base_type) if arg is not type(None)
+                ]
+                if len(non_none_args) > 1:
+                    self._unsupported(
+                        path,
+                        base_type,
+                        "Only Optional[T] unions are supported.",
+                    )
+                lowered_args = tuple(
+                    self.lower_type(arg, f"{name_hint}_option_{index}", path)
+                    for index, arg in enumerate(get_args(base_type))
+                )
+                lowered = Union[lowered_args]
+                return _wrap_annotated(lowered, metadata)
+
+            if origin in (tuple, Tuple):
+                tuple_args = get_args(base_type)
+                if not tuple_args:
+                    self._unsupported(
+                        path,
+                        base_type,
+                        "Tuples require explicit item types.",
+                    )
+                if len(tuple_args) == 2 and tuple_args[1] is Ellipsis:
+                    lowered = Tuple[
+                        self.lower_type(tuple_args[0], f"{name_hint}_item", f"{path}[]"),  # noqa: E501
+                        ...,
+                    ]
+                else:
+                    lowered = Tuple[
+                        tuple(
+                            self.lower_type(
+                                arg,
+                                f"{name_hint}_item_{index}",
+                                f"{path}[{index}]",
+                            )
+                            for index, arg in enumerate(tuple_args)
+                        )
+                    ]
+                return _wrap_annotated(lowered, metadata)
+
+            if origin in (set, Set, frozenset):
+                self._unsupported(
+                    path,
+                    base_type,
+                    "Sets are not supported by OpenAI structured outputs.",
+                )
+
+            if origin in (Mapping, ABCMapping):
+                self._unsupported(
+                    path,
+                    base_type,
+                    "Use `Dict[K, V]` instead of mapping abstractions.",
+                )
+
+            if origin is not None and origin is not Literal:
+                self._unsupported(
+                    path,
+                    base_type,
+                    "This generic type is not supported by the OpenAI lowering layer.",
+                )
+
+            return _wrap_annotated(base_type, metadata)
+
+    if not issubclass(struct_class, msgspec.Struct):
+        raise TypeError(
+            "`struct_class` must be a `msgspec.Struct` subclass "
+            f"given `{type(struct_class)}`"
+        )
+
+    compiler = _Compiler()
+    return compiler.lower_struct(struct_class, struct_class.__name__)
+
+
+def restore_openai_structured_output(value: Any, logical_type: Any) -> Any:  # noqa: C901
+    """Restore provider-specific transport shapes to the logical output schema."""
+    origin = get_origin(logical_type)
+
+    if origin is Annotated:
+        logical_type = get_args(logical_type)[0]
+        origin = get_origin(logical_type)
+
+    if value is None:
+        return None
+
+    if isinstance(logical_type, type) and issubclass(logical_type, msgspec.Struct):
+        restored = {}
+        for field in msgspec.structs.fields(logical_type):
+            if field.name not in value:
+                continue
+            restored[field.name] = restore_openai_structured_output(
+                value[field.name], field.type
+            )
+        return dotdict(restored)
+
+    if origin in (list, List):
+        item_type = get_args(logical_type)[0]
+        return [restore_openai_structured_output(item, item_type) for item in value]
+
+    if origin in (dict, Dict):
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                "Expected a mapping transport value for "
+                f"`{str(logical_type).replace('typing.', '')}` "
+                f"given `{type(value)}`"
+            )
+        if "entries" not in value:
+            raise ValueError(
+                "Expected transport mapping wrapper with required `entries` field "
+                f"for `{str(logical_type).replace('typing.', '')}`"
+            )
+        key_type, value_type = get_args(logical_type)
+        entries = value["entries"]
+        restored = {}
+        for item in entries:
+            key = restore_openai_structured_output(item["key"], key_type)
+            restored[key] = restore_openai_structured_output(item["value"], value_type)
+        return dotdict(restored)
+
+    if origin is Union:
+        args = tuple(arg for arg in get_args(logical_type) if arg is not type(None))
+        if len(args) == 1:
+            return restore_openai_structured_output(value, args[0])
+        if args:
+            raise TypeError(
+                "Unsupported logical type during OpenAI output restoration: "
+                f"`{str(logical_type).replace('typing.', '')}`. "
+                "Only Optional[T] unions are supported."
+            )
+
+    if origin in (tuple, Tuple):
+        tuple_args = get_args(logical_type)
+        if len(tuple_args) == 2 and tuple_args[1] is Ellipsis:
+            item_type = tuple_args[0]
+            return tuple(
+                restore_openai_structured_output(item, item_type) for item in value
+            )
+        return tuple(
+            restore_openai_structured_output(item, tuple_args[index])
+            for index, item in enumerate(value)
+        )
+
+    return value
 
 
 def is_optional_field(struct_class: Type[Struct], field_name: str) -> bool:

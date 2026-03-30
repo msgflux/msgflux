@@ -43,7 +43,11 @@ from msgflux.models.types import (
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.console import cprint
 from msgflux.utils.encode import encode_data_to_bytes
-from msgflux.utils.msgspec import struct_to_dict
+from msgflux.utils.msgspec import (
+    lower_msgspec_struct_for_openai,
+    restore_openai_structured_output,
+    struct_to_dict,
+)
 from msgflux.utils.tenacity import apply_retry, default_model_retry
 
 
@@ -341,8 +345,19 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         return model_output
 
     def _process_completion_model_output(  # noqa: C901
-        self, model_output, typed_parser=None, generation_schema=None
+        self,
+        model_output,
+        typed_parser=None,
+        generation_schema=None,
+        transport_generation_schema=None,
     ):
+        """Build a ModelResponse from the raw OpenAI completion output.
+
+        `generation_schema` is the canonical msgflux schema exposed to callers.
+        `transport_generation_schema` is an OpenAI-specific wire schema used when
+        the canonical schema must be lowered to satisfy Structured Outputs
+        constraints, for example lowering ``Dict[K, V]`` to an ``entries`` list.
+        """
         response = ModelResponse()
         metadata = self._build_usage_metadata(model_output)
 
@@ -385,9 +400,22 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     decoder.decode(self._encoder.encode(response_content))
             elif generation_schema is not None:
                 response.set_response_type("structured")
-                decoder = self._get_decoder(generation_schema)
+                # The raw payload follows the OpenAI transport schema, which may be
+                # a lowered version of the logical msgflux generation schema.
+                decoder_schema = transport_generation_schema or generation_schema
+                decoder = self._get_decoder(decoder_schema)
                 struct = decoder.decode(choice.message.content)
-                response_content = dotdict(struct_to_dict(struct))
+                response_content = struct_to_dict(struct)
+                if (
+                    transport_generation_schema is not None
+                    and transport_generation_schema is not generation_schema
+                ):
+                    # Restore the lowered transport shape back to the logical schema
+                    # before exposing the response to msgflux callers.
+                    response_content = restore_openai_structured_output(
+                        response_content, generation_schema
+                    )
+                response_content = dotdict(response_content)
             else:
                 response.set_response_type("text_generation")
                 response_content = choice.message.content
@@ -413,10 +441,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         return response
 
     def _process_model_output(
-        self, model_output, typed_parser=None, generation_schema=None
+        self,
+        model_output,
+        typed_parser=None,
+        generation_schema=None,
+        transport_generation_schema=None,
     ):
         return self._process_completion_model_output(
-            model_output, typed_parser, generation_schema
+            model_output,
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
         )
 
     def _check_cache(self, **kwargs):
@@ -433,26 +468,46 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             self._response_cache.set(cache_key, response)
 
     def _prepare_generate_kwargs(self, kwargs):
+        """Prepare generation kwargs and derive the OpenAI transport schema.
+
+        `generation_schema` remains the canonical schema for msgflux.
+        `transport_generation_schema` is the schema sent to OpenAI in
+        `response_format`; it may be the same type or a lowered variant that only
+        exists to satisfy OpenAI Structured Outputs restrictions.
+        """
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
+        transport_generation_schema = None
 
         if generation_schema is not None and typed_parser is None:
-            kwargs["response_format"] = response_format_from_msgspec_struct(
+            # Lower only for the OpenAI transport layer; the logical schema stays
+            # unchanged so decoded outputs can be restored to the original shape.
+            transport_generation_schema = lower_msgspec_struct_for_openai(
                 generation_schema
             )
+            kwargs["response_format"] = response_format_from_msgspec_struct(
+                transport_generation_schema
+            )
 
-        return typed_parser, generation_schema
+        return typed_parser, generation_schema, transport_generation_schema
 
     def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
         cached = self._check_cache(**kwargs)
         if cached:
             return cached
 
-        typed_parser, generation_schema = self._prepare_generate_kwargs(kwargs)
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = self._prepare_generate_kwargs(kwargs)
 
         model_output = self._execute_model(**kwargs)
         response = self._process_model_output(
-            model_output, typed_parser, generation_schema
+            model_output,
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
         )
 
         self._store_cache(
@@ -468,11 +523,18 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         if cached:
             return cached
 
-        typed_parser, generation_schema = self._prepare_generate_kwargs(kwargs)
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = self._prepare_generate_kwargs(kwargs)
 
         model_output = await self._aexecute_model(**kwargs)
         response = self._process_model_output(
-            model_output, typed_parser, generation_schema
+            model_output,
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
         )
 
         self._store_cache(
