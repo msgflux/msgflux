@@ -1,5 +1,6 @@
 """Tests for msgflux.nn.modules.module base class."""
 
+import inspect
 import pytest
 from unittest.mock import Mock, MagicMock, patch
 
@@ -33,6 +34,25 @@ class NestedModule(Module):
 
     def forward(self, x):
         return self.sub2(self.sub1(x))
+
+
+class MethodHookModule(Module):
+    """Module with additional methods for method hook testing."""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+
+    def transform(self, value, *, prefix=""):
+        return f"{prefix}{value}"
+
+    def _normalize(self, value):
+        return value.strip().lower()
+
+    async def atransform(self, value, *, prefix=""):
+        return f"{prefix}{value}"
 
 
 class TestHelperFunctions:
@@ -316,6 +336,115 @@ class TestModule:
         assert len(hook_results) == 1
         assert hook_results[0] == result
         handle.remove()
+
+    def test_register_method_pre_hook(self):
+        """Test registering arbitrary method pre-hook."""
+        module = MethodHookModule()
+
+        def my_hook(mod, args, kwargs):
+            return (args[0].upper(),), kwargs
+
+        handle = module.register_method_pre_hook("transform", my_hook)
+        result = module.transform("hello")
+
+        assert result == "HELLO"
+        assert len(module._method_pre_hooks["transform"]) == 1
+        handle.remove()
+
+    def test_register_method_hook(self):
+        """Test registering arbitrary method post-hook."""
+        module = MethodHookModule()
+
+        def my_hook(mod, args, kwargs, output):
+            return output + "!"
+
+        handle = module.register_method_hook("transform", my_hook)
+        result = module.transform("hello", prefix="> ")
+
+        assert result == "> hello!"
+        assert len(module._method_hooks["transform"]) == 1
+        handle.remove()
+
+    def test_register_method_hook_preserves_bound_method_semantics(self):
+        """Test hooked methods still behave like bound methods."""
+        module = MethodHookModule()
+        module.register_method_hook("transform", lambda mod, args, kwargs, output: output)
+
+        wrapped = module.transform
+
+        assert inspect.ismethod(wrapped)
+        assert wrapped.__self__ is module
+        assert wrapped("hello") == "hello"
+
+    def test_register_method_hook_private_method(self):
+        """Test private methods can be hooked without decorators."""
+        module = MethodHookModule()
+
+        def my_hook(mod, args, kwargs, output):
+            return output + "!"
+
+        module.register_method_hook("_normalize", my_hook)
+
+        assert module._normalize("  Hello  ") == "hello!"
+
+    def test_register_method_pre_hook_invalid_target(self):
+        """Test invalid method hook targets are rejected."""
+        module = MethodHookModule()
+
+        with pytest.raises(AttributeError, match="has no method"):
+            module.register_method_pre_hook("missing_method", lambda m, a, k: None)
+
+        with pytest.raises(ValueError, match="reserved"):
+            module.register_method_pre_hook("forward", lambda m, a, k: None)
+
+    @pytest.mark.asyncio
+    async def test_register_async_method_hook(self):
+        """Test async methods use async method hooks."""
+        module = MethodHookModule()
+
+        async def my_hook(mod, args, kwargs, output):
+            return output + "!"
+
+        module.register_method_hook("atransform", my_hook)
+
+        result = await module.atransform("hello", prefix="> ")
+
+        assert result == "> hello!"
+
+    def test_hook_register_with_method_uses_method_registry(self):
+        """Test Hook.register routes method hooks into the method registries."""
+        from msgflux.nn.hooks import Hook
+
+        class AppendHook(Hook):
+            def __init__(self):
+                super().__init__(on="post", method="transform")
+
+            def __call__(self, module, args, kwargs, output=None):
+                return output + "!"
+
+        module = MethodHookModule()
+        hook = AppendHook()
+        handle = hook.register(module)
+
+        assert len(module._method_hooks["transform"]) == 1
+        assert module.transform("hello") == "hello!"
+        handle.remove()
+
+    def test_set_hooks_rejects_non_module_target(self):
+        """Test declarative hooks reject targets that are not modules."""
+        from msgflux.nn.hooks import Hook
+
+        class AppendHook(Hook):
+            def __init__(self):
+                super().__init__(on="post", target="transform")
+
+            def __call__(self, module, args, kwargs, output=None):
+                return output
+
+        module = MethodHookModule()
+
+        with pytest.raises(TypeError, match="must resolve to a Module"):
+            module._set_hooks([AppendHook()])
 
     def test_forward_hook_modifies_output(self):
         """Test that forward hook can modify output."""

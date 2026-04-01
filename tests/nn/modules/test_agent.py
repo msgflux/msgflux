@@ -684,6 +684,34 @@ class TestAgentHooks:
 
         assert len(agent.generator._forward_pre_hooks) == 1
 
+    def test_agent_method_hook_via_hooks_param(self):
+        """Test declarative method hooks register on Agent methods."""
+        from msgflux.nn.hooks import Hook
+
+        class PrepareResponseHook(Hook):
+            def __init__(self):
+                super().__init__(on="post", method="_prepare_response")
+
+            def __call__(self, module, args, kwargs, output=None):
+                return output + "!"
+
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(name="agent", model=mock_model, hooks=[PrepareResponseHook()])
+
+        response = agent._prepare_response(
+            raw_response="hello",
+            response_type="text_generation",
+            messages=[],
+            message="hello",
+            vars={},
+            reasoning=None,
+        )
+
+        assert len(agent._method_hooks["_prepare_response"]) == 1
+        assert response == "hello!"
+
 
 class TestAgentExamples:
     """Test Agent examples functionality."""
