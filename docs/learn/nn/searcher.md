@@ -34,38 +34,52 @@ The `nn.Searcher` module provides a unified interface for information retrieval 
         # [{'results': [{'data': 'Python is a...', 'score': 2.35}, ...], 'query': 'Python programming'}]
         ```
 
-    === "Fuzzy"
+    === "Direct"
 
         ```python
         import msgflux as mf
         import msgflux.nn as nn
 
-        fuzzy = mf.Retriever.fuzzy("rapidfuzz")
-        fuzzy.add([
-            "Alice Johnson",
-            "Bob Smith",
-            "Carlos Mendoza",
-            "Diana Prince",
+        bm25 = mf.Retriever.lexical("bm25")
+        bm25.add([
+            "Python is a programming language created by Guido van Rossum",
+            "JavaScript runs in the browser and on the server with Node.js",
+            "Rust is fast and memory safe, created by Mozilla",
+            "Go was designed at Google by Robert Griesemer",
         ])
 
-        class NameSearcher(nn.Searcher):
-            """Search contacts by approximate name match."""
-            retriever = fuzzy
-            config    = {"top_k": 2, "threshold": 60.0, "return_score": True}
-
-        searcher = NameSearcher()
-        results = searcher("Allice Jonson")
-        # [{'results': [{'data': 'Alice Johnson', 'score': 93.3}], 'query': 'Allice Jonson'}]
-        ```
-
-    === "Direct"
-
-        ```python
         searcher = nn.Searcher(
             retriever=bm25,
-            config={"top_k": 3}
+            config={"top_k": 3, "return_score": True},
         )
+
+        results = searcher("Python programming")
+        # [{'results': [{'data': 'Python is a...', 'score': 2.35}, ...], 'query': 'Python programming'}]
         ```
+
+???+ example "Fuzzy — approximate name lookup"
+
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    fuzzy = mf.Retriever.fuzzy("rapidfuzz")
+    fuzzy.add([
+        "Alice Johnson",
+        "Bob Smith",
+        "Carlos Mendoza",
+        "Diana Prince",
+    ])
+
+    class NameSearcher(nn.Searcher):
+        """Search contacts by approximate name match."""
+        retriever = fuzzy
+        config    = {"top_k": 2, "threshold": 60.0, "return_score": True}
+
+    searcher = NameSearcher()
+    results = searcher("Allice Jonson")
+    # [{'results': [{'data': 'Alice Johnson', 'score': 93.3}], 'query': 'Allice Jonson'}]
+    ```
 
 ---
 
