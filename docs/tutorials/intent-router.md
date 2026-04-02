@@ -1,10 +1,8 @@
 # Solving Agent Tool Sprawl with Intent Routing
 
-Stop letting LLMs improvise across your tools. Use typed signatures and intent-based orchestration for routing that is observable, debuggable, and structured.
-
 > **Inspired by**: [Solving Agent Tool Sprawl with DSPy](https://viksit.substack.com/p/solving-agent-tool-sprawl-with-dspy)
 
----
+Production support systems often end up with a single agent holding dozens of tools. As the tool list grows, routing becomes unreliable and debugging becomes impossible.
 
 ## The Problem
 
@@ -25,26 +23,27 @@ User query
     search_docs  get_doc_by_id  metrics  list_tickets  ...
 ```
 
-You expose all your tools to the agent. The model sees everything and decides which tools to call. But you have no control layer. When it picks wrong, you add examples to the prompt — then more examples, then ALL CAPS WARNINGS. The model keeps improvising because the fundamental issue is not the prompt. You have delegated architectural decisions to a general-purpose model that does not know your system.
-
-- The model cannot learn from mistakes.
+- The model sees all tools and decides which to call — with no control layer.
+- When it picks wrong, you add prompt examples, then CAPS WARNINGS. The model keeps improvising.
 - You cannot see why it chose Tool X over Tool Y.
 - You cannot A/B test routing strategies.
+- The model cannot learn from mistakes.
 
 You are debugging by vibes.
 
-```python
-# Naive approach — one agent, every tool
-class SupportAgent(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    tools = [search_docs, get_doc_by_id, get_incident_metrics, list_open_tickets, ...]
-```
+---
 
-**The fix**: add an orchestration layer that decides which tools to call, in what order, and how to combine results. Separate *planning* (what intents does this query need?) from *execution* (which agent handles each intent?). A typed `Signature` makes the planner's contract explicit and debuggable.
+## The Plan
+
+We will build an `IntentRouter` that separates *planning* from *execution*.
+
+A typed `Signature` drives the planner: it receives the user question and a list of available intents, and emits an ordered plan of `{subquery, intent}` pairs. `ChainOfThought` adds a reasoning step before the model commits to a plan, so the decision is logged as structured data — not buried in a prompt.
+
+Each intent maps to a specialized agent that has access only to the tools relevant to that intent. Results from earlier steps flow into later ones through a shared `context` field, so agents can build on each other's output without any global state.
 
 ---
 
-## What You'll Build
+## Architecture
 
 ```
 User query
@@ -58,6 +57,7 @@ QueryPlanner (Signature + ChainOfThought)
     ▼       ▼       ▼
  search  lookup  analyze
  Agent   Agent   Agent
+ (1 tool)(1 tool)(1 tool)
     │       │       │
     └───────┴───────┘
             │
@@ -67,7 +67,7 @@ QueryPlanner (Signature + ChainOfThought)
     Final context assembled
 ```
 
-Each sub-agent has access **only** to the tools relevant to its intent. Results from earlier steps flow into later ones through a shared `context` field. The orchestration layer is:
+The orchestration layer is:
 
 - **Observable** — every routing decision is a typed plan you can log and inspect
 - **Programmable** — routing logic lives in code, not buried in a prompt
@@ -172,9 +172,15 @@ from typing import Dict, List
 class QueryPlanner(mf.Signature):
     """Decompose the user question into an ordered list of sub-tasks.
 
-    Each step must be assigned one of the available intents.
+    Each step in the plan MUST be a dict with exactly two keys:
+    - "subquery": the question or instruction for that agent
+    - "intent": one of the available intents (exact string match required)
+
     Steps may depend on previous ones — include earlier results in the subquery
-    so the next agent has all the context it needs.
+    so the next agent has full context.
+
+    Constraint: 'lookup' requires a document ID that can only come from a prior
+    'search' step. Never emit 'lookup' as the first step.
     """
 
     question: str = mf.InputField(desc="The full user question")
@@ -184,8 +190,9 @@ class QueryPlanner(mf.Signature):
 
     plan: List[Dict[str, str]] = mf.OutputField(
         desc=(
-            "Ordered list of steps. Each step is a dict with keys: "
-            "'subquery' (str) and 'intent' (one of the available intents)."
+            "Ordered list of steps. Every step must contain both keys: "
+            "'subquery' (str) and 'intent' (exact value from available_intents). "
+            "Example: [{\"subquery\": \"find auth docs\", \"intent\": \"search\"}, ...]"
         )
     )
 
@@ -206,8 +213,8 @@ class Planner(nn.Module):
         msg.plan = self.agent(
             question=msg.question,
             available_intents=(
-                "search: find articles by keyword, "
-                "lookup: retrieve a specific document by ID, "
+                "search: find articles by keyword — returns article titles and IDs, "
+                "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
         )["final_answer"]["plan"]
@@ -217,8 +224,8 @@ class Planner(nn.Module):
         msg.plan = (await self.agent.acall(
             question=msg.question,
             available_intents=(
-                "search: find articles by keyword, "
-                "lookup: retrieve a specific document by ID, "
+                "search: find articles by keyword — returns article titles and IDs, "
+                "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
         ))["final_answer"]["plan"]
@@ -256,7 +263,7 @@ class IntentRouter(nn.Module):
                 continue
 
             context = "\n".join(context_parts) or "No prior context."
-            result  = agent(query=subquery, context=context)
+            result  = next(iter(agent(query=subquery, context=context).values()))
 
             step_summary = f"Step {i} ({intent}): {result}"
             context_parts.append(step_summary)
@@ -270,12 +277,12 @@ class IntentRouter(nn.Module):
 
         context_parts = []
         for i, step in enumerate(msg.plan):
-            agent = self.agents.get(step["intent"])
+            agent = self.agents.get(step.get("intent", ""))
             if agent is None:
                 continue
 
             context = "\n".join(context_parts) or "No prior context."
-            result  = await agent.acall(query=step["subquery"], context=context)
+            result  = next(iter((await agent.acall(query=step["subquery"], context=context)).values()))
 
             step_summary = f"Step {i} ({step['intent']}): {result}"
             context_parts.append(step_summary)
@@ -287,7 +294,87 @@ class IntentRouter(nn.Module):
 
 ---
 
-## Complete Example
+## Examples
+
+???+ example
+
+    === "Multi-intent query"
+
+        ```python
+        router = IntentRouter()
+
+        msg = mf.Message()
+        msg.question = "What is our deployment process and how many critical incidents happened this week?"
+
+        router(msg)
+
+        print("\n--- Plan ---")
+        for step in msg.plan:
+            print(f"  [{step['intent']}] {step['subquery']}")
+
+        print("\n--- Final Context ---")
+        print(msg.context)
+        ```
+
+        ```
+        [SearchAgent][tool_call] search_docs: {'query': 'deployment process'}
+        [SearchAgent][tool_response] search_docs: deploy-101 · Deployment Guide, deploy-docker · Docker Setup
+        Step 0 (search): Found documents: 'deploy-101 · Deployment Guide' and 'deploy-docker · Docker Setup'.
+
+        [SearchAgent][tool_call] search_docs: {'query': 'critical incidents this week'}
+        [SearchAgent][tool_response] search_docs: No articles found for: 'critical incidents this week'
+        Step 1 (search): No reports about critical incidents this week were found in the knowledge base.
+
+        [AnalyzeAgent][tool_call] get_incident_metrics: {'severity': 'critical', 'last_days': 7}
+        [AnalyzeAgent][tool_response] get_incident_metrics: Last 7d — 3 critical incidents · MTTR 2.1 h
+        Step 2 (analyze): In the last week, there were 3 critical incidents reported.
+
+        --- Plan ---
+          [search]  find documents about deployment process
+          [search]  find reports or data about critical incidents this week
+          [analyze] analyze the critical incidents data from this week to count how many occurred
+
+        --- Final Context ---
+        Step 0 (search): Found documents: 'deploy-101 · Deployment Guide' and 'deploy-docker · Docker Setup'.
+        Step 1 (search): No reports about critical incidents this week were found in the knowledge base.
+        Step 2 (analyze): In the last week, there were 3 critical incidents reported.
+        ```
+
+    === "Single-intent query"
+
+        ```python
+        router = IntentRouter()
+
+        msg = mf.Message()
+        msg.question = "Where can I find the authentication documentation?"
+
+        router(msg)
+        print(msg.context)
+        ```
+
+        ```
+        [search] calling search_docs(query='authentication documentation')
+        Step 0 (search): auth-001 · Auth Overview, auth-jwt · JWT Configuration
+        ```
+
+    === "Async"
+
+        ```python
+        import asyncio
+
+        async def main():
+            router = IntentRouter()
+            msg = mf.Message()
+            msg.question = "Walk me through authentication and show any performance issues this week."
+            await router.acall(msg)
+            print(msg.context)
+
+        asyncio.run(main())
+        ```
+
+---
+
+## Complete Script
 
 ```python
 import asyncio
@@ -336,19 +423,27 @@ def get_incident_metrics(severity: str = "all", last_days: int = 7) -> str:
 class QueryPlanner(mf.Signature):
     """Decompose the user question into an ordered list of sub-tasks.
 
-    Each step must be assigned one of the available intents.
-    Include earlier results in later subqueries so context flows forward.
+    Each step in the plan MUST be a dict with exactly two keys:
+    - "subquery": the question or instruction for that agent
+    - "intent": one of the available intents (exact string match required)
+
+    Steps may depend on previous ones — include earlier results in the subquery
+    so the next agent has full context.
+
+    Constraint: 'lookup' requires a document ID that can only come from a prior
+    'search' step. Never emit 'lookup' as the first step.
     """
 
     question: str = mf.InputField(desc="The full user question")
     available_intents: str = mf.InputField(
-        desc="Comma-separated intents with one-line descriptions"
+        desc="Comma-separated intents the system can handle, with one-line descriptions"
     )
 
     plan: List[Dict[str, str]] = mf.OutputField(
         desc=(
-            "Ordered list of steps. Each step: "
-            "'subquery' (str) and 'intent' (search | lookup | analyze)."
+            "Ordered list of steps. Every step must contain both keys: "
+            "'subquery' (str) and 'intent' (exact value from available_intents). "
+            "Example: [{\"subquery\": \"find auth docs\", \"intent\": \"search\"}, ...]"
         )
     )
 
@@ -393,8 +488,8 @@ class Planner(nn.Module):
         msg.plan = self.agent(
             question=msg.question,
             available_intents=(
-                "search: find articles by keyword, "
-                "lookup: retrieve a specific document by ID, "
+                "search: find articles by keyword — returns article titles and IDs, "
+                "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
         )["final_answer"]["plan"]
@@ -404,8 +499,8 @@ class Planner(nn.Module):
         msg.plan = (await self.agent.acall(
             question=msg.question,
             available_intents=(
-                "search: find articles by keyword, "
-                "lookup: retrieve a specific document by ID, "
+                "search: find articles by keyword — returns article titles and IDs, "
+                "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
         ))["final_answer"]["plan"]
@@ -427,12 +522,12 @@ class IntentRouter(nn.Module):
 
         context_parts = []
         for i, step in enumerate(msg.plan):
-            agent = self.agents.get(step["intent"])
+            agent = self.agents.get(step.get("intent", ""))
             if agent is None:
                 continue
 
             context = "\n".join(context_parts) or "No prior context."
-            result  = agent(query=step["subquery"], context=context)
+            result  = next(iter(agent(query=step["subquery"], context=context).values()))
 
             step_summary = f"Step {i} ({step['intent']}): {result}"
             context_parts.append(step_summary)
@@ -446,12 +541,12 @@ class IntentRouter(nn.Module):
 
         context_parts = []
         for i, step in enumerate(msg.plan):
-            agent = self.agents.get(step["intent"])
+            agent = self.agents.get(step.get("intent", ""))
             if agent is None:
                 continue
 
             context = "\n".join(context_parts) or "No prior context."
-            result  = await agent.acall(query=step["subquery"], context=context)
+            result  = next(iter((await agent.acall(query=step["subquery"], context=context)).values()))
 
             step_summary = f"Step {i} ({step['intent']}): {result}"
             context_parts.append(step_summary)
@@ -465,49 +560,8 @@ router = IntentRouter()
 
 msg = mf.Message()
 msg.question = "What is our deployment process and how many critical incidents happened this week?"
-
 router(msg)
-
-print("\n--- Plan ---")
-for step in msg.plan:
-    print(f"  [{step['intent']}] {step['subquery']}")
-
-print("\n--- Final Context ---")
 print(msg.context)
-
-
-async def main():
-    router = IntentRouter()
-    msg = mf.Message()
-    msg.question = "Walk me through authentication and show any performance issues this week."
-    await router.acall(msg)
-    print(msg.context)
-
-
-asyncio.run(main())
-```
-
-**Sample output** (plan generated by the model, tool calls logged by `verbose`):
-
-```
-[search] calling search_docs(query='deployment process')
-Step 0 (search): deploy-101 · Deployment Guide, deploy-docker · Docker Setup
-
-[lookup] calling get_doc_by_id(doc_id='deploy-101')
-Step 1 (lookup): ## Deployment Guide\nPush to `main` triggers CI...
-
-[analyze] calling get_incident_metrics(severity='critical', last_days=7)
-Step 2 (analyze): Last 7d — 3 critical incidents · MTTR 2.1 h
-
---- Plan ---
-  [search]  Find articles about deployment process
-  [lookup]  Retrieve content of deploy-101
-  [analyze] Get critical incident count for the last 7 days
-
---- Final Context ---
-Step 0 (search): deploy-101 · Deployment Guide, deploy-docker · Docker Setup
-Step 1 (lookup): ## Deployment Guide\nPush to `main` triggers CI...
-Step 2 (analyze): Last 7d — 3 critical incidents · MTTR 2.1 h
 ```
 
 ---

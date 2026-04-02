@@ -19,6 +19,8 @@ The `chat_completion` model is the most versatile model type for natural languag
 
 ## ✦₊⁺ Overview
 
+--8<-- "docs/_includes/init_chat_completion_model.md"
+
 Chat completion models are stateless - they don't maintain conversation history between calls. You must provide all context (previous messages, system prompt, etc.) in each request.
 
 ### Quick Start
@@ -36,10 +38,6 @@ Chat completion models are stateless - they don't maintain conversation history 
     response = model("Hello!")
     print(response.consume())
     ```
-
-!!! tip
-
-    `consume()` is an alias for `.data`.
 
 ## 1. **Model Initialization**
 
@@ -705,7 +703,7 @@ Models can suggest calling functions (tools) to gather information:
 
 ## 10. **Prefilling**
 
-Force the model to start its response with specific text:
+Force the model to start its response with specific text. msgFlux appends the value as an assistant message before sending the request to the provider — see [Prefilling](../nn/agent/prefilling.md) for a detailed explanation of the technique.
 
 ???+ example
 
@@ -836,7 +834,7 @@ msgFlux exposes five parameters that control reasoning behaviour at model initia
 | `reasoning_effort` | How much reasoning to do. One of `"minimal"`, `"low"`, `"medium"`, `"high"`. | — |
 | `reasoning_max_tokens` | Hard cap (in tokens) on the internal thinking budget. | — |
 | `return_reasoning` | Store the reasoning trace in `response.reasoning`. When `False`, reasoning is discarded even if the provider returns it. | `True` |
-| `enable_thinking` | Activate extended model reasoning (provider-level switch, e.g. Anthropic). | `False` |
+| `enable_thinking` | Activate extended model reasoning. | `False` |
 | `reasoning_in_tool_call` | Preserve reasoning context across tool calls so the model keeps its chain of thought intact. When enabled, the `ToolCallAggregator` embeds the reasoning in `<think>` tags inside the assistant message history, allowing the model to see its previous reasoning when processing tool results. | `False` |
 
 ???+ example "Initialization"
