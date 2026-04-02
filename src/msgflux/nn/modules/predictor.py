@@ -79,7 +79,7 @@ class Predictor(Module, metaclass=AutoParams):
         if name:
             self.set_name(name)
 
-    def forward(self, message: Union[Any, Message], **kwargs: Any) -> Any:
+    def forward(self, message: Union[Any, Message] = None, **kwargs: Any) -> Any:
         """Execute the predictor with the given message.
 
         Args:
@@ -87,19 +87,24 @@ class Predictor(Module, metaclass=AutoParams):
                 - Any: Direct data input for prediction (text, image, array, etc.)
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
+                - data: Alias for ``message`` — useful when called as a Guard validator.
                 - task: Override field path or direct value
                 - model_preference: Override model preference
 
         Returns:
             Prediction results (type depends on model and response_mode).
         """
+        if message is None and "data" in kwargs:
+            message = kwargs.pop("data")
         inputs = self._prepare_inputs(message, **kwargs)
         model_response = self._execute_model(**inputs)
         response = self._process_model_response(model_response, message)
         return response
 
-    async def aforward(self, message: Union[Any, Message], **kwargs) -> Any:
+    async def aforward(self, message: Union[Any, Message] = None, **kwargs) -> Any:
         """Async version of forward. Execute the predictor asynchronously."""
+        if message is None and "data" in kwargs:
+            message = kwargs.pop("data")
         inputs = self._prepare_inputs(message, **kwargs)
         model_response = await self._aexecute_model(**inputs)
         response = self._process_model_response(model_response, message)
