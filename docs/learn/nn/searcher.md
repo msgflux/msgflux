@@ -2,7 +2,7 @@
 
 ## ✦₊⁺ Overview
 
-The `nn.Searcher` module provides a unified interface for information retrieval using lexical search (BM25) or web search (Wikipedia).
+The `nn.Searcher` module provides a unified interface for information retrieval using lexical search (BM25), fuzzy search (RapidFuzz), or web search (Wikipedia).
 
 ---
 
@@ -32,6 +32,30 @@ The `nn.Searcher` module provides a unified interface for information retrieval 
         searcher = DocSearcher()
         results = searcher("Python programming")
         # [{'results': [{'data': 'Python is a...', 'score': 2.35}, ...], 'query': 'Python programming'}]
+        ```
+
+    === "Fuzzy"
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        fuzzy = mf.Retriever.fuzzy("rapidfuzz")
+        fuzzy.add([
+            "Alice Johnson",
+            "Bob Smith",
+            "Carlos Mendoza",
+            "Diana Prince",
+        ])
+
+        class NameSearcher(nn.Searcher):
+            """Search contacts by approximate name match."""
+            retriever = fuzzy
+            config    = {"top_k": 2, "threshold": 60.0, "return_score": True}
+
+        searcher = NameSearcher()
+        results = searcher("Allice Jonson")
+        # [{'results': [{'data': 'Alice Johnson', 'score': 93.3}], 'query': 'Allice Jonson'}]
         ```
 
     === "Direct"

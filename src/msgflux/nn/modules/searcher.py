@@ -5,6 +5,7 @@ from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.data.dbs.types import VectorDB
 from msgflux.data.retrievers.types import (
+    FuzzyRetriever,
     LexicalRetriever,
     SemanticRetriever,
     WebRetriever,
@@ -18,7 +19,9 @@ from msgflux.models.types import (
 from msgflux.nn.modules.embedder import Embedder
 from msgflux.nn.modules.module import Module
 
-RETRIVERS = Union[WebRetriever, LexicalRetriever, SemanticRetriever, VectorDB]
+RETRIVERS = Union[
+    WebRetriever, LexicalRetriever, FuzzyRetriever, SemanticRetriever, VectorDB
+]
 EMBEDDER_MODELS = Union[
     AudioEmbedderModel, ImageEmbedderModel, TextEmbedderModel, ModelGateway
 ]
@@ -285,13 +288,21 @@ class Searcher(Module, metaclass=AutoParams):
 
     def _set_retriever(self, retriever: RETRIVERS):
         if isinstance(
-            retriever, (WebRetriever, LexicalRetriever, SemanticRetriever, VectorDB)
+            retriever,
+            (
+                WebRetriever,
+                LexicalRetriever,
+                FuzzyRetriever,
+                SemanticRetriever,
+                VectorDB,
+            ),
         ):
             self.register_buffer("retriever", retriever)
         else:
             raise TypeError(
-                "`retriever` requires `HybridRetriever`, `LexicalRetriever`, "
-                f"`SemanticRetriever` or `VectorDB` instance given `{type(retriever)}`"
+                "`retriever` requires `WebRetriever`, `LexicalRetriever`, "
+                "`FuzzyRetriever`, `SemanticRetriever` or `VectorDB` instance "
+                f"given `{type(retriever)}`"
             )
 
     def _set_model(self, model: Optional[Union[EMBEDDER_MODELS, Embedder]] = None):
