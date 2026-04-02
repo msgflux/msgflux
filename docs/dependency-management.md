@@ -134,6 +134,12 @@ hide:
 | BM25s       | `bm25s`       |
 | Rank BM25   | `rank-bm25s`  |
 
+### Fuzzy
+
+| Provider    | Dependency    |
+|-------------|---------------|
+| RapidFuzz   | `rapidfuzz`   |
+
 ### Web Search
 
 | Provider    | Dependency    |

@@ -4,11 +4,12 @@
 
 `Retriever` provides a unified interface for fetching relevant content from different sources. All retrievers return a consistent `dotdict` response and support both synchronous and async execution.
 
-There are two retriever families:
+There are three retriever families:
 
 | Family | Providers | Use Case |
 |--------|-----------|----------|
 | **Lexical** | `bm25`, `bm25s`, `rank_bm25` | Search a local document corpus by keyword relevance |
+| **Fuzzy** | `rapidfuzz` | Approximate string matching — tolerates typos and partial matches |
 | **Web** | `wikipedia` | Fetch content from external sources at query time |
 
 ---
@@ -35,6 +36,26 @@ There are two retriever families:
     # Machine learning is a subset of artificial intelligence.
     ```
 
+???+ example "Fuzzy — RapidFuzz"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.fuzzy("rapidfuzz")
+
+    retriever.add([
+        "Alice Johnson",
+        "Bob Smith",
+        "Carlos Mendoza",
+    ])
+
+    response = retriever("Allice Jonson", top_k=1, return_score=True)
+
+    result = response.data[0][0]
+    print(f"[{result.score:.1f}] {result.data}")
+    # [93.3] Alice Johnson
+    ```
+
 ???+ example "Web — Wikipedia"
 
     ```python
@@ -56,7 +77,7 @@ There are two retriever families:
 All retrievers return a `dotdict` with a consistent top-level structure:
 
 ```python
-response.response_type  # "lexical_search" or "web_search"
+response.response_type  # "lexical_search", "fuzzy_search", or "web_search"
 response.data           # list — one entry per query
 response.data[0].results        # list of results for the first query
 response.data[0].results[0].data  # the retrieved content

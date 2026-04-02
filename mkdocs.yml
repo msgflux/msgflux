@@ -2,7 +2,7 @@ site_name: msgFlux
 site_url: https://msgflux.com/
 site_author: Vilson Rodrigues
 site_description: >-
-  An engine for build dynamic AI systems.
+  A framework for build dynamic AI systems.
 copyright: |
     &copy; 2026 <a href="https://github.com/msgflux"  target="_blank" rel="noopener">msgFlux</a>
 
@@ -137,8 +137,9 @@ nav:
       - learn/models/text_reranker.md
     - ⟳ Retrievers:
       - learn/retrievers/retriever.md
-      - learn/retrievers/bm25.md
-      - learn/retrievers/wikipedia.md
+      - learn/retrievers/lexical.md
+      - learn/retrievers/fuzzy.md
+      - learn/retrievers/web.md
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
@@ -192,22 +193,39 @@ nav:
           - api-reference/nn/functional.md
           - api-reference/nn/modules/agent.md       
   - Tutorials:
-    #- tutorials/tutorials.md
-    - Payments Assistant: tutorials/payments-assistant.md
-    - Product Poster Generator: tutorials/product-poster.md
-    - Intent Router: tutorials/intent-router.md
-    - Visit Report Assistant: tutorials/visit-report.md
-    - Query Router with Signatures: tutorials/signature-router.md
-    - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
-    - Call Transcript Analysis: tutorials/call-transcript-analysis.md
-    - Research Scholar Agent: tutorials/research-scholar.md
-    - Email Auto Responder: tutorials/email-auto-responder.md
-    - Meeting Assistant: tutorials/meeting-assistant.md
-    - Code Generation & Debugging Agent: tutorials/code-debug-agent.md
-    - Legal Document Review: tutorials/legal-document-review.md
-    - Lead Scoring: tutorials/lead-scoring.md
-    - README Generator: tutorials/readme-generator.md
-    - Ad Focus Group Simulator: tutorials/ad-focus-group.md
+    - tutorials/index.md
+    - Finance & Payments:
+      - PIX Assistant: tutorials/pix-assistant.md
+      - Restaurant Supply Assistant: tutorials/restaurant-supply-assistant.md
+      - Food Delivery Assistant: tutorials/food-delivery-assistant.md
+    - Agro & Industrial:
+      - Herd Monitor: tutorials/herd-monitor.md
+      - Smart Collar Analytics: tutorials/smart-collar-analytics.md
+    - Safety & Infrastructure:
+      - Road Collision Detector: tutorials/road-collision-detector.md
+      - PPE Compliance Monitor: tutorials/ppe-compliance-monitor.md
+      - Workplace Incident Reporter: tutorials/workplace-incident-reporter.md
+    - Routing & Classification:
+      - Intent Router: tutorials/intent-router.md
+      - Query Router with Signatures: tutorials/signature-router.md
+    - Audio & Video:
+      - Meeting Assistant: tutorials/meeting-assistant.md
+      - Call Transcript Analysis: tutorials/call-transcript-analysis.md
+      - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
+    - Research & Analysis:
+      - Research Scholar Agent: tutorials/research-scholar.md
+      - Legal Document Review: tutorials/legal-document-review.md
+    - Business & Sales:
+      - Visit Report Assistant: tutorials/visit-report.md
+      - Lead Scoring: tutorials/lead-scoring.md
+    - Automation:
+      - Email Auto Responder: tutorials/email-auto-responder.md
+    - Developer Tools:
+      - Code Generation & Debugging Agent: tutorials/code-debug-agent.md
+      - README Generator: tutorials/readme-generator.md
+    - Marketing & Creative:
+      - Product Poster Generator: tutorials/product-poster.md
+      - Ad Focus Group Simulator: tutorials/ad-focus-group.md
   - Dependency Management: dependency-management.md
   - Changelog: CHANGELOG.md
   - Blog:

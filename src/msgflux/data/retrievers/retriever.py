@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from msgflux.data.retrievers.base import BaseRetriever
 
 from msgflux.data.retrievers.types import (
+    FuzzyRetriever,
     LexicalRetriever,
     SemanticRetriever,
     WebRetriever,
@@ -76,3 +77,7 @@ class Retriever:
     @classmethod
     def web(cls, provider: str, **kwargs) -> WebRetriever:
         return cls._create_retriever("web", provider, **kwargs)
+
+    @classmethod
+    def fuzzy(cls, provider: str, **kwargs) -> FuzzyRetriever:
+        return cls._create_retriever("fuzzy", provider, **kwargs)

@@ -1,4 +1,4 @@
-# BM25 Retrievers
+# Lexical Retrievers
 
 ## ✦₊⁺ Overview
 

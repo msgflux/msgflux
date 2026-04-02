@@ -1,4 +1,4 @@
-# Wikipedia Retriever
+# Web Retrievers
 
 ## ✦₊⁺ Overview
 
