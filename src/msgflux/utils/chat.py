@@ -287,15 +287,51 @@ def hint_to_schema(type_hint) -> dict:  # noqa: C901
         if type_hint is bool:
             return {"type": "boolean"}
         if type_hint is Any:
-            raise TypeError("Unsupported type in Tool: Any")
+            raise TypeError(
+                "Unsupported bare `Any` in Tool parameter. "
+                "Use a concrete type or `dict[K, V]` with explicit types."
+            )
         if type_hint is dict or type_hint is Dict:
-            raise TypeError("Unsupported type in Tool: Dict")
+            raise TypeError(
+                "Unsupported bare `dict` in Tool parameter. "
+                "Use `dict[K, V]` with explicit key and value types."
+            )
 
     # List / list[T]
     if origin in (list, List):
         args = get_args(type_hint)
         items_schema = hint_to_schema(args[0]) if args else {}
         return {"type": "array", "items": items_schema}
+
+    # dict[K, V] — lowered to {entries: [{key: K, value: V}]} for OpenAI strict compat
+    if origin in (dict, Dict):
+        args = get_args(type_hint)
+        if len(args) != 2:
+            raise TypeError(
+                "Unsupported bare `dict` in Tool parameter. "
+                "Use `dict[K, V]` with explicit key and value types."
+            )
+        key_type, val_type = args
+        key_schema = hint_to_schema(key_type)
+        # Any as value type means "no schema constraint" — may not be strict-compatible
+        val_schema = {} if val_type is Any else hint_to_schema(val_type)
+        entry_schema = {
+            "type": "object",
+            "properties": {
+                "key": key_schema,
+                "value": val_schema,
+            },
+            "required": ["key", "value"],
+            "additionalProperties": False,
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "entries": {"type": "array", "items": entry_schema},
+            },
+            "required": ["entries"],
+            "additionalProperties": False,
+        }
 
     # Literal
     if origin is Literal:

@@ -2,7 +2,7 @@ import asyncio
 import inspect
 from dataclasses import asdict, dataclass, field
 from functools import partial
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union, get_args, get_origin
 
 import msgspec
 
@@ -172,12 +172,14 @@ class LocalTool(Tool):
         annotations: Dict[str, Any],
         tool_config: Dict[str, Any],
         impl: Callable,
+        transport_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.set_name(name)
         self.set_description(description)
         self.set_annotations(annotations)
         self.register_buffer("tool_config", tool_config)
+        self.register_buffer("transport_params", transport_params or {})
         self.impl = impl  # Not a buffer for now
 
         # Apply retry
@@ -189,14 +191,34 @@ class LocalTool(Tool):
             self.aforward, retry_config, default=default_tool_retry
         )
 
+    def _restore_transport_params(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Restore wire-format dict params (entries list) back to plain dicts.
+
+        When a tool parameter is typed as ``dict[K, V]``, the JSON Schema sent
+        to the model uses ``{entries: [{key, value}]}`` to stay compatible with
+        OpenAI strict mode.  This method converts those entries back to a plain
+        ``dict`` before the underlying function is called.
+        """
+        transport_params = self._buffers.get("transport_params", {})
+        if not transport_params:
+            return kwargs
+        restored = dict(kwargs)
+        for param_name in transport_params:
+            raw = restored.get(param_name)
+            if isinstance(raw, dict) and "entries" in raw:
+                restored[param_name] = {e["key"]: e["value"] for e in raw["entries"]}
+        return restored
+
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
+        kwargs = self._restore_transport_params(kwargs)
         if inspect.iscoroutinefunction(self.impl):
             return F.wait_for(self.impl, **kwargs)
         return self.impl(**kwargs)
 
     @aset_tool_attributes(execution_type="local")
     async def aforward(self, *args, **kwargs):
+        kwargs = self._restore_transport_params(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
         elif inspect.iscoroutinefunction(self.impl):
@@ -295,12 +317,23 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
     if tool_config.get("spawn"):
         doc = "This tool will not generate a return. \n" + doc
 
+    # Detect dict[K, V] parameters that need transport lowering.
+    # hint_to_schema will emit {entries: [{key, value}]} for these; we record
+    # them here so LocalTool can restore the entries list back to a plain dict
+    # before calling the underlying function.
+    transport_params: Dict[str, Any] = {
+        param: hint
+        for param, hint in annotations.items()
+        if param != "return" and get_origin(hint) in (dict, Dict)
+    }
+
     return LocalTool(
         name=name,
         description=doc,
         annotations=annotations,
         tool_config=tool_config,
         impl=impl,
+        transport_params=transport_params,
     )
 
 
