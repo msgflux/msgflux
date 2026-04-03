@@ -199,7 +199,7 @@ class LocalTool(Tool):
         OpenAI strict mode.  This method converts those entries back to a plain
         ``dict`` before the underlying function is called.
         """
-        transport_params = self._buffers.get("transport_params") or {}
+        transport_params = self._buffers.get("transport_params", {})
         if not transport_params:
             return kwargs
         restored = dict(kwargs)
@@ -333,7 +333,7 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
         annotations=annotations,
         tool_config=tool_config,
         impl=impl,
-        transport_params=transport_params or None,
+        transport_params=transport_params,
     )
 
 
