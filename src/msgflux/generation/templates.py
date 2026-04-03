@@ -7,8 +7,8 @@ class PromptSpec:
 
 
 SYSTEM_PROMPT_TEMPLATE = """
-{% if system_message or instructions or expected_output or examples or team_members or system_extra_message %}
-<developer_note>
+{% if system_message or instructions or expected_output or examples or system_extra_message %}
+<system_note>
 {% if system_message %}<system_message>
 {{ system_message }}
 </system_message>
@@ -31,7 +31,7 @@ SYSTEM_PROMPT_TEMPLATE = """
 {% if current_date %}
 The current date is: {{ current_date }}
 {% endif %}
-</developer_note>
+</system_note>
 {% endif %}
 """  # noqa: E501
 
