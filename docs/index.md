@@ -331,7 +331,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
 
     === "Agent-as-Tool"
 
-        An agent can serve as a tool for another agent. Decorate with `@tool_config` and pass the **class** to `tools`:
+        An agent can serve as a tool for another agent. Pass the **class** to `tools`. Use `@tool_config` when you need extra behavior, like routing the tool result directly to the caller:
 
         ```python linenums="1"
         import msgflux as mf

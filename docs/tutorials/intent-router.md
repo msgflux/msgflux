@@ -37,7 +37,7 @@ You are debugging by vibes.
 
 We will build an `IntentRouter` that separates *planning* from *execution*.
 
-A typed `Signature` drives the planner: it receives the user question and a list of available intents, and emits an ordered plan of `{subquery, intent}` pairs. `ChainOfThought` adds a reasoning step before the model commits to a plan, so the decision is logged as structured data — not buried in a prompt.
+A typed `Signature` drives the planner: it receives the user question and a list of available intents, and emits an ordered plan of `{subquery, intent}` pairs. `ChainOfThought` adds a reasoning step before the model commits to a plan, so the decision is logged as structured data.
 
 Each intent maps to a specialized agent that has access only to the tools relevant to that intent. Results from earlier steps flow into later ones through a shared `context` field, so agents can build on each other's output without any global state.
 
@@ -138,7 +138,7 @@ class SearchAgent(nn.Agent):
     """Finds relevant articles using keyword search."""
     model = model
     tools = [search_docs]
-    signature = "query, context -> results: str"
+    signature = "query, context -> results"
     config = {"verbose": True}
 
 
@@ -146,7 +146,7 @@ class LookupAgent(nn.Agent):
     """Fetches the full content of a specific document by ID."""
     model = model
     tools = [get_doc_by_id]
-    signature = "query, context -> details: str"
+    signature = "query, context -> details"
     config = {"verbose": True}
 
 
@@ -154,7 +154,7 @@ class AnalyzeAgent(nn.Agent):
     """Computes incident metrics and surfaces trends."""
     model = model
     tools = [get_incident_metrics]
-    signature = "query, context -> analysis: str"
+    signature = "query, context -> analysis"
     config = {"verbose": True}
 ```
 
@@ -163,6 +163,22 @@ class AnalyzeAgent(nn.Agent):
 ## Step 3: Query Planner with a Signature
 
 The planner is the heart of the system. A `Signature` makes its contract explicit: here are the inputs, here are the typed outputs, here is the docstring that becomes its instruction. `ChainOfThought` adds a reasoning step before the model commits to a plan.
+
+!!! note "Output structure: CoT + Signature"
+    When `generation_schema = ChainOfThought` is used **without** a Signature, the agent returns `{"reasoning": "...", "final_answer": "..."}` where `final_answer` is a plain `str`.
+
+    When a **Signature is also set**, the Agent injects the Signature's output fields inside `final_answer`. It becomes a `dict` whose keys match the declared `OutputField` names. For `QueryPlanner`, that means:
+
+    ```python
+    {
+        "reasoning": "...",
+        "final_answer": {
+            "plan": [{"subquery": "...", "intent": "..."}, ...]
+        }
+    }
+    ```
+
+    This is why `Planner.forward` reads `["final_answer"]["plan"]` rather than just `["final_answer"]`.
 
 ```python
 from msgflux.generation.reasoning import ChainOfThought
@@ -217,7 +233,7 @@ class Planner(nn.Module):
                 "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
-        )["final_answer"]["plan"]
+        )["final_answer"]["plan"]  # final_answer is a dict here because a Signature is set; "plan" is its OutputField
         return msg
 
     async def aforward(self, msg):
@@ -228,7 +244,7 @@ class Planner(nn.Module):
                 "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
-        ))["final_answer"]["plan"]
+        ))["final_answer"]["plan"]  # same as above: final_answer["plan"] → Signature OutputField
         return msg
 ```
 
@@ -492,7 +508,7 @@ class Planner(nn.Module):
                 "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
-        )["final_answer"]["plan"]
+        )["final_answer"]["plan"]  # final_answer is a dict here because a Signature is set; "plan" is its OutputField
         return msg
 
     async def aforward(self, msg):
@@ -503,7 +519,7 @@ class Planner(nn.Module):
                 "lookup: retrieve a specific document by ID (requires an ID from a prior search step), "
                 "analyze: compute incident metrics and trends"
             ),
-        ))["final_answer"]["plan"]
+        ))["final_answer"]["plan"]  # same as above: final_answer["plan"] → Signature OutputField
         return msg
 
 

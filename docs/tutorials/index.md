@@ -1,322 +1,272 @@
-# Examples
-
-A collection of creative examples demonstrating msgFlux capabilities.
-
+---
+hide:
+  - toc
 ---
 
-## 🎙️ Podcast Generator
+# Tutorials
 
-An automated pipeline that converts a topic into a two-host podcast episode, complete with script writing, voice synthesis, and audio mixing.
+Learn good AI system design through real problems. Each tutorial shows how msgFlux modules compose and how Inline expresses dynamic workflows, turning an industry challenge into production-ready code.
 
-**Concepts**: `nn.Sequential`, `nn.Speaker`, `msg_bcast_gather`, `AutoParams`
+<div class="tutorial-section" markdown>
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
-from msgflux import Message
+## :material-bank: Finance & Payments
 
-# Models
-chat_model = mf.Model.chat_completion("openai/gpt-4")
-tts_model = mf.Model.text_to_speech("openai/tts-1")
+<div class="grid cards" markdown>
 
-class ScriptWriter(nn.Agent):
-    """Writes a dynamic dialogue between two hosts."""
-    model = chat_model
-    system_message = "You are a professional podcast scriptwriter."
-    instructions = """
-    Write a 2-minute dialogue between two hosts: 
-    - Alex (Enthusiastic, main host)
-    - Jamie (Skeptical but curious, co-host)
-    
-    Topic: {{topic}}
-    
-    Output the script as a list of turns.
-    """
-    signature = "topic -> script: list[dict[str, str]]"
-    message_fields = {"task": "topic"}
-    response_mode = "script"
+-   [**PIX Assistant**](./pix-assistant.md) <span class="tag tag-orange">Advanced</span>
 
-class AudioProducer(nn.Module):
-    """Synthesizes audio for each turn in parallel."""
-    def __init__(self):
-        super().__init__()
-        # Define speakers
-        self.alex = nn.Speaker(
-            model=tts_model, 
-            config={"voice": "alloy", "speed": 1.0}
-        )
-        self.jamie = nn.Speaker(
-            model=tts_model, 
-            config={"voice": "onyx", "speed": 1.05}
-        )
+    ---
 
-    def forward(self, msg):
-        script = msg.script
-        
-        def process_turn(turn):
-            speaker_name = turn['speaker'].lower()
-            text = turn['text']
-            
-            # Select voice
-            speaker = self.alex if 'alex' in speaker_name else self.jamie
-            
-            # Generate audio in parallel
-            return speaker(text)
+    PIX multimodal pipeline: accepts text, voice notes, or images with embedded keys, resolves contacts via BM25 lookup, and routes to a payment tool with guardrails.
 
-        # Generate all lines concurrently
-        msg.audio_segments = F.map_gather(process_turn, [(turn,) for turn in script])
-        return msg
+    `multimodal` · `BM25` · `tools` · `guardrails`
 
-class AudioMixer(nn.Module):
-    """Combines audio segments (mock implementation)."""
-    def forward(self, msg):
-        # In a real app, use pydub to concatenate audio bytes
-        msg.final_podcast = b"".join(msg.audio_segments)
-        return msg
+-   [**Restaurant Supply Assistant**](./restaurant-supply-assistant.md)
 
-# Podcast Pipeline
-podcast_gen = nn.Sequential(
-    ScriptWriter(),
-    AudioProducer(),
-    AudioMixer()
-)
+    ---
 
-# Run
-msg = Message(topic="The Future of Space Travel")
-podcast_gen(msg)
+    Multimodal purchasing assistant for restaurant kitchens: accepts text, audio, shelf photos, or combinations, identifies products with a VLM, and matches them to a supplier catalog via BM25.
 
-# Save
-with open("podcast.mp3", "wb") as f:
-    f.write(msg.final_podcast)
-```
+    `multimodal` · `VLM` · `Transcriber` · `BM25` · `tools`
 
----
+-   [**Food Delivery Assistant**](./food-delivery-assistant.md)
 
-## 🎨 AI Art Director
+    ---
 
-A chain of agents that refine prompts, generate images, and critique them iteratively.
+    iFood-style conversational assistant: searches dishes and restaurants via BM25, handles vague requests and dietary restrictions across multiple turns, and submits the order after confirmation.
 
-**Concepts**: `ModuleDict`, `inline` DSL, `Conditional Logic`
+    `BM25` · `tools` · `multi-turn` · `bcast_gather`
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
+</div>
+</div>
 
-class ArtDirector(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.models = nn.ModuleDict({
-            # Ideation
-            "conceptualizer": nn.Agent(
-                model=mf.Model.chat_completion("openai/gpt-4"),
-                instructions="Turn this abstract concept into 3 visual prompt ideas.",
-                response_mode="concepts"
-            ),
-            # Production
-            "artist": nn.MediaMaker(
-                model=mf.Model.text_to_image("openai/dall-e-3"),
-                message_fields={"task": "selected_concept"},
-                response_mode="artwork"
-            ),
-            # Quality Control
-            "critic": nn.Agent(
-                model=mf.Model.chat_completion("openai/gpt-4-vision-preview"),
-                instructions="Rate this image 1-10 on composition and relevance.",
-                signature="image -> score: int, critique: str",
-                message_fields={"task_multimodal": {"image": "artwork"}},
-                response_mode="review"
-            )
-        })
-        
-        # Define the workflow DSL
-        self.register_buffer("workflow", """
-        conceptualizer 
-        -> select_best 
-        -> artist 
-        -> critic 
-        -> {score < 7 ? retry : finalize}
-        """)
+<div class="tutorial-section" markdown>
 
-    def select_best(self, msg):
-        # Simple logic to pick the first concept
-        msg.selected_concept = msg.concepts[0]
-        return msg
+## :material-transit-connection: Routing & Classification
 
-    def finalize(self, msg):
-        msg.status = "approved"
-        return msg
-        
-    def retry(self, msg):
-        msg.status = "rejected"
-        # Update concept based on critique for next loop
-        msg.selected_concept = f"{msg.selected_concept}. Improve: {msg.review['critique']}"
-        # Recurse (simplified)
-        return self.models["artist"](msg)
+<div class="grid cards" markdown>
 
-    def forward(self, msg):
-        # Add local methods to the execution scope
-        scope = dict(self.models)
-        scope.update({
-            "select_best": self.select_best,
-            "finalize": self.finalize,
-            "retry": self.retry
-        })
-        
-        return F.inline(self.workflow, scope, msg)
-```
+-   [**Intent Router**](./intent-router.md) <span class="tag tag-purple">Intermediate</span>    
 
----
+    Stop tool sprawl: route user queries to specialized handlers using typed signatures and observable intent-based orchestration.
 
-## 🏠 Intelligent Home Hub
+    `Signature` · `routing` · `ChainOfThought`
 
-A routing system that directs user commands to specialized IoT agents.
+-   [**Query Router with Signatures**](./signature-router.md)
 
-**Concepts**: `ModuleDict`, `Routing`, `Intent Classification`
+    ---
 
-```python
-class IntentRouter(nn.Agent):
-    """Classifies user intent to route to the correct subsystem."""
-    model = mf.Model.chat_completion("openai/gpt-4-turbo")
-    signature = "command -> system: Literal['lighting', 'hvac', 'security', 'media']"
-    
-class HomeHub(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.router = IntentRouter()
-        
-        # Subsystems
-        self.systems = nn.ModuleDict({
-            "lighting": nn.Agent(instructions="Convert command to Zigbee JSON for lights."),
-            "hvac": nn.Agent(instructions="Convert command to thermostat adjustments."),
-            "security": nn.Agent(instructions="Handle locks and cameras."),
-            "media": nn.Agent(instructions="Control TV and speakers.")
-        })
+    Dispatch queries across multiple backends — SQL, vector DB, knowledge base — using a typed routing layer.
 
-    def forward(self, msg):
-        # 1. Determine intent
-        intent = self.router(msg.command)
-        msg.system = intent['system']
-        
-        # 2. Route dynamically
-        if msg.system in self.systems:
-            # Execute specific agent
-            self.systems[msg.system](msg)
-        else:
-            msg.error = "Unknown system"
-            
-        return msg
+    `Signature` · `routing` · `multi-backend`
 
-hub = HomeHub()
-result = hub(mf.Message(command="Dim the lights and set temperature to 72"))
-# Routes to 'lighting' -> (handling logic needed for multiple intents)
-```
+</div>
+</div>
 
----
+<div class="tutorial-section" markdown>
 
-## 🚀 Startup Idea Validator
+## :material-microphone: Audio & Video
 
-A comprehensive analysis pipeline running parallel market research.
+<div class="grid cards" markdown>
 
-**Concepts**: `bcast_gather`, `Parallel Execution`, `Aggregation`
+-   [**Meeting Assistant**](./meeting-assistant.md)
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
+    ---
 
-class Validator(nn.Module):
-    def __init__(self):
-        super().__init__()
-        model = mf.Model.chat_completion("openai/gpt-4")
-        
-        # Parallel Analysts
-        self.analysts = [
-            nn.Agent(model, instructions="Analyze market size and growth CAGR.", name="market"),
-            nn.Agent(model, instructions="Identify 3 key competitors and their weaknesses.", name="competitors"),
-            nn.Agent(model, instructions="List technical feasibility risks.", name="tech"),
-            nn.Agent(model, instructions="Suggest monetization strategies.", name="finance")
-        ]
-        
-        self.synthesizer = nn.Agent(
-            model, 
-            instructions="Synthesize all reports into a Go/No-Go recommendation.",
-            message_fields={"task_context": "reports"}
-        )
+    Record, transcribe, and summarize meetings. Produces structured notes, action items, and owner assignments.
 
-    def forward(self, msg):
-        idea = msg.idea
-        
-        # Run all analysts in parallel
-        # Each returns a distinct report string
-        reports = F.bcast_gather(self.analysts, idea)
-        
-        # Store results
-        msg.reports = {
-            "market": reports[0],
-            "competitors": reports[1],
-            "tech": reports[2],
-            "finance": reports[3]
-        }
-        
-        # Synthesize final decision
-        self.synthesizer(msg)
-        return msg
+    `Transcriber` · `Agent` · `audio`
 
-validator = Validator()
-res = validator(mf.Message(idea="Uber for dog walking"))
-print(res.content) # Final recommendation
-```
+-   [**Call Transcript Analysis**](./call-transcript-analysis.md)
 
----
+    ---
 
-## 📚 Personalized Learning Assistant
+    Analyze sales or support call recordings for sentiment, talk time, objections, and follow-up tasks.
 
-Adapts content difficulty based on user feedback loop.
+    `Transcriber` · `structured output` · `audio`
 
-**Concepts**: `State Management`, `Conditionals`, `Adaptive Logic`
+-   [**YouTube Cut Detector**](./youtube-cut-detector.md)
 
-```python
-class Tutor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = mf.Model.chat_completion("openai/gpt-4")
-        
-        # State tracking (would exist in DB in prod)
-        self.register_buffer("level", 1) 
-        
-    def generate_lesson(self, topic):
-        return nn.Agent(
-            self.model,
-            instructions=f"Explain {{topic}} at difficulty level {self.level}/5."
-        )(topic)
-        
-    def check_understanding(self, response):
-        return nn.Agent(
-            self.model,
-            signature="response -> score: int"
-        )(response)
+    ---
 
-    def forward(self, msg):
-        # 1. Teach
-        msg.lesson = self.generate_lesson(msg.topic)
-        
-        # 2. Wait for user input (simulated here)
-        msg.user_response = input(f"Lesson: {msg.lesson}\nWhat did you understand? ")
-        
-        # 3. Assess
-        assessment = self.check_understanding(msg.user_response)
-        
-        # 4. Adapt State
-        if assessment['score'] > 8:
-            self.level = min(5, self.level + 1)
-            msg.feedback = "Great! Moving to next level."
-        elif assessment['score'] < 4:
-            self.level = max(1, self.level - 1)
-            msg.feedback = "Let's review the basics."
-        else:
-            msg.feedback = "Good, let's practice more."
-            
-        return msg
-```
+    Find the best clips in a long video by analyzing the transcript for key moments, topics, and audience hooks.
+
+    `Transcriber` · `inline` · `video`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-magnify: Research & Analysis
+
+<div class="grid cards" markdown>
+
+-   [**Research Scholar Agent**](./research-scholar.md)
+
+    ---
+
+    Multi-hop research agent that decomposes complex questions, retrieves from Wikipedia, and synthesizes structured answers.
+
+    `Searcher` · `Wikipedia` · `ReAct`
+
+-   [**Legal Document Review**](./legal-document-review.md)
+
+    ---
+
+    Extract obligations, deadlines, and risk clauses from contracts. Flags high-risk provisions with structured output.
+
+    `Signature` · `structured output` · `PDF`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-cow: Agro & Industrial
+
+<div class="grid cards" markdown>
+
+-   [**Herd Monitor**](./herd-monitor.md)
+
+    ---
+
+    Overlays a chess-like grid on farm camera images to give the VLM spatial references, tracks herd state across observations, and fires structured alerts for missing animals, crowding, or isolation.
+
+    `VLM` · `grid overlay` · `stateful Module` · `Inline`
+
+-   [**Smart Collar Analytics**](./smart-collar-analytics.md)
+
+    ---
+
+    Individual bovine biometrics from smart collars: detects estrus, illness, and lameness via parallel sensor analysis, and enforces virtual fences with GPS geofencing and collar alerts.
+
+    `map_gather` · `Signature` · `geofencing` · `Inline`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-traffic-light: Safety & Infrastructure
+
+<div class="grid cards" markdown>
+
+-   [**Road Collision Detector**](./road-collision-detector.md)
+
+    ---
+
+    VLM pipeline that reasons step by step through road camera frames to detect collisions, returns a structured report with severity and confidence, and dispatches emergency alerts on confirmation.
+
+    `VLM` · `CoT` · `structured output` · `Inline` · `map_gather`
+
+-   [**PPE Compliance Monitor**](./ppe-compliance-monitor.md)
+
+    ---
+
+    Analyzes construction site and factory camera frames to detect missing or incorrectly worn protective equipment per worker, using a grid overlay for spatial reference and structured violation alerts.
+
+    `VLM` · `grid overlay` · `structured output` · `Inline` · `map_gather`
+
+-   [**Workplace Incident Reporter**](./workplace-incident-reporter.md)
+
+    ---
+
+    Accepts a worker's incident description, classifies type and severity via a typed Signature, matches relevant safety regulations with BM25, and generates a formal boletim ready for CIPA submission.
+
+    `Signature` · `BM25` · `structured output` · `Inline`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-chart-line: Business & Sales
+
+<div class="grid cards" markdown>
+
+-   [**Visit Report Assistant**](./visit-report.md)
+
+    ---
+
+    Generate structured field visit reports from salesperson notes. Formats observations into standardized CRM-ready output.
+
+    `inline` · `structured output`
+
+-   [**Lead Scoring**](./lead-scoring.md)
+
+    ---
+
+    Score inbound leads across four dimensions simultaneously — demographic fit, engagement, budget, and timing — with parallel agents.
+
+    `bcast_gather` · `parallel` · `Signature`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-email-fast: Automation
+
+<div class="grid cards" markdown>
+
+-   [**Email Auto Responder**](./email-auto-responder.md)
+
+    ---
+
+    Classify incoming emails by intent and urgency, then draft context-aware replies. Handles escalation and triage.
+
+    `inline` · `classification` · `generation`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-code-tags: Developer Tools
+
+<div class="grid cards" markdown>
+
+-   [**Code Generation & Debugging Agent**](./code-debug-agent.md)
+
+    ---
+
+    Iterative coding agent: generates, executes, and fixes code in a loop until tests pass.
+
+    `Agent` · `tools` · `ReAct`
+
+-   [**README Generator**](./readme-generator.md)
+
+    ---
+
+    Analyze a codebase and generate comprehensive documentation: overview, quickstart, API reference, and badges.
+
+    `Agent` · `tools` · `code analysis`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-palette: Marketing & Creative
+
+<div class="grid cards" markdown>
+
+-   [**Product Poster Generator**](./product-poster.md)
+
+    ---
+
+    Combine a product photo with a reference style image to produce polished marketing posters via image-to-image generation.
+
+    `MediaMaker` · `Vision` · `image-to-image`
+
+-   [**Ad Focus Group Simulator**](./ad-focus-group.md)
+
+    ---
+
+    Simulate a diverse group of personas that evaluate ad concepts, provide ratings, and surface strategic insights.
+
+    `bcast_gather` · `parallel` · `ModuleList`
+
+</div>
+</div>

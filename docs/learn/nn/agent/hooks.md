@@ -13,7 +13,7 @@ A `Guard` validates inputs and/or outputs of a Module. Each Guard wraps a **vali
 - **`target`** — submodule to register on. Defaults to `"generator"`.
 - **`include_data`** — if `True`, attaches the data that triggered the guard to the raised exception via `exc.data`. Defaults to `False` for security (the data may contain unsafe content).
 
-The validator receives `data=...` and returns a dict with `"safe"` (bool).
+The validator receives `data` as a positional argument and must return either a dict with `"safe"` (bool) or a `ModelResponse` (auto-consumed by Guard).
 
 ```python
 from msgflux.nn.hooks import Guard
@@ -96,7 +96,8 @@ guard = Guard(validator=my_validator, on="pre")
 
     === "With Moderation Model"
 
-        Use OpenAI's moderation model as a guard validator:
+        Pass a moderation model directly as the validator — Guard calls it with the
+        input data and auto-consumes the `ModelResponse`:
 
         ```python
         import msgflux as mf
@@ -105,21 +106,17 @@ guard = Guard(validator=my_validator, on="pre")
 
         moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
 
-        def moderation_validator(data):
-            response = moderation_model(data=str(data))
-            return {"safe": response.data.safe}
-
         class ModeratedBot(nn.Agent):
             """A bot with pre and post moderation."""
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
                 Guard(
-                    validator=moderation_validator,
+                    validator=moderation_model,
                     on="pre",
                     message="Your message was flagged by our safety system.",
                 ),
-                Guard(validator=moderation_validator, on="post"),
+                Guard(validator=moderation_model, on="post"),
             ]
 
         agent = ModeratedBot()

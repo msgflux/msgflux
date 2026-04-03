@@ -218,7 +218,7 @@ nav:
     - Business & Sales:
       - Visit Report Assistant: tutorials/visit-report.md
       - Lead Scoring: tutorials/lead-scoring.md
-    - Automation:
+    - Office:
       - Email Auto Responder: tutorials/email-auto-responder.md
     - Developer Tools:
       - Code Generation & Debugging Agent: tutorials/code-debug-agent.md
