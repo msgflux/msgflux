@@ -1,4 +1,4 @@
-!!! info "Setup your chat completion model ([check dependencies](/dependency-management/#chat-completion))"
+!!! info "Setup your chat completion model (<a href='/dependency-management/#chat-completion'>check dependencies</a>)"
 
     === "OpenAI"
 
