@@ -1,7 +1,8 @@
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
+from typing import Any, Callable, Tuple
 
 try:
     import platform
@@ -45,7 +46,11 @@ class Executor:
         self.num_threads = envs.executor_num_threads
         self.num_async_workers = envs.executor_num_async_workers
         self.async_worker_index = 0
-        self.thread_pool = ThreadPoolExecutor(max_workers=self.num_threads)
+        self._thread_local = threading.local()
+        self.thread_pool = ThreadPoolExecutor(
+            max_workers=self.num_threads,
+            initializer=self._mark_thread_pool_worker,
+        )
         self.async_workers = [AsyncWorker() for _ in range(self.num_async_workers)]
 
     @classmethod
@@ -61,20 +66,63 @@ class Executor:
         """Submits a task to the appropriate pool based on the function type.
         Returns a Future to track the result.
         """
-        if hasattr(f, "acall"):
-            coro = f.acall(*args, **kwargs)
-            return self._submit_to_async_worker(coro)
-        elif asyncio.iscoroutinefunction(f):
-            coro = f(*args, **kwargs)
-            return self._submit_to_async_worker(coro)
-        else:
-            return self.thread_pool.submit(f, *args, **kwargs)
+        mode, target = self._resolve_submission_target(f, args, kwargs)
+        if mode == "async":
+            return self._submit_to_async_worker(target)
+
+        sync_callable, sync_args, sync_kwargs = target
+        if self._is_in_thread_pool_worker():
+            return self._execute_inline(sync_callable, *sync_args, **sync_kwargs)
+
+        return self.thread_pool.submit(sync_callable, *sync_args, **sync_kwargs)
 
     def _submit_to_async_worker(self, coro):
         """Distribute a coroutine to an asynchronous worker using round-robin."""
         worker = self.async_workers[self.async_worker_index]
         self.async_worker_index = (self.async_worker_index + 1) % self.num_async_workers
         return worker.submit(coro)
+
+    def _resolve_submission_target(
+        self,
+        f: Callable,
+        args: Tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Tuple[str, Any]:
+        """Resolve wrappers like functools.partial before deciding execution mode.
+
+        This preserves `.acall()` routing for partially-bound Modules/Tools and
+        avoids sending nested sync work back into the same saturated pool.
+        """
+        if isinstance(f, partial):
+            merged_kwargs = dict(f.keywords or {})
+            merged_kwargs.update(kwargs)
+            merged_args = (*f.args, *args)
+            return self._resolve_submission_target(f.func, merged_args, merged_kwargs)
+
+        if hasattr(f, "acall"):
+            return ("async", f.acall(*args, **kwargs))
+
+        if asyncio.iscoroutinefunction(f):
+            return ("async", f(*args, **kwargs))
+
+        return ("sync", (f, args, kwargs))
+
+    def _mark_thread_pool_worker(self) -> None:
+        self._thread_local.in_thread_pool_worker = True
+
+    def _is_in_thread_pool_worker(self) -> bool:
+        return bool(getattr(self._thread_local, "in_thread_pool_worker", False))
+
+    def _execute_inline(self, f: Callable, *args, **kwargs) -> Future:
+        """Execute nested sync work inline and wrap it in a completed Future."""
+        future: Future = Future()
+        try:
+            result = f(*args, **kwargs)
+        except Exception as exc:
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+        return future
 
     def shutdown(self):
         """Shutdown the executor, closing the pools."""
