@@ -507,6 +507,8 @@ class Agent(Module, metaclass=AutoParams):
             tool_schemas = None
 
         tool_choice = self.config.get("tool_choice")
+        flow_tool_schemas = None
+        flow_tool_annotations = None
 
         if is_subclass_of(self.generation_schema, ToolFlowControl) and tool_schemas:
             tools_template = self.generation_schema.tools_template
@@ -516,6 +518,8 @@ class Agent(Module, metaclass=AutoParams):
                 system_prompt = flow_control_tools + "\n\n" + system_prompt
             else:
                 system_prompt = flow_control_tools
+            flow_tool_schemas = tool_schemas
+            flow_tool_annotations = self.tool_library.get_tool_annotations()
             tool_schemas = None  # Disable tool_schemas to controlflow preference
             tool_choice = None  # Disable tool_choice to controlflow preference
 
@@ -529,6 +533,11 @@ class Agent(Module, metaclass=AutoParams):
             generation_schema=self.generation_schema,
             typed_parser=self.typed_parser,
         )
+
+        if flow_tool_schemas is not None:
+            model_execution_params.flow_tool_schemas = flow_tool_schemas
+        if flow_tool_annotations is not None:
+            model_execution_params.flow_tool_annotations = flow_tool_annotations
 
         if model_preference:
             model_execution_params.model_preference = model_preference

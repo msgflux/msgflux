@@ -62,11 +62,10 @@ class TestReActToolFlowControl:
         """Test that Action struct holds name and arguments."""
         action = Action(
             name="search",
-            arguments=[Argument(name="query", value="test")],
+            arguments={"query": "test"},
         )
         assert action.name == "search"
-        assert len(action.arguments) == 1
-        assert action.arguments[0].name == "query"
+        assert action.arguments["query"] == "test"
 
         # Without arguments
         action_no_args = Action(name="noop")
@@ -93,16 +92,11 @@ class TestReActToolFlowControl:
             "actions": [
                 {
                     "name": "search",
-                    "arguments": [
-                        {"name": "query", "value": "Python docs"},
-                    ],
+                    "arguments": {"query": "Python docs"},
                 },
                 {
                     "name": "calculate",
-                    "arguments": [
-                        {"name": "a", "value": 1},
-                        {"name": "b", "value": 2},
-                    ],
+                    "arguments": {"a": 1, "b": 2},
                 },
             ],
             "final_answer": None,
@@ -139,12 +133,12 @@ class TestReActToolFlowControl:
             "actions": [
                 {
                     "name": "search",
-                    "arguments": [{"name": "q", "value": "test"}],
+                    "arguments": {"q": "test"},
                     "_id": "id1",
                 },
                 {
                     "name": "calc",
-                    "arguments": [{"name": "a", "value": 1}],
+                    "arguments": {"a": 1},
                     "_id": "id2",
                 },
             ],
@@ -183,7 +177,7 @@ class TestReActToolFlowControl:
         raw_response = {
             "thought": "Testing",
             "actions": [
-                {"name": "search", "arguments": [{"name": "q", "value": "test"}]},
+                {"name": "search", "arguments": {"q": "test"}},
             ],
             "observations": [{"tool": "search", "result": "found"}],
             "final_answer": None,
@@ -200,7 +194,7 @@ class TestReActToolFlowControl:
         raw_response = {
             "thought": "Second step",
             "actions": [
-                {"name": "calc", "arguments": [{"name": "a", "value": 1}]},
+                {"name": "calc", "arguments": {"a": 1}},
             ],
             "observations": [{"tool": "calc", "result": "42"}],
             "final_answer": None,
@@ -210,7 +204,7 @@ class TestReActToolFlowControl:
         existing_step = {
             "thought": "First step",
             "actions": [
-                {"name": "search", "arguments": [{"name": "q", "value": "test"}]},
+                {"name": "search", "arguments": {"q": "test"}},
             ],
             "observations": [{"tool": "search", "result": "found"}],
         }
@@ -235,3 +229,70 @@ class TestReActToolFlowControl:
 
         history = await ReAct.abuild_history(raw_response, [])
         assert len(history) == 1
+
+    def test_build_provider_response_format_flattens_tool_parameters(self):
+        response_format = ReAct.build_provider_response_format(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "store_fields",
+                        "description": "Store values",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "fields": {
+                                    "type": "object",
+                                    "properties": {"entries": {"type": "array"}},
+                                    "required": ["entries"],
+                                    "additionalProperties": False,
+                                }
+                            },
+                            "required": ["fields"],
+                            "additionalProperties": False,
+                        },
+                        "strict": True,
+                    },
+                }
+            ]
+        )
+
+        action_schema = response_format["json_schema"]["schema"]["properties"]["actions"][
+            "anyOf"
+        ][0]["items"]
+        assert action_schema["properties"]["name"]["enum"] == ["store_fields"]
+        assert "fields" in action_schema["properties"]
+        assert "arguments" not in action_schema["properties"]
+
+    def test_normalize_provider_response_restores_action_arguments(self):
+        raw_response = {
+            "thought": "Store the fields",
+            "actions": [
+                {
+                    "name": "store_fields",
+                    "fields": {
+                        "entries": [
+                            {"key": "city", "value": "Austin"},
+                            {"key": "country", "value": "USA"},
+                        ]
+                    },
+                }
+            ],
+            "final_answer": None,
+        }
+
+        normalized = ReAct.normalize_provider_response(
+            raw_response,
+            tool_annotations={"store_fields": {"fields": dict[str, str]}},
+        )
+
+        assert normalized == {
+            "thought": "Store the fields",
+            "actions": [
+                {
+                    "name": "store_fields",
+                    "arguments": {"fields": {"city": "Austin", "country": "USA"}},
+                }
+            ],
+            "final_answer": None,
+        }

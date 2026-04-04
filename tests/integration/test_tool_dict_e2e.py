@@ -3,10 +3,9 @@
 import pytest
 
 import msgflux as mf
+from msgflux import nn
 
 mf.load_dotenv()
-
-import msgflux.nn as nn
 
 
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")

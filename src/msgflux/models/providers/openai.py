@@ -1,6 +1,7 @@
 import base64
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
+from functools import partial
 from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Union
 
@@ -25,6 +26,7 @@ import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
 from msgflux.dsl.typed_parsers import typed_parser_registry
 from msgflux.exceptions import TypedParserNotFoundError
+from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.models.base import BaseModel
 from msgflux.models.cache import ResponseCache, generate_cache_key
 from msgflux.models.profiles import get_model_profile
@@ -401,21 +403,25 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             elif generation_schema is not None:
                 response.set_response_type("structured")
                 # The raw payload follows the OpenAI transport schema, which may be
-                # a lowered version of the logical msgflux generation schema.
-                decoder_schema = transport_generation_schema or generation_schema
-                decoder = self._get_decoder(decoder_schema)
-                struct = decoder.decode(choice.message.content)
-                response_content = struct_to_dict(struct)
-                if (
-                    transport_generation_schema is not None
-                    and transport_generation_schema is not generation_schema
-                ):
-                    # Restore the lowered transport shape back to the logical schema
-                    # before exposing the response to msgflux callers.
-                    response_content = restore_openai_structured_output(
-                        response_content, generation_schema
-                    )
-                response_content = dotdict(response_content)
+                # a lowered or dynamically generated version of the logical msgflux
+                # generation schema.
+                transport_info = transport_generation_schema or {}
+                decoder_schema = transport_info.get("decoder_schema", generation_schema)
+                normalize = transport_info.get("normalize")
+
+                if decoder_schema is None:
+                    response_content = msgspec.json.decode(choice.message.content)
+                else:
+                    decoder = self._get_decoder(decoder_schema)
+                    struct = decoder.decode(choice.message.content)
+                    response_content = struct_to_dict(struct)
+
+                if normalize is not None:
+                    response_content = normalize(response_content)
+
+                decoder = self._get_decoder(generation_schema)
+                struct = decoder.decode(self._encoder.encode(response_content))
+                response_content = dotdict(struct_to_dict(struct))
             else:
                 response.set_response_type("text_generation")
                 response_content = choice.message.content
@@ -477,17 +483,43 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
+        flow_tool_schemas = kwargs.pop("flow_tool_schemas", None)
+        flow_tool_annotations = kwargs.pop("flow_tool_annotations", None)
         transport_generation_schema = None
 
         if generation_schema is not None and typed_parser is None:
-            # Lower only for the OpenAI transport layer; the logical schema stays
-            # unchanged so decoded outputs can be restored to the original shape.
-            transport_generation_schema = lower_msgspec_struct_for_openai(
-                generation_schema
-            )
-            kwargs["response_format"] = response_format_from_msgspec_struct(
-                transport_generation_schema
-            )
+            if issubclass(generation_schema, ToolFlowControl):
+                response_format = generation_schema.build_provider_response_format(
+                    flow_tool_schemas
+                )
+                if response_format is not None:
+                    transport_generation_schema = {
+                        "decoder_schema": None,
+                        "normalize": lambda payload: generation_schema.normalize_provider_response(  # noqa: E501
+                            payload,
+                            tool_annotations=flow_tool_annotations,
+                        ),
+                    }
+                    kwargs["response_format"] = response_format
+
+            if transport_generation_schema is None:
+                # Lower only for the OpenAI transport layer; the logical schema
+                # stays unchanged so decoded outputs can be restored to the
+                # original shape.
+                decoder_schema = lower_msgspec_struct_for_openai(generation_schema)
+                normalize = None
+                if decoder_schema is not generation_schema:
+                    normalize = partial(
+                        restore_openai_structured_output,
+                        logical_type=generation_schema,
+                    )
+                transport_generation_schema = {
+                    "decoder_schema": decoder_schema,
+                    "normalize": normalize,
+                }
+                kwargs["response_format"] = response_format_from_msgspec_struct(
+                    decoder_schema
+                )
 
         return typed_parser, generation_schema, transport_generation_schema
 
@@ -730,6 +762,22 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
         return generation_params
 
+    @staticmethod
+    def _validate_chat_completion_options(
+        *,
+        prefilling: Optional[str],
+        generation_schema: Optional[msgspec.Struct],
+        typed_parser: Optional[str],
+        stream: Optional[bool],
+    ) -> None:
+        if prefilling is not None and generation_schema is not None:
+            raise ValueError(
+                "`prefilling` is not compatible with `generation_schema` in "
+                "OpenAI chat completions."
+            )
+        if stream is True and typed_parser is not None:
+            raise ValueError("`typed_parser` is not `stream=True` compatible")
+
     def __call__(
         self,
         messages: Union[str, List[Dict[str, Any]]],
@@ -776,14 +824,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
+        self._validate_chat_completion_options(
+            prefilling=prefilling,
+            generation_schema=generation_schema,
+            typed_parser=typed_parser,
+            stream=stream,
+        )
         generation_params = self._build_generation_params(
             messages, system_prompt, prefilling, tool_schemas, tool_choice
         )
 
         if stream is True:
-            if typed_parser is not None:
-                raise ValueError("`typed_parser` is not `stream=True` compatible")
-
             stream_response = ModelStreamResponse(mode="sync")
             F.spawn(
                 self._stream_generate,
@@ -854,14 +905,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
+        self._validate_chat_completion_options(
+            prefilling=prefilling,
+            generation_schema=generation_schema,
+            typed_parser=typed_parser,
+            stream=stream,
+        )
         generation_params = self._build_generation_params(
             messages, system_prompt, prefilling, tool_schemas, tool_choice
         )
 
         if stream is True:
-            if typed_parser is not None:
-                raise ValueError("`typed_parser` is not `stream=True` compatible")
-
             stream_response = ModelStreamResponse(mode="async")
             await F.aspawn(
                 self._astream_generate,

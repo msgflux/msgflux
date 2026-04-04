@@ -68,7 +68,10 @@ class ChatBlock(metaclass=ChatBlockMeta):
             content: The main response content.
             reasoning: The reasoning/thinking content to embed.
         """
-        return {"role": "assistant", "content": f"<think>{reasoning}</think>\n\n{content}"}
+        return {
+            "role": "assistant",
+            "content": f"<think>{reasoning}</think>\n\n{content}",
+        }
 
     @classmethod
     def system(cls, content: str) -> Dict[str, str]:
@@ -262,11 +265,20 @@ def response_format_from_msgspec_struct(  # noqa: C901
     _ensure_all_properties_are_required(inlined_schema)
 
     inlined_schema.pop("title", None)
+    return response_format_from_json_schema(
+        inlined_schema, struct_class.__name__.lower()
+    )
+
+
+def response_format_from_json_schema(
+    schema: Dict[str, Any], name: str
+) -> Dict[str, Any]:
+    """Wrap a JSON Schema object in OpenAI's response_format envelope."""
     response_format = {
         "type": "json_schema",
         "json_schema": {
-            "name": struct_class.__name__.lower(),
-            "schema": inlined_schema,
+            "name": name,
+            "schema": schema,
             "strict": True,
         },
     }

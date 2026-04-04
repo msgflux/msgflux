@@ -1,5 +1,6 @@
 import os
 import re
+from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Union
 
 import msgspec
@@ -14,6 +15,7 @@ from msgflux.utils.msgspec import (
     msgspec_dumps,
     read_json,
     restore_openai_structured_output,
+    restore_transport_value,
     save,
     struct_to_dict,
 )
@@ -49,6 +51,11 @@ class SetOutput(msgspec.Struct):
 
 class BareDictOutput(msgspec.Struct):
     payload: dict
+
+
+class Label(Enum):
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
 
 
 JSON_SCHEMA = {
@@ -171,6 +178,22 @@ def test_restore_openai_structured_output_rejects_invalid_mapping_wrapper():
 def test_restore_openai_structured_output_rejects_non_optional_union():
     with pytest.raises(TypeError, match="Only Optional\\[T\\] unions are supported"):
         restore_openai_structured_output("value", Union[str, int])
+
+
+def test_restore_transport_value_accepts_plain_mapping_when_not_strict():
+    restored = restore_transport_value(
+        {"profile": {"entries": [{"key": "city", "value": "Austin"}]}},
+        Dict[str, Dict[str, str]],
+    )
+    assert restored == {"profile": {"city": "Austin"}}
+
+
+def test_restore_transport_value_restores_enum_keys():
+    restored = restore_transport_value(
+        {"entries": [{"key": "primary", "value": "Alice"}]},
+        Dict[Label, str],
+    )
+    assert restored == {Label.PRIMARY: "Alice"}
 
 
 @pytest.mark.parametrize(

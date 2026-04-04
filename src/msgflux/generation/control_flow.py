@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolResponses
@@ -50,6 +50,30 @@ class ToolFlowControl:
 
     system_message: Optional[str] = None
     tools_template: Optional[str] = None
+
+    @classmethod
+    def build_provider_response_format(
+        cls, _tool_schemas: Optional[List[Dict[str, Any]]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Build a provider-facing transport schema for structured output.
+
+        Flow controls may override this when their logical runtime shape differs
+        from the schema that should be exposed to the model. Returning ``None``
+        means "use the logical generation schema as-is".
+        """
+        return None
+
+    @classmethod
+    def normalize_provider_response(
+        cls,
+        raw_response: Mapping[str, Any],
+        _tool_annotations: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Mapping[str, Any]:
+        """Normalize a provider-facing transport payload to the logical shape.
+
+        By default, transport and logical shapes are the same.
+        """
+        return raw_response
 
     @classmethod
     @abstractmethod
