@@ -104,81 +104,81 @@ Raw restaurants carry only identity fields. Faker generates the operational meta
 
 ```python
 RAW_RESTAURANTS = [
-    {"id": "REST001", "name": "Pizzaria Bella Napoli", "cuisine": "pizza"},
-    {"id": "REST002", "name": "Sushi Sakura",          "cuisine": "japanese"},
-    {"id": "REST003", "name": "Burger Bros",            "cuisine": "burger"},
-    {"id": "REST004", "name": "Sabor Mineiro",          "cuisine": "brazilian"},
-    {"id": "REST005", "name": "Shawarma Palace",        "cuisine": "arabic"},
-    {"id": "REST006", "name": "Verde & Bom",            "cuisine": "vegan"},
-    {"id": "REST007", "name": "Wok House",              "cuisine": "chinese"},
-    {"id": "REST008", "name": "Tacos & Co",             "cuisine": "mexican"},
-    {"id": "REST009", "name": "Frango & Cia",           "cuisine": "brazilian"},
-    {"id": "REST010", "name": "Pasta Mia",              "cuisine": "italian"},
+    {"id": "REST001", "name": "Napoli's Pizza",   "cuisine": "pizza"},
+    {"id": "REST002", "name": "Tokyo Garden",     "cuisine": "japanese"},
+    {"id": "REST003", "name": "Burger Bros",      "cuisine": "burger"},
+    {"id": "REST004", "name": "Southern Table",   "cuisine": "brazilian"},
+    {"id": "REST005", "name": "Shawarma Palace",  "cuisine": "arabic"},
+    {"id": "REST006", "name": "Green & Good",     "cuisine": "vegan"},
+    {"id": "REST007", "name": "Wok House",        "cuisine": "chinese"},
+    {"id": "REST008", "name": "Tacos & Co",       "cuisine": "mexican"},
+    {"id": "REST009", "name": "Chicken House",    "cuisine": "brazilian"},
+    {"id": "REST010", "name": "Pasta Mia",        "cuisine": "italian"},
 ]
 
 RAW_DISHES = [
-    # Pizzaria Bella Napoli
+    # Napoli's Pizza
     {"restaurant_id": "REST001", "raw_name": "margherita"},
-    {"restaurant_id": "REST001", "raw_name": "calabresa"},
-    {"restaurant_id": "REST001", "raw_name": "quatro queijos"},
-    {"restaurant_id": "REST001", "raw_name": "frango catupiry"},
-    {"restaurant_id": "REST001", "raw_name": "calzone de presunto"},
-    {"restaurant_id": "REST001", "raw_name": "pão de alho"},
-    # Sushi Sakura
-    {"restaurant_id": "REST002", "raw_name": "combinado 20 peças"},
-    {"restaurant_id": "REST002", "raw_name": "temaki salmão"},
-    {"restaurant_id": "REST002", "raw_name": "uramaki philadelphia"},
-    {"restaurant_id": "REST002", "raw_name": "sashimi salmão"},
-    {"restaurant_id": "REST002", "raw_name": "yakisoba frango"},
-    {"restaurant_id": "REST002", "raw_name": "missoshiru"},
+    {"restaurant_id": "REST001", "raw_name": "sausage pizza"},
+    {"restaurant_id": "REST001", "raw_name": "four cheese pizza"},
+    {"restaurant_id": "REST001", "raw_name": "chicken cream cheese pizza"},
+    {"restaurant_id": "REST001", "raw_name": "ham calzone"},
+    {"restaurant_id": "REST001", "raw_name": "garlic bread"},
+    # Tokyo Garden
+    {"restaurant_id": "REST002", "raw_name": "20-piece sushi combo"},
+    {"restaurant_id": "REST002", "raw_name": "salmon hand roll"},
+    {"restaurant_id": "REST002", "raw_name": "philadelphia roll"},
+    {"restaurant_id": "REST002", "raw_name": "salmon sashimi"},
+    {"restaurant_id": "REST002", "raw_name": "chicken yakisoba"},
+    {"restaurant_id": "REST002", "raw_name": "miso soup"},
     # Burger Bros
     {"restaurant_id": "REST003", "raw_name": "classic burger"},
-    {"restaurant_id": "REST003", "raw_name": "double smash"},
-    {"restaurant_id": "REST003", "raw_name": "chicken crispy"},
+    {"restaurant_id": "REST003", "raw_name": "double smash burger"},
+    {"restaurant_id": "REST003", "raw_name": "crispy chicken sandwich"},
     {"restaurant_id": "REST003", "raw_name": "veggie burger"},
-    {"restaurant_id": "REST003", "raw_name": "batata frita"},
-    {"restaurant_id": "REST003", "raw_name": "milk shake chocolate"},
-    # Sabor Mineiro
-    {"restaurant_id": "REST004", "raw_name": "frango com quiabo"},
-    {"restaurant_id": "REST004", "raw_name": "tutu de feijão"},
-    {"restaurant_id": "REST004", "raw_name": "costelinha com mandioca"},
-    {"restaurant_id": "REST004", "raw_name": "feijão tropeiro"},
-    {"restaurant_id": "REST004", "raw_name": "arroz com pequi"},
+    {"restaurant_id": "REST003", "raw_name": "french fries"},
+    {"restaurant_id": "REST003", "raw_name": "chocolate milkshake"},
+    # Southern Table
+    {"restaurant_id": "REST004", "raw_name": "chicken with okra"},
+    {"restaurant_id": "REST004", "raw_name": "bean stew"},
+    {"restaurant_id": "REST004", "raw_name": "pork ribs with cassava"},
+    {"restaurant_id": "REST004", "raw_name": "tropeiro beans"},
+    {"restaurant_id": "REST004", "raw_name": "pequi rice"},
     # Shawarma Palace
-    {"restaurant_id": "REST005", "raw_name": "shawarma de frango"},
-    {"restaurant_id": "REST005", "raw_name": "shawarma de carne"},
-    {"restaurant_id": "REST005", "raw_name": "falafel no pão"},
-    {"restaurant_id": "REST005", "raw_name": "kafta grelhada"},
-    {"restaurant_id": "REST005", "raw_name": "prato árabe completo"},
-    # Verde & Bom
-    {"restaurant_id": "REST006", "raw_name": "bowl proteico"},
-    {"restaurant_id": "REST006", "raw_name": "hambúrguer de grão de bico"},
-    {"restaurant_id": "REST006", "raw_name": "açaí na tigela"},
-    {"restaurant_id": "REST006", "raw_name": "wrap vegano"},
-    {"restaurant_id": "REST006", "raw_name": "salada caesar vegana"},
+    {"restaurant_id": "REST005", "raw_name": "chicken shawarma"},
+    {"restaurant_id": "REST005", "raw_name": "beef shawarma"},
+    {"restaurant_id": "REST005", "raw_name": "falafel wrap"},
+    {"restaurant_id": "REST005", "raw_name": "grilled kafta"},
+    {"restaurant_id": "REST005", "raw_name": "arabic platter"},
+    # Green & Good
+    {"restaurant_id": "REST006", "raw_name": "protein bowl"},
+    {"restaurant_id": "REST006", "raw_name": "chickpea burger"},
+    {"restaurant_id": "REST006", "raw_name": "açaí bowl"},
+    {"restaurant_id": "REST006", "raw_name": "vegan wrap"},
+    {"restaurant_id": "REST006", "raw_name": "vegan caesar salad"},
     # Wok House
-    {"restaurant_id": "REST007", "raw_name": "frango ao molho agridoce"},
-    {"restaurant_id": "REST007", "raw_name": "yakisoba misto"},
-    {"restaurant_id": "REST007", "raw_name": "arroz chop suey"},
-    {"restaurant_id": "REST007", "raw_name": "camarão ao alho e óleo"},
+    {"restaurant_id": "REST007", "raw_name": "sweet and sour chicken"},
+    {"restaurant_id": "REST007", "raw_name": "mixed yakisoba"},
+    {"restaurant_id": "REST007", "raw_name": "chop suey rice"},
+    {"restaurant_id": "REST007", "raw_name": "garlic shrimp"},
     # Tacos & Co
-    {"restaurant_id": "REST008", "raw_name": "tacos de carne"},
-    {"restaurant_id": "REST008", "raw_name": "tacos de frango"},
-    {"restaurant_id": "REST008", "raw_name": "burrito de carne"},
-    {"restaurant_id": "REST008", "raw_name": "quesadilla de queijo"},
-    {"restaurant_id": "REST008", "raw_name": "nachos com guacamole"},
-    # Frango & Cia
-    {"restaurant_id": "REST009", "raw_name": "meio frango grelhado"},
-    {"restaurant_id": "REST009", "raw_name": "porção de frango frito"},
-    {"restaurant_id": "REST009", "raw_name": "frango à passarinho"},
-    {"restaurant_id": "REST009", "raw_name": "sanduíche de frango"},
-    {"restaurant_id": "REST009", "raw_name": "aipim frito"},
+    {"restaurant_id": "REST008", "raw_name": "beef tacos"},
+    {"restaurant_id": "REST008", "raw_name": "chicken tacos"},
+    {"restaurant_id": "REST008", "raw_name": "beef burrito"},
+    {"restaurant_id": "REST008", "raw_name": "cheese quesadilla"},
+    {"restaurant_id": "REST008", "raw_name": "nachos with guacamole"},
+    # Chicken House
+    {"restaurant_id": "REST009", "raw_name": "half grilled chicken"},
+    {"restaurant_id": "REST009", "raw_name": "fried chicken platter"},
+    {"restaurant_id": "REST009", "raw_name": "chicken bites"},
+    {"restaurant_id": "REST009", "raw_name": "chicken sandwich"},
+    {"restaurant_id": "REST009", "raw_name": "fried cassava"},
     # Pasta Mia
     {"restaurant_id": "REST010", "raw_name": "spaghetti bolognese"},
     {"restaurant_id": "REST010", "raw_name": "fettuccine alfredo"},
     {"restaurant_id": "REST010", "raw_name": "penne all'arrabbiata"},
-    {"restaurant_id": "REST010", "raw_name": "lasanha de carne"},
-    {"restaurant_id": "REST010", "raw_name": "risoto de funghi"},
+    {"restaurant_id": "REST010", "raw_name": "meat lasagna"},
+    {"restaurant_id": "REST010", "raw_name": "mushroom risotto"},
     {"restaurant_id": "REST010", "raw_name": "tiramisu"},
 ]
 ```
@@ -224,8 +224,8 @@ class ProductClassifier(nn.Agent):
     """
     model        = chat_model
     system_message = """
-    You are a food catalog specialist for a Brazilian food delivery platform.
-    Generate realistic, appetizing catalog entries in Brazilian Portuguese.
+    You are a food catalog specialist for a food delivery platform.
+    Generate realistic, appetizing catalog entries in English.
     Price estimates should reflect typical restaurant prices in Brazil (BRL).
     """
     signature = """
@@ -532,17 +532,17 @@ assistant = FoodAssistant()
         history   = []
 
         # Turn 1 — vague
-        response = assistant("Quero comer algo japonês hoje", messages=history)
-        history += [ChatBlock.user("Quero comer algo japonês hoje"), ChatBlock.assist(str(response))]
+        response = assistant("I want something Japanese today", messages=history)
+        history += [ChatBlock.user("I want something Japanese today"), ChatBlock.assist(str(response))]
         print("Assistant:", response)
 
         # Turn 2 — refinement
-        response = assistant("Tem algo sem glúten e até R$40?", messages=history)
-        history += [ChatBlock.user("Tem algo sem glúten e até R$40?"), ChatBlock.assist(str(response))]
+        response = assistant("Anything gluten-free under R$40?", messages=history)
+        history += [ChatBlock.user("Anything gluten-free under R$40?"), ChatBlock.assist(str(response))]
         print("Assistant:", response)
 
         # Turn 3 — confirm
-        response = assistant("Quero o sashimi. Confirma o pedido.", messages=history)
+        response = assistant("I'll take the salmon sashimi. Place the order.", messages=history)
         print("Assistant:", response)
         ```
 
@@ -552,11 +552,11 @@ assistant = FoodAssistant()
         assistant = FoodAssistant()
         history   = []
 
-        response = assistant("Quero algo vegano, até R$35, entrega rápida", messages=history)
-        history += [ChatBlock.user("Quero algo vegano, até R$35, entrega rápida"), ChatBlock.assist(str(response))]
+        response = assistant("I want something vegan, under R$35, fast delivery", messages=history)
+        history += [ChatBlock.user("I want something vegan, under R$35, fast delivery"), ChatBlock.assist(str(response))]
         print("Assistant:", response)
 
-        response = assistant("Quero o bowl proteico. Pode pedir.", messages=history)
+        response = assistant("I'll take the protein bowl. Go ahead and order.", messages=history)
         print("Assistant:", response)
         ```
 
@@ -566,15 +566,15 @@ assistant = FoodAssistant()
         assistant = FoodAssistant()
         history   = []
 
-        response = assistant("Mostra o cardápio da Pizzaria Bella Napoli", messages=history)
-        history += [ChatBlock.user("Mostra o cardápio da Pizzaria Bella Napoli"), ChatBlock.assist(str(response))]
+        response = assistant("Show me the menu at Napoli's Pizza", messages=history)
+        history += [ChatBlock.user("Show me the menu at Napoli's Pizza"), ChatBlock.assist(str(response))]
         print("Assistant:", response)
 
-        response = assistant("Quero uma Margherita e um Pão de Alho", messages=history)
-        history += [ChatBlock.user("Quero uma Margherita e um Pão de Alho"), ChatBlock.assist(str(response))]
+        response = assistant("I'd like a Margherita and a Garlic Bread", messages=history)
+        history += [ChatBlock.user("I'd like a Margherita and a Garlic Bread"), ChatBlock.assist(str(response))]
         print("Assistant:", response)
 
-        response = assistant("Confirma.", messages=history)
+        response = assistant("Confirm.", messages=history)
         print("Assistant:", response)
         ```
 
@@ -645,7 +645,7 @@ class StructuredRecommender(nn.Module):
 
 # Usage
 recommender = StructuredRecommender()
-result      = recommender("Quero algo vegano, leve, até R$35")
+result      = recommender("I want something vegan, light, under R$35")
 
 print("Recommendations:", result["recommendations"])
 print("Reasoning:", result["reasoning"])
