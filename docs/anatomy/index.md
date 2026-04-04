@@ -21,6 +21,8 @@ Use this section when you need to answer questions like:
 
 - [Agent](agent.md): the main orchestration module that ties together input
   preparation, provider execution, tool loops, and final response shaping.
+- [Signatures](signatures.md): how a signature compiles templates,
+  annotations, output structs, and optional reasoning-schema fusion.
 - [ToolLibrary](tool-library.md): the execution boundary that registers tools,
   exposes schemas, restores typed arguments, and collects tool results.
 - [OpenAI Chat Completion](openai-chat-completion.md): the provider adapter that

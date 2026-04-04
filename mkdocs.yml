@@ -177,17 +177,6 @@ nav:
       - MediaMaker: learn/nn/mediamaker.md
       - Predictor: learn/nn/predictor.md
     - ◎ Telemetry: learn/telemetry.md
-    - Anatomy:
-      - anatomy/index.md
-      - anatomy/agent.md
-      - anatomy/tool-library.md
-      - anatomy/openai-chat-completion.md
-      - anatomy/chat-schema-utils.md
-      - anatomy/msgspec-transport-lowering.md
-      - anatomy/tool-flow-control.md
-      - anatomy/logical-vs-provider-schema.md
-      - anatomy/dict-lowering-and-restoration.md
-      - anatomy/react-provider-schemas.md
     #- ⇄ Dependency Management: dependency-management.md
     - API Reference:
       - Models:

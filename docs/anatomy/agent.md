@@ -359,6 +359,7 @@ becomes much easier to place.
 
 ## Related Pages
 
+- [Signatures](signatures.md)
 - [ToolFlowControl](tool-flow-control.md)
 - [Logical vs Provider Schema](logical-vs-provider-schema.md)
 - [ReAct Provider Schemas](react-provider-schemas.md)
