@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 from uuid import uuid4
 
 import msgspec
@@ -84,14 +84,6 @@ Tool choice: {{ tool_choice }}
 Each action must include the function name and an `arguments` object containing
 the tool parameters.
 """
-
-
-class Argument(Struct):
-    """Legacy pair form kept for backward-compatible parsing."""
-
-    name: str
-    value: Union[str, int, float, bool, List[str]]
-
 
 ToolArguments = dict[str, Any]
 
@@ -208,15 +200,7 @@ class ReAct(Struct, ToolFlowControl):
                 tool_id = str(uuid4())
                 act["_id"] = tool_id
                 args = act.get("arguments")
-                if isinstance(args, list):
-                    # Backward-compatible support for the legacy name/value list.
-                    args_dict = {
-                        a["name"] if isinstance(a, dict) else a.name: (
-                            a["value"] if isinstance(a, dict) else a.value
-                        )
-                        for a in args
-                    }
-                elif isinstance(args, Mapping):
+                if isinstance(args, Mapping):
                     args_dict = dict(args)
                 else:
                     args_dict = args

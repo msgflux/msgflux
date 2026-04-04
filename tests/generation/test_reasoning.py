@@ -12,7 +12,6 @@ from msgflux.generation.reasoning.react import (
     REACT_SYSTEM_MESSAGE,
     REACT_TOOLS_TEMPLATE,
     Action,
-    Argument,
     ReAct,
 )
 
@@ -47,16 +46,6 @@ class TestReActToolFlowControl:
         """Test that ReAct has system_message and tools_template."""
         assert ReAct.system_message == REACT_SYSTEM_MESSAGE
         assert ReAct.tools_template == REACT_TOOLS_TEMPLATE
-
-    def test_argument_struct(self):
-        """Test that Argument struct holds name and value."""
-        arg = Argument(name="query", value="test")
-        assert arg.name == "query"
-        assert arg.value == "test"
-
-        # With list value
-        arg_list = Argument(name="items", value=["a", "b", "c"])
-        assert arg_list.value == ["a", "b", "c"]
 
     def test_action_struct(self):
         """Test that Action struct holds name and arguments."""
