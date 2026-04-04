@@ -9,6 +9,7 @@ import msgspec
 import pytest
 
 from msgflux.generation.reasoning.react import ReAct
+from msgflux.tools.definitions import ToolDefinitions
 
 
 class TestOpenAIProviderImport:
@@ -261,75 +262,8 @@ class TestOpenAIChatCompletion:
         kwargs = {
             "typed_parser": None,
             "generation_schema": ReAct,
-            "flow_tool_schemas": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "store_fields",
-                        "description": "Store values",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "fields": {
-                                    "type": "object",
-                                    "properties": {
-                                        "entries": {
-                                            "type": "array",
-                                            "items": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "key": {"type": "string"},
-                                                    "value": {"type": "string"},
-                                                },
-                                                "required": ["key", "value"],
-                                                "additionalProperties": False,
-                                            },
-                                        }
-                                    },
-                                    "required": ["entries"],
-                                    "additionalProperties": False,
-                                }
-                            },
-                            "required": ["fields"],
-                            "additionalProperties": False,
-                        },
-                        "strict": True,
-                    },
-                }
-            ],
-            "flow_tool_annotations": {"store_fields": {"fields": dict[str, str]}},
-        }
-
-        (
-            typed_parser,
-            generation_schema,
-            transport_generation_schema,
-        ) = model._prepare_generate_kwargs(kwargs)
-
-        assert typed_parser is None
-        assert generation_schema is ReAct
-        assert transport_generation_schema["decoder_schema"] is None
-        action_schema = kwargs["response_format"]["json_schema"]["schema"]["properties"][
-            "actions"
-        ]["anyOf"][0]["items"]
-        assert action_schema["properties"]["name"]["enum"] == ["store_fields"]
-        assert "fields" in action_schema["properties"]
-        assert "arguments" not in action_schema["properties"]
-
-    def test_process_completion_model_output_normalizes_react_transport_shape(
-        self, mock_openai_client
-    ):
-        """Test ToolFlowControl transport payloads are normalized to Action(arguments=...)."""
-        pytest.importorskip("openai")
-
-        from msgflux.models.providers.openai import OpenAIChatCompletion
-
-        model = OpenAIChatCompletion(model_id="gpt-4")
-        transport_generation_schema = model._prepare_generate_kwargs(
-            {
-                "typed_parser": None,
-                "generation_schema": ReAct,
-                "flow_tool_schemas": [
+            "tool_definitions": ToolDefinitions(
+                schemas=[
                     {
                         "type": "function",
                         "function": {
@@ -365,7 +299,78 @@ class TestOpenAIChatCompletion:
                         },
                     }
                 ],
-                "flow_tool_annotations": {"store_fields": {"fields": dict[str, str]}},
+                annotations={"store_fields": {"fields": dict[str, str]}},
+            ),
+        }
+
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = model._prepare_generate_kwargs(kwargs)
+
+        assert typed_parser is None
+        assert generation_schema is ReAct
+        assert transport_generation_schema["decoder_schema"] is None
+        action_schema = kwargs["response_format"]["json_schema"]["schema"]["properties"][
+            "actions"
+        ]["anyOf"][0]["items"]
+        assert action_schema["properties"]["name"]["enum"] == ["store_fields"]
+        assert "fields" in action_schema["properties"]
+        assert "arguments" not in action_schema["properties"]
+
+    def test_process_completion_model_output_normalizes_react_transport_shape(
+        self, mock_openai_client
+    ):
+        """Test ToolFlowControl transport payloads are normalized to Action(arguments=...)."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": ReAct,
+                "tool_definitions": ToolDefinitions(
+                    schemas=[
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "store_fields",
+                                "description": "Store values",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "fields": {
+                                            "type": "object",
+                                            "properties": {
+                                                "entries": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "key": {"type": "string"},
+                                                            "value": {"type": "string"},
+                                                        },
+                                                        "required": ["key", "value"],
+                                                        "additionalProperties": False,
+                                                    },
+                                                }
+                                            },
+                                            "required": ["entries"],
+                                            "additionalProperties": False,
+                                        }
+                                    },
+                                    "required": ["fields"],
+                                    "additionalProperties": False,
+                                },
+                                "strict": True,
+                            },
+                        }
+                    ],
+                    annotations={"store_fields": {"fields": dict[str, str]}},
+                ),
             }
         )[2]
 

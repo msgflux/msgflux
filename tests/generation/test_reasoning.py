@@ -14,6 +14,7 @@ from msgflux.generation.reasoning.react import (
     Action,
     ReAct,
 )
+from msgflux.tools.definitions import ToolDefinitions
 
 
 class TestChainOfThought:
@@ -221,29 +222,31 @@ class TestReActToolFlowControl:
 
     def test_build_provider_response_format_flattens_tool_parameters(self):
         response_format = ReAct.build_provider_response_format(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "store_fields",
-                        "description": "Store values",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "fields": {
-                                    "type": "object",
-                                    "properties": {"entries": {"type": "array"}},
-                                    "required": ["entries"],
-                                    "additionalProperties": False,
-                                }
+            ToolDefinitions(
+                schemas=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "store_fields",
+                            "description": "Store values",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "fields": {
+                                        "type": "object",
+                                        "properties": {"entries": {"type": "array"}},
+                                        "required": ["entries"],
+                                        "additionalProperties": False,
+                                    }
+                                },
+                                "required": ["fields"],
+                                "additionalProperties": False,
                             },
-                            "required": ["fields"],
-                            "additionalProperties": False,
+                            "strict": True,
                         },
-                        "strict": True,
-                    },
-                }
-            ]
+                    }
+                ]
+            )
         )
 
         action_schema = response_format["json_schema"]["schema"]["properties"]["actions"][
@@ -272,7 +275,9 @@ class TestReActToolFlowControl:
 
         normalized = ReAct.normalize_provider_response(
             raw_response,
-            tool_annotations={"store_fields": {"fields": dict[str, str]}},
+            tool_definitions=ToolDefinitions(
+                annotations={"store_fields": {"fields": dict[str, str]}}
+            ),
         )
 
         assert normalized == {

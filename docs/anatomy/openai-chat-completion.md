@@ -81,7 +81,7 @@ That includes:
 
 - `typed_parser`
 - canonical `generation_schema`
-- flow-control metadata such as `flow_tool_schemas`
+- flow-control metadata carried through `ToolDefinitions`
 - the OpenAI `response_format`
 - transport normalization metadata
 

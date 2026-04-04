@@ -42,6 +42,7 @@ from msgflux.models.types import (
     TextToImageModel,
     TextToSpeechModel,
 )
+from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.console import cprint
 from msgflux.utils.encode import encode_data_to_bytes
@@ -51,6 +52,7 @@ from msgflux.utils.msgspec import (
     struct_to_dict,
 )
 from msgflux.utils.tenacity import apply_retry, default_model_retry
+from msgflux.utils.validation import is_subclass_of
 
 
 class _BaseOpenAI(BaseModel):
@@ -483,21 +485,20 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
-        flow_tool_schemas = kwargs.pop("flow_tool_schemas", None)
-        flow_tool_annotations = kwargs.pop("flow_tool_annotations", None)
+        tool_definitions = kwargs.pop("tool_definitions", None)
         transport_generation_schema = None
 
         if generation_schema is not None and typed_parser is None:
             if issubclass(generation_schema, ToolFlowControl):
                 response_format = generation_schema.build_provider_response_format(
-                    flow_tool_schemas
+                    tool_definitions
                 )
                 if response_format is not None:
                     transport_generation_schema = {
                         "decoder_schema": None,
                         "normalize": lambda payload: generation_schema.normalize_provider_response(  # noqa: E501
                             payload,
-                            tool_annotations=flow_tool_annotations,
+                            tool_definitions=tool_definitions,
                         ),
                     }
                     kwargs["response_format"] = response_format
@@ -788,6 +789,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         generation_schema: Optional[msgspec.Struct] = None,
         tool_schemas: Optional[Dict] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_annotations: Optional[Dict[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Args:
@@ -814,6 +817,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         Call one or more functions.
                     3. Forced Tool:
                         Call exactly one specific tool e.g: "get_weather".
+            tool_annotations:
+                Optional tool parameter annotations used for flow-control
+                normalization and local restoration.
+            tool_definitions:
+                Optional container with tool schemas, annotations, and
+                tool-choice metadata.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -830,9 +839,30 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             typed_parser=typed_parser,
             stream=stream,
         )
+        if tool_definitions is None and (
+            tool_schemas is not None
+            or tool_choice is not None
+            or tool_annotations is not None
+        ):
+            tool_definitions = ToolDefinitions(
+                schemas=tool_schemas,
+                annotations=tool_annotations,
+                choice=tool_choice,
+            )
+        is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
         generation_params = self._build_generation_params(
-            messages, system_prompt, prefilling, tool_schemas, tool_choice
+            messages,
+            system_prompt,
+            prefilling,
+            None
+            if is_flow_control or tool_definitions is None
+            else tool_definitions.schemas,
+            None
+            if is_flow_control or tool_definitions is None
+            else tool_definitions.choice,
         )
+        if tool_definitions is not None:
+            generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
             stream_response = ModelStreamResponse(mode="sync")
@@ -869,6 +899,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         generation_schema: Optional[msgspec.Struct] = None,
         tool_schemas: Optional[Dict] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_annotations: Optional[Dict[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Async version of __call__. Args:
@@ -895,6 +927,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         Call one or more functions.
                     3. Forced Tool:
                         Call exactly one specific tool e.g: "get_weather".
+            tool_annotations:
+                Optional tool parameter annotations used for flow-control
+                normalization and local restoration.
+            tool_definitions:
+                Optional container with tool schemas, annotations, and
+                tool-choice metadata.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -911,9 +949,30 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             typed_parser=typed_parser,
             stream=stream,
         )
+        if tool_definitions is None and (
+            tool_schemas is not None
+            or tool_choice is not None
+            or tool_annotations is not None
+        ):
+            tool_definitions = ToolDefinitions(
+                schemas=tool_schemas,
+                annotations=tool_annotations,
+                choice=tool_choice,
+            )
+        is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
         generation_params = self._build_generation_params(
-            messages, system_prompt, prefilling, tool_schemas, tool_choice
+            messages,
+            system_prompt,
+            prefilling,
+            None
+            if is_flow_control or tool_definitions is None
+            else tool_definitions.schemas,
+            None
+            if is_flow_control or tool_definitions is None
+            else tool_definitions.choice,
         )
+        if tool_definitions is not None:
+            generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
             stream_response = ModelStreamResponse(mode="async")

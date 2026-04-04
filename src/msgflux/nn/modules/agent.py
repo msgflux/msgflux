@@ -43,6 +43,7 @@ from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
+from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.console import cprint
 from msgflux.utils.msgspec import StructFactory, is_optional_field, msgspec_dumps
@@ -507,37 +508,36 @@ class Agent(Module, metaclass=AutoParams):
             tool_schemas = None
 
         tool_choice = self.config.get("tool_choice")
-        flow_tool_schemas = None
-        flow_tool_annotations = None
+        tool_definitions = None
+
+        if tool_schemas is not None:
+            tool_definitions = ToolDefinitions(
+                schemas=tool_schemas,
+                annotations=self.tool_library.get_tool_annotations() or None,
+                choice=tool_choice,
+            )
 
         if is_subclass_of(self.generation_schema, ToolFlowControl) and tool_schemas:
             tools_template = self.generation_schema.tools_template
-            inputs = {"tool_schemas": tool_schemas, "tool_choice": tool_choice}
+            inputs = {
+                "tool_schemas": tool_definitions.schemas,
+                "tool_choice": tool_definitions.choice,
+            }
             flow_control_tools = self._format_template(inputs, tools_template)
             if system_prompt:
                 system_prompt = flow_control_tools + "\n\n" + system_prompt
             else:
                 system_prompt = flow_control_tools
-            flow_tool_schemas = tool_schemas
-            flow_tool_annotations = self.tool_library.get_tool_annotations()
-            tool_schemas = None  # Disable tool_schemas to controlflow preference
-            tool_choice = None  # Disable tool_choice to controlflow preference
 
         model_execution_params = dotdict(
             messages=deepcopy(messages),
             system_prompt=system_prompt or None,
             prefilling=prefilling,
             stream=self.config.get("stream", False),
-            tool_schemas=tool_schemas,
-            tool_choice=tool_choice,
+            tool_definitions=tool_definitions,
             generation_schema=self.generation_schema,
             typed_parser=self.typed_parser,
         )
-
-        if flow_tool_schemas is not None:
-            model_execution_params.flow_tool_schemas = flow_tool_schemas
-        if flow_tool_annotations is not None:
-            model_execution_params.flow_tool_annotations = flow_tool_annotations
 
         if model_preference:
             model_execution_params.model_preference = model_preference

@@ -11,6 +11,7 @@ from msgflux.utils.msgspec import restore_transport_value
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolResponses
+    from msgflux.tools.definitions import ToolDefinitions
 
 REACT_SYSTEM_MESSAGE = """
 You are an Agent. In each episode, you will be given the task as input.
@@ -102,10 +103,11 @@ class ReAct(Struct, ToolFlowControl):
 
     @classmethod
     def build_provider_response_format(
-        cls, tool_schemas: Optional[List[Dict[str, Any]]] = None
+        cls, tool_definitions: Optional["ToolDefinitions"] = None
     ) -> Optional[Dict[str, Any]]:
         """Build a dynamic OpenAI transport schema from the available tools."""
         action_variants = []
+        tool_schemas = tool_definitions.schemas if tool_definitions else None
         for tool_schema in tool_schemas or []:
             function_schema = deepcopy(tool_schema["function"])
             parameters = function_schema.get("parameters", {})
@@ -149,7 +151,7 @@ class ReAct(Struct, ToolFlowControl):
     def normalize_provider_response(
         cls,
         raw_response: Mapping[str, Any],
-        tool_annotations: Optional[Dict[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional["ToolDefinitions"] = None,
     ) -> Mapping[str, Any]:
         """Normalize flattened action params to the logical Action(arguments=...)."""
         normalized = {
@@ -163,7 +165,9 @@ class ReAct(Struct, ToolFlowControl):
             return normalized
 
         normalized_actions = []
-        tool_annotations = tool_annotations or {}
+        tool_annotations = (
+            tool_definitions.annotations if tool_definitions else None
+        ) or {}
         for action in actions:
             name = action.get("name")
             argument_annotations = tool_annotations.get(name, {})
