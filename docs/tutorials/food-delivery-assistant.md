@@ -105,15 +105,15 @@ Raw restaurants carry only identity fields. Faker generates the operational meta
 ```python
 RAW_RESTAURANTS = [
     {"id": "REST001", "name": "Pizzaria Bella Napoli", "cuisine": "pizza"},
-    {"id": "REST002", "name": "Sushi Sakura",          "cuisine": "japonesa"},
-    {"id": "REST003", "name": "Burger Bros",            "cuisine": "hambúrguer"},
-    {"id": "REST004", "name": "Sabor Mineiro",          "cuisine": "brasileira"},
-    {"id": "REST005", "name": "Shawarma Palace",        "cuisine": "árabe"},
-    {"id": "REST006", "name": "Verde & Bom",            "cuisine": "vegana"},
-    {"id": "REST007", "name": "Wok House",              "cuisine": "chinesa"},
-    {"id": "REST008", "name": "Tacos & Co",             "cuisine": "mexicana"},
-    {"id": "REST009", "name": "Frango & Cia",           "cuisine": "brasileira"},
-    {"id": "REST010", "name": "Pasta Mia",              "cuisine": "italiana"},
+    {"id": "REST002", "name": "Sushi Sakura",          "cuisine": "japanese"},
+    {"id": "REST003", "name": "Burger Bros",            "cuisine": "burger"},
+    {"id": "REST004", "name": "Sabor Mineiro",          "cuisine": "brazilian"},
+    {"id": "REST005", "name": "Shawarma Palace",        "cuisine": "arabic"},
+    {"id": "REST006", "name": "Verde & Bom",            "cuisine": "vegan"},
+    {"id": "REST007", "name": "Wok House",              "cuisine": "chinese"},
+    {"id": "REST008", "name": "Tacos & Co",             "cuisine": "mexican"},
+    {"id": "REST009", "name": "Frango & Cia",           "cuisine": "brazilian"},
+    {"id": "REST010", "name": "Pasta Mia",              "cuisine": "italian"},
 ]
 
 RAW_DISHES = [
@@ -187,9 +187,9 @@ Restaurant operational metadata is generated with Faker. Delivery times and mini
 
 ```python
 _DELIVERY_BY_CUISINE = {
-    "hambúrguer": (20, 30), "brasileira": (30, 45), "pizza": (30, 40),
-    "japonesa": (35, 50),   "árabe": (25, 35),       "vegana": (30, 40),
-    "chinesa": (25, 35),    "mexicana": (20, 30),     "italiana": (30, 45),
+    "burger":   (20, 30), "brazilian": (30, 45), "pizza":    (30, 40),
+    "japanese": (35, 50), "arabic":    (25, 35), "vegan":    (30, 40),
+    "chinese":  (25, 35), "mexican":   (20, 30), "italian":  (30, 45),
 }
 
 def generate_restaurant_metadata(raw: list[dict]) -> list[dict]:
@@ -232,7 +232,7 @@ class ProductClassifier(nn.Agent):
     raw_name: str, cuisine: str ->
     name:        str,
     description: str,
-    category:    Literal['prato principal', 'entrada', 'sobremesa', 'bebida', 'acompanhamento'],
+    category:    Literal['main course', 'starter', 'dessert', 'drink', 'side dish'],
     price:       float,
     tags:        list[str],
     dietary:     list[str]
@@ -357,7 +357,7 @@ def search_dishes(query: str) -> str:
     """
     Search for dishes by name, description, ingredients, cuisine, or dietary tag.
     Include price constraints and dietary restrictions directly in the query
-    (e.g. "vegano até R$35", "sem glúten japonesa").
+    (e.g. "vegan under R$35", "gluten-free japanese").
     """
     raw     = _dish_searcher(query)
     results = raw[0]["results"] if raw else []
@@ -386,7 +386,7 @@ def search_restaurants(query: str) -> str:
     """
     Search for restaurants by name, cuisine type, or tags.
     Include delivery time constraints directly in the query
-    (e.g. "japonesa rápida", "pizza entrega 30 minutos").
+    (e.g. "japanese fast delivery", "pizza 30 minutes").
     """
     raw     = _restaurant_searcher(query)
     results = raw[0]["results"] if raw else []
@@ -475,7 +475,7 @@ class FoodAssistant(nn.Agent):
     Help the user find and order food through a natural conversation.
 
     Available tools:
-    - search_dishes: search by name, ingredient, cuisine, or tag (e.g. "vegano", "sem glúten", "picante")
+    - search_dishes: search by name, ingredient, cuisine, or tag (e.g. "vegan", "gluten-free", "spicy")
     - search_restaurants: search by name or cuisine type
     - get_menu: get the full menu of a specific restaurant
     - place_order: submit the order after user confirmation
