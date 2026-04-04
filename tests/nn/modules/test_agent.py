@@ -999,6 +999,88 @@ class TestAgentProperties:
         assert agent.prefilling == "Start here"
 
 
+class TestAgentJinjaTaskTemplateValidation:
+    """Test that a string task passed to an agent with a Jinja2-only task_template raises ValueError."""
+
+    def test_jinja_variable_template_with_str_task_raises(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "<ticket>{{ ticket }}</ticket>"},
+        )
+        with pytest.raises(ValueError, match="Jinja2 variables"):
+            agent._render_task("", vars={}, task="classify this ticket")
+
+    def test_jinja_block_template_with_str_task_raises(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "{% if ticket %}{{ ticket }}{% endif %}"},
+        )
+        with pytest.raises(ValueError, match="Jinja2 variables"):
+            agent._render_task("", vars={}, task="classify this ticket")
+
+    def test_error_message_includes_agent_name(self, mock_chat_model):
+        agent = Agent(
+            name="my-router",
+            model=mock_chat_model,
+            templates={"task": "{{ ticket }}"},
+        )
+        with pytest.raises(ValueError, match="my-router"):
+            agent._render_task("", vars={}, task="some text")
+
+    def test_mixed_jinja_and_format_placeholder_does_not_raise(self, mock_chat_model):
+        """Template with both Jinja2 vars and {} placeholder is valid with a string task."""
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "{% if ctx %}Context: {{ ctx }}\n{% endif %}Task: {}"},
+        )
+        # Should not raise — {} receives the string task after Jinja2 renders vars
+        agent._render_task("", vars={"ctx": "billing"}, task="help me")
+
+    def test_pure_format_placeholder_does_not_raise(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "Task: {}"},
+        )
+        agent._render_task("", vars={}, task="help me")
+
+    def test_jinja_template_with_dict_task_does_not_raise(self, mock_chat_model):
+        """Dict task always follows the Jinja2 rendering path — no error."""
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "<ticket>{{ ticket }}</ticket>"},
+        )
+        agent._render_task("", vars={}, task={"ticket": "I was charged twice"})
+
+    def test_no_template_with_str_task_does_not_raise(self, mock_chat_model):
+        """No task_template — string task is used as-is."""
+        agent = Agent(name="agent", model=mock_chat_model)
+        agent._render_task("", vars={}, task="help me")
+
+    @pytest.mark.asyncio
+    async def test_jinja_template_with_str_task_raises_async(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "<ticket>{{ ticket }}</ticket>"},
+        )
+        with pytest.raises(ValueError, match="Jinja2 variables"):
+            await agent._arender_task("", vars={}, task="classify this ticket")
+
+    @pytest.mark.asyncio
+    async def test_mixed_template_does_not_raise_async(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "{% if ctx %}{{ ctx }}\n{% endif %}Task: {}"},
+        )
+        agent._render_task("", vars={}, task="help me")
+
+
 class TestAgentSystemExtraMessage:
     """Test Agent system_extra_message."""
 

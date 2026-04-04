@@ -45,6 +45,7 @@ from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
+from msgflux.utils.common import has_format_placeholder, is_jinja_template
 from msgflux.utils.console import cprint
 from msgflux.utils.msgspec import StructFactory, is_optional_field, msgspec_dumps
 from msgflux.utils.validation import is_subclass_of
@@ -1137,6 +1138,13 @@ class Agent(Module, metaclass=AutoParams):
         if self.templates.get("task"):
             if task:
                 if isinstance(task, str):
+                    task_template = self.templates["task"]
+                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):
+                        raise ValueError(
+                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "
+                            "passed as a plain string. Pass 'task' as a dict with the required "
+                            "variable names, or use message_fields to map from the message."
+                        )
                     pre_task = self._format_task_template(vars)
                     task_content = self._format_template(task, pre_task)
                 elif isinstance(task, Mapping):
@@ -1198,6 +1206,13 @@ class Agent(Module, metaclass=AutoParams):
         if self.templates.get("task"):
             if task:
                 if isinstance(task, str):
+                    task_template = self.templates["task"]
+                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):
+                        raise ValueError(
+                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "
+                            "passed as a plain string. Pass 'task' as a dict with the required "
+                            "variable names, or use message_fields to map from the message."
+                        )
                     pre_task = self._format_task_template(vars)
                     task_content = self._format_template(task, pre_task)
                 elif isinstance(task, Mapping):

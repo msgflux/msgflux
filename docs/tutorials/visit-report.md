@@ -20,13 +20,13 @@ By the time the data reaches the pipeline, it is incomplete, inconsistent, or si
 
 We will build a conversational assistant that captures visit report fields through a multi-turn dialogue. The user narrates the visit — the assistant extracts, validates, and fills.
 
-Each report lives in an independent draft slot in `msg.vars`. A single `activate_report` tool creates a new draft or switches context to an existing one. All other tools — `fill_fields`, `validate_report`, `submit_report`, `get_report` — always operate on the currently active draft, so the root agent never has to pass a report identifier on every call.
+A rep may visit several clients in the same day. Each report lives in its own draft. The user can create a new one or switch between existing ones at any point — the assistant always knows which report is currently active, so the user never has to repeat it.
 
-Sensitive fields — participants, companies, and competitors — are never filled with a raw string. Before each write, a dedicated `EntityResolver` sub-agent validates the name. It uses a fuzzy retriever and retries with different query variations when the first attempt fails: normalizing, stripping to first name, trying phonetic variants. This covers both transcription errors and nicknames. The root agent receives only the resolved candidates — never the search iterations.
+Sensitive fields — participants, companies, and competitors — are never stored as raw text. Before writing any of them, a dedicated resolver agent looks up the name in the company database. When the first attempt fails, it tries alternative forms: normalized spelling, first name only, phonetic variants. This covers transcription errors and nicknames alike. The conversation agent only ever sees resolved candidates — it never knows how many attempts were needed.
 
-Audio input is transcribed first via Whisper. Downstream processing is identical to text.
+If the user sends an audio note, it is transcribed first. Downstream, everything works exactly as with text.
 
-When a name is confirmed, the tool silently fetches enriched data from external systems — participant IDs, emails, roles, company websites — and stores it inside the active draft without telling the model. The model never sees these values, which means it cannot reproduce them incorrectly or get distracted by them mid-conversation. The enriched data surfaces only in the final report, delivered directly to the caller via `return_direct`.
+Once a name is confirmed, the assistant quietly fetches the enriched record — IDs, email, role, company website — and attaches it to the draft. The conversation agent never sees these values, which means it cannot reproduce them incorrectly or mix them into the dialogue. They surface only in the final report, returned directly to the caller when requested.
 
 ---
 
@@ -77,7 +77,7 @@ User Input (text or audio)
                      └── submitted → full report with enriched data
 ```
 
-`query_entity` is the single interface for all entity resolution. The root agent passes a `domain` and the raw query — the sub-agent handles the uncertainty. `get_report` is the only tool that bypasses the LLM on return — it delivers the enriched report directly to the orchestrator.
+`query_entity` is the single interface for all entity resolution. The root agent passes a `domain` and the raw query — the sub-agent handles the uncertainty. `get_report` is the only tool that bypasses the Assistant on return — it delivers the enriched report directly to the orchestrator.
 
 ---
 
@@ -570,7 +570,10 @@ class VisitAssistant(nn.Agent):
         "task": "user.text",
         "vars": "vars",
     }
-    tools         = [QueryEntity, activate_report, fill_fields, validate_report, submit_report, get_report]
+    tools         = [
+        QueryEntity, activate_report, fill_fields,
+        validate_report, submit_report, get_report
+    ]
     response_mode = "response"
     config        = {"include_date": True}
 ```

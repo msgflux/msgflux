@@ -215,11 +215,15 @@ nav:
     - Research & Analysis:
       - Research Scholar Agent: tutorials/research-scholar.md
       - Legal Document Review: tutorials/legal-document-review.md
-    - Business & Sales:
+    - CRM:
       - Visit Report Assistant: tutorials/visit-report.md
+      - Email Auto Responder: tutorials/email-auto-responder.md
+      - Support Ticket Router: tutorials/support-ticket-router.md
+      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
+    - Business & Sales:
       - Lead Scoring: tutorials/lead-scoring.md
     - Office:
-      - Email Auto Responder: tutorials/email-auto-responder.md
+      - Meeting Action Items Tracker: tutorials/meeting-action-items.md
     - Developer Tools:
       - Code Generation & Debugging Agent: tutorials/code-debug-agent.md
       - README Generator: tutorials/readme-generator.md
