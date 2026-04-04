@@ -1,0 +1,29 @@
+# Anatomy
+
+The pages in this section document architectural choices that are easy to miss
+when reading a single file in isolation.
+
+They are not API tutorials. They describe the internal contracts that keep
+`Agent`, `ToolFlowControl`, provider adapters, transport schemas, and runtime
+normalization aligned.
+
+Use this section when you need to answer questions like:
+
+- Why does a flow control exist instead of extending the default tool loop?
+- What is the difference between the logical generation schema and the provider
+  response format?
+- Why are some values lowered before they are sent to a model and restored
+  afterward?
+- Why does ReAct build a provider-specific schema instead of exposing its
+  runtime shape directly?
+
+## Pages
+
+- [ToolFlowControl](tool-flow-control.md): extension point for custom tool loops
+  without modifying the default `Agent` flow.
+- [Logical vs Provider Schema](logical-vs-provider-schema.md): why msgFlux
+  separates runtime shape from provider-facing schema.
+- [Dict Lowering and Restoration](dict-lowering-and-restoration.md): how
+  `dict[K, V]` is encoded for strict structured outputs and restored at runtime.
+- [ReAct Provider Schemas](react-provider-schemas.md): how ReAct uses tool
+  schemas to build a dynamic provider-facing response format.
