@@ -388,6 +388,18 @@
     border-color: rgba(206, 147, 216, 0.35);
 }
 
+/* gray */
+.tag-gray {
+    background: rgba(120, 120, 120, 0.11);
+    color: #555555;
+    border: 1px solid rgba(120, 120, 120, 0.28);
+}
+[data-md-color-scheme="slate"] .tag-gray {
+    background: rgba(180, 180, 180, 0.15);
+    color: #BDBDBD;
+    border-color: rgba(180, 180, 180, 0.3);
+}
+
 /* ===========================
    TUTORIAL CATEGORY SECTIONS
    =========================== */
