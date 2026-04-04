@@ -2,7 +2,7 @@
 
 import os
 from types import SimpleNamespace
-from typing import Dict, List
+from typing import Dict, List, Optional
 from unittest.mock import MagicMock, Mock, patch
 
 import msgspec
@@ -441,6 +441,102 @@ class TestOpenAIChatCompletion:
                 }
             ],
             "final_answer": None,
+        }
+
+    def test_prepare_generate_kwargs_uses_typed_final_answer_for_react_subclass(
+        self, mock_openai_client
+    ):
+        """ToolFlowControl transport schema should follow the subclass final_answer type."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class Outputs(msgspec.Struct):
+            candidates: List[str]
+            resolved: bool
+
+        Output = type(
+            "Output",
+            (ReAct,),
+            {"__annotations__": {**ReAct.__annotations__, "final_answer": Optional[Outputs]}},
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        kwargs = {
+            "typed_parser": None,
+            "generation_schema": Output,
+            "tool_definitions": ToolDefinitions(schemas=[]),
+        }
+
+        model._prepare_generate_kwargs(kwargs)
+
+        final_answer_schema = kwargs["response_format"]["json_schema"]["schema"][
+            "properties"
+        ]["final_answer"]["anyOf"][0]
+        assert final_answer_schema["type"] == "object"
+        assert final_answer_schema["properties"]["candidates"]["type"] == "array"
+        assert (
+            final_answer_schema["properties"]["candidates"]["items"]["type"] == "string"
+        )
+        assert final_answer_schema["properties"]["resolved"]["type"] == "boolean"
+        assert final_answer_schema["additionalProperties"] is False
+
+    def test_process_completion_model_output_decodes_react_signature_final_answer(
+        self, mock_openai_client
+    ):
+        """Decoded ReAct payload should respect the fused final_answer struct type."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class Outputs(msgspec.Struct):
+            candidates: List[str]
+            resolved: bool
+
+        Output = type(
+            "Output",
+            (ReAct,),
+            {"__annotations__": {**ReAct.__annotations__, "final_answer": Optional[Outputs]}},
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": Output,
+                "tool_definitions": ToolDefinitions(schemas=[]),
+            }
+        )[2]
+
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"thought":"I have enough information","actions":null,"final_answer":{"candidates":["Alice Johnson"],"resolved":true}}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=Output,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.data == {
+            "thought": "I have enough information",
+            "actions": None,
+            "final_answer": {
+                "candidates": ["Alice Johnson"],
+                "resolved": True,
+            },
         }
 
 

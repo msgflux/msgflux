@@ -6,7 +6,11 @@ import msgspec
 from msgspec import Struct
 
 from msgflux.generation.control_flow import ToolFlowControl, ToolFlowResult
-from msgflux.utils.chat import ChatBlock, response_format_from_json_schema
+from msgflux.utils.chat import (
+    ChatBlock,
+    response_format_from_json_schema,
+    schema_fragment_from_msgspec_type,
+)
 from msgflux.utils.msgspec import restore_transport_value
 
 if TYPE_CHECKING:
@@ -129,6 +133,14 @@ class ReAct(Struct, ToolFlowControl):
             action_items = action_variants[0]
         elif action_variants:
             action_items = {"anyOf": action_variants}
+
+        final_answer_type = Optional[str]
+        for base in cls.__mro__:
+            annotations = getattr(base, "__dict__", {}).get("__annotations__", {})
+            if "final_answer" in annotations:
+                final_answer_type = annotations["final_answer"]
+                break
+
         schema = {
             "type": "object",
             "properties": {
@@ -138,9 +150,7 @@ class ReAct(Struct, ToolFlowControl):
                     if action_items is not None
                     else {"type": "null"}
                 ),
-                "final_answer": {
-                    "anyOf": [{"type": "string"}, {"type": "null"}]
-                },
+                "final_answer": schema_fragment_from_msgspec_type(final_answer_type),
             },
             "required": ["thought", "actions", "final_answer"],
             "additionalProperties": False,
