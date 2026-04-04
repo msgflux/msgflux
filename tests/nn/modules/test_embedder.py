@@ -45,6 +45,44 @@ class MockEmbedderModel(BaseModel):
         return self(**kwargs)
 
 
+class DualModeEmbedderModel(BaseModel):
+    """Mock model with distinct sync and async outputs."""
+
+    model_type = "text_embedder"
+    provider = "mock"
+    batch_support = False
+
+    def __init__(self):
+        self.model_id = "dual-mode-embedder"
+        self._api_key = None
+        self.model = None
+        self.processor = None
+        self.client = None
+
+    def _initialize(self):
+        pass
+
+    def __call__(self, **kwargs):
+        data = kwargs.get("data", [])
+        if isinstance(data, str):
+            data = [data]
+        embeddings = [[1.0, 0.0, 0.0] for _ in data]
+        response = ModelResponse()
+        response.set_response_type("embeddings")
+        response.add(embeddings)
+        return response
+
+    async def acall(self, **kwargs):
+        data = kwargs.get("data", [])
+        if isinstance(data, str):
+            data = [data]
+        embeddings = [[0.0, 1.0, 0.0] for _ in data]
+        response = ModelResponse()
+        response.set_response_type("embeddings")
+        response.add(embeddings)
+        return response
+
+
 class TestEmbedder:
     """Test suite for Embedder module."""
 
@@ -169,6 +207,14 @@ class TestEmbedder:
 
             # Verify map_gather was called
             assert mock_map_gather.called
+
+    def test_embedder_non_batch_sync_uses_sync_generator_path(self):
+        """Non-batch sync execution should not route through generator.acall()."""
+        embedder = Embedder(model=DualModeEmbedderModel())
+
+        result = embedder(["Text 1", "Text 2"])
+
+        assert result == [[[1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]]]
 
     def test_embedder_config_invalid_type(self):
         """Test Embedder raises TypeError for invalid config type."""
