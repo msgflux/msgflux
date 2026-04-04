@@ -12,6 +12,8 @@ hide:
 
 | Provider    | Dependency        | Auth Env             |
 |-------------|-------------------|----------------------|
+| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`   |
+| Groq        | `msgflux[openai]` | `GROQ_API_KEY`       |
 | Ollama      | `msgflux[openai]` |                      |
 | OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`     |
 | OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY` |
