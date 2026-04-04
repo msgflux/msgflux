@@ -140,6 +140,17 @@ class TestSearcher:
         assert result[0]["query"] == "test query"
         assert len(result[0]["results"]) == 2
 
+    def test_forward_accepts_query_kwarg(self):
+        """Test Searcher supports the tool-style `query=` alias."""
+        mock_retriever = MockLexicalRetriever()
+        ret = Searcher(retriever=mock_retriever)
+
+        result = ret(query="test query")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["query"] == "test query"
+
     def test_forward_list_of_strings(self):
         """Test Searcher forward with list of string queries."""
         mock_retriever = MockLexicalRetriever()
@@ -168,7 +179,7 @@ class TestSearcher:
         """Test Searcher forward with Message object."""
         mock_retriever = MockLexicalRetriever()
         ret = Searcher(
-            retriever=mock_retriever, message_fields={"task": "query"}
+            retriever=mock_retriever, message_fields={"query": "query"}
         )
 
         msg = Message()
@@ -207,6 +218,18 @@ class TestSearcher:
 
         assert isinstance(result, list)
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_aforward_accepts_query_kwarg(self):
+        """Test async Searcher supports the tool-style `query=` alias."""
+        mock_retriever = MockLexicalRetriever()
+        ret = Searcher(retriever=mock_retriever)
+
+        result = await ret.aforward(query="async query")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["query"] == "async query"
 
     @pytest.mark.asyncio
     async def test_aforward_with_embedder(self):
@@ -415,7 +438,7 @@ class TestSearcherResponseMode:
         mock_retriever = MockLexicalRetriever()
         ret = Searcher(
             retriever=mock_retriever,
-            message_fields={"task": "question"},
+            message_fields={"query": "question"},
             response_mode="context",
         )
 
@@ -534,7 +557,7 @@ class TestSearcherWithRealBM25:
         bm25 = self._make_bm25()
         searcher = Searcher(
             retriever=bm25,
-            message_fields={"task": "question"},
+            message_fields={"query": "question"},
             response_mode="context",
             config={"top_k": 1},
         )
