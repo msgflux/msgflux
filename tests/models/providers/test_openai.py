@@ -161,6 +161,42 @@ class TestOpenAIChatCompletion:
             "entities"
         ]["items"]["properties"]["entries"]["type"] == "array"
 
+    def test_build_generation_params_uses_tool_definitions(self, mock_openai_client):
+        """Test native tool calling is derived from ToolDefinitions."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        params = model._build_generation_params(
+            messages=[{"role": "user", "content": "What's the weather?"}],
+            system_prompt=None,
+            prefilling=None,
+            tool_definitions=ToolDefinitions(
+                schemas=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"location": {"type": "string"}},
+                                "required": ["location"],
+                            },
+                        },
+                    }
+                ],
+                choice="get_weather",
+            ),
+        )
+
+        assert params["tools"][0]["function"]["name"] == "get_weather"
+        assert params["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "get_weather"},
+        }
+        assert params["parallel_tool_calls"] is model.parallel_tool_calls
+
     def test_process_completion_model_output_restores_dict_shape(
         self, mock_openai_client
     ):

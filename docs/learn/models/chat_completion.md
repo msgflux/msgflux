@@ -210,7 +210,7 @@ The cache is sensitive to:
 - System prompt
 - Temperature and sampling parameters
 - Generation schema
-- Tool schemas
+- Tool definitions
 
 Changing any of these creates a new cache entry.
 
@@ -550,6 +550,7 @@ Models can suggest calling functions (tools) to gather information:
 
         ```python
         import msgflux as mf
+        from msgflux.tools import ToolDefinitions
 
         # Define tool schema
         tools = [{
@@ -576,11 +577,13 @@ Models can suggest calling functions (tools) to gather information:
             }
         }]
 
+        tool_definitions = ToolDefinitions(schemas=tools)
+
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         response = model(
             messages=[{"role": "user", "content": "What's the weather in Paris?"}],
-            tool_schemas=tools
+            tool_definitions=tool_definitions,
         )
 
         # Get tool calls
@@ -598,28 +601,26 @@ Models can suggest calling functions (tools) to gather information:
 
         ```python
         import msgflux as mf
+        from msgflux.tools import ToolDefinitions
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         # Auto - model decides
         response = model(
             messages=[{"role": "user", "content": "What's the weather?"}],
-            tool_schemas=tools,
-            tool_choice="auto"  # Default
+            tool_definitions=ToolDefinitions(schemas=tools, choice="auto"),
         )
 
         # Required - must call at least one tool
         response = model(
             messages=[{"role": "user", "content": "What's the weather?"}],
-            tool_schemas=tools,
-            tool_choice="required"
+            tool_definitions=ToolDefinitions(schemas=tools, choice="required"),
         )
 
         # Specific function - must call this exact function
         response = model(
             messages=[{"role": "user", "content": "Paris weather"}],
-            tool_schemas=tools,
-            tool_choice="get_weather"
+            tool_definitions=ToolDefinitions(schemas=tools, choice="get_weather"),
         )
         ```
 
@@ -627,6 +628,7 @@ Models can suggest calling functions (tools) to gather information:
 
         ```python
         import msgflux as mf
+        from msgflux.tools import ToolDefinitions
 
         def get_weather(location, unit="celsius"):
             """Simulate weather API call."""
@@ -648,12 +650,14 @@ Models can suggest calling functions (tools) to gather information:
             }
         }]
 
+        tool_definitions = ToolDefinitions(schemas=tools)
+
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         # Initial request
         messages = [{"role": "user", "content": "What's the weather in Paris?"}]
 
-        response = model(messages=messages, tool_schemas=tools)
+        response = model(messages=messages, tool_definitions=tool_definitions)
         tool_call_agg = response.consume()
 
         # Execute tool calls
@@ -684,12 +688,13 @@ Models can suggest calling functions (tools) to gather information:
 
         ```python
         import msgflux as mf
+        from msgflux.tools import ToolDefinitions
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         response = model(
             messages=[{"role": "user", "content": "What's the weather in Tokyo?"}],
-            tool_schemas=tools,
+            tool_definitions=ToolDefinitions(schemas=tools),
             stream=True
         )
 
@@ -1220,6 +1225,7 @@ This is separate from the response-level `reasoning` field. The `ToolCallAggrega
 
     ```python
     import msgflux as mf
+    from msgflux.tools import ToolDefinitions
 
     tools = [{
         "type": "function",
@@ -1245,7 +1251,7 @@ This is separate from the response-level `reasoning` field. The `ToolCallAggrega
 
     response = model(
         messages=[{"role": "user", "content": "What is (14 + 28) × 3 − 7?"}],
-        tool_schemas=tools,
+        tool_definitions=ToolDefinitions(schemas=tools),
     )
 
     tool_call_agg = response.consume()

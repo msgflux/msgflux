@@ -25,7 +25,7 @@ Upstream code thinks in terms such as:
 - `typed_parser`
 - `ToolFlowControl`
 - `prefilling`
-- `tool_schemas`
+- `tool_definitions`
 
 OpenAI expects:
 
@@ -67,7 +67,7 @@ This method builds the OpenAI request envelope:
 - normalizes `messages`
 - injects `system_prompt`
 - keeps `prefilling`
-- adds native `tools` and `tool_choice` when present
+- expands `tool_definitions` into native `tools` and `tool_choice` when present
 
 This is still a provider-neutral view of the request shape.
 

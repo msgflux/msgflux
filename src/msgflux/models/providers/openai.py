@@ -735,14 +735,14 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         messages: Union[str, List[Dict[str, Any]]],
         system_prompt: Optional[str],
         prefilling: Optional[str],
-        tool_schemas: Optional[Dict],
-        tool_choice: Optional[Union[str, Dict[str, Any]]],
+        tool_definitions: Optional[ToolDefinitions],
     ) -> Dict[str, Any]:
         if isinstance(messages, str):
             messages = [ChatBlock.user(messages)]
         if isinstance(system_prompt, str):
             messages.insert(0, ChatBlock.system(system_prompt))
 
+        tool_choice = tool_definitions.choice if tool_definitions else None
         if isinstance(tool_choice, str):
             if tool_choice not in ["auto", "required", "none"]:
                 tool_choice = {
@@ -756,8 +756,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             "model": self.model_id,
         }
 
-        if tool_schemas:
-            generation_params["tools"] = tool_schemas
+        if tool_definitions and tool_definitions.schemas:
+            generation_params["tools"] = tool_definitions.schemas
             generation_params["tool_choice"] = tool_choice
             generation_params["parallel_tool_calls"] = self.parallel_tool_calls
 
@@ -787,9 +787,6 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefilling: Optional[str] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
-        tool_schemas: Optional[Dict] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        tool_annotations: Optional[Dict[str, Dict[str, Any]]] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
@@ -806,23 +803,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 Whether generation should be in streaming mode.
             generation_schema:
                 Schema that defines how the output should be structured.
-            tool_schemas:
-                JSON schema containing available tools.
-            tool_choice:
-                By default the model will determine when and how many tools to use.
-                You can force specific behavior with the tool_choice parameter.
-                    1. auto:
-                        (Default) Call zero, one, or multiple functions.
-                    2. required:
-                        Call one or more functions.
-                    3. Forced Tool:
-                        Call exactly one specific tool e.g: "get_weather".
-            tool_annotations:
-                Optional tool parameter annotations used for flow-control
-                normalization and local restoration.
             tool_definitions:
                 Optional container with tool schemas, annotations, and
-                tool-choice metadata.
+                tool-choice metadata. This is the single tool-calling entrypoint
+                for the provider.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -839,27 +823,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             typed_parser=typed_parser,
             stream=stream,
         )
-        if tool_definitions is None and (
-            tool_schemas is not None
-            or tool_choice is not None
-            or tool_annotations is not None
-        ):
-            tool_definitions = ToolDefinitions(
-                schemas=tool_schemas,
-                annotations=tool_annotations,
-                choice=tool_choice,
-            )
         is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
         generation_params = self._build_generation_params(
             messages,
             system_prompt,
             prefilling,
-            None
-            if is_flow_control or tool_definitions is None
-            else tool_definitions.schemas,
-            None
-            if is_flow_control or tool_definitions is None
-            else tool_definitions.choice,
+            None if is_flow_control else tool_definitions,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions
@@ -897,9 +866,6 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefilling: Optional[str] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
-        tool_schemas: Optional[Dict] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        tool_annotations: Optional[Dict[str, Dict[str, Any]]] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
@@ -916,23 +882,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 Whether generation should be in streaming mode.
             generation_schema:
                 Schema that defines how the output should be structured.
-            tool_schemas:
-                JSON schema containing available tools.
-            tool_choice:
-                By default the model will determine when and how many tools to use.
-                You can force specific behavior with the tool_choice parameter.
-                    1. auto:
-                        (Default) Call zero, one, or multiple functions.
-                    2. required:
-                        Call one or more functions.
-                    3. Forced Tool:
-                        Call exactly one specific tool e.g: "get_weather".
-            tool_annotations:
-                Optional tool parameter annotations used for flow-control
-                normalization and local restoration.
             tool_definitions:
                 Optional container with tool schemas, annotations, and
-                tool-choice metadata.
+                tool-choice metadata. This is the single tool-calling entrypoint
+                for the provider.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -949,27 +902,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             typed_parser=typed_parser,
             stream=stream,
         )
-        if tool_definitions is None and (
-            tool_schemas is not None
-            or tool_choice is not None
-            or tool_annotations is not None
-        ):
-            tool_definitions = ToolDefinitions(
-                schemas=tool_schemas,
-                annotations=tool_annotations,
-                choice=tool_choice,
-            )
         is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
         generation_params = self._build_generation_params(
             messages,
             system_prompt,
             prefilling,
-            None
-            if is_flow_control or tool_definitions is None
-            else tool_definitions.schemas,
-            None
-            if is_flow_control or tool_definitions is None
-            else tool_definitions.choice,
+            None if is_flow_control else tool_definitions,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions
