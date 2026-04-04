@@ -1,11 +1,9 @@
-"""Unit tests for transport_params dict-lowering in LocalTool."""
+"""Unit tests for transport-lowered tool params in LocalTool."""
 
 import pytest
 from typing import Optional, Union
-from unittest.mock import MagicMock
 
-from msgflux.nn.modules.tool import LocalTool, _convert_module_to_nn_tool
-from msgflux.tools.config import tool_config
+from msgflux.nn.modules.tool import LocalTool, ToolLibrary, _convert_module_to_nn_tool
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -26,24 +24,15 @@ def _make_local_tool(fn, transport_params=None):
 
 class TestRestoreTransportParams:
 
-    def test_no_transport_params_returns_kwargs_unchanged(self):
+    def test_scalar_params_are_left_unchanged(self):
         def fn(x: str) -> str:
             """fn"""
             return x
 
         tool = _make_local_tool(fn, transport_params=None)
         kwargs = {"x": "hello", "tool_call_id": "abc"}
-        assert tool._restore_transport_params(kwargs) is kwargs
-
-    def test_empty_transport_params_returns_kwargs_unchanged(self):
-        def fn(x: str) -> str:
-            """fn"""
-            return x
-
-        tool = _make_local_tool(fn, transport_params={})
-        kwargs = {"x": "hello"}
         result = tool._restore_transport_params(kwargs)
-        assert result == {"x": "hello"}
+        assert result == {"x": "hello", "tool_call_id": "abc"}
 
     def test_entries_are_converted_to_dict(self):
         def fn(mapping: dict[str, str]) -> str:
@@ -86,15 +75,24 @@ class TestRestoreTransportParams:
         restored = tool._restore_transport_params(wire)
         assert restored == {"other": "value"}
 
-    def test_param_without_entries_key_is_not_touched(self):
-        def fn(mapping: dict[str, str]) -> str:
+    def test_plain_dict_is_restored_recursively_without_entries_wrapper(self):
+        def fn(mapping: dict[str, dict[str, str]]) -> str:
             """fn"""
             return ""
 
-        tool = _make_local_tool(fn, transport_params={"mapping": dict[str, str]})
-        wire = {"mapping": {"not_entries": []}}
+        tool = _make_local_tool(
+            fn,
+            transport_params={"mapping": dict[str, dict[str, str]]},
+        )
+        wire = {
+            "mapping": {
+                "profile": {
+                    "entries": [{"key": "city", "value": "Austin"}],
+                }
+            }
+        }
         restored = tool._restore_transport_params(wire)
-        assert restored["mapping"] == {"not_entries": []}
+        assert restored["mapping"] == {"profile": {"city": "Austin"}}
 
     def test_empty_entries_list_produces_empty_dict(self):
         def fn(mapping: dict[str, str]) -> str:
@@ -122,45 +120,46 @@ class TestRestoreTransportParams:
         restored = tool._restore_transport_params(wire)
         assert restored["mapping"] == {"participants": ["Alice", "Bob"]}
 
+    def test_int_keys_are_restored_from_entries(self):
+        def fn(labels: dict[int, str]) -> str:
+            """fn"""
+            return ""
 
-# ── _convert_module_to_nn_tool detects transport params ──────────────────────
+        tool = _make_local_tool(fn, transport_params={"labels": dict[int, str]})
+        wire = {
+            "labels": {
+                "entries": [
+                    {"key": 1, "value": "one"},
+                    {"key": 2, "value": "two"},
+                ]
+            }
+        }
+        restored = tool._restore_transport_params(wire)
+        assert restored["labels"] == {1: "one", 2: "two"}
 
-class TestConvertDetectsTransportParams:
 
-    def test_dict_param_detected(self):
+# ── annotations drive restoration ────────────────────────────────────────────
+
+class TestToolAnnotations:
+
+    def test_convert_module_preserves_dict_annotation(self):
         def fn(updates: dict[str, str]) -> str:
             """A tool with a dict param."""
             return ""
 
         local = _convert_module_to_nn_tool(fn)
-        assert "updates" in local._buffers["transport_params"]
+        assert local.get_module_annotations()["updates"] == dict[str, str]
 
-    def test_non_dict_param_not_detected(self):
-        def fn(name: str, count: int) -> str:
-            """A tool without dict params."""
-            return ""
-
-        local = _convert_module_to_nn_tool(fn)
-        assert local._buffers["transport_params"] == {}
-
-    def test_return_annotation_not_in_transport_params(self):
-        def fn(updates: dict[str, str]) -> dict:
-            """A tool."""
-            return {}
-
-        local = _convert_module_to_nn_tool(fn)
-        assert "return" not in local._buffers["transport_params"]
-
-    def test_mixed_params_only_dict_detected(self):
+    def test_tool_library_exposes_annotations_by_tool_name(self):
         def fn(updates: dict[str, str], name: str, count: int) -> str:
             """A tool with mixed params."""
             return ""
 
-        local = _convert_module_to_nn_tool(fn)
-        tp = local._buffers["transport_params"]
-        assert "updates" in tp
-        assert "name" not in tp
-        assert "count" not in tp
+        library = ToolLibrary("test", [fn])
+        annotations = library.get_tool_annotations()
+        assert annotations["fn"]["updates"] == dict[str, str]
+        assert annotations["fn"]["name"] is str
+        assert annotations["fn"]["count"] is int
 
 
 # ── forward calls impl with restored dict ────────────────────────────────────

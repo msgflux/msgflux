@@ -137,7 +137,9 @@ class Embedder(Module, metaclass=AutoParams):
             # since we only have kwargs
             args_list = [()] * len(data_list)
             responses = F.map_gather(
-                self.generator, args_list=args_list, kwargs_list=distributed_params
+                self._execute_single_model_sync,
+                args_list=args_list,
+                kwargs_list=distributed_params,
             )
             embeddings = [
                 self._extract_raw_response(response) for response in responses
@@ -151,6 +153,10 @@ class Embedder(Module, metaclass=AutoParams):
                 return embeddings[0]
             return embeddings
         return embeddings
+
+    def _execute_single_model_sync(self, **model_execution_params):
+        """Execute a single embedding request through the sync module path."""
+        return self.generator(**model_execution_params)
 
     async def _aexecute_model(
         self, data: Union[str, List[str]], model_preference: Optional[str] = None

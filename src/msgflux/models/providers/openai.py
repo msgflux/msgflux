@@ -1,6 +1,7 @@
 import base64
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
+from functools import partial
 from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Union
 
@@ -25,6 +26,7 @@ import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
 from msgflux.dsl.typed_parsers import typed_parser_registry
 from msgflux.exceptions import TypedParserNotFoundError
+from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.models.base import BaseModel
 from msgflux.models.cache import ResponseCache, generate_cache_key
 from msgflux.models.profiles import get_model_profile
@@ -40,6 +42,7 @@ from msgflux.models.types import (
     TextToImageModel,
     TextToSpeechModel,
 )
+from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.console import cprint
 from msgflux.utils.encode import encode_data_to_bytes
@@ -49,6 +52,7 @@ from msgflux.utils.msgspec import (
     struct_to_dict,
 )
 from msgflux.utils.tenacity import apply_retry, default_model_retry
+from msgflux.utils.validation import is_subclass_of
 
 
 class _BaseOpenAI(BaseModel):
@@ -401,21 +405,25 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             elif generation_schema is not None:
                 response.set_response_type("structured")
                 # The raw payload follows the OpenAI transport schema, which may be
-                # a lowered version of the logical msgflux generation schema.
-                decoder_schema = transport_generation_schema or generation_schema
-                decoder = self._get_decoder(decoder_schema)
-                struct = decoder.decode(choice.message.content)
-                response_content = struct_to_dict(struct)
-                if (
-                    transport_generation_schema is not None
-                    and transport_generation_schema is not generation_schema
-                ):
-                    # Restore the lowered transport shape back to the logical schema
-                    # before exposing the response to msgflux callers.
-                    response_content = restore_openai_structured_output(
-                        response_content, generation_schema
-                    )
-                response_content = dotdict(response_content)
+                # a lowered or dynamically generated version of the logical msgflux
+                # generation schema.
+                transport_info = transport_generation_schema or {}
+                decoder_schema = transport_info.get("decoder_schema", generation_schema)
+                normalize = transport_info.get("normalize")
+
+                if decoder_schema is None:
+                    response_content = msgspec.json.decode(choice.message.content)
+                else:
+                    decoder = self._get_decoder(decoder_schema)
+                    struct = decoder.decode(choice.message.content)
+                    response_content = struct_to_dict(struct)
+
+                if normalize is not None:
+                    response_content = normalize(response_content)
+
+                decoder = self._get_decoder(generation_schema)
+                struct = decoder.decode(self._encoder.encode(response_content))
+                response_content = dotdict(struct_to_dict(struct))
             else:
                 response.set_response_type("text_generation")
                 response_content = choice.message.content
@@ -477,17 +485,42 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         typed_parser = kwargs.pop("typed_parser")
         generation_schema = kwargs.pop("generation_schema")
+        tool_definitions = kwargs.pop("tool_definitions", None)
         transport_generation_schema = None
 
         if generation_schema is not None and typed_parser is None:
-            # Lower only for the OpenAI transport layer; the logical schema stays
-            # unchanged so decoded outputs can be restored to the original shape.
-            transport_generation_schema = lower_msgspec_struct_for_openai(
-                generation_schema
-            )
-            kwargs["response_format"] = response_format_from_msgspec_struct(
-                transport_generation_schema
-            )
+            if issubclass(generation_schema, ToolFlowControl):
+                response_format = generation_schema.build_provider_response_format(
+                    tool_definitions
+                )
+                if response_format is not None:
+                    transport_generation_schema = {
+                        "decoder_schema": None,
+                        "normalize": lambda payload: generation_schema.normalize_provider_response(  # noqa: E501
+                            payload,
+                            tool_definitions=tool_definitions,
+                        ),
+                    }
+                    kwargs["response_format"] = response_format
+
+            if transport_generation_schema is None:
+                # Lower only for the OpenAI transport layer; the logical schema
+                # stays unchanged so decoded outputs can be restored to the
+                # original shape.
+                decoder_schema = lower_msgspec_struct_for_openai(generation_schema)
+                normalize = None
+                if decoder_schema is not generation_schema:
+                    normalize = partial(
+                        restore_openai_structured_output,
+                        logical_type=generation_schema,
+                    )
+                transport_generation_schema = {
+                    "decoder_schema": decoder_schema,
+                    "normalize": normalize,
+                }
+                kwargs["response_format"] = response_format_from_msgspec_struct(
+                    decoder_schema
+                )
 
         return typed_parser, generation_schema, transport_generation_schema
 
@@ -702,14 +735,14 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         messages: Union[str, List[Dict[str, Any]]],
         system_prompt: Optional[str],
         prefilling: Optional[str],
-        tool_schemas: Optional[Dict],
-        tool_choice: Optional[Union[str, Dict[str, Any]]],
+        tool_definitions: Optional[ToolDefinitions],
     ) -> Dict[str, Any]:
         if isinstance(messages, str):
             messages = [ChatBlock.user(messages)]
         if isinstance(system_prompt, str):
             messages.insert(0, ChatBlock.system(system_prompt))
 
+        tool_choice = tool_definitions.choice if tool_definitions else None
         if isinstance(tool_choice, str):
             if tool_choice not in ["auto", "required", "none"]:
                 tool_choice = {
@@ -723,12 +756,28 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             "model": self.model_id,
         }
 
-        if tool_schemas:
-            generation_params["tools"] = tool_schemas
+        if tool_definitions and tool_definitions.schemas:
+            generation_params["tools"] = tool_definitions.schemas
             generation_params["tool_choice"] = tool_choice
             generation_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         return generation_params
+
+    @staticmethod
+    def _validate_chat_completion_options(
+        *,
+        prefilling: Optional[str],
+        generation_schema: Optional[msgspec.Struct],
+        typed_parser: Optional[str],
+        stream: Optional[bool],
+    ) -> None:
+        if prefilling is not None and generation_schema is not None:
+            raise ValueError(
+                "`prefilling` is not compatible with `generation_schema` in "
+                "OpenAI chat completions."
+            )
+        if stream is True and typed_parser is not None:
+            raise ValueError("`typed_parser` is not `stream=True` compatible")
 
     def __call__(
         self,
@@ -738,8 +787,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefilling: Optional[str] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
-        tool_schemas: Optional[Dict] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Args:
@@ -755,17 +803,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 Whether generation should be in streaming mode.
             generation_schema:
                 Schema that defines how the output should be structured.
-            tool_schemas:
-                JSON schema containing available tools.
-            tool_choice:
-                By default the model will determine when and how many tools to use.
-                You can force specific behavior with the tool_choice parameter.
-                    1. auto:
-                        (Default) Call zero, one, or multiple functions.
-                    2. required:
-                        Call one or more functions.
-                    3. Forced Tool:
-                        Call exactly one specific tool e.g: "get_weather".
+            tool_definitions:
+                Optional container with tool schemas, annotations, and
+                tool-choice metadata. This is the single tool-calling entrypoint
+                for the provider.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -776,14 +817,23 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
-        generation_params = self._build_generation_params(
-            messages, system_prompt, prefilling, tool_schemas, tool_choice
+        self._validate_chat_completion_options(
+            prefilling=prefilling,
+            generation_schema=generation_schema,
+            typed_parser=typed_parser,
+            stream=stream,
         )
+        is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
+        generation_params = self._build_generation_params(
+            messages,
+            system_prompt,
+            prefilling,
+            None if is_flow_control else tool_definitions,
+        )
+        if tool_definitions is not None:
+            generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
-            if typed_parser is not None:
-                raise ValueError("`typed_parser` is not `stream=True` compatible")
-
             stream_response = ModelStreamResponse(mode="sync")
             F.spawn(
                 self._stream_generate,
@@ -816,8 +866,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefilling: Optional[str] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
-        tool_schemas: Optional[Dict] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Async version of __call__. Args:
@@ -833,17 +882,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 Whether generation should be in streaming mode.
             generation_schema:
                 Schema that defines how the output should be structured.
-            tool_schemas:
-                JSON schema containing available tools.
-            tool_choice:
-                By default the model will determine when and how many tools to use.
-                You can force specific behavior with the tool_choice parameter.
-                    1. auto:
-                        (Default) Call zero, one, or multiple functions.
-                    2. required:
-                        Call one or more functions.
-                    3. Forced Tool:
-                        Call exactly one specific tool e.g: "get_weather".
+            tool_definitions:
+                Optional container with tool schemas, annotations, and
+                tool-choice metadata. This is the single tool-calling entrypoint
+                for the provider.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -854,14 +896,23 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
-        generation_params = self._build_generation_params(
-            messages, system_prompt, prefilling, tool_schemas, tool_choice
+        self._validate_chat_completion_options(
+            prefilling=prefilling,
+            generation_schema=generation_schema,
+            typed_parser=typed_parser,
+            stream=stream,
         )
+        is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
+        generation_params = self._build_generation_params(
+            messages,
+            system_prompt,
+            prefilling,
+            None if is_flow_control else tool_definitions,
+        )
+        if tool_definitions is not None:
+            generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
-            if typed_parser is not None:
-                raise ValueError("`typed_parser` is not `stream=True` compatible")
-
             stream_response = ModelStreamResponse(mode="async")
             await F.aspawn(
                 self._astream_generate,

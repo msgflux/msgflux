@@ -213,6 +213,12 @@ Use Jinja2 templates to format results into readable strings. When a `response` 
 
 ## 6. **Message Fields & Response Mode**
 
+`Searcher` uses `query` as its canonical input name.
+
+- direct calls can use `searcher("...")` or `searcher(query="...")`
+- `message_fields` should map `query`, not `task`
+- when used as an `Agent` tool, the generated tool schema also exposes `query`
+
 !!! info "Structured input/output"
 
     === "Message Field Mapping"
@@ -220,7 +226,7 @@ Use Jinja2 templates to format results into readable strings. When a `response` 
         ```python
         class StructuredSearcher(nn.Searcher):
             retriever      = bm25
-            message_fields = {"task": "query.user"}
+            message_fields = {"query": "query.user"}
             config         = {"top_k": 3}
 
         searcher = StructuredSearcher()
@@ -238,7 +244,7 @@ Use Jinja2 templates to format results into readable strings. When a `response` 
         class PipelineSearcher(nn.Searcher):
             """Writes results into msg.context for downstream modules."""
             retriever      = bm25
-            message_fields = {"task": "question"}
+            message_fields = {"query": "question"}
             response_mode  = "context"
             config         = {"top_k": 3}
 
@@ -269,6 +275,8 @@ Use Jinja2 templates to format results into readable strings. When a `response` 
 ## 7. **Integration with Agents**
 
 A `Searcher` with a docstring can be plugged directly as a tool into an `Agent` — no wrapper needed. The docstring becomes the tool description, the class name the tool name, and the default annotations define the schema.
+
+The tool input name is `query`, matching the search contract directly.
 
 !!! info "Searcher as Agent tool"
 

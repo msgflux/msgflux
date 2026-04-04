@@ -31,9 +31,9 @@ You are shipping unreviewed text.
 
 ## The Plan
 
-We will build a pipeline that classifies the email before responding, drafts a calibrated reply, and runs it through a reviewer before sending.
+We will build a flux based on the Reflection architecture that classifies the email before responding, drafts a calibrated reply, and runs it through a reviewer before sending.
 
-A `Classifier` reads the email and extracts `intent`, `urgency`, and `tone`. A `Drafter` uses those signals to write a context-aware reply. A `Reviewer` scores the draft and decides whether it's ready. If not, a `Reviser` incorporates the feedback — and the `Reviewer` runs again. The revision cycle is expressed declaratively with `Inline`'s `@{while}` construct, so the pipeline keeps iterating until the draft passes.
+A `Classifier` reads the email and extracts `intent`, `urgency`, and `tone`. A `Drafter` uses those signals to write a context-aware reply. A `Reviewer` scores the draft and decides whether it's ready. If not, a `Reviser` incorporates the feedback — and the `Reviewer` runs again. The revision cycle is expressed declaratively with `Inline`'s `@{while}` construct, so the flux keeps iterating until the draft passes.
 
 ---
 
@@ -62,7 +62,7 @@ Incoming email
          msg.draft  (ready to send)
 ```
 
-The pipeline is:
+The flux is:
 
 - **Adaptive** — tone and depth are driven by the classified intent, not a fixed prompt
 - **Self-correcting** — the revision loop runs until quality passes, capped by `max_iterations`
@@ -78,14 +78,12 @@ The pipeline is:
 
 ## Step 1 — Classifying the Email
 
-Before drafting anything, the pipeline needs to understand what kind of email arrived. The classifier extracts four signals that the rest of the pipeline depends on: the sender's primary `intent`, how urgently they need a response, what `tone` the reply should use, and the sender's name for personalization.
+Before drafting anything, the flux needs to understand what kind of email arrived. The classifier extracts four signals that the rest of the flux depends on: the sender's primary `intent`, how urgently they need a response, what `tone` the reply should use, and the sender's name for personalization.
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
 from typing import Literal
-
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
 class ClassifyEmail(mf.Signature):
@@ -136,12 +134,12 @@ class ReviewDraft(mf.Signature):
     email_body: str = mf.InputField(desc="The original email")
     draft: str = mf.InputField(desc="The draft reply to review")
 
-    approved: bool = mf.OutputField(
-        desc="True if the draft is ready to send, False if it needs revision"
-    )
     feedback: str = mf.OutputField(
         desc="Specific, actionable feedback if not approved; empty string if approved"
     )
+    approved: bool = mf.OutputField(
+        desc="True if the draft is ready to send, False if it needs revision"
+    )    
     score: float = mf.OutputField(
         desc="Quality score from 0.0 to 1.0 (approved when >= 0.8)"
     )
@@ -177,7 +175,15 @@ class Classifier(nn.Agent):
 class Drafter(nn.Agent):
     model = model
     signature = DraftReply
-    message_fields = {"task": {"email_body": "email_body", "intent": "cls.intent", "urgency": "cls.urgency", "tone": "cls.tone"}}
+    message_fields = {
+        "task": {
+            # Map input_name to msg field
+            "email_body": "email_body",
+            "intent": "cls.intent",
+            "urgency": "cls.urgency",
+            "tone": "cls.tone"
+        }
+    }
     response_mode = "rsp"
     config = {"verbose": True}
 
@@ -202,10 +208,10 @@ class Reviser(nn.Agent):
 
 ## Step 4 — Wiring the Pipeline
 
-`Inline` composes the agents into a single pipeline. The `@{rev.approved == False}: reviser -> reviewer;` node runs the revision cycle while the reviewer has not approved the draft — then exits when `rev.approved` is `True`. The dotted path `rev.approved` resolves to `msg.rev.approved`, which is written in-place by the `Reviewer`'s `response_mode`.
+`Inline` composes the agents into a single flux. The `@{rev.approved == False}: reviser -> reviewer;` node runs the revision cycle while the reviewer has not approved the draft — then exits when `rev.approved` is `True`. The dotted path `rev.approved` resolves to `msg.rev.approved`, which is written in-place by the `Reviewer`'s `response_mode`.
 
 ```python
-pipeline = mf.Inline(
+flux = mf.Inline(
     "classifier -> drafter -> reviewer -> @{rev.approved == False}: reviser -> reviewer;",
     {
         "classifier": Classifier(),
@@ -223,9 +229,9 @@ pipeline = mf.Inline(
 
 ---
 
-## Step 5 — Running the Pipeline
+## Step 5 — Running the Flux
 
-Pass the email in and let the pipeline run. Each agent writes to its own namespace on `msg`; results are accessed via dotted paths after the pipeline returns.
+Pass the email in and let the flux run. Each agent writes to its own namespace on `msg`; results are accessed via dotted paths after the flux returns.
 
 ???+ example
 
@@ -244,7 +250,7 @@ Pass the email in and let the pipeline run. Each agent writes to its own namespa
         Maria
         """
 
-        pipeline(msg)
+        flux(msg)
 
         print(f"Intent:      {msg.cls.intent}")
         print(f"Urgency:     {msg.cls.urgency}")
@@ -285,7 +291,7 @@ Pass the email in and let the pipeline run. Each agent writes to its own namespa
             Maria
             """
 
-            await pipeline.acall(msg)
+            await flux.acall(msg)
 
             print(f"Intent:      {msg.cls.intent}")
             print(f"Urgency:     {msg.cls.urgency}")
@@ -338,8 +344,8 @@ class ReviewDraft(mf.Signature):
 
     email_body: str = mf.InputField(desc="The original email")
     draft: str = mf.InputField(desc="The draft reply to review")
-    approved: bool = mf.OutputField(desc="True if the draft is ready to send")
     feedback: str = mf.OutputField(desc="Specific, actionable feedback if not approved")
+    approved: bool = mf.OutputField(desc="True if the draft is ready to send")    
     score: float = mf.OutputField(desc="Quality score from 0.0 to 1.0")
 
 
@@ -383,7 +389,7 @@ class Reviser(nn.Agent):
     config = {"verbose": True}
 
 
-pipeline = mf.Inline(
+flux = mf.Inline(
     "classifier -> drafter -> reviewer -> @{rev.approved == False}: reviser -> reviewer;",
     {
         "classifier": Classifier(),
@@ -393,36 +399,12 @@ pipeline = mf.Inline(
     },
     max_iterations=5,
 )
-
-emails = [
-    """Hi, I placed order #ORD-9921 three weeks ago and it hasn't arrived.
-    The tracking just says "processing". I needed it for a trip that already happened.
-    I'd like a refund or explanation. — Maria""",
-
-    """Hey! Quick question — does your Premium plan include API access?
-    I'm evaluating options for our startup. Thanks! — Jake""",
-
-    """To whom it may concern,
-    I wish to formally cancel my subscription effective immediately.
-    Please confirm cancellation and refund the current billing period.
-    Regards, Dr. Chen""",
-]
-
-for email in emails:
-    msg = mf.Message()
-    msg.email_body = email
-
-    pipeline(msg)
-
-    print(f"\n{'─' * 60}")
-    print(f"Intent: {msg.cls.intent} | Urgency: {msg.cls.urgency} | Score: {msg.rev.score:.2f}")
-    print(f"\nReply:\n{msg.rsp.draft}")
 ```
 
 ---
 
 ## Further Reading
 
-- [Inline DSL](../learn/inline.md) — pipeline syntax, branching, and while loops
+- [Inline DSL](../learn/inline.md) — flux syntax, branching, and while loops
 - [Signatures](../learn/nn/agent/signatures.md) — declarative input/output contracts for agents
-- [Async](../learn/nn/agent/async.md) — running pipelines asynchronously with `acall`
+- [Async](../learn/nn/agent/async.md) — running fluxs asynchronously with `acall`

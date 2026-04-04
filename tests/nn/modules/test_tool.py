@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
+from msgflux.core.dotdict import dotdict
 from msgflux.nn.modules.tool import (
     ToolCall,
     ToolResponses,
@@ -80,6 +81,31 @@ class TestToolResponses:
         result_json = responses.to_json()
 
         assert isinstance(result_json, bytes)
+
+    def test_tool_responses_to_dict_accepts_nested_dotdict(self):
+        """Test ToolResponses.to_dict handles nested dotdict payloads."""
+        call = ToolCall(
+            id="call_dotdict",
+            name="report",
+            result=dotdict(
+                {
+                    "participants_data": [
+                        {"name": "Alice", "company": "OpenAI"},
+                        {"name": "Bob", "company": "Msgflux"},
+                    ]
+                }
+            ),
+        )
+        responses = ToolResponses(return_directly=False, tool_calls=[call])
+
+        result_dict = responses.to_dict()
+
+        assert result_dict["tool_calls"][0]["result"] == {
+            "participants_data": [
+                {"name": "Alice", "company": "OpenAI"},
+                {"name": "Bob", "company": "Msgflux"},
+            ]
+        }
 
     def test_tool_responses_get_by_id(self):
         """Test ToolResponses get_by_id method."""

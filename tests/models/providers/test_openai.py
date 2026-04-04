@@ -2,11 +2,14 @@
 
 import os
 from types import SimpleNamespace
-from typing import Dict, List
+from typing import Dict, List, Optional
 from unittest.mock import MagicMock, Mock, patch
 
 import msgspec
 import pytest
+
+from msgflux.generation.reasoning.react import ReAct
+from msgflux.tools.definitions import ToolDefinitions
 
 
 class TestOpenAIProviderImport:
@@ -158,6 +161,42 @@ class TestOpenAIChatCompletion:
             "entities"
         ]["items"]["properties"]["entries"]["type"] == "array"
 
+    def test_build_generation_params_uses_tool_definitions(self, mock_openai_client):
+        """Test native tool calling is derived from ToolDefinitions."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        params = model._build_generation_params(
+            messages=[{"role": "user", "content": "What's the weather?"}],
+            system_prompt=None,
+            prefilling=None,
+            tool_definitions=ToolDefinitions(
+                schemas=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"location": {"type": "string"}},
+                                "required": ["location"],
+                            },
+                        },
+                    }
+                ],
+                choice="get_weather",
+            ),
+        )
+
+        assert params["tools"][0]["function"]["name"] == "get_weather"
+        assert params["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "get_weather"},
+        }
+        assert params["parallel_tool_calls"] is model.parallel_tool_calls
+
     def test_process_completion_model_output_restores_dict_shape(
         self, mock_openai_client
     ):
@@ -198,6 +237,306 @@ class TestOpenAIChatCompletion:
         assert response.response_type == "structured"
         assert response.data == {
             "entities": [{"name": "Apple", "type": "Organization"}]
+        }
+
+    def test_prefilling_is_not_compatible_with_generation_schema(
+        self, mock_openai_client
+    ):
+        """Test prefilling is rejected with structured outputs."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class DictOutput(msgspec.Struct):
+            entities: List[Dict[str, str]]
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        with pytest.raises(
+            ValueError,
+            match="`prefilling` is not compatible with `generation_schema`",
+        ):
+            model(
+                messages=[{"role": "user", "content": "test"}],
+                prefilling="{",
+                generation_schema=DictOutput,
+            )
+
+    @pytest.mark.asyncio
+    async def test_async_prefilling_is_not_compatible_with_generation_schema(
+        self, mock_openai_client
+    ):
+        """Test async prefilling is rejected with structured outputs."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class DictOutput(msgspec.Struct):
+            entities: List[Dict[str, str]]
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        with pytest.raises(
+            ValueError,
+            match="`prefilling` is not compatible with `generation_schema`",
+        ):
+            await model.acall(
+                messages=[{"role": "user", "content": "test"}],
+                prefilling="{",
+                generation_schema=DictOutput,
+            )
+
+    def test_prepare_generate_kwargs_builds_dynamic_react_transport_schema(
+        self, mock_openai_client
+    ):
+        """Test ToolFlowControl schemas can expose a dynamic transport schema."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        kwargs = {
+            "typed_parser": None,
+            "generation_schema": ReAct,
+            "tool_definitions": ToolDefinitions(
+                schemas=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "store_fields",
+                            "description": "Store values",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "fields": {
+                                        "type": "object",
+                                        "properties": {
+                                            "entries": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "key": {"type": "string"},
+                                                        "value": {"type": "string"},
+                                                    },
+                                                    "required": ["key", "value"],
+                                                    "additionalProperties": False,
+                                                },
+                                            }
+                                        },
+                                        "required": ["entries"],
+                                        "additionalProperties": False,
+                                    }
+                                },
+                                "required": ["fields"],
+                                "additionalProperties": False,
+                            },
+                            "strict": True,
+                        },
+                    }
+                ],
+                annotations={"store_fields": {"fields": dict[str, str]}},
+            ),
+        }
+
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = model._prepare_generate_kwargs(kwargs)
+
+        assert typed_parser is None
+        assert generation_schema is ReAct
+        assert transport_generation_schema["decoder_schema"] is None
+        action_schema = kwargs["response_format"]["json_schema"]["schema"]["properties"][
+            "actions"
+        ]["anyOf"][0]["items"]
+        assert action_schema["properties"]["name"]["enum"] == ["store_fields"]
+        assert "fields" in action_schema["properties"]
+        assert "arguments" not in action_schema["properties"]
+
+    def test_process_completion_model_output_normalizes_react_transport_shape(
+        self, mock_openai_client
+    ):
+        """Test ToolFlowControl transport payloads are normalized to Action(arguments=...)."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": ReAct,
+                "tool_definitions": ToolDefinitions(
+                    schemas=[
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "store_fields",
+                                "description": "Store values",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "fields": {
+                                            "type": "object",
+                                            "properties": {
+                                                "entries": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "key": {"type": "string"},
+                                                            "value": {"type": "string"},
+                                                        },
+                                                        "required": ["key", "value"],
+                                                        "additionalProperties": False,
+                                                    },
+                                                }
+                                            },
+                                            "required": ["entries"],
+                                            "additionalProperties": False,
+                                        }
+                                    },
+                                    "required": ["fields"],
+                                    "additionalProperties": False,
+                                },
+                                "strict": True,
+                            },
+                        }
+                    ],
+                    annotations={"store_fields": {"fields": dict[str, str]}},
+                ),
+            }
+        )[2]
+
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"thought":"Store the fields","actions":[{"name":"store_fields","fields":{"entries":[{"key":"city","value":"Austin"}]}}],"final_answer":null}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=ReAct,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.data == {
+            "thought": "Store the fields",
+            "actions": [
+                {
+                    "name": "store_fields",
+                    "arguments": {"fields": {"city": "Austin"}},
+                }
+            ],
+            "final_answer": None,
+        }
+
+    def test_prepare_generate_kwargs_uses_typed_final_answer_for_react_subclass(
+        self, mock_openai_client
+    ):
+        """ToolFlowControl transport schema should follow the subclass final_answer type."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class Outputs(msgspec.Struct):
+            candidates: List[str]
+            resolved: bool
+
+        Output = type(
+            "Output",
+            (ReAct,),
+            {"__annotations__": {**ReAct.__annotations__, "final_answer": Optional[Outputs]}},
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        kwargs = {
+            "typed_parser": None,
+            "generation_schema": Output,
+            "tool_definitions": ToolDefinitions(schemas=[]),
+        }
+
+        model._prepare_generate_kwargs(kwargs)
+
+        final_answer_schema = kwargs["response_format"]["json_schema"]["schema"][
+            "properties"
+        ]["final_answer"]["anyOf"][0]
+        assert final_answer_schema["type"] == "object"
+        assert final_answer_schema["properties"]["candidates"]["type"] == "array"
+        assert (
+            final_answer_schema["properties"]["candidates"]["items"]["type"] == "string"
+        )
+        assert final_answer_schema["properties"]["resolved"]["type"] == "boolean"
+        assert final_answer_schema["additionalProperties"] is False
+
+    def test_process_completion_model_output_decodes_react_signature_final_answer(
+        self, mock_openai_client
+    ):
+        """Decoded ReAct payload should respect the fused final_answer struct type."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class Outputs(msgspec.Struct):
+            candidates: List[str]
+            resolved: bool
+
+        Output = type(
+            "Output",
+            (ReAct,),
+            {"__annotations__": {**ReAct.__annotations__, "final_answer": Optional[Outputs]}},
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": Output,
+                "tool_definitions": ToolDefinitions(schemas=[]),
+            }
+        )[2]
+
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"thought":"I have enough information","actions":null,"final_answer":{"candidates":["Alice Johnson"],"resolved":true}}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=Output,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.data == {
+            "thought": "I have enough information",
+            "actions": None,
+            "final_answer": {
+                "candidates": ["Alice Johnson"],
+                "resolved": True,
+            },
         }
 
 

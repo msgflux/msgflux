@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Iterable, Mapping, Optional, Tuple, Union
 
 import msgspec
 
@@ -48,7 +48,9 @@ class dotdict(dict):  # noqa: N801
 
     def __init__(
         self,
-        initial_data: Optional[Dict[str, Any]] = None,
+        initial_data: Optional[
+            Union[Mapping[str, Any], Iterable[Tuple[str, Any]]]
+        ] = None,
         *,
         frozen: Optional[bool] = False,
         hidden_keys: Optional[list[str]] = None,
@@ -79,7 +81,10 @@ class dotdict(dict):  # noqa: N801
             print(d.to_dict())        # {"name": "John"}
             print(d.api_key)          # "secret"  (direct access)
         """
-        initial_data = initial_data or {}
+        if initial_data is None:
+            initial_data = {}
+        elif not isinstance(initial_data, dict):
+            initial_data = dict(initial_data)
         self._frozen = frozen
         self._hidden_keys = set(hidden_keys or [])
         super().__init__()

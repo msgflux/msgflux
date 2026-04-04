@@ -58,12 +58,12 @@ class Searcher(Module, metaclass=AutoParams):
             Optional - only needed for semantic retrieval.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task"
+            Valid keys: "query", "model_preference"
             !!! example
-                message_fields={"task": "query.user"}
+                message_fields={"query": "query.user"}
 
             Field description:
-            - task: Field path for query input (str or dict)
+            - query: Field path for search input (str or dict)
         response_mode:
             Controls how the response is returned.
             * ``None`` (default): Returns the response directly.
@@ -89,7 +89,7 @@ class Searcher(Module, metaclass=AutoParams):
             - top_k: Maximum return of similar points (int)
             - threshold: Search threshold (float)
             - return_score: If True, return similarity score (bool)
-            - dict_key: Help to extract a value from task if dict (str)
+            - dict_key: Help to extract a value from query if dict (str)
         name:
             Searcher name in snake case format.
         description:
@@ -113,8 +113,39 @@ class Searcher(Module, metaclass=AutoParams):
         self.set_description(description)
         self.set_annotations(annotations or {"query": str, "return": str})
 
+    def _set_message_fields(self, message_fields: Optional[Dict[str, Any]] = None):
+        """Searcher-specific message field mappings.
+
+        Searcher uses `query` as its canonical input name and maps it to the
+        base module task field internally.
+        """
+        valid_keys = {"query", "model_preference"}
+
+        if message_fields is None:
+            self._set_task(None)
+            self._set_model_preference(None)
+            return
+
+        if not isinstance(message_fields, dict):
+            raise TypeError(
+                f"`message_fields` must be a dict or None, given "
+                f"`{type(message_fields)}`"
+            )
+
+        invalid_keys = set(message_fields.keys()) - valid_keys
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid message_fields keys: {invalid_keys}. "
+                f"Valid keys are: {valid_keys}"
+            )
+
+        self._set_task(message_fields.get("query"))
+        self._set_model_preference(message_fields.get("model_preference"))
+
     def forward(
-        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs: Any
+        self,
+        message: Optional[Union[str, List[str], List[Dict[str, Any]], Message]] = None,
+        **kwargs: Any,
     ) -> Union[str, Dict[str, str], Message]:
         """Execute the retriever with the given message.
 
@@ -130,15 +161,25 @@ class Searcher(Module, metaclass=AutoParams):
         Returns:
             Retrieved results (str, dict, or Message depending on response_mode)
         """
+        if message is None and "query" in kwargs:
+            message = kwargs.pop("query")
+        if message is None:
+            raise TypeError("Searcher.forward() missing required argument: 'message'")
         inputs = self._prepare_inputs(message, **kwargs)
         retriever_response = self._execute_retriever(**inputs)
         response = self._prepare_response(retriever_response, message)
         return response
 
     async def aforward(
-        self, message: Union[str, List[str], List[Dict[str, Any]], Message], **kwargs: Any
+        self,
+        message: Optional[Union[str, List[str], List[Dict[str, Any]], Message]] = None,
+        **kwargs: Any,
     ) -> Union[str, Dict[str, str], Message]:
         """Async version of forward. Execute the retriever asynchronously."""
+        if message is None and "query" in kwargs:
+            message = kwargs.pop("query")
+        if message is None:
+            raise TypeError("Searcher.aforward() missing required argument: 'message'")
         inputs = self._prepare_inputs(message, **kwargs)
         retriever_response = await self._aexecute_retriever(**inputs)
         response = self._prepare_response(retriever_response, message)

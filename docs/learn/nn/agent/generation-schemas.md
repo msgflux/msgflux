@@ -147,7 +147,7 @@ Each `Action` contains:
 | Field       | Type              | Description                            |
 |-------------|-------------------|----------------------------------------|
 | `name`      | `str`             | The tool function to call              |
-| `arguments` | `List[Argument]`  | Named arguments passed to the tool     |
+| `arguments` | `dict[str, Any]`  | Named arguments passed to the tool     |
 
 !!! warning "Tools are serialized as text"
     Unlike standard tool calling, ReAct injects tool schemas into the system prompt as text descriptions rather than passing function definitions to the model's native `tools` parameter. This makes the loop more portable across models and providers, but changes how tools are represented internally.

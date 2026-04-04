@@ -904,8 +904,20 @@ def lower_msgspec_struct_for_openai(  # noqa: C901
     return compiler.lower_struct(struct_class, struct_class.__name__)
 
 
-def restore_openai_structured_output(value: Any, logical_type: Any) -> Any:  # noqa: C901
-    """Restore provider-specific transport shapes to the logical output schema."""
+def restore_transport_value(  # noqa: C901
+    value: Any,
+    logical_type: Any,
+    *,
+    dict_factory: Type[dict] = dotdict,
+    strict: bool = False,
+) -> Any:
+    """Restore transport-lowered values using the original logical type hint.
+
+    The helper is intentionally reusable:
+    - ``strict=True`` is appropriate when restoring provider structured outputs.
+    - ``strict=False`` is appropriate when preparing tool kwargs, where values may
+      already be in their logical shape.
+    """
     origin = get_origin(logical_type)
 
     if origin is Annotated:
@@ -915,64 +927,176 @@ def restore_openai_structured_output(value: Any, logical_type: Any) -> Any:  # n
     if value is None:
         return None
 
+    if logical_type in (Any, object):
+        return value
+
+    if origin is Literal:
+        return value
+
+    if logical_type is bool:
+        if isinstance(value, bool):
+            return value
+        if value in (0, 1):
+            return bool(value)
+        if strict:
+            raise TypeError(f"Expected bool given `{type(value)}`")
+        return value
+
+    if logical_type in (str, int, float):
+        if isinstance(value, logical_type):
+            return value
+        try:
+            return logical_type(value)
+        except (TypeError, ValueError):
+            if strict:
+                raise
+            return value
+
+    if isinstance(logical_type, type) and issubclass(logical_type, Enum):
+        try:
+            return logical_type(value)
+        except ValueError:
+            if strict:
+                raise
+            return value
+
     if isinstance(logical_type, type) and issubclass(logical_type, msgspec.Struct):
+        if not isinstance(value, Mapping):
+            if strict:
+                raise TypeError(
+                    "Expected a mapping transport value for "
+                    f"`{logical_type.__name__}` given `{type(value)}`"
+                )
+            return value
         restored = {}
         for field in msgspec.structs.fields(logical_type):
             if field.name not in value:
                 continue
-            restored[field.name] = restore_openai_structured_output(
-                value[field.name], field.type
+            restored[field.name] = restore_transport_value(
+                value[field.name],
+                field.type,
+                dict_factory=dict_factory,
+                strict=strict,
             )
         return dotdict(restored)
 
     if origin in (list, List):
+        if not isinstance(value, list):
+            if strict:
+                raise TypeError(
+                    "Expected a list transport value for "
+                    f"`{str(logical_type).replace('typing.', '')}` "
+                    f"given `{type(value)}`"
+                )
+            return value
         item_type = get_args(logical_type)[0]
-        return [restore_openai_structured_output(item, item_type) for item in value]
-
-    if origin in (dict, Dict):
-        if not isinstance(value, Mapping):
-            raise TypeError(
-                "Expected a mapping transport value for "
-                f"`{str(logical_type).replace('typing.', '')}` "
-                f"given `{type(value)}`"
+        return [
+            restore_transport_value(
+                item,
+                item_type,
+                dict_factory=dict_factory,
+                strict=strict,
             )
-        if "entries" not in value:
+            for item in value
+        ]
+
+    if origin in (dict, Dict, Mapping, ABCMapping):
+        args = get_args(logical_type)
+        key_type, value_type = args if len(args) == 2 else (Any, Any)
+        if not isinstance(value, Mapping):
+            if strict:
+                raise TypeError(
+                    "Expected a mapping transport value for "
+                    f"`{str(logical_type).replace('typing.', '')}` "
+                    f"given `{type(value)}`"
+                )
+            return value
+
+        if "entries" in value:
+            items = value["entries"]
+        elif strict:
             raise ValueError(
                 "Expected transport mapping wrapper with required `entries` field "
                 f"for `{str(logical_type).replace('typing.', '')}`"
             )
-        key_type, value_type = get_args(logical_type)
-        entries = value["entries"]
+        else:
+            items = [{"key": key, "value": item} for key, item in value.items()]
+
         restored = {}
-        for item in entries:
-            key = restore_openai_structured_output(item["key"], key_type)
-            restored[key] = restore_openai_structured_output(item["value"], value_type)
-        return dotdict(restored)
+        for item in items:
+            key = restore_transport_value(
+                item["key"],
+                key_type,
+                dict_factory=dict_factory,
+                strict=strict,
+            )
+            restored[key] = restore_transport_value(
+                item["value"],
+                value_type,
+                dict_factory=dict_factory,
+                strict=strict,
+            )
+        return dict_factory(restored)
 
     if origin is Union:
         args = tuple(arg for arg in get_args(logical_type) if arg is not type(None))
         if len(args) == 1:
-            return restore_openai_structured_output(value, args[0])
-        if args:
+            return restore_transport_value(
+                value,
+                args[0],
+                dict_factory=dict_factory,
+                strict=strict,
+            )
+        if args and strict:
             raise TypeError(
-                "Unsupported logical type during OpenAI output restoration: "
+                "Unsupported logical type during transport restoration: "
                 f"`{str(logical_type).replace('typing.', '')}`. "
                 "Only Optional[T] unions are supported."
             )
+        return value
 
     if origin in (tuple, Tuple):
+        if not isinstance(value, (list, tuple)):
+            if strict:
+                raise TypeError(
+                    "Expected a tuple-compatible transport value for "
+                    f"`{str(logical_type).replace('typing.', '')}` "
+                    f"given `{type(value)}`"
+                )
+            return value
         tuple_args = get_args(logical_type)
         if len(tuple_args) == 2 and tuple_args[1] is Ellipsis:
             item_type = tuple_args[0]
             return tuple(
-                restore_openai_structured_output(item, item_type) for item in value
+                restore_transport_value(
+                    item,
+                    item_type,
+                    dict_factory=dict_factory,
+                    strict=strict,
+                )
+                for item in value
             )
         return tuple(
-            restore_openai_structured_output(item, tuple_args[index])
+            restore_transport_value(
+                item,
+                tuple_args[index],
+                dict_factory=dict_factory,
+                strict=strict,
+            )
             for index, item in enumerate(value)
         )
 
     return value
+
+
+def restore_openai_structured_output(value: Any, logical_type: Any) -> Any:
+    """Restore provider-specific transport shapes to the logical output schema."""
+    return restore_transport_value(
+        value,
+        logical_type,
+        dict_factory=dotdict,
+        strict=True,
+    )
 
 
 def is_optional_field(struct_class: Type[Struct], field_name: str) -> bool:

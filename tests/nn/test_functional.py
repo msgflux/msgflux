@@ -1,12 +1,34 @@
 """Tests for msgflux.nn.functional module."""
 
 import asyncio
+from functools import partial
 
 import pytest
 
 from msgflux import TaskError
+from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
+from msgflux.envs import envs
 from msgflux.nn import functional as F
+
+
+@pytest.fixture
+def fresh_executor(monkeypatch):
+    """Reset the singleton so tests can control the executor shape safely."""
+    existing = Executor._instance
+    if existing is not None:
+        existing.shutdown()
+        Executor._instance = None
+
+    monkeypatch.setattr(envs, "executor_num_threads", 1)
+    monkeypatch.setattr(envs, "executor_num_async_workers", 1)
+
+    yield
+
+    current = Executor._instance
+    if current is not None:
+        current.shutdown()
+        Executor._instance = None
 
 
 class TestMapGather:
@@ -100,6 +122,36 @@ class TestScatterGather:
         """Test scatter_gather raises TypeError for non-callable list."""
         with pytest.raises(TypeError, match="`to_send` must be a non-empty list"):
             F.scatter_gather("not_a_list")
+
+    def test_scatter_gather_nested_sync_work_executes_inline(self, fresh_executor):
+        """Nested sync fan-out should not deadlock the shared thread pool."""
+
+        def leaf(value):
+            return value + 1
+
+        def outer(value):
+            return F.scatter_gather([partial(leaf, value)])[0]
+
+        results = F.scatter_gather([outer], args_list=[(1,)])
+
+        assert results == (2,)
+
+    def test_scatter_gather_partial_preserves_acall(self, fresh_executor):
+        """Partials of async-capable callables should still route through acall."""
+
+        class AsyncCapable:
+            def __call__(self, value):
+                raise AssertionError("sync path should not be used")
+
+            async def acall(self, value):
+                return value + 1
+
+        def outer(value):
+            return F.scatter_gather([partial(AsyncCapable(), value=value)])[0]
+
+        results = F.scatter_gather([outer], args_list=[(1,)])
+
+        assert results == (2,)
 
 
 class TestBcastGather:
