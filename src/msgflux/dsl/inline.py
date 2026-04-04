@@ -418,7 +418,8 @@ class Inline:
             elif step["type"] == "parallel":
                 module_names = step["modules"]
                 parallel_modules = [
-                    self._get_module(module_name) for module_name in module_names
+                    functools.partial(self._call_module, module_name)
+                    for module_name in module_names
                 ]
                 results = F.bcast_gather(parallel_modules, message)
                 self._validate_parallel_results(module_names, results)
