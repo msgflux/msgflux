@@ -260,6 +260,7 @@ class Assistant(nn.Agent):
             message="This message cannot be processed.",
         )
     ]
+    response_mode = "response"
     config = {"verbose": True}
 
 
@@ -283,14 +284,14 @@ class PIXAssistant(nn.Module):
         self._setup_vars(msg)
         if msg.get("audio_content"):
             self.stt(msg)
-        msg.response = self.chat_assistant(msg, messages=history or [])
+        self.chat_assistant(msg, messages=history or [])
         return msg
 
     async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
         self._setup_vars(msg)
         if msg.get("audio_content"):
             await self.stt.acall(msg)
-        msg.response = await self.chat_assistant.acall(msg, messages=history or [])
+        await self.chat_assistant.acall(msg, messages=history or [])
         return msg
 
 
