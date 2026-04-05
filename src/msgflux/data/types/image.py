@@ -1,5 +1,6 @@
 """Image data type for multimodal processing."""
 
+import base64
 from functools import lru_cache
 from typing import Any, Dict
 
@@ -71,8 +72,7 @@ class Image(MediaType):
         source = self.source
 
         if isinstance(source, bytes):
-            import base64 as _base64
-            return _base64.b64encode(source).decode("utf-8")
+            return base64.b64encode(source).decode("utf-8")
 
         if is_base64(source):
             return source
@@ -89,6 +89,9 @@ class Image(MediaType):
             Base64 encoded data or original URL.
         """
         source = self.source
+
+        if isinstance(source, bytes):
+            return base64.b64encode(source).decode("utf-8")
 
         if is_base64(source):
             return source
