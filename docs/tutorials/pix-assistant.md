@@ -1,4 +1,4 @@
-# Payments Assistant
+# Open PIX Assistant
 
 <span class="tag tag-orange">Advanced</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Multimodal</span><span class="tag tag-gray">Retrivers</span><span class="tag tag-gray">Guardrails</span>
 
