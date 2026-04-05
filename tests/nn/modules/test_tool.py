@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from typing import Optional
 
 from msgflux.core.dotdict import dotdict
 from msgflux.nn.modules.tool import (
@@ -188,6 +189,32 @@ class TestLocalTool:
 
         assert tool.name == "my_tool"
         assert tool.description == "A test tool"
+
+    def test_local_tool_uses_python_default_when_null_is_given(self):
+        """Test null transport values are omitted when the callable has a default."""
+
+        def my_func(query: str, limit: int = 5) -> int:
+            """Test function."""
+            return limit
+
+        tool = _convert_module_to_nn_tool(my_func)
+
+        result = tool(query="hello", limit=None)
+
+        assert result == 5
+
+    def test_local_tool_keeps_none_without_python_default(self):
+        """Test null values are preserved when the callable requires the param."""
+
+        def my_func(query: Optional[str]) -> Optional[str]:
+            """Test function."""
+            return query
+
+        tool = _convert_module_to_nn_tool(my_func)
+
+        result = tool(query=None)
+
+        assert result is None
         assert tool.impl == my_func
 
     def test_local_tool_forward_sync_function(self):

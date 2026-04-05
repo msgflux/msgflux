@@ -24,7 +24,7 @@ from msgflux.telemetry.span import (
     set_tool_attributes,
 )
 from msgflux.utils.chat import generate_tool_json_schema
-from msgflux.utils.inspect import fn_has_parameters
+from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
 from msgflux.utils.msgspec import restore_transport_value
 from msgflux.utils.tenacity import apply_retry, default_tool_retry
 
@@ -182,6 +182,7 @@ class LocalTool(Tool):
         self.register_buffer("tool_config", tool_config)
         self.register_buffer("transport_params", transport_params or {})
         self.impl = impl  # Not a buffer for now
+        self._param_defaults = get_fn_param_defaults(impl)
 
         # Apply retry
         retry_config = tool_config.get("retry")
@@ -211,9 +212,26 @@ class LocalTool(Tool):
             )
         return restored
 
+    def _strip_none_default_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Treat `null` tool arguments as omission when Python defaults exist.
+
+        This mirrors the tool schema contract used by LocalTool/function tools:
+        strict providers require every field in `required`, so optional/defaulted
+        params are represented as nullable in the schema and mapped back to
+        Python defaults here when the model emits `null`.
+        """
+        if not self._param_defaults:
+            return kwargs
+        return {
+            key: value
+            for key, value in kwargs.items()
+            if not (key in self._param_defaults and value is None)
+        }
+
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
         kwargs = self._restore_transport_params(kwargs)
+        kwargs = self._strip_none_default_kwargs(kwargs)
         if inspect.iscoroutinefunction(self.impl):
             return F.wait_for(self.impl, **kwargs)
         return self.impl(**kwargs)
@@ -221,6 +239,7 @@ class LocalTool(Tool):
     @aset_tool_attributes(execution_type="local")
     async def aforward(self, *args, **kwargs):
         kwargs = self._restore_transport_params(kwargs)
+        kwargs = self._strip_none_default_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
         elif inspect.iscoroutinefunction(self.impl):

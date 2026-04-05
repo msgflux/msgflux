@@ -1,5 +1,6 @@
 import msgspec
 import pytest
+from typing import Optional
 
 from msgflux.utils.chat import (
     ChatBlock,
@@ -178,6 +179,56 @@ def test_generate_json_schema():
     assert schema["name"] == "my_tool"
     assert schema["description"] == "My function."
     assert schema["parameters"]["properties"]["a"]["description"] == "first param."
+
+
+class MyOptionalTool:
+    def get_module_name(self):
+        return "my_optional_tool"
+
+    def get_module_description(self):
+        return DOCSTRING
+
+    def get_module_annotations(self):
+        return {"a": str, "b": Optional[int]}
+
+    def forward(self, a: str, b: Optional[int] = None):
+        return a, b
+
+
+class MyDefaultTool:
+    def get_module_name(self):
+        return "my_default_tool"
+
+    def get_module_description(self):
+        return DOCSTRING
+
+    def get_module_annotations(self):
+        return {"a": str, "limit": int}
+
+    def forward(self, a: str, limit: int = 5):
+        return a, limit
+
+
+def test_generate_json_schema_optional_tool_param_is_required_and_nullable():
+    schema = generate_json_schema(MyOptionalTool())
+    params = schema["parameters"]
+
+    assert sorted(params["required"]) == ["a", "b"]
+    assert params["properties"]["b"]["anyOf"] == [
+        {"type": "integer"},
+        {"type": "null"},
+    ]
+
+
+def test_generate_json_schema_default_tool_param_is_required_and_nullable():
+    schema = generate_json_schema(MyDefaultTool())
+    params = schema["parameters"]
+
+    assert sorted(params["required"]) == ["a", "limit"]
+    assert params["properties"]["limit"]["anyOf"] == [
+        {"type": "integer"},
+        {"type": "null"},
+    ]
 
 
 def test_generate_tool_json_schema():

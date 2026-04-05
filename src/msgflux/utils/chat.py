@@ -16,7 +16,7 @@ from typing import (
 import msgspec
 
 from msgflux.logger import logger
-from msgflux.utils.inspect import get_mime_type
+from msgflux.utils.inspect import get_fn_param_defaults, get_mime_type
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -320,6 +320,35 @@ def response_format_from_json_schema(
     return response_format
 
 
+def _schema_allows_null(schema: Dict[str, Any]) -> bool:
+    """Return whether a JSON Schema fragment already accepts `null`."""
+    if schema.get("type") == "null":
+        return True
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        return any(branch.get("type") == "null" for branch in any_of)
+    return False
+
+
+def _make_schema_nullable(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Extend a JSON Schema fragment to accept `null`."""
+    if _schema_allows_null(schema):
+        return schema
+    if "anyOf" in schema:
+        return {"anyOf": [*schema["anyOf"], {"type": "null"}]}
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _get_tool_signature_defaults(tool: Any) -> Dict[str, Any]:
+    """Inspect the callable behind a tool-like object and collect defaults."""
+    callable_target = getattr(tool, "impl", None)
+    if callable_target is None:
+        callable_target = getattr(tool, "forward", None)
+    if callable_target is None or not callable(callable_target):
+        return {}
+    return get_fn_param_defaults(callable_target)
+
+
 def hint_to_schema(type_hint) -> dict:  # noqa: C901
     """Converte um type hint para um fragmento JSON Schema."""
     origin = get_origin(type_hint)
@@ -522,6 +551,7 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
     clean_description = clean_docstring(description)
     param_descriptions = parse_docstring_args(description)
     annotations = cls.get_module_annotations()
+    param_defaults = _get_tool_signature_defaults(cls)
 
     properties = {}
     required = []
@@ -536,8 +566,6 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
         if param in param_descriptions:
             prop_schema["description"] = param_descriptions[param]
 
-        # Decide whether it is required:
-        # It is only NOT required when the Union contains None (i.e., Optional)
         origin = get_origin(type_hint)
         is_optional = False
         if origin is Union:
@@ -545,8 +573,12 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
             if any(a is type(None) for a in args):
                 is_optional = True
 
-        if not is_optional:
-            required.append(param)
+        if is_optional or param in param_defaults:
+            prop_schema = _make_schema_nullable(prop_schema)
+
+        # OpenAI strict tool schemas require every property to be listed under
+        # `required`. Optionality is represented via `null`, not omission.
+        required.append(param)
 
         properties[param] = prop_schema
 

@@ -2,7 +2,7 @@ import inspect
 import mimetypes
 import os
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Dict
 from urllib.parse import urlparse
 
 
@@ -13,6 +13,24 @@ def fn_has_parameters(fn: Callable) -> bool:
         if param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
             return True
     return False
+
+
+def get_fn_param_defaults(fn: Callable) -> Dict[str, Any]:
+    """Return explicit default values for callable parameters."""
+    target = fn
+    if not callable(target):
+        target = getattr(fn, "acall", None)
+        if target is None or not callable(target):
+            return {}
+
+    sig = inspect.signature(target)
+    defaults = {}
+    for param in sig.parameters.values():
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        if param.default is not inspect._empty:
+            defaults[param.name] = param.default
+    return defaults
 
 
 def get_mime_type(source: str) -> str:  # noqa: C901
