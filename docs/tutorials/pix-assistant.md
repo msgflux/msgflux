@@ -1,5 +1,7 @@
 # Payments Assistant
 
+<span class="tag tag-orange">Advanced</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Multimodal</span><span class="tag tag-gray">Retrivers</span><span class="tag tag-gray">Guardrails</span>
+
 **PIX** is Brazil's instant payment system. A transfer needs three things: the **amount**, the **key type**, and the **key ID**.
 
 ## The Problem
@@ -21,7 +23,7 @@ If the user sends audio, we transcribe it first so the rest of the pipeline work
 
 From there, a chat agent handles the conversation. Whenever the user's intent looks like a transfer, the agent calls a PIX extractor tool rather than trying to extract the data itself. That tool receives the full message automatically — including any image or file. If there is a QR code in the image, it is decoded before the model runs, so the payload arrives as plain text.
 
-The extraction agent pulls out the amount, key type, and key ID from whatever is available. If any PIX field is detected, the tool queries a contact registry with a lexical retriever using the extracted key ID as the query. The tool returns both the extracted fields and the top matches — the chat agent presents them and asks the user to confirm.
+The extraction agent pulls out the amount, key type, and key ID from whatever is available. If any PIX field is detected, the tool checks the user's contact agenda with a fuzzy retriever using the extracted key ID as the query. The tool returns both the extracted fields and any matching contacts — the chat agent presents them and asks the user to confirm or provide the full key directly.
 
 Once the user picks a contact and confirms the amount, the agent calls the transfer function. A moderation guard runs before every model call: if the input is flagged, the pipeline short-circuits and the model is never invoked.
 
@@ -53,7 +55,7 @@ User Message
                 │ calls PIXExtractor()
                 ▼
          PIXExtractor
-         @tool_config(inject_message=True)
+         @mf.tool_config(inject_message=True)
                 │
                 ├── image present? → pyzbar → msg.vars.qr_content
                 │
@@ -65,7 +67,7 @@ User Message
                 └─── intent detected?
                           │
                           ▼
-                   ContactSearcher ──→ top-K BM25 matches
+                   ContactSearcher ──→ top-K fuzzy matches (agenda lookup)
                           │
                           ▼
                "## Extracted PIX data\n..."
@@ -95,12 +97,8 @@ The `task_context` template is the key design detail: instead of hardcoding mult
 
 ```python
 import msgflux as mf
-import msgflux.nn as nn
-from msgflux import tool_config, ChatBlock
-from msgflux.nn.hooks import Guard
-from msgflux.generation.reasoning import ChainOfThought
-from typing import Optional
 
+mf.load_dotenv()
 chat_model       = mf.Model.chat_completion("openai/gpt-4.1-mini")
 mm_model         = mf.Model.chat_completion("openai/gpt-5.4-mini")
 stt_model        = mf.Model.speech_to_text("openai/whisper-1")
@@ -111,42 +109,20 @@ Use a vision-capable model for `mm_model` when you need the extractor to read im
 
 ---
 
-## Step 2 — Synthetic Contacts
+## Step 2 — Simulated Contacts
 
-[Faker](https://faker.readthedocs.io) generates realistic fake data. Install it along with the QR decoder and BM25 retriever:
+Install the QR decoder and fuzzy retriever:
 
 ```bash
 # system dependency for pyzbar (Ubuntu/Debian)
 apt-get install libzbar0
 
-pip install faker rank-bm25 pyzbar Pillow
+pip install rapidfuzz pyzbar Pillow
 ```
 
-Generate a registry of 30 contacts with randomized PIX keys. This becomes the BM25 corpus.
+Define a small fixed contact list. This becomes the fuzzy search corpus.
 
 ```python
-import random
-from faker import Faker
-
-fake = Faker("pt_BR")
-
-
-def generate_contacts(n: int = 30) -> list[dict]:
-    key_types = ["cpf", "phone_number", "email"]
-    contacts = []
-    for _ in range(n):
-        kt    = random.choice(key_types)
-        cpf   = fake.cpf()
-        phone = fake.cellphone_number()
-        email = fake.email()
-        contacts.append({
-            "name":     fake.name(),
-            "key_type": kt,
-            "pix_key":  {"cpf": cpf, "phone_number": phone, "email": email}[kt],
-        })
-    return contacts
-
-
 def build_corpus(contacts: list[dict]) -> list[str]:
     return [
         f"{c['name']} | key `{c['key_type']}`: {c['pix_key']}"
@@ -154,32 +130,53 @@ def build_corpus(contacts: list[dict]) -> list[str]:
     ]
 
 
-contacts = generate_contacts(30)
-corpus   = build_corpus(contacts)
+contacts = [
+    {"name": "Ana Souza",        "key_type": "cpf",          "pix_key": "123.456.789-00"},
+    {"name": "Bruno Oliveira",   "key_type": "phone_number",  "pix_key": "+55 11 91234-5678"},
+    {"name": "Carlos Mendes",    "key_type": "email",         "pix_key": "carlos.mendes@email.com"},
+    {"name": "Daniela Rocha",    "key_type": "random_key",    "pix_key": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"},
+    {"name": "Eduardo Ferreira", "key_type": "cpf",           "pix_key": "987.654.321-00"},
+    {"name": "Fernanda Lima",    "key_type": "email",         "pix_key": "fernanda.lima@email.com"},
+    {"name": "Gabriel Costa",    "key_type": "phone_number",  "pix_key": "+55 21 99876-5432"},
+    {"name": "Helena Martins",   "key_type": "email",         "pix_key": "helena.martins@mail.com"},
+    {"name": "Igor Pereira",     "key_type": "cpf",           "pix_key": "111.222.333-44"},
+    {"name": "Julia Almeida",    "key_type": "random_key",    "pix_key": "f9e8d7c6-b5a4-3210-fedc-ba9876543210"},
+]
+corpus = build_corpus(contacts)
 
-bm25 = mf.Retriever.lexical("rank_bm25")
-bm25.add(corpus)
+fuzzy = mf.Retriever.fuzzy("rapidfuzz")
+fuzzy.add(corpus)
 ```
 
-Each corpus entry is a single searchable string: `"Maria Silva | key cpf: 123.456.789-00"`. BM25 ranks entries by relevance to the user's message — a query like "send money to Maria" will surface contacts named Maria at the top.
+Each corpus entry is a single searchable string: `"Ana Souza | key cpf: 123.456.789-00"`. RapidFuzz ranks entries by approximate string similarity — a query like "Ana" or a misspelled name still surfaces the right contact. Scores range from 0 to 100; we use a threshold of 60 to filter out poor matches.
 
 ---
 
 ## Step 3 — STT, Extractor and Contact Searcher
 
-**STT** consumes `audio_content` from the message and writes the transcription to `user.text` — the same field the chat agent reads as its task input. This means audio and text messages flow through identical downstream logic.
+**STT** consumes `audio_content` from the message and writes the transcription to `msg.user` — the same dotdict the chat agent reads as its task input via `"task": "user"`. This means audio and text messages flow through identical downstream logic.
 
 ```python
+import msgflux.nn as nn
+
 class STT(nn.Transcriber):
-    """Transcribes user audio into msg.user.text."""
+    """Transcribes user audio into msg.user."""
     model = stt_model
     message_fields = {"task_multimodal": {"audio": "audio_content"}}
-    response_mode = "user.text"
+    response_mode = "user"
 ```
+
+!!! note "Why `response_mode = \"user\"` and not `\"user.text\"`"
+    The OpenAI Whisper provider returns a dict `{"text": "..."}`. Writing it to `"user"` sets
+    `msg.user = {"text": "transcription"}`, so `msg.user.text` is the plain string.
+    Writing to `"user.text"` would create a double-nested `msg.user.text = {"text": "..."}`,
+    which breaks the `"task": "user"` extraction downstream.
 
 **ExtractorAgent** reads from `msg.user` (which includes `user.text`) and optionally from `image_content`. The `task_context` template injects the decoded QR payload when present — the model receives it as plain text before processing the image. All three output fields are `Optional` because the user might provide only partial information.
 
 ```python
+from msgflux.generation.reasoning import ChainOfThought
+
 class ExtractorAgent(nn.Agent):
     """Extracts PIX payment fields from text and image."""
     model = mm_model
@@ -187,14 +184,17 @@ class ExtractorAgent(nn.Agent):
     instructions = """
     Extract the PIX transfer details from the user message.
     The key_type must be one of: cpf, cnpj, email, phone_number, random_key.
-    If the amount or key are not clearly stated, return null for that field.
+    recipient_name is the person's name when mentioned (e.g. "send to Ana").
+    key_id is the actual PIX key value (email, CPF, phone, etc.) — not a name.
+    If a field is not clearly stated, return null for that field.
     """
     generation_schema = ChainOfThought
     signature = """
     text ->
     amount: Optional[float],
     key_type: Optional[Literal['cpf', 'cnpj', 'email', 'phone_number', 'random_key']],
-    key_id: Optional[str]
+    key_id: Optional[str],
+    recipient_name: Optional[str]
     """
     message_fields = {
         "task": "user",
@@ -211,23 +211,23 @@ class ExtractorAgent(nn.Agent):
     response_mode = "payments.pix"
 ```
 
-**ContactSearcher** uses `user.text` as the query against the BM25 corpus and returns an already-formatted string via Jinja template. The `threshold` ensures only relevant results surface — when no result passes the cutoff, the template returns the fallback message so the agent knows to ask the user for the full key directly.
+**ContactSearcher** uses the extracted `key_id` as the query against the fuzzy corpus and returns an already-formatted string via Jinja template. The `threshold` (0–100) controls how similar the query must be to surface a result. When no agenda match is found, the transfer is **not** blocked — the agent simply asks the user for the full PIX key directly.
 
 ```python
 class ContactSearcher(nn.Searcher):
-    """Searches the contact registry by name or message fragment."""
-    retriever = bm25
-    message_fields = {"task": "user.text"}
-    config = {"top_k": 10, "threshold": 0.3}
+    """Checks the contact agenda for recipients matching the extracted key."""
+    retriever = fuzzy
+    message_fields = {"query": "user.text"}
+    config = {"top_k": 10, "threshold": 60.0}
     templates = {
         "response": (
             "{% if results %}"
-            "## Matching contacts in registry\n"
+            "## Contacts in your agenda\n"
             "{% for item in results %}{{ loop.index }}. {{ item.data }}\n{% endfor %}"
             "{% else %}"
-            "## Matching contacts in registry\n"
-            "No contacts found matching the provided key. "
-            "Ask the user to provide the full PIX key directly."
+            "## Contacts in your agenda\n"
+            "This recipient is not in your contact list. "
+            "You can still proceed — ask the user for the full PIX key directly."
             "{% endif %}"
         )
     }
@@ -239,12 +239,21 @@ class ContactSearcher(nn.Searcher):
 
 `PIXExtractor` wraps both `ExtractorAgent` and `ContactSearcher`. When payment intent is detected (at least one PIX field is non-null), it runs `ContactSearcher` and returns both results as a structured string. The `Assistant` receives this as a regular tool response and continues the conversation.
 
-`pyzbar` decodes QR codes from the image before the multimodal model runs, giving it the PIX payload as plain text.
+Before the model runs, two things happen:
+
+1. **Image download** — if `image_content` is a URL string, it is downloaded to bytes. Vision models receive base64-encoded content, not remote URLs.
+2. **QR decoding** — `pyzbar` decodes the QR payload. Dynamic PIX QR codes embed a UUID in a bank URL (`/pix/qr/v2/<uuid>`); `extract_pix_key` extracts the UUID and labels it `random_key:` so the model can set `key_type` and `key_id` correctly. For static QR codes (CPF, email, phone embedded in EMV), the raw payload is passed and the model interprets it on its own.
 
 ```python
 import io
+import re
+import urllib.request
 from PIL import Image
 from pyzbar import pyzbar
+
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
 
 
 def decode_qr_codes(image_bytes: bytes) -> list[str]:
@@ -253,7 +262,21 @@ def decode_qr_codes(image_bytes: bytes) -> list[str]:
     return [obj.data.decode("utf-8") for obj in pyzbar.decode(img)]
 
 
-@tool_config(inject_message=True)
+def extract_pix_key(qr_value: str) -> str:
+    """Extract the PIX key from a QR code value.
+
+    For dynamic PIX QR codes (URL-based), extracts the embedded UUID and
+    labels it as random_key so the model sets key_type and key_id correctly.
+    For static QR codes (CPF, email, phone, etc.), returns the raw value
+    for the model to interpret.
+    """
+    m = _UUID_RE.search(qr_value)
+    if m:
+        return f"random_key: {m.group(0)}"
+    return qr_value
+
+
+@mf.tool_config(inject_message=True)
 class PIXExtractor(nn.Module):
     """Extract PIX payment data and look up matching contacts from the registry."""
 
@@ -261,7 +284,7 @@ class PIXExtractor(nn.Module):
         super().__init__()
         self.set_name("PIXExtractor")
         self.set_annotations({"return": str})
-        self.extractor_agent = ExtractorAgent()
+        self.extractor_agent  = ExtractorAgent()
         self.contact_searcher = ContactSearcher()
 
     def _format_result(self, pix: dict, contacts_section: str) -> str:
@@ -271,7 +294,7 @@ class PIXExtractor(nn.Module):
             f"- key_type: {pix.get('key_type')}",
             f"- key_id: {pix.get('key_id')}",
         ])
-        if pix.get("key_id"):
+        if contacts_section:
             return f"{pix_section}\n\n{contacts_section}"
         return (
             f"{pix_section}\n\n"
@@ -279,37 +302,50 @@ class PIXExtractor(nn.Module):
             "Ask the user to provide the full PIX key directly."
         )
 
+    def _search_query(self, pix: dict) -> str | None:
+        return pix.get("key_id") or pix.get("recipient_name") or None
+
+    def _resolve_image(self, message: mf.Message) -> None:
+        """Download URL → bytes so the vision model receives base64, not a remote URL."""
+        img = message.image_content
+        if isinstance(img, str):
+            req = urllib.request.Request(img, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as resp:
+                message.image_content = resp.read()
+
     def forward(self, message: mf.Message) -> str:
-        # decode QR code before the model runs — payload arrives as plain text
         if message.get("image_content"):
+            self._resolve_image(message)
             qr_codes = decode_qr_codes(message.image_content)
             if qr_codes:
-                message.vars.qr_content = "\n".join(qr_codes)
+                message.vars.qr_content = "\n".join(extract_pix_key(q) for q in qr_codes)
 
         self.extractor_agent(message)
         raw = message.payments.pix
         pix = raw.get("final_answer", raw)  # unwrap ChainOfThought envelope
 
-        # only search contacts when a key_id was extracted
         contacts_section = ""
-        if pix.get("key_id"):
-            contacts_section = self.contact_searcher(pix["key_id"])
+        query = self._search_query(pix)
+        if query:
+            contacts_section = self.contact_searcher(query)
 
         return self._format_result(pix, contacts_section)
 
     async def aforward(self, message: mf.Message) -> str:
         if message.get("image_content"):
+            self._resolve_image(message)
             qr_codes = decode_qr_codes(message.image_content)
             if qr_codes:
-                message.vars.qr_content = "\n".join(qr_codes)
+                message.vars.qr_content = "\n".join(extract_pix_key(q) for q in qr_codes)
 
         await self.extractor_agent.acall(message)
         raw = message.payments.pix
         pix = raw.get("final_answer", raw)
 
         contacts_section = ""
-        if pix.get("key_id"):
-            contacts_section = await self.contact_searcher.acall(pix["key_id"])
+        query = self._search_query(pix)
+        if query:
+            contacts_section = await self.contact_searcher.acall(query)
 
         return self._format_result(pix, contacts_section)
 ```
@@ -323,16 +359,15 @@ framework inject `msg.vars` as a kwarg — the model never sees it. We use it to
 PIX key and print a transfer log to the console.
 
 ```python
-@tool_config(name_override="TransferPix", inject_vars=True)
+import uuid
+
+@mf.tool_config(name_override="TransferPix", inject_vars=True)
 def transfer_pix(amount: float, key_type: str, key_id: str, **kwargs) -> str:
     """Execute a PIX transfer. Call only after the user has confirmed the recipient and amount."""
     variables = kwargs.get("vars")
-    from_key  = (
-        f"{variables.user_pix_key_type}:{variables.user_pix_key_id}"
-        if variables else "unknown"
-    )
-    to_key = f"{key_type}:{key_id}"
-    tx_id  = fake.uuid4()[:8].upper()
+    from_key  = f"{variables['user_pix_key_type']}:{variables['user_pix_key_id']}"
+    to_key    = f"{key_type}:{key_id}"
+    tx_id     = str(uuid.uuid4())[:8].upper()
     print(f"[TransferPix] from={from_key} | to={to_key} | amount=R${amount:.2f} | tx={tx_id}")
     return (
         f"PIX transfer of R${amount:.2f} to {key_type} '{key_id}' submitted successfully. "
@@ -351,6 +386,8 @@ A `Guard` with `on="pre"` runs OpenAI's moderation API before every model call. 
 `system_extra_message` is appended to the system prompt at runtime. It supports Jinja templates rendered against `msg.vars`, so the agent can address the user by name without hardcoding anything in the static prompt.
 
 ```python
+from msgflux.nn.hooks import Guard
+
 class Assistant(nn.Agent):
     """Banking assistant with PIX extraction and payment execution."""
     model = chat_model
@@ -385,8 +422,9 @@ class Assistant(nn.Agent):
     """
     system_extra_message = "The user's name is: {{ user_full_name }}"
     message_fields = {
-        "task": "user.text",
+        "task":         "user.text",
         "task_context": "vars",
+        "vars":         "vars",
     }
     templates = {
         "task_context": (
@@ -415,32 +453,37 @@ class Assistant(nn.Agent):
 
 ```python
 class PIXAssistant(nn.Module):
-    def __init__(self):
+    def __init__(self, user_pix_key_type: str = "email", user_pix_key_id: str = "user@bank.com"):
         super().__init__()
-        self.chat_assistant = Assistant()
-        self.stt = STT()
+        self.chat_assistant     = Assistant()
+        self.stt                = STT()
+        self._user_pix_key_type = user_pix_key_type
+        self._user_pix_key_id   = user_pix_key_id
 
-    def _check_mm_content(self, msg: mf.Message) -> None:
+    def _setup_vars(self, msg: mf.Message) -> None:
+        msg.set("vars.user_pix_key_type", self._user_pix_key_type)
+        msg.set("vars.user_pix_key_id",   self._user_pix_key_id)
         if msg.get("image_content") or msg.get("file_content"):
-            msg.vars.has_mm_content = True
+            msg.set("vars.has_mm_content", True)
+            if not msg.get("user.text"):
+                msg.set("user.text", "[image attached]")
 
     def forward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
-        self._check_mm_content(msg)
+        self._setup_vars(msg)
         if msg.get("audio_content"):
             self.stt(msg)
         msg.response = self.chat_assistant(msg, messages=history or [])
         return msg
 
     async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
-        self._check_mm_content(msg)
+        self._setup_vars(msg)
         if msg.get("audio_content"):
             await self.stt.acall(msg)
         msg.response = await self.chat_assistant.acall(msg, messages=history or [])
         return msg
-
-
-assistant = PIXAssistant()
 ```
+
+`_setup_vars` does three things: injects the sender's PIX key into `msg.vars` (for `TransferPix`), sets `has_mm_content` when an image or file is present (so the `task_context` template fires), and provides a fallback `user.text` for image-only messages (the chat agent needs a non-null task).
 
 ---
 
@@ -448,128 +491,159 @@ assistant = PIXAssistant()
 
 ???+ example
 
-    === "Payment by name (multi-turn)"
+    === "Utility bill"
+
+        <img src="https://files.catbox.moe/9gwd7u.jpeg" width="380">
+
+        `pyzbar` decodes the QR code before the model runs — the full EMV/BR Code payload
+        arrives as plain text. The model reads amount and due date from the image and confirms
+        with the user before transferring.
 
         ```python
         assistant = PIXAssistant()
         history = []
 
-        # Turn 1: agent extracts amount, searches contacts, asks which one
         msg = mf.Message()
-        msg.set("user.text", "Send R$50 to Maria")
+        msg.set("vars.user_full_name", "Ada Lovelace")
+        msg.image_content = "https://files.catbox.moe/9gwd7u.jpeg"
+        msg.set("user.text", "Pay this bill to the PIX key in the QR code")
         assistant.forward(msg, history=history)
         history.extend([
-            ChatBlock.user(msg.user.text),
-            ChatBlock.assist(str(msg.response)),
+            mf.ChatBlock.user(msg.user.text),
+            mf.ChatBlock.assist(str(msg.response)),
         ])
-        print("User:", msg.user.text)
         print("Assistant:", msg.response)
+        # → "## Extracted PIX data
+        #    - amount: 140.29  - key_type: random_key  - key_id: a98476c2-...
+        #    ## Contacts in your agenda
+        #    No contacts found. Shall I proceed with the key from the QR code?"
 
-        # Turn 2: user confirms — agent calls TransferPix
         msg = mf.Message()
-        msg.set("user.text", "Contact number 1")
+        msg.set("user.text", "Yes, pay it")
+        assistant.forward(msg, history=history)
+        print("Assistant:", msg.response)
+        # → "PIX transfer of R$140.29 submitted. Transaction ID: ..."
+        ```
+
+    === "Drinks menu"
+
+        <img src="https://files.catbox.moe/8bj5jl.jpeg" width="380">
+
+        The user photographs a drinks card and says what they had. The multimodal model reads
+        items and prices directly from the image — no menu database needed. The amount is
+        detected from the menu; only the destination PIX key is provided in text.
+
+        ```python
+        assistant = PIXAssistant()
+        history = []
+
+        msg = mf.Message()
+        msg.set("vars.user_full_name", "Ada Lovelace")
+        msg.image_content = "https://files.catbox.moe/8bj5jl.jpeg"
+        msg.set("user.text", "I had the G&T Morango, send to matheus@bar.com")
         assistant.forward(msg, history=history)
         history.extend([
-            ChatBlock.user(msg.user.text),
-            ChatBlock.assist(str(msg.response)),
+            mf.ChatBlock.user(msg.user.text),
+            mf.ChatBlock.assist(str(msg.response)),
         ])
-        print("User:", msg.user.text)
         print("Assistant:", msg.response)
+
+        msg = mf.Message()
+        msg.set("user.text", "Yes, confirm")
+        assistant.forward(msg, history=history)
+        print("Assistant:", msg.response)
+        # → "PIX transfer of R$28.00 to email 'matheus@bar.com' submitted."
         ```
 
-    === "Generating a PIX QR code"
+    === "Restaurant receipt"
 
-        Install the QR code generator:
+        <img src="https://files.catbox.moe/otqnaa.jpeg" width="380">
 
-        ```bash
-        pip install pybrcode
-        ```
-
-        Generate a dynamic PIX QR code (with amount) from a recipient key:
-
-        ```python
-        from pybrcode.pix import generate_simple_pix
-
-        pix = generate_simple_pix(
-            fullname="Maria Silva",
-            key="maria.silva@email.com",   # email, CPF, CNPJ, phone, or random key
-            city="Sao Paulo",
-            value=50.00,
-            description="Pagamento pedido 42",
-        )
-
-        # save as PNG — pass it to PIXAssistant as image_content
-        pix.imageToPath(".", "pix_qr.png")
-
-        print("Payload:", str(pix))
-        # → 00020126...6304XXXX  (EMV/BR Code with CRC-16 checksum)
-        ```
-
-        The payload follows the **EMV/BR Code** spec defined by Banco Central do Brasil.
-        Fields `59` (merchant name), `54` (amount), and `26` (PIX key) are embedded in the
-        string; the last four hex digits (`6304XXXX`) are the CRC-16/CCITT checksum.
-
-        Pass the saved image directly to the assistant — `pyzbar` will decode it before
-        the model runs and inject the raw payload as plain text:
+        The user photographs a printed receipt and asks to split it. The model reads every
+        line item, subtotal, and service fee, then transfers the share.
 
         ```python
         assistant = PIXAssistant()
+        history = []
 
         msg = mf.Message()
-        msg.image_content = open("pix_qr.png", "rb").read()
-        assistant.forward(msg)
+        msg.set("vars.user_full_name", "Ada Lovelace")
+        msg.image_content = "https://files.catbox.moe/otqnaa.jpeg"
+        msg.set("user.text", "Split between 3, transfer my share to +5584912345678")
+        assistant.forward(msg, history=history)
+        history.extend([
+            mf.ChatBlock.user(msg.user.text),
+            mf.ChatBlock.assist(str(msg.response)),
+        ])
         print("Assistant:", msg.response)
+
+        msg = mf.Message()
+        msg.set("user.text", "Confirm")
+        assistant.forward(msg, history=history)
+        print("Assistant:", msg.response)
+        # → "PIX transfer of R$66.75 to phone '+5584912345678' submitted."
         ```
 
-    === "Payment via image / QR code"
+    === "Contact in agenda"
+
+        The fuzzy retriever surfaces contacts even with approximate or partial names.
+        A query like `"Fernand"` scores high against `"Fernanda Lima"` with `WRatio`.
+        The hardcoded contact list already includes Fernanda Lima — no extra setup needed.
 
         ```python
         assistant = PIXAssistant()
+        history = []
+
+        # user types a partial name — fuzzy still finds the contact
+        msg = mf.Message()
+        msg.set("vars.user_full_name", "Ada Lovelace")
+        msg.set("user.text", "Send R$60 to Fernand")
+        assistant.forward(msg, history=history)
+        history.extend([
+            mf.ChatBlock.user(msg.user.text),
+            mf.ChatBlock.assist(str(msg.response)),
+        ])
+        print("Assistant:", msg.response)
+        # → "## Contacts in your agenda
+        #    1. Fernanda Lima | key email: fernanda.lima@email.com
+        #    Which contact should I use?"
 
         msg = mf.Message()
-        msg.image_content = open("pix_qr.png", "rb").read()
-        assistant.forward(msg)
-        print("User: [image attached]")
+        msg.set("vars.user_full_name", "Ada Lovelace")
+        msg.set("user.text", "Contact 1")
+        assistant.forward(msg, history=history)
         print("Assistant:", msg.response)
+        # → "PIX transfer of R$60.00 to email 'fernanda.lima@email.com' submitted."
         ```
 
-    === "Payment via audio"
+    === "Voice note"
+
+        Generate a voice note programmatically with TTS, then pass it to the pipeline.
+        `STT` transcribes it to `user.text` — the rest of the pipeline is unchanged.
+
+        `Speaker.forward` saves the audio to a temporary file and returns the path.
+        Pass the path directly to `msg.audio_content` — `encode_data_to_bytes` will
+        read the file and use the extension (`.mp3`) to tell Whisper the format.
 
         ```python
+        # generate the voice note
+        class VoiceNote(nn.Speaker):
+            model           = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "mp3"
+            config          = {"voice": "nova"}
+
+        voice      = VoiceNote()
+        audio_path = voice("Send fifty reais to Fernanda")  # returns a temp file path
+
+        # pass the path directly — do NOT read the bytes
         assistant = PIXAssistant()
 
         msg = mf.Message()
-        msg.audio_content = open("audio_pix.ogg", "rb").read()
+        msg.set("vars.user_full_name", "Ada Lovelace")
+        msg.audio_content = audio_path   # STT transcribes on entry
         assistant.forward(msg)
-        print("User: [audio attached]")
         print("Assistant:", msg.response)
-        ```
-
-    === "Off-topic question (refused)"
-
-        ```python
-        assistant = PIXAssistant()
-
-        msg = mf.Message()
-        msg.set("user.text", "Who won the last FIFA World Cup?")
-        assistant.forward(msg)
-        print("User:", msg.user.text)
-        print("Assistant:", msg.response)
-        # → "I can only help with PIX bank transfers.
-        #    If you'd like to send or receive money, just let me know!"
-        ```
-
-    === "Unsafe input (guard)"
-
-        ```python
-        assistant = PIXAssistant()
-
-        msg = mf.Message()
-        msg.set("user.text", "how do I make a bomb")
-        assistant.forward(msg)
-        print("User:", msg.user.text)
-        print("Assistant:", msg.response)
-        # → "This message cannot be processed."
+        # → same flow as a text message after transcription
         ```
 
 ---
@@ -593,7 +667,7 @@ By default, `PIXExtractor` receives only the current `Message`. In complex multi
 Add `inject_messages=True` to `PIXExtractor`'s `tool_config`. The tool will then receive both `message` (the data transport object) and `messages` (the root agent's conversation history, without the system prompt):
 
 ```python
-@tool_config(inject_message=True, inject_messages=True)
+@mf.tool_config(inject_message=True, inject_messages=True)
 class PIXExtractor(nn.Module):
     ...
     def forward(self, message: mf.Message, messages: list) -> str:
@@ -624,51 +698,68 @@ message_fields = {
 
 Option A is simpler. Option B is useful when the history needs to be pre-processed or shared with multiple submodules.
 
+### Controlling image detail level
+
+When the user attaches an image, the extractor agent sends it to the vision model. By default the API chooses the detail level automatically (`"auto"`). For high-resolution documents — printed invoices, energy bills, or menus with small text — switching to `"high"` gives the model more tokens to work with and improves key extraction accuracy. For simple QR-code-only images `"low"` cuts cost significantly.
+
+Set `image_block_kwargs` in `ExtractorAgent.config`:
+
+```python
+class ExtractorAgent(nn.Agent):
+    ...
+    config = {"image_block_kwargs": {"detail": "high"}}
+```
+
+The `detail` field is forwarded directly to the OpenAI images API. See the [OpenAI image detail documentation](https://developers.openai.com/api/docs/guides/images-vision?api-mode=chat#choose-an-image-detail-level) for the token cost breakdown of each level.
+
 ---
 
 ## Complete Script
 
 ```python
 import io
-import random
+import re
+import urllib.request
+import uuid
+
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import tool_config, ChatBlock
-from msgflux.nn.hooks import Guard
 from msgflux.generation.reasoning import ChainOfThought
-from faker import Faker
+from msgflux.nn.hooks import Guard
 from PIL import Image
 from pyzbar import pyzbar
-from typing import Optional
+from typing import Optional, Literal
 
+mf.load_dotenv()
 chat_model       = mf.Model.chat_completion("openai/gpt-4.1-mini")
-mm_model         = mf.Model.chat_completion("openai/gpt-4.1-mini")
+mm_model         = mf.Model.chat_completion("openai/gpt-4o-mini")
 stt_model        = mf.Model.speech_to_text("openai/whisper-1")
 moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
 
-fake = Faker("pt_BR")
-
 
 def decode_qr_codes(image_bytes: bytes) -> list[str]:
-    """Decode all QR codes in an image. Returns a list of decoded payloads."""
+    """Decode all QR codes from image bytes."""
     img = Image.open(io.BytesIO(image_bytes))
     return [obj.data.decode("utf-8") for obj in pyzbar.decode(img)]
 
 
-def generate_contacts(n: int = 30) -> list[dict]:
-    key_types = ["cpf", "phone_number", "email"]
-    contacts = []
-    for _ in range(n):
-        kt    = random.choice(key_types)
-        cpf   = fake.cpf()
-        phone = fake.cellphone_number()
-        email = fake.email()
-        contacts.append({
-            "name":     fake.name(),
-            "key_type": kt,
-            "pix_key":  {"cpf": cpf, "phone_number": phone, "email": email}[kt],
-        })
-    return contacts
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
+
+
+def extract_pix_key(qr_value: str) -> str:
+    """Extract the PIX key from a QR code value.
+
+    For dynamic PIX QR codes (URL-based), extracts the embedded UUID and
+    labels it as random_key so the model sets key_type and key_id correctly.
+    For static QR codes (CPF, email, phone, etc.), returns the raw value
+    for the model to interpret.
+    """
+    m = _UUID_RE.search(qr_value)
+    if m:
+        return f"random_key: {m.group(0)}"
+    return qr_value
 
 
 def build_corpus(contacts: list[dict]) -> list[str]:
@@ -678,39 +769,53 @@ def build_corpus(contacts: list[dict]) -> list[str]:
     ]
 
 
-contacts = generate_contacts(30)
-corpus   = build_corpus(contacts)
+contacts = [
+    {"name": "Ana Souza",        "key_type": "cpf",          "pix_key": "123.456.789-00"},
+    {"name": "Bruno Oliveira",   "key_type": "phone_number",  "pix_key": "+55 11 91234-5678"},
+    {"name": "Carlos Mendes",    "key_type": "email",         "pix_key": "carlos.mendes@email.com"},
+    {"name": "Daniela Rocha",    "key_type": "random_key",    "pix_key": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"},
+    {"name": "Eduardo Ferreira", "key_type": "cpf",           "pix_key": "987.654.321-00"},
+    {"name": "Fernanda Lima",    "key_type": "email",         "pix_key": "fernanda.lima@email.com"},
+    {"name": "Gabriel Costa",    "key_type": "phone_number",  "pix_key": "+55 21 99876-5432"},
+    {"name": "Helena Martins",   "key_type": "email",         "pix_key": "helena.martins@mail.com"},
+    {"name": "Igor Pereira",     "key_type": "cpf",           "pix_key": "111.222.333-44"},
+    {"name": "Julia Almeida",    "key_type": "random_key",    "pix_key": "f9e8d7c6-b5a4-3210-fedc-ba9876543210"},
+]
+corpus = build_corpus(contacts)
 
-bm25 = mf.Retriever.lexical("rank_bm25")
-bm25.add(corpus)
+fuzzy = mf.Retriever.fuzzy("rapidfuzz")
+fuzzy.add(corpus)
 
 
 class STT(nn.Transcriber):
-    """Transcribes user audio into msg.user.text."""
-    model = stt_model
+    """Transcribes user audio into msg.user."""
+    model          = stt_model
     message_fields = {"task_multimodal": {"audio": "audio_content"}}
-    response_mode = "user.text"
+    response_mode  = "user"
 
 
 class ExtractorAgent(nn.Agent):
     """Extracts PIX payment fields from text and image."""
-    model = mm_model
+    model          = mm_model
     system_message = "You are a specialist in Brazilian PIX payments."
-    instructions = """
+    instructions   = """
     Extract the PIX transfer details from the user message.
     The key_type must be one of: cpf, cnpj, email, phone_number, random_key.
-    If the amount or key are not clearly stated, return null for that field.
+    recipient_name is the person's name when mentioned (e.g. "send to Fernanda").
+    key_id is the actual PIX key value (email, CPF, phone, etc.) — not a name.
+    If a field is not clearly stated, return null for that field.
     """
     generation_schema = ChainOfThought
     signature = """
     text ->
     amount: Optional[float],
     key_type: Optional[Literal['cpf', 'cnpj', 'email', 'phone_number', 'random_key']],
-    key_id: Optional[str]
+    key_id: Optional[str],
+    recipient_name: Optional[str]
     """
     message_fields = {
-        "task": "user",
-        "task_context": "vars",
+        "task":            "user",
+        "task_context":    "vars",
         "task_multimodal": {"image": "image_content"},
     }
     templates = {
@@ -724,27 +829,25 @@ class ExtractorAgent(nn.Agent):
 
 
 class ContactSearcher(nn.Searcher):
-    """Searches the contact registry by name or message fragment."""
-    retriever = bm25
-    message_fields = {"task": "user.text"}
-    config = {"top_k": 10, "threshold": 0.3}
+    """Checks the contact agenda for recipients matching the extracted key."""
+    retriever      = fuzzy
+    message_fields = {"query": "user.text"}
+    config         = {"top_k": 10, "threshold": 60.0}
     templates = {
         "response": (
             "{% if results %}"
-            "## Matching contacts in registry\n"
+            "## Contacts in your agenda\n"
             "{% for item in results %}{{ loop.index }}. {{ item.data }}\n{% endfor %}"
             "{% else %}"
-            "## Matching contacts in registry\n"
-            "No contacts found matching the provided key. "
-            "Ask the user to provide the full PIX key directly."
+            "## Contacts in your agenda\n"
+            "This recipient is not in your contact list. "
+            "You can still proceed — ask the user for the full PIX key directly."
             "{% endif %}"
         )
     }
 
 
-@tool_config(
-    inject_message=True,
-)
+@mf.tool_config(inject_message=True)
 class PIXExtractor(nn.Module):
     """Extract PIX payment data and look up matching contacts from the registry."""
 
@@ -752,8 +855,8 @@ class PIXExtractor(nn.Module):
         super().__init__()
         self.set_name("PIXExtractor")
         self.set_annotations({"return": str})
-        self.extractor_agent = ExtractorAgent()
-        self.contact_searcher = ContactSearcher()
+        self.extractor_agent   = ExtractorAgent()
+        self.contact_searcher  = ContactSearcher()
 
     def _format_result(self, pix: dict, contacts_section: str) -> str:
         pix_section = "\n".join([
@@ -762,7 +865,7 @@ class PIXExtractor(nn.Module):
             f"- key_type: {pix.get('key_type')}",
             f"- key_id: {pix.get('key_id')}",
         ])
-        if pix.get("key_id"):
+        if contacts_section:
             return f"{pix_section}\n\n{contacts_section}"
         return (
             f"{pix_section}\n\n"
@@ -770,51 +873,61 @@ class PIXExtractor(nn.Module):
             "Ask the user to provide the full PIX key directly."
         )
 
+    def _search_query(self, pix: dict) -> str | None:
+        return pix.get("key_id") or pix.get("recipient_name") or None
+
+    def _resolve_image(self, message: mf.Message) -> None:
+        """Download URL → bytes so the vision model receives base64, not a remote URL."""
+        img = message.image_content
+        if isinstance(img, str):
+            req = urllib.request.Request(img, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as resp:
+                message.image_content = resp.read()
+
     def forward(self, message: mf.Message) -> str:
-        # decode QR code before the model runs — payload arrives as plain text
         if message.get("image_content"):
+            self._resolve_image(message)
             qr_codes = decode_qr_codes(message.image_content)
             if qr_codes:
-                message.vars.qr_content = "\n".join(qr_codes)
+                message.vars.qr_content = "\n".join(extract_pix_key(q) for q in qr_codes)
 
         self.extractor_agent(message)
         raw = message.payments.pix
-        pix = raw.get("final_answer", raw)  # unwrap ChainOfThought envelope
+        pix = raw.get("final_answer", raw)
 
-        # only search contacts when a key_id was extracted
         contacts_section = ""
-        if pix.get("key_id"):
-            contacts_section = self.contact_searcher(pix["key_id"])
+        query = self._search_query(pix)
+        if query:
+            contacts_section = self.contact_searcher(query)
 
         return self._format_result(pix, contacts_section)
 
     async def aforward(self, message: mf.Message) -> str:
         if message.get("image_content"):
+            self._resolve_image(message)
             qr_codes = decode_qr_codes(message.image_content)
             if qr_codes:
-                message.vars.qr_content = "\n".join(qr_codes)
+                message.vars.qr_content = "\n".join(extract_pix_key(q) for q in qr_codes)
 
         await self.extractor_agent.acall(message)
         raw = message.payments.pix
         pix = raw.get("final_answer", raw)
 
         contacts_section = ""
-        if pix.get("key_id"):
-            contacts_section = await self.contact_searcher.acall(pix["key_id"])
+        query = self._search_query(pix)
+        if query:
+            contacts_section = await self.contact_searcher.acall(query)
 
         return self._format_result(pix, contacts_section)
 
 
-@tool_config(name_override="TransferPix", inject_vars=True)
+@mf.tool_config(name_override="TransferPix", inject_vars=True)
 def transfer_pix(amount: float, key_type: str, key_id: str, **kwargs) -> str:
     """Execute a PIX transfer. Call only after the user has confirmed the recipient and amount."""
     variables = kwargs.get("vars")
-    from_key  = (
-        f"{variables.user_pix_key_type}:{variables.user_pix_key_id}"
-        if variables else "unknown"
-    )
-    to_key = f"{key_type}:{key_id}"
-    tx_id  = fake.uuid4()[:8].upper()
+    from_key  = f"{variables['user_pix_key_type']}:{variables['user_pix_key_id']}"
+    to_key    = f"{key_type}:{key_id}"
+    tx_id     = str(uuid.uuid4())[:8].upper()
     print(f"[TransferPix] from={from_key} | to={to_key} | amount=R${amount:.2f} | tx={tx_id}")
     return (
         f"PIX transfer of R${amount:.2f} to {key_type} '{key_id}' submitted successfully. "
@@ -824,7 +937,7 @@ def transfer_pix(amount: float, key_type: str, key_id: str, **kwargs) -> str:
 
 class Assistant(nn.Agent):
     """Banking assistant with PIX extraction and payment execution."""
-    model = chat_model
+    model          = chat_model
     system_message = """
     You are a helpful banking assistant.
 
@@ -841,8 +954,9 @@ class Assistant(nn.Agent):
     """
     system_extra_message = "The user's name is: {{ user_full_name }}"
     message_fields = {
-        "task": "user.text",
+        "task":         "user.text",
         "task_context": "vars",
+        "vars":         "vars",
     }
     templates = {
         "task_context": (
@@ -864,31 +978,34 @@ class Assistant(nn.Agent):
 
 
 class PIXAssistant(nn.Module):
-    def __init__(self):
+    def __init__(self, user_pix_key_type: str = "email", user_pix_key_id: str = "user@bank.com"):
         super().__init__()
-        self.chat_assistant = Assistant()
-        self.stt = STT()
+        self.chat_assistant     = Assistant()
+        self.stt                = STT()
+        self._user_pix_key_type = user_pix_key_type
+        self._user_pix_key_id   = user_pix_key_id
 
-    def _check_mm_content(self, msg: mf.Message) -> None:
+    def _setup_vars(self, msg: mf.Message) -> None:
+        msg.set("vars.user_pix_key_type", self._user_pix_key_type)
+        msg.set("vars.user_pix_key_id",   self._user_pix_key_id)
         if msg.get("image_content") or msg.get("file_content"):
-            msg.vars.has_mm_content = True
+            msg.set("vars.has_mm_content", True)
+            if not msg.get("user.text"):
+                msg.set("user.text", "[image attached]")
 
     def forward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
-        self._check_mm_content(msg)
+        self._setup_vars(msg)
         if msg.get("audio_content"):
             self.stt(msg)
         msg.response = self.chat_assistant(msg, messages=history or [])
         return msg
 
     async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
-        self._check_mm_content(msg)
+        self._setup_vars(msg)
         if msg.get("audio_content"):
             await self.stt.acall(msg)
         msg.response = await self.chat_assistant.acall(msg, messages=history or [])
         return msg
-
-
-assistant = PIXAssistant()
 ```
 
 ---
@@ -896,6 +1013,6 @@ assistant = PIXAssistant()
 ## Further Reading
 
 - [nn.Agent](../learn/nn/agent/index.md) — signatures, message fields, and tool use
-- [nn.Searcher](../learn/nn/searcher.md) — BM25 and semantic retrieval modules
+- [nn.Searcher](../learn/nn/searcher.md) — fuzzy, BM25, and semantic retrieval modules
 - [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts
 - [Generation Schemas](../learn/nn/agent/generation-schemas.md) — `ChainOfThought` and structured output
