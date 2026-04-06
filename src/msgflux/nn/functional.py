@@ -10,6 +10,12 @@ from msgflux.exceptions import TaskError
 from msgflux.logger import logger
 from msgflux.telemetry import Spans
 
+
+def _resolve_async_call(f: Callable) -> Callable:
+    """Returns f.acall if available (Module interface), otherwise f itself."""
+    return f.acall if hasattr(f, "acall") else f
+
+
 __all__ = [
     "abcast_gather",
     "amap_gather",
@@ -408,17 +414,17 @@ async def aspawn(to_send: Callable, *args, **kwargs) -> None:
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")
 
+    call = _resolve_async_call(to_send)
+
     async def run_task():
         """Wrapper to run the task and log errors."""
         try:
-            if hasattr(to_send, "acall"):
-                await to_send.acall(*args, **kwargs)
-            elif asyncio.iscoroutinefunction(to_send):
-                await to_send(*args, **kwargs)
+            if asyncio.iscoroutinefunction(call):
+                await call(*args, **kwargs)
             else:
                 # Fall back to running sync function in executor
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, lambda: to_send(*args, **kwargs))
+                await loop.run_in_executor(None, lambda: call(*args, **kwargs))
         except Exception as e:
             logger.error(f"Fire-and-forget task error: {e!s}", exc_info=True)
 
@@ -506,11 +512,12 @@ async def amap_gather(
                 "`kwargs_list` must be a list with the same length as `args_list`"
             )
 
+    call = _resolve_async_call(to_send)
     tasks = []
     for i in range(len(args_list)):
         args = args_list[i]
         kwargs = kwargs_list[i] if kwargs_list else {}
-        tasks.append(to_send(*args, **kwargs))
+        tasks.append(call(*args, **kwargs))
 
     responses = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -573,7 +580,7 @@ async def ascatter_gather(
     for i, f in enumerate(to_send):
         args = args_list[i] if args_list and i < len(args_list) else ()
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
-        tasks.append(f(*args, **kwargs))
+        tasks.append(_resolve_async_call(f)(*args, **kwargs))
 
     responses = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -624,7 +631,7 @@ async def abcast_gather(
     if not isinstance(to_send, list) or not all(callable(f) for f in to_send):
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
-    tasks = [f(*args, **kwargs) for f in to_send]
+    tasks = [_resolve_async_call(f)(*args, **kwargs) for f in to_send]
     responses = await asyncio.gather(*tasks, return_exceptions=True)
 
     results = []

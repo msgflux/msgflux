@@ -363,3 +363,126 @@ class TestAsyncFunctions:
         """Test aspawn raises TypeError for non-callable."""
         with pytest.raises(TypeError, match="`to_send` must be a callable"):
             await F.aspawn("not_callable")
+
+
+class FakeModule:
+    """Simulates a msgflux Module with the acall interface.
+
+    __call__ raises so tests catch any accidental use of the sync path.
+    """
+
+    def __init__(self, return_value=None):
+        self.return_value = return_value
+        self.acall_calls: list = []
+
+    def __call__(self, *args, **kwargs):
+        raise AssertionError("sync __call__ must not be used in async context")
+
+    async def acall(self, *args, **kwargs):
+        self.acall_calls.append((args, kwargs))
+        return self.return_value
+
+
+class TestAcallRouting:
+    """Verify that all async gather/spawn helpers resolve .acall when present."""
+
+    @pytest.mark.asyncio
+    async def test_amap_gather_uses_acall(self):
+        """amap_gather must call .acall instead of __call__ for Module-like objects."""
+        mod = FakeModule(return_value=42)
+
+        results = await F.amap_gather(mod, args_list=[(1,), (2,)])
+
+        assert results == (42, 42)
+        assert len(mod.acall_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_amap_gather_plain_coroutine_unchanged(self):
+        """Plain async functions without acall must still work normally."""
+
+        async def double(x):
+            return x * 2
+
+        results = await F.amap_gather(double, args_list=[(3,), (5,)])
+        assert results == (6, 10)
+
+    @pytest.mark.asyncio
+    async def test_ascatter_gather_uses_acall(self):
+        """ascatter_gather must call .acall for each Module-like object in the list."""
+        mod_a = FakeModule(return_value="a")
+        mod_b = FakeModule(return_value="b")
+
+        results = await F.ascatter_gather(
+            [mod_a, mod_b],
+            args_list=[(1,), (2,)],
+        )
+
+        assert results == ("a", "b")
+        assert len(mod_a.acall_calls) == 1
+        assert len(mod_b.acall_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_ascatter_gather_mixed_callables(self):
+        """ascatter_gather must handle a mix of Modules and plain async functions."""
+
+        async def triple(x):
+            return x * 3
+
+        mod = FakeModule(return_value=99)
+
+        results = await F.ascatter_gather(
+            [triple, mod],
+            args_list=[(4,), (0,)],
+        )
+
+        assert results == (12, 99)
+        assert len(mod.acall_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_abcast_gather_uses_acall(self):
+        """abcast_gather must broadcast via .acall for Module-like objects."""
+        mod_a = FakeModule(return_value=10)
+        mod_b = FakeModule(return_value=20)
+
+        results = await F.abcast_gather([mod_a, mod_b], "payload")
+
+        assert results == (10, 20)
+        assert mod_a.acall_calls == [(("payload",), {})]
+        assert mod_b.acall_calls == [(("payload",), {})]
+
+    @pytest.mark.asyncio
+    async def test_abcast_gather_plain_coroutine_unchanged(self):
+        """Plain async functions without acall must still work in abcast_gather."""
+
+        async def square(x):
+            return x * x
+
+        async def cube(x):
+            return x * x * x
+
+        results = await F.abcast_gather([square, cube], 3)
+        assert results == (9, 27)
+
+    @pytest.mark.asyncio
+    async def test_aspawn_uses_acall(self):
+        """aspawn must fire .acall when the callable has it."""
+        mod = FakeModule(return_value="spawned")
+
+        await F.aspawn(mod, "arg1")
+        await asyncio.sleep(0.05)
+
+        assert len(mod.acall_calls) == 1
+        assert mod.acall_calls[0] == (("arg1",), {})
+
+    @pytest.mark.asyncio
+    async def test_aspawn_plain_coroutine_unchanged(self):
+        """Plain async functions without acall must still work in aspawn."""
+        results = []
+
+        async def collect(value):
+            results.append(value)
+
+        await F.aspawn(collect, "hello")
+        await asyncio.sleep(0.05)
+
+        assert results == ["hello"]
