@@ -616,6 +616,69 @@ Pass images, audio, or files via `task_multimodal`. Requires a multimodal model 
         ```
 
 
+### Customizing Multimodal Blocks
+
+Use `image_block_kwargs` and `video_block_kwargs` in `config` to pass extra parameters directly to the underlying multimodal block. This is useful, for example, to control the image **detail level** supported by OpenAI models:
+
+| Value | Behavior |
+|-------|----------|
+| `"auto"` | Model decides (default) |
+| `"low"` | Fast, low-resolution analysis (512×512 px) |
+| `"high"` | High-fidelity analysis, higher token cost |
+| `"original"` | Preserves the original resolution — recommended for spatially-sensitive tasks (e.g., click-accuracy with gpt-4.1) |
+
+???+ example "Image Detail Level"
+
+    === "image_block_kwargs"
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class VisionAgent(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1")
+            config = {
+                "image_block_kwargs": {"detail": "original"}
+            }
+
+        agent = VisionAgent()
+
+        response = agent(
+            "Identify which UI element the cursor is closest to",
+            task_multimodal={
+                "image": "https://example.com/screenshot.png"
+            }
+        )
+        ```
+
+    === "video_block_kwargs"
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class VideoAgent(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1")
+            config = {
+                "video_block_kwargs": {"fps": 1}
+            }
+
+        agent = VideoAgent()
+
+        response = agent(
+            "Describe what happens in this video",
+            task_multimodal={
+                "video": "./recording.mp4"
+            }
+        )
+        ```
+
 ## Messages (Chat History)
 
 Pass a list of messages in ChatML format to provide conversation history. This is useful for chatbots and multi-turn conversations.

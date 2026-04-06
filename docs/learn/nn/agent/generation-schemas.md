@@ -174,6 +174,9 @@ print(result.thought)       # "I need to fetch python.org to get the version..."
 print(result.final_answer)  # "Python 3.14.x"
 ```
 
+!!! tip "Default system_message"
+    `ReAct` ships with a built-in `system_message` that instructs the model to follow the Thought → Action → Observation loop. You can inspect it with `ReAct.system_message`. It can be overridden by setting `system_message` on the agent, though that is generally not recommended — the default prompt is carefully tuned to keep the loop stable.
+
 !!! tip "When to use"
     ReAct is the right choice when the agent needs external information to answer a question — web searches, API calls, database lookups, file reads, or any task requiring multi-turn tool interactions before an answer can be formed.
 

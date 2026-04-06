@@ -845,7 +845,7 @@ class TestAgentExecutionPaths:
 
         # Create Message object
         msg = Message()
-        msg.query = "Test question"
+        msg.query = {"query": "Test question"}
 
         result = agent(msg)
 

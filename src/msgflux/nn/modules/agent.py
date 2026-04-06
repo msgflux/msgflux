@@ -181,7 +181,8 @@ class Agent(Module, metaclass=AutoParams):
         config:
             Dictionary with configuration options.
             Valid keys: "verbose", "return_messages", "tool_choice",
-            "stream", "image_block_kwargs", "video_block_kwargs", "include_date"
+            "stream", "image_block_kwargs", "video_block_kwargs", "include_date",
+            "reasoning_in_response"
             !!! example
                 config={
                     "verbose": True,
@@ -1139,11 +1140,11 @@ class Agent(Module, metaclass=AutoParams):
             if task:
                 if isinstance(task, str):
                     task_template = self.templates["task"]
-                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):
+                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):  # noqa: E501
                         raise ValueError(
-                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "
-                            "passed as a plain string. Pass 'task' as a dict with the required "
-                            "variable names, or use message_fields to map from the message."
+                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
+                            "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
+                            "variable names, or use message_fields to map from the message."  # noqa: E501
                         )
                     pre_task = self._format_task_template(vars)
                     task_content = self._format_template(task, pre_task)
@@ -1207,11 +1208,11 @@ class Agent(Module, metaclass=AutoParams):
             if task:
                 if isinstance(task, str):
                     task_template = self.templates["task"]
-                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):
+                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):  # noqa: E501
                         raise ValueError(
-                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "
-                            "passed as a plain string. Pass 'task' as a dict with the required "
-                            "variable names, or use message_fields to map from the message."
+                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
+                            "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
+                            "variable names, or use message_fields to map from the message."  # noqa: E501
                         )
                     pre_task = self._format_task_template(vars)
                     task_content = self._format_template(task, pre_task)
@@ -1654,7 +1655,6 @@ class Agent(Module, metaclass=AutoParams):
             "image_block_kwargs",
             "video_block_kwargs",
             "include_date",
-            "execution",  # Added for execution settings
             "reasoning_in_response",
         }
 
