@@ -71,7 +71,7 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
         text = "Quantum computing uses qubits that can exist in superposition..."
 
         summary, translation = await F.abcast_gather(
-            [summarizer.acall, translator.acall], text
+            [summarizer, translator], text
         )
 
         print(summary)
@@ -102,7 +102,7 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
         ]
 
         results = await F.amap_gather(
-            agent.acall,
+            agent,
             args_list=[(r,) for r in reviews],
         )
 
@@ -133,7 +133,7 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
         translator = Translator()
 
         results = await F.ascatter_gather(
-            [summarizer.acall, translator.acall],
+            [summarizer, translator],
             args_list=[
                 ("Explain quantum computing in detail...",),
                 ("The weather is beautiful today.",),

@@ -183,7 +183,7 @@ Since Agents are callable (`agent(input)` calls `forward`), you can pass them di
 
         ```python
         results = await F.amap_gather(
-            agent.acall,
+            agent,
             args_list=[(r,) for r in reviews],
         )
         ```
@@ -293,7 +293,7 @@ With Agents, `scatter_gather` lets you run completely different AI tasks in para
 
         ```python
         results = await F.ascatter_gather(
-            [summarizer.acall, translator.acall],
+            [summarizer, translator],
             args_list=[
                 ("Explain how neural networks learn from data...",),
                 ("The weather is beautiful today.",),
@@ -417,7 +417,7 @@ A common use case with Agents is analyzing one document from multiple perspectiv
 
         ```python
         summary, translation, keywords = await F.abcast_gather(
-            [summarizer.acall, translator.acall, extractor.acall], text
+            [summarizer, translator, extractor], text
         )
         ```
 

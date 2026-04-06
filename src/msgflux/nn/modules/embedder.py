@@ -188,7 +188,7 @@ class Embedder(Module, metaclass=AutoParams):
             # since we only have kwargs
             args_list = [()] * len(data_list)
             responses = await F.amap_gather(
-                self.generator.acall,
+                self.generator,
                 args_list=args_list,
                 kwargs_list=distributed_params,
             )

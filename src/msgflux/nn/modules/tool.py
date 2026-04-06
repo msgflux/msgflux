@@ -771,7 +771,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
             if config.get("spawn", False):
                 return_directly = False
-                await F.aspawn(tool.acall, **call_params)
+                await F.aspawn(tool, **call_params)
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,

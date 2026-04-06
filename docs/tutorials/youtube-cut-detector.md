@@ -252,7 +252,7 @@ pipeline = VideoCutPipeline(max_cuts=5)
                 "https://www.youtube.com/watch?v=VIDEO_3",
             ]
             results = await F.amap_gather(
-                pipeline.acall,
+                pipeline,
                 kwargs_list=[{"url": u} for u in urls],
             )
             for url, result in zip(urls, results):

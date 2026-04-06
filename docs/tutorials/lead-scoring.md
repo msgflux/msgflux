@@ -1,11 +1,52 @@
 # Lead Scoring
 
-Score inbound leads across multiple dimensions simultaneously — demographic fit, engagement signals, budget alignment, and purchase timing — then aggregate into a weighted final score with a ranked shortlist.
+<span class="tag tag-purple">Intermediate</span><span class="tag tag-gray">Signature</span>
 
-## What You'll Build
+Sales teams receive more inbound leads than they can manually evaluate. Prioritizing them means assessing each lead across multiple dimensions: demographic fit, engagement signals, budget alignment, and purchase timing.
+
+## The Problem
+
+The most common starting point looks like this.
 
 ```
 Lead data (company, role, activity, budget, signals)
+                 │
+                 ▼
+┌──────────────────────────────────────────┐
+│              ScorerAgent                 │
+│                                          │
+│  assess everything  ←──→  one call       │
+└──────────────────────────────────────────┘
+                 │ single score + rationale
+                 ▼
+         sales team acts on it
+```
+
+- A single prompt must evaluate demographic fit, engagement level, budget, and timing simultaneously — each requiring different reasoning.
+- The rationale is a blended explanation. You cannot tell which dimension drove the score.
+- Adding a new scoring dimension means reworking the entire prompt.
+- Tuning the weight of each dimension requires iterative prompt engineering with no clear feedback loop.
+
+You are guessing which leads matter.
+
+---
+
+## The Plan
+
+We will build a scorer that decomposes evaluation into four independent dimensions — demographic fit, engagement signals, budget alignment, and purchase timing — runs them in parallel, and aggregates the results into a final weighted score.
+
+Each dimension is evaluated in isolation by its own dedicated scorer, without interference from the others. All four scorers run at the same time, so total latency is the slowest dimension, not their sum. This also means each scorer can be tuned, replaced, or inspected independently.
+
+An aggregator combines the four scores into a weighted result (0–100), assigns a tier (A–D), and recommends a next action for the sales team.
+
+This tutorial uses the **imperative API**: modules are called directly with typed arguments and return plain dicts, which keeps the data flow explicit and easy to test in isolation.
+
+---
+
+## Architecture
+
+```
+lead_data: str
        │
        ├───────────────────────────────────────────┐
        ▼           ▼           ▼           ▼       │
@@ -13,38 +54,33 @@ DemographicScorer  EngagementScorer  BudgetScorer  TimingScorer
   (parallel via bcast_gather)
        │           │           │           │
        └───────────┴─────┬─────┴───────────┘
-                         │  scores: list[float]
+                         │  results: list[dict]
                          ▼
-                   Aggregator ── weighted average + Signature:
-                                   scores → final_score, tier,
-                                             rationale, next_action
+                   Aggregator(demographic_score=..., engagement_score=..., ...)
+                         │
+                         ▼
+                   dict: final_score, tier, rationale, next_action
 ```
 
-Each scorer runs independently and simultaneously — total latency equals the slowest scorer, not the sum.
+The key design choice is that each scorer is a separate `Agent` with its own `Signature`. The `Aggregator` receives only the four dimension scores — not the raw lead data. This separation means you can tune individual scorer prompts, replace one scorer, or adjust aggregation weights without touching the rest of the pipeline.
 
 ---
 
 ## Setup
 
-```bash
-pip install msgflux[openai]
-```
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
+--8<-- "docs/_includes/init_chat_completion_model.md"
 
 ---
 
 ## Step 1 — Scorer Signatures
 
-Each scorer returns a `score` (0.0–1.0) and a `rationale` explaining the assessment:
+Each scorer returns a `score` (0.0–1.0) and a `rationale` explaining the assessment. The `strengths`, `gaps`, `hot_signals`, and `urgency_signals` fields capture dimension-specific evidence for downstream use.
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
 import msgflux.nn.functional as F
-from msgflux import Message, Signature, InputField, OutputField
+from msgflux import Signature, InputField, OutputField
 from typing import Literal, List
 
 
@@ -124,6 +160,8 @@ class TimingScore(Signature):
 
 ## Step 2 — Scorer Agents
 
+Each agent is backed by the same model but bound to a different signature — so each has a focused, isolated view of the lead data. Because the signatures are separate, prompts do not bleed into each other and each scorer can be tuned independently.
+
 ```python
 class DemographicScorer(nn.Agent):
     """Scores lead fit based on company profile and role."""
@@ -156,6 +194,8 @@ class TimingScorer(nn.Agent):
 ---
 
 ## Step 3 — Aggregation Signature
+
+The aggregator receives the four dimension scores as named kwargs and returns a final weighted score on a 0–100 scale. Weights are encoded in the `final_score` field description so the model applies them consistently — no separate instruction needed.
 
 ```python
 class AggregateScore(Signature):
@@ -190,9 +230,11 @@ class Aggregator(nn.Agent):
 
 ---
 
-## Step 4 — Lead Scorer Module
+## Step 4 — LeadScorer Module
 
-`F.bcast_gather` broadcasts the same `lead_data` string to all four scorers in parallel:
+`F.bcast_gather` broadcasts `{"lead_data": lead_data}` to all four scorers in parallel. The dict wrapping is required because each `Signature` generates a Jinja2 task template (`<lead_data>{{ lead_data }}</lead_data>`) from its `InputField` — passing a bare string would raise a `ValueError` at runtime.
+
+Once the four scores are collected, `Aggregator` is called with named kwargs directly — `**scores` unpacks the `demographic_score`, `engagement_score`, `budget_score`, and `timing_score` keys. The agent's Signature maps each kwarg to its corresponding `InputField` template variable. Both the scorer results and the final output are returned as a plain dict.
 
 ```python
 class LeadScorer(nn.Module):
@@ -206,37 +248,220 @@ class LeadScorer(nn.Module):
         ]
         self.aggregator = Aggregator()
 
-    def forward(self, msg):
-        # All four scorers run in parallel on the same lead_data
-        results = F.bcast_gather(self.scorers, msg.lead_data)
+    def forward(self, lead_data: str) -> dict:
+        results = F.bcast_gather(self.scorers, {"lead_data": lead_data})
 
-        msg.demographic_score = results[0]["score"]
-        msg.engagement_score  = results[1]["score"]
-        msg.budget_score      = results[2]["score"]
-        msg.timing_score      = results[3]["score"]
-
-        # Store dimension details
-        msg.score_details = {
+        scores = {
+            "demographic_score": results[0]["score"],
+            "engagement_score":  results[1]["score"],
+            "budget_score":      results[2]["score"],
+            "timing_score":      results[3]["score"],
+        }
+        details = {
             "demographic": results[0],
             "engagement":  results[1],
             "budget":      results[2],
             "timing":      results[3],
         }
 
-        # Aggregate
-        self.aggregator(msg)
-        return msg
+        final = self.aggregator(**scores)
+        return {**final, **scores, "score_details": details}
+
+    async def aforward(self, lead_data: str) -> dict:
+        results = await F.abcast_gather(
+            self.scorers, {"lead_data": lead_data}
+        )
+
+        scores = {
+            "demographic_score": results[0]["score"],
+            "engagement_score":  results[1]["score"],
+            "budget_score":      results[2]["score"],
+            "timing_score":      results[3]["score"],
+        }
+        details = {
+            "demographic": results[0],
+            "engagement":  results[1],
+            "budget":      results[2],
+            "timing":      results[3],
+        }
+
+        final = await self.aggregator.acall(**scores)
+        return {**final, **scores, "score_details": details}
 ```
 
 ---
 
-## Complete Example
+## Examples
+
+???+ example
+
+    === "Single lead"
+
+        ```python
+        scorer = LeadScorer()
+
+        result = scorer(
+            "Company: PayStream, 200 employees, Series B fintech, San Francisco. "
+            "Role: VP Engineering. "
+            "Activity: Visited pricing page 4x this week, downloaded security whitepaper, "
+            "attended live demo, replied to SDR email. "
+            "Budget signals: $40M Series B, currently paying $8k/mo on Datadog. "
+            "Timing: Current contract with Segment renews in 60 days."
+        )
+
+        print(f"Score: {result['final_score']:.1f}/100  |  Tier: {result['tier']}")
+        print(f"Next action: {result['next_action']}")
+        print(f"Rationale: {result['rationale']}")
+        ```
+
+    === "Ranked batch (sync)"
+
+        Score a list of leads and sort by final score:
+
+        ```python
+        leads = [
+            {
+                "name": "Alice Chen — VP Engineering at FinTech Series B ($40M raised)",
+                "data": (
+                    "Company: PayStream, 200 employees, Series B fintech, San Francisco. "
+                    "Role: VP Engineering. "
+                    "Activity: Visited pricing page 4x this week, downloaded security whitepaper, "
+                    "attended live demo, replied to SDR email. "
+                    "Budget signals: $40M Series B, currently paying $8k/mo on Datadog. "
+                    "Timing: Current contract with Segment renews in 60 days."
+                ),
+            },
+            {
+                "name": "Bob Martinez — Marketing Manager at SMB retail",
+                "data": (
+                    "Company: LocalShop, 12 employees, bootstrapped retail, Texas. "
+                    "Role: Marketing Manager. "
+                    "Activity: One blog post view last month, no other engagement. "
+                    "Budget signals: Revenue ~$2M/year, no tech stack mentioned. "
+                    "Timing: No renewal signals, exploring options casually."
+                ),
+            },
+            {
+                "name": "Carol Davis — CTO at Health Tech startup",
+                "data": (
+                    "Company: MedAnalytics, 80 employees, Seed-funded health tech, Boston. "
+                    "Role: CTO. "
+                    "Activity: Requested a trial account, asked detailed API questions in chat, "
+                    "watched 3 product demos. "
+                    "Budget signals: $5M seed, HIPAA compliance is a hard requirement. "
+                    "Timing: Launching new product in Q2, needs infrastructure now."
+                ),
+            },
+        ]
+
+        scorer = LeadScorer()
+        scored_leads = [(lead["name"], scorer(lead["data"])) for lead in leads]
+        scored_leads.sort(key=lambda x: x[1]["final_score"], reverse=True)
+
+        print("\n" + "=" * 60)
+        print("LEAD SCORING RESULTS")
+        print("=" * 60)
+
+        for rank, (name, result) in enumerate(scored_leads, 1):
+            print(f"\n#{rank} — {name}")
+            print(f"   Score: {result['final_score']:.1f}/100  |  Tier: {result['tier']}")
+            print(f"   Demographic: {result['demographic_score']:.2f}  "
+                  f"Engagement: {result['engagement_score']:.2f}  "
+                  f"Budget: {result['budget_score']:.2f}  "
+                  f"Timing: {result['timing_score']:.2f}")
+            print(f"   Next action: {result['next_action']}")
+            print(f"   Rationale: {result['rationale']}")
+        ```
+
+    === "Concurrent batch (async)"
+
+        Score all leads simultaneously — each lead's four scorers run in parallel, and multiple leads are also processed concurrently:
+
+        ```python
+        import asyncio
+
+
+        async def main():
+            scorer = LeadScorer()
+
+            results = await F.amap_gather(
+                scorer,
+                args_list=[(lead["data"],) for lead in leads],
+            )
+
+            for lead, result in zip(leads, results):
+                print(f"{lead['name']}: {result['final_score']:.1f} (Tier {result['tier']})")
+
+
+        asyncio.run(main())
+        ```
+
+---
+
+## Extending
+
+### Adding a scoring dimension
+
+Add a new `Signature`, wrap it in an `Agent`, and append it to `self.scorers`. Then add a corresponding `InputField` to `AggregateScore` and update the weight distribution in the `final_score` description:
 
 ```python
+class TechFitScore(Signature):
+    """Score technology stack alignment with the product's integration requirements."""
+    lead_data: str = InputField(desc="Technology stack, integrations, API usage")
+    score: float = OutputField(desc="Tech fit score 0.0-1.0")
+    rationale: str = OutputField(desc="One sentence explanation")
+    compatible_tools: List[str] = OutputField(desc="Tools that integrate with the product")
+
+
+class TechFitScorer(nn.Agent):
+    model = model
+    signature = TechFitScore
+    config = {"verbose": True}
+```
+
+Then add `tech_fit_score: float = InputField(...)` to `AggregateScore` and pass it to the aggregator in `forward`:
+
+```python
+scores = {
+    ...,
+    "tech_fit_score": results[4]["score"],
+}
+```
+
+### Routing by tier after scoring
+
+Filter and route the result immediately after the `LeadScorer` returns:
+
+```python
+result = scorer(lead_data)
+if result["tier"] == "A":
+    schedule_outreach(result)
+```
+
+### Inspecting dimension details
+
+Each `results[i]` dict from `bcast_gather` carries the full scorer output — not just the score:
+
+```python
+result = scorer(lead_data)
+demographic = result["score_details"]["demographic"]
+print(demographic["strengths"])   # ['Series B', 'decision-maker role', ...]
+print(demographic["gaps"])        # ['outside target geography', ...]
+
+engagement = result["score_details"]["engagement"]
+print(engagement["hot_signals"])  # ['attended live demo', 'replied to SDR email']
+```
+
+---
+
+## Complete Script
+
+```python
+import asyncio
 import msgflux as mf
 import msgflux.nn as nn
 import msgflux.nn.functional as F
-from msgflux import Message, Signature, InputField, OutputField
+from msgflux import Signature, InputField, OutputField
 from typing import Literal, List
 
 
@@ -339,23 +564,45 @@ class LeadScorer(nn.Module):
         ]
         self.aggregator = Aggregator()
 
-    def forward(self, msg):
-        results = F.bcast_gather(self.scorers, msg.lead_data)
+    def forward(self, lead_data: str) -> dict:
+        results = F.bcast_gather(self.scorers, {"lead_data": lead_data})
 
-        msg.demographic_score = results[0]["score"]
-        msg.engagement_score  = results[1]["score"]
-        msg.budget_score      = results[2]["score"]
-        msg.timing_score      = results[3]["score"]
-
-        msg.score_details = {
+        scores = {
+            "demographic_score": results[0]["score"],
+            "engagement_score":  results[1]["score"],
+            "budget_score":      results[2]["score"],
+            "timing_score":      results[3]["score"],
+        }
+        details = {
             "demographic": results[0],
             "engagement":  results[1],
             "budget":      results[2],
             "timing":      results[3],
         }
 
-        self.aggregator(msg)
-        return msg
+        final = self.aggregator(**scores)
+        return {**final, **scores, "score_details": details}
+
+    async def aforward(self, lead_data: str) -> dict:
+        results = await F.abcast_gather(
+            self.scorers, {"lead_data": lead_data}
+        )
+
+        scores = {
+            "demographic_score": results[0]["score"],
+            "engagement_score":  results[1]["score"],
+            "budget_score":      results[2]["score"],
+            "timing_score":      results[3]["score"],
+        }
+        details = {
+            "demographic": results[0],
+            "engagement":  results[1],
+            "budget":      results[2],
+            "timing":      results[3],
+        }
+
+        final = await self.aggregator.acall(**scores)
+        return {**final, **scores, "score_details": details}
 
 
 # ── Leads ─────────────────────────────────────────────────────────────────────
@@ -396,79 +643,29 @@ leads = [
 ]
 
 scorer = LeadScorer()
-scored_leads = []
-
-for lead in leads:
-    msg = Message(lead_data=lead["data"])
-    scorer(msg)
-    scored_leads.append((lead["name"], msg))
-
-# Sort by final score
-scored_leads.sort(key=lambda x: x[1].final_score, reverse=True)
+scored_leads = [(lead["name"], scorer(lead["data"])) for lead in leads]
+scored_leads.sort(key=lambda x: x[1]["final_score"], reverse=True)
 
 print("\n" + "=" * 60)
 print("LEAD SCORING RESULTS")
 print("=" * 60)
 
-for rank, (name, msg) in enumerate(scored_leads, 1):
+for rank, (name, result) in enumerate(scored_leads, 1):
     print(f"\n#{rank} — {name}")
-    print(f"   Score: {msg.final_score:.1f}/100  |  Tier: {msg.tier}")
-    print(f"   Demographic: {msg.demographic_score:.2f}  "
-          f"Engagement: {msg.engagement_score:.2f}  "
-          f"Budget: {msg.budget_score:.2f}  "
-          f"Timing: {msg.timing_score:.2f}")
-    print(f"   Next action: {msg.next_action}")
-    print(f"   Rationale: {msg.rationale}")
+    print(f"   Score: {result['final_score']:.1f}/100  |  Tier: {result['tier']}")
+    print(f"   Demographic: {result['demographic_score']:.2f}  "
+          f"Engagement: {result['engagement_score']:.2f}  "
+          f"Budget: {result['budget_score']:.2f}  "
+          f"Timing: {result['timing_score']:.2f}")
+    print(f"   Next action: {result['next_action']}")
+    print(f"   Rationale: {result['rationale']}")
 ```
 
 ---
 
-## Async Batch Scoring
+## Further Reading
 
-Score a large batch of leads concurrently — each lead's four scorers run in parallel, and multiple leads are processed simultaneously:
-
-```python
-import asyncio
-
-
-class LeadScorer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.scorers = [
-            DemographicScorer(),
-            EngagementScorer(),
-            BudgetScorer(),
-            TimingScorer(),
-        ]
-        self.aggregator = Aggregator()
-
-    async def aforward(self, msg):
-        results = await F.ascatter_gather(
-            [s.acall for s in self.scorers],
-            args_list=[(msg.lead_data,)] * len(self.scorers),
-        )
-
-        msg.demographic_score = results[0]["score"]
-        msg.engagement_score  = results[1]["score"]
-        msg.budget_score      = results[2]["score"]
-        msg.timing_score      = results[3]["score"]
-
-        await self.aggregator.acall(msg)
-        return msg
-
-
-async def main():
-    scorer = LeadScorer()
-    messages = [Message(lead_data=lead["data"]) for lead in leads]
-
-    # All leads scored concurrently
-    results = await F.ascatter_gather(
-        [scorer.acall] * len(messages),
-        args_list=[(msg,) for msg in messages],
-    )
-
-    for lead, msg in zip(leads, results):
-        print(f"{lead['name']}: {msg.final_score:.1f} (Tier {msg.tier})")
-
-asyncio.run(main())
-```
+- [nn.Agent](../learn/nn/agent/index.md) — signatures, message fields, and structured output
+- [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts
+- [Functional API](../learn/nn/functional.md) — `bcast_gather`, `abcast_gather`, and parallel execution
+- [Generation Schemas](../learn/nn/agent/generation-schemas.md) — `ChainOfThought` and structured output

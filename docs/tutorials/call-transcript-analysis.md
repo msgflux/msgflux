@@ -1,49 +1,99 @@
 # Call Transcript Analysis
 
-Analyze customer service transcripts across three conversational phases — opening, middle, and closing — extracting per-phase sentiments with their rationale, and a resolution verdict with its justification. Uses `Signature` combined with `generation_schema=ChainOfThought` so the model reasons holistically over the conversation arc before producing structured outputs.
+<span class="tag tag-purple">Intermediate</span>
 
-## What You'll Build
+Customer service teams review call quality manually — a supervisor listens to recordings, fills out a scorecard, and writes notes. At 5–10 minutes per call, a team handling hundreds of calls a day can review only a fraction of them.
+
+## The Problem
+
+The standard approach to quality assurance on call center transcripts looks like this.
 
 ```
-Transcript
-    │
-    ▼
-CallAnalyzer (Agent)
-  ├── generation_schema = ChainOfThought  →  msg.reasoning
-  └── signature = CallAnalysisSignature   →  msg.final_answer
-                                                 │
-                              ┌──────────────────┼──────────────────┐
-                              ▼                  ▼                  ▼
-                         Sentiments         Trajectory         Resolution
-                     opening / middle    improved / stable    was_resolved
-                       / closing          / worsened           + quality
-                     + reason each        + summary            + reason
+Call transcript
+       │
+       ▼
+┌──────────────────────────────────────────┐
+│             SupervisorAgent              │
+│                                          │
+│   read transcript  ←──→  score it        │
+└──────────────────────────────────────────┘
+       │ one number, one comment
+       ▼
+   quality report
 ```
 
-The reasoning trace (`msg.reasoning`) records *how* the model interpreted the conversation before committing to each label — invaluable for auditing disputed cases.
+- A single pass without structure produces inconsistent results. Two reviewers score the same call differently.
+- Phase-level detail is lost. A call where the customer started angry but ended satisfied looks the same as one that was neutral throughout.
+- There is no evidence trail. The score exists but not why it was given — disputed calls can't be audited.
+- Scale is the bottleneck. Volume grows faster than review capacity.
+
+You are sampling, not monitoring.
+
+---
+
+## The Plan
+
+We will build an analyzer that produces a structured breakdown of a call in a single pass: per-phase sentiment with a reason for each label, a sentiment arc across the conversation, resolution quality, and a predicted CSAT score.
+
+The key design choice is asking the model to reason step by step before filling any field. Classifying sentiment across three temporal phases is not a lookup — the model must locate where each phase begins, identify the language that carries sentiment, and weigh the trajectory before committing to labels. Without a shared reasoning step, each output field is filled independently and the results can contradict each other: the closing phase labeled satisfied while the resolution is flagged as absent. With step-by-step reasoning, a single interpretation is built first, all fields follow from it, and that reasoning is returned alongside the results as an audit trail you can inspect for every call.
+
+This tutorial uses the **imperative API**: the analyzer is called directly with a transcript string and returns a plain dict.
+
+---
+
+## Architecture
+
+```
+transcript: str
+       │
+       ▼
+  CallAnalyzer (nn.Module)
+       │
+       ▼
+  _Analyzer (nn.Agent)
+    ├── signature = CallAnalysisSignature
+    └── generation_schema = ChainOfThought
+              │
+              ▼
+         raw output
+    ├── reasoning     ← "Let's think step by step..."
+    └── final_answer
+          ├── opening_sentiment / opening_reason
+          ├── middle_sentiment  / middle_reason
+          ├── closing_sentiment / closing_reason
+          ├── sentiment_trajectory / trajectory_summary
+          ├── was_resolved / resolution_quality / resolution_reason
+          └── csat_prediction
+              │
+              ▼ (unwrapped by CallAnalyzer.forward)
+         dict: all output fields + "reasoning"
+```
+
+The `reasoning` field records *how* the model interpreted the conversation before committing to each label — invaluable for auditing disputed cases. The `CallAnalyzer.forward` method unwraps the CoT envelope with `result.get("final_answer", result)` so callers receive a flat dict with all fields, including `reasoning`, at the top level.
 
 ---
 
 ## Setup
 
-```bash
-pip install msgflux[openai]
-```
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
+--8<-- "docs/_includes/init_chat_completion_model.md"
 
 ---
 
-## Step 1 — Define the Signature
+## Step 1 — Signature
 
-The `Signature` encodes the full analytical contract: what goes in, and every structured field that comes out. Separate `reason` fields for sentiments and resolution force the model to provide evidence, not just labels:
+The `Signature` encodes the full analytical contract: one input field and every structured field the model must produce. Separate `reason` fields for each sentiment and for the resolution verdict force the model to provide evidence, not just labels.
 
 ```python
 import msgflux as mf
+import msgflux.nn as nn
 from msgflux import Signature, InputField, OutputField
+from msgflux.generation.reasoning import ChainOfThought
 from typing import Literal
+
+mf.load_dotenv()
+
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
 
 class CallAnalysisSignature(Signature):
     """
@@ -85,7 +135,9 @@ class CallAnalysisSignature(Signature):
 
     # ── Trajectory ────────────────────────────────────────────────────────────
 
-    sentiment_trajectory: Literal["improved", "stable_positive", "stable_neutral", "stable_negative", "worsened", "volatile"] = OutputField(
+    sentiment_trajectory: Literal[
+        "improved", "stable_positive", "stable_neutral", "stable_negative", "worsened", "volatile"
+    ] = OutputField(
         desc="Overall arc of the customer's emotional state from opening to closing"
     )
     trajectory_summary: str = OutputField(
@@ -97,7 +149,9 @@ class CallAnalysisSignature(Signature):
     was_resolved: bool = OutputField(
         desc="True if the customer's core issue was addressed and closed by the end of the call"
     )
-    resolution_quality: Literal["fully_resolved", "partially_resolved", "unresolved", "escalated"] = OutputField(
+    resolution_quality: Literal[
+        "fully_resolved", "partially_resolved", "unresolved", "escalated"
+    ] = OutputField(
         desc=(
             "fully_resolved: issue closed and customer acknowledged; "
             "partially_resolved: progress made but follow-up required; "
@@ -109,7 +163,7 @@ class CallAnalysisSignature(Signature):
         desc="Concrete evidence from the transcript that supports the resolution verdict"
     )
 
-    # ── Prediction ────────────────────────────────────────────────────────────
+    # ── CSAT Prediction ───────────────────────────────────────────────────────
 
     csat_prediction: int = OutputField(
         desc="Predicted CSAT score the customer would give (1 = very dissatisfied, 5 = very satisfied)"
@@ -118,100 +172,35 @@ class CallAnalysisSignature(Signature):
 
 ---
 
-## Step 2 — Combine with ChainOfThought
+## Step 2 — Agent and Wrapper
 
-Adding `generation_schema=ChainOfThought` makes msgFlux fuse the two schemas: the model first fills a `reasoning` field (step-by-step analysis of the transcript), then populates `final_answer` with every field from the signature:
+`_Analyzer` is the raw agent — it takes `{"transcript": text}` and returns the fused CoT output. `CallAnalyzer` wraps it: `forward` unwraps the `final_answer` envelope and merges `reasoning` into the returned dict so all fields are accessible at the top level.
 
 ```python
-import msgflux.nn as nn
-from msgflux.generation.reasoning import ChainOfThought
-
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-
-class CallAnalyzer(nn.Agent):
-    """Analyzes a customer service transcript across phases and evaluates resolution."""
+class _Analyzer(nn.Agent):
     model = model
     signature = CallAnalysisSignature
     generation_schema = ChainOfThought
     config = {"verbose": True}
-```
-
-The fused schema that msgFlux builds internally:
-
-```
-Output
-  ├── reasoning     — "Let's think step by step …" (ChainOfThought)
-  └── final_answer
-        ├── opening_sentiment / opening_reason
-        ├── middle_sentiment  / middle_reason
-        ├── closing_sentiment / closing_reason
-        ├── sentiment_trajectory / trajectory_summary
-        ├── was_resolved / resolution_quality / resolution_reason
-        └── csat_prediction
-```
-
----
-
-## Step 3 — Build the Pipeline
-
-A thin `Module` wraps the agent and prints a formatted report:
-
-```python
-from msgflux import Message
 
 
-class CallAnalysisPipeline(nn.Module):
-    """Runs the full analysis and formats the result."""
-
+class CallAnalyzer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.analyzer = CallAnalyzer()
+        self.agent = _Analyzer()
 
-    def forward(self, msg: Message) -> Message:
-        self.analyzer(msg)
-        return msg
+    def forward(self, transcript: str) -> dict:
+        raw = self.agent({"transcript": transcript})
+        return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 
-
-def print_report(msg: Message) -> None:
-    """Print a formatted analysis report from a processed Message."""
-    trajectory_icon = {
-        "improved": "📈",
-        "stable_positive": "✅",
-        "stable_neutral": "➡️",
-        "stable_negative": "⚠️",
-        "worsened": "📉",
-        "volatile": "〰️",
-    }.get(msg.sentiment_trajectory, "❓")
-
-    resolution_icon = "✅" if msg.was_resolved else "❌"
-
-    print("=" * 60)
-    print("CALL ANALYSIS REPORT")
-    print("=" * 60)
-
-    print("\n── Sentiment by Phase ──────────────────────────────────")
-    print(f"  Opening  [{msg.opening_sentiment:>10}]  {msg.opening_reason}")
-    print(f"  Middle   [{msg.middle_sentiment:>10}]  {msg.middle_reason}")
-    print(f"  Closing  [{msg.closing_sentiment:>10}]  {msg.closing_reason}")
-
-    print(f"\n── Trajectory {trajectory_icon} ────────────────────────────────────")
-    print(f"  {msg.sentiment_trajectory.upper()}: {msg.trajectory_summary}")
-
-    print(f"\n── Resolution {resolution_icon} ────────────────────────────────────")
-    print(f"  Quality : {msg.resolution_quality}")
-    print(f"  Reason  : {msg.resolution_reason}")
-
-    print(f"\n── CSAT Prediction {'⭐' * msg.csat_prediction} ({'⭐' * msg.csat_prediction}/{5 * '⭐'})")
-
-    print("\n── Reasoning Trace ─────────────────────────────────────")
-    print(f"  {msg.reasoning}")
-    print("=" * 60)
+    async def aforward(self, transcript: str) -> dict:
+        raw = await self.agent.acall({"transcript": transcript})
+        return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 ```
 
 ---
 
-## Step 4 — Run Against a Sample Transcript
+## Step 3 — Run It
 
 ```python
 TRANSCRIPT_RESOLVED = """
@@ -238,27 +227,172 @@ TRANSCRIPT_UNRESOLVED = """
 [Customer]: Whatever.
 """
 
-pipeline = CallAnalysisPipeline()
 
-for label, transcript in [("RESOLVED", TRANSCRIPT_RESOLVED), ("UNRESOLVED", TRANSCRIPT_UNRESOLVED)]:
-    print(f"\n\n{'#' * 60}")
-    print(f"# SCENARIO: {label}")
-    print(f"{'#' * 60}")
-    msg = Message(transcript=transcript)
-    pipeline(msg)
-    print_report(msg)
+def print_report(a: dict) -> None:
+    trajectory_icon = {
+        "improved": "📈", "stable_positive": "✅", "stable_neutral": "➡️",
+        "stable_negative": "⚠️", "worsened": "📉", "volatile": "〰️",
+    }.get(a["sentiment_trajectory"], "❓")
+    resolution_icon = "✅" if a["was_resolved"] else "❌"
+
+    print("=" * 60)
+    print("CALL ANALYSIS REPORT")
+    print("=" * 60)
+    print("\n── Sentiment by Phase ──────────────────────────────────")
+    print(f"  Opening  [{a['opening_sentiment']:>10}]  {a['opening_reason']}")
+    print(f"  Middle   [{a['middle_sentiment']:>10}]  {a['middle_reason']}")
+    print(f"  Closing  [{a['closing_sentiment']:>10}]  {a['closing_reason']}")
+    print(f"\n── Trajectory {trajectory_icon} ────────────────────────────────────")
+    print(f"  {a['sentiment_trajectory'].upper()}: {a['trajectory_summary']}")
+    print(f"\n── Resolution {resolution_icon} ────────────────────────────────────")
+    print(f"  Quality : {a['resolution_quality']}")
+    print(f"  Reason  : {a['resolution_reason']}")
+    print(f"\n── CSAT Prediction ({'⭐' * a['csat_prediction']}) ({a['csat_prediction']}/5)")
+    print("\n── Reasoning Trace ─────────────────────────────────────")
+    print(f"  {a['reasoning']}")
+    print("=" * 60)
+
+
+analyzer = CallAnalyzer()
+
+for label, transcript in [
+    ("RESOLVED CALL", TRANSCRIPT_RESOLVED),
+    ("UNRESOLVED CALL", TRANSCRIPT_UNRESOLVED),
+]:
+    print(f"\n\n{'#' * 60}\n# {label}\n{'#' * 60}")
+    analysis = analyzer(transcript)
+    print_report(analysis)
 ```
 
 ---
 
-## Complete Example
+## Examples
+
+???+ example
+
+    === "Resolved call"
+
+        ```python
+        analyzer = CallAnalyzer()
+        analysis = analyzer(TRANSCRIPT_RESOLVED)
+
+        print(f"Trajectory : {analysis['sentiment_trajectory']}")
+        print(f"Resolution : {analysis['resolution_quality']}")
+        print(f"CSAT       : {analysis['csat_prediction']}/5")
+        print(f"Reasoning  : {analysis['reasoning']}")
+        ```
+
+    === "Escalated call"
+
+        ```python
+        analyzer = CallAnalyzer()
+        analysis = analyzer(TRANSCRIPT_UNRESOLVED)
+
+        print(f"Trajectory : {analysis['sentiment_trajectory']}")
+        print(f"Resolution : {analysis['resolution_quality']}")
+        print(f"CSAT       : {analysis['csat_prediction']}/5")
+        print(f"Opening    : {analysis['opening_sentiment']} — {analysis['opening_reason']}")
+        print(f"Closing    : {analysis['closing_sentiment']} — {analysis['closing_reason']}")
+        ```
+
+    === "Async batch"
+
+        Score a queue of transcripts concurrently — each runs an independent model call:
+
+        ```python
+        import asyncio
+        import msgflux.nn.functional as F
+
+
+        async def main():
+            analyzer = CallAnalyzer()
+            transcripts = [TRANSCRIPT_RESOLVED, TRANSCRIPT_UNRESOLVED]
+
+            results = await F.amap_gather(
+                analyzer,
+                args_list=[(t,) for t in transcripts],
+            )
+
+            for i, analysis in enumerate(results, 1):
+                print(
+                    f"Call {i}: "
+                    f"trajectory={analysis['sentiment_trajectory']}, "
+                    f"resolved={analysis['was_resolved']}, "
+                    f"csat={analysis['csat_prediction']}/5"
+                )
+
+
+        asyncio.run(main())
+        ```
+
+---
+
+## Extending
+
+### Adding agent quality metrics
+
+Add output fields to `CallAnalysisSignature` to turn this into a full QA scorecard:
 
 ```python
+agent_empathy: Literal["high", "medium", "low"] = OutputField(
+    desc="Degree to which the agent acknowledged and validated the customer's feelings"
+)
+protocol_compliance: bool = OutputField(
+    desc="True if the agent followed standard greeting, verification, and closing procedures"
+)
+```
+
+The `reasoning` step will naturally incorporate these new fields into its analysis before filling them.
+
+### Routing by resolution quality
+
+Act immediately on the result without any extra infrastructure:
+
+```python
+analysis = analyzer(transcript)
+
+if analysis["resolution_quality"] == "escalated":
+    flag_for_supervisor(analysis)
+elif analysis["csat_prediction"] <= 2:
+    schedule_callback(analysis)
+```
+
+### Building a service health dashboard
+
+Run `amap_gather` over a day's call batch and aggregate:
+
+```python
+results = await F.amap_gather(analyzer, args_list=[(t,) for t in transcripts])
+
+from collections import Counter
+
+trajectories = Counter(r["sentiment_trajectory"] for r in results)
+avg_csat     = sum(r["csat_prediction"] for r in results) / len(results)
+resolved_pct = sum(r["was_resolved"] for r in results) / len(results) * 100
+
+print(f"Resolved: {resolved_pct:.1f}%  |  Avg CSAT: {avg_csat:.2f}")
+print(f"Trajectories: {dict(trajectories)}")
+```
+
+---
+
+## Complete Script
+
+```python
+import asyncio
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import Message, Signature, InputField, OutputField
+import msgflux.nn.functional as F
+from msgflux import Signature, InputField, OutputField
 from msgflux.generation.reasoning import ChainOfThought
 from typing import Literal
+
+mf.load_dotenv()
+
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
 # ── Signature ─────────────────────────────────────────────────────────────────
@@ -279,37 +413,37 @@ class CallAnalysisSignature(Signature):
     )
 
     opening_sentiment: Literal["positive", "neutral", "frustrated", "angry"] = OutputField(
-        desc="Customer sentiment in the opening phase (roughly the first third of the conversation)"
+        desc="Customer sentiment in the opening phase (roughly the first third)"
     )
     opening_reason: str = OutputField(
         desc="Specific words, tone, or cues from the opening that justify this sentiment"
     )
-
     middle_sentiment: Literal["positive", "neutral", "frustrated", "angry"] = OutputField(
         desc="Customer sentiment in the middle phase (roughly the central third)"
     )
     middle_reason: str = OutputField(
         desc="Specific words, tone, or cues from the middle that justify this sentiment"
     )
-
     closing_sentiment: Literal["positive", "neutral", "satisfied", "frustrated", "angry"] = OutputField(
         desc="Customer sentiment in the closing phase (roughly the final third)"
     )
     closing_reason: str = OutputField(
         desc="Specific words, tone, or cues from the closing that justify this sentiment"
     )
-
-    sentiment_trajectory: Literal["improved", "stable_positive", "stable_neutral", "stable_negative", "worsened", "volatile"] = OutputField(
+    sentiment_trajectory: Literal[
+        "improved", "stable_positive", "stable_neutral", "stable_negative", "worsened", "volatile"
+    ] = OutputField(
         desc="Overall arc of the customer's emotional state from opening to closing"
     )
     trajectory_summary: str = OutputField(
         desc="One or two sentences describing the emotional journey of this call"
     )
-
     was_resolved: bool = OutputField(
         desc="True if the customer's core issue was addressed and closed by the end of the call"
     )
-    resolution_quality: Literal["fully_resolved", "partially_resolved", "unresolved", "escalated"] = OutputField(
+    resolution_quality: Literal[
+        "fully_resolved", "partially_resolved", "unresolved", "escalated"
+    ] = OutputField(
         desc=(
             "fully_resolved: issue closed and customer acknowledged; "
             "partially_resolved: progress made but follow-up required; "
@@ -320,59 +454,58 @@ class CallAnalysisSignature(Signature):
     resolution_reason: str = OutputField(
         desc="Concrete evidence from the transcript that supports the resolution verdict"
     )
-
     csat_prediction: int = OutputField(
         desc="Predicted CSAT score the customer would give (1 = very dissatisfied, 5 = very satisfied)"
     )
 
 
-# ── Model + Agent ─────────────────────────────────────────────────────────────
+# ── Agent and Wrapper ─────────────────────────────────────────────────────────
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-
-class CallAnalyzer(nn.Agent):
-    """Analyzes a customer service transcript across phases and evaluates resolution."""
+class _Analyzer(nn.Agent):
     model = model
     signature = CallAnalysisSignature
     generation_schema = ChainOfThought
     config = {"verbose": True}
 
 
-# ── Pipeline ──────────────────────────────────────────────────────────────────
-
-class CallAnalysisPipeline(nn.Module):
+class CallAnalyzer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.analyzer = CallAnalyzer()
+        self.agent = _Analyzer()
 
-    def forward(self, msg: Message) -> Message:
-        self.analyzer(msg)
-        return msg
+    def forward(self, transcript: str) -> dict:
+        raw = self.agent({"transcript": transcript})
+        return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
+
+    async def aforward(self, transcript: str) -> dict:
+        raw = await self.agent.acall({"transcript": transcript})
+        return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 
 
-def print_report(msg: Message) -> None:
+# ── Report ────────────────────────────────────────────────────────────────────
+
+def print_report(a: dict) -> None:
     trajectory_icon = {
         "improved": "📈", "stable_positive": "✅", "stable_neutral": "➡️",
         "stable_negative": "⚠️", "worsened": "📉", "volatile": "〰️",
-    }.get(msg.sentiment_trajectory, "❓")
-    resolution_icon = "✅" if msg.was_resolved else "❌"
+    }.get(a["sentiment_trajectory"], "❓")
+    resolution_icon = "✅" if a["was_resolved"] else "❌"
 
     print("=" * 60)
     print("CALL ANALYSIS REPORT")
     print("=" * 60)
     print("\n── Sentiment by Phase ──────────────────────────────────")
-    print(f"  Opening  [{msg.opening_sentiment:>10}]  {msg.opening_reason}")
-    print(f"  Middle   [{msg.middle_sentiment:>10}]  {msg.middle_reason}")
-    print(f"  Closing  [{msg.closing_sentiment:>10}]  {msg.closing_reason}")
+    print(f"  Opening  [{a['opening_sentiment']:>10}]  {a['opening_reason']}")
+    print(f"  Middle   [{a['middle_sentiment']:>10}]  {a['middle_reason']}")
+    print(f"  Closing  [{a['closing_sentiment']:>10}]  {a['closing_reason']}")
     print(f"\n── Trajectory {trajectory_icon} ────────────────────────────────────")
-    print(f"  {msg.sentiment_trajectory.upper()}: {msg.trajectory_summary}")
+    print(f"  {a['sentiment_trajectory'].upper()}: {a['trajectory_summary']}")
     print(f"\n── Resolution {resolution_icon} ────────────────────────────────────")
-    print(f"  Quality : {msg.resolution_quality}")
-    print(f"  Reason  : {msg.resolution_reason}")
-    print(f"\n── CSAT Prediction {'⭐' * msg.csat_prediction} ({msg.csat_prediction}/5)")
+    print(f"  Quality : {a['resolution_quality']}")
+    print(f"  Reason  : {a['resolution_reason']}")
+    print(f"\n── CSAT Prediction ({'⭐' * a['csat_prediction']}) ({a['csat_prediction']}/5)")
     print("\n── Reasoning Trace ─────────────────────────────────────")
-    print(f"  {msg.reasoning}")
+    print(f"  {a['reasoning']}")
     print("=" * 60)
 
 
@@ -402,81 +535,25 @@ TRANSCRIPT_UNRESOLVED = """
 [Customer]: Whatever.
 """
 
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
-pipeline = CallAnalysisPipeline()
+analyzer = CallAnalyzer()
 
 for label, transcript in [
     ("RESOLVED CALL", TRANSCRIPT_RESOLVED),
     ("UNRESOLVED CALL", TRANSCRIPT_UNRESOLVED),
 ]:
-    print(f"\n\n{'#' * 60}\n# SCENARIO: {label}\n{'#' * 60}")
-    msg = Message(transcript=transcript)
-    pipeline(msg)
-    print_report(msg)
+    print(f"\n\n{'#' * 60}\n# {label}\n{'#' * 60}")
+    analysis = analyzer(transcript)
+    print_report(analysis)
 ```
 
 ---
 
-## Batch Analysis
+## Further Reading
 
-Analyze a queue of transcripts in parallel with `ascatter_gather`:
-
-```python
-import asyncio
-import msgflux.nn.functional as F
-from msgflux import Message
-
-
-class AsyncCallAnalysisPipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.analyzer = CallAnalyzer()
-
-    async def aforward(self, msg: Message) -> Message:
-        await self.analyzer.acall(msg)
-        return msg
-
-
-async def analyze_batch(transcripts: list[str]) -> list[Message]:
-    pipeline = AsyncCallAnalysisPipeline()
-    messages = [Message(transcript=t) for t in transcripts]
-
-    return await F.ascatter_gather(
-        [pipeline.acall] * len(messages),
-        args_list=[(msg,) for msg in messages],
-    )
-
-
-async def main():
-    transcripts = [TRANSCRIPT_RESOLVED, TRANSCRIPT_UNRESOLVED]
-    results = await analyze_batch(transcripts)
-
-    for i, msg in enumerate(results, 1):
-        print(f"\nCall {i}: trajectory={msg.sentiment_trajectory}, "
-              f"resolved={msg.was_resolved}, csat={msg.csat_prediction}/5")
-
-
-asyncio.run(main())
-```
-
----
-
-## Why ChainOfThought improves phase analysis
-
-Sentiment classification across temporal phases is a *reasoning task*, not a lookup task. The model must:
-
-1. Locate where each phase begins and ends
-2. Identify sentiment-carrying language in each zone
-3. Weigh the trajectory across all three before committing to labels
-4. Decide whether resolution evidence is present or absent
-
-Without `ChainOfThought`, the model answers each field independently and can produce incoherent combinations (e.g., `closing_sentiment = "satisfied"` but `was_resolved = false`). With CoT, the `reasoning` step builds a shared context that keeps all fields internally consistent — and leaves an audit trail in `msg.reasoning` for every decision.
-
----
-
-## Next Steps
-
-- **Agent quality scoring**: Add output fields like `agent_empathy`, `response_speed`, and `protocol_compliance` to turn this into a full QA scorecard.
-- **Topic extraction**: Add a `main_topic: str` and `issue_category: Literal[...]` field to route reports by department automatically.
-- **Multi-call trend**: Run `analyze_batch` over a week of calls and aggregate `sentiment_trajectory` and `csat_prediction` to build a daily service health dashboard.
+- [nn.Agent](../learn/nn/agent/index.md) — signatures, message fields, and structured output
+- [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts
+- [Generation Schemas](../learn/nn/agent/generation-schemas.md) — `ChainOfThought` and structured output
+- [Functional API](../learn/nn/functional.md) — `amap_gather` and parallel execution

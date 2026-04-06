@@ -447,7 +447,7 @@ async def main():
     tracker  = MeetingTracker()
     audios   = [open(f, "rb").read() for f in ["week1.mp3", "week2.mp3", "week3.mp3"]]
     results  = await F.amap_gather(
-        tracker.acall,
+        tracker,
         kwargs_list=[{"audio": a} for a in audios],
     )
     for i, r in enumerate(results, 1):
