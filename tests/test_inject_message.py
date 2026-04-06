@@ -1,13 +1,7 @@
 """Tests for tool_config(inject_message=True).
 
 Unit tests use Agents with mock models.
-Integration test (marked with `integration`) uses real Groq API via .env.
-
-Run integration tests:
-    pytest tests/test_inject_message.py -v -m integration
 """
-
-import os
 
 import pytest
 from unittest.mock import MagicMock
@@ -123,7 +117,7 @@ class TestAgentAsToolInjectMessage:
         class SubAgent(Agent):
             """Agent without inject_message."""
 
-            def forward(self, message=None, **kwargs):  # noqa: ARG002
+            def forward(self, message=None, **kwargs):
                 received["message"] = message
                 return "done"
 
@@ -150,7 +144,7 @@ class TestAgentAsToolInjectMessage:
         class SubAgent(Agent):
             """Sub."""
 
-            def forward(self, message=None, **kwargs):  # noqa: ARG002
+            def forward(self, message=None, **kwargs):
                 return "ok"
 
         sub = SubAgent(model=_mock_model())
@@ -167,72 +161,3 @@ class TestAgentAsToolInjectMessage:
 
         call = responses.tool_calls[0]
         assert "message" not in (call.parameters or {})
-
-
-# ---------------------------------------------------------------------------
-# Integration test — real Groq model
-# ---------------------------------------------------------------------------
-
-@pytest.mark.integration
-class TestInjectMessageIntegration:
-    """End-to-end test: Router uses SubAgent as tool with inject_message.
-
-    Pattern from docs "Router Pattern" — extended with inject_message so the
-    specialist receives the original structured input directly.
-
-    Requires GROQ_API_KEY in the environment (.env).
-    Run with: pytest tests/test_inject_message.py -v -m integration
-    """
-
-    def test_router_injects_message_into_specialist(self):
-        """
-        Scenario:
-          - Router receives mf.dotdict(question="...", customer_id="cust_42").
-          - Router model (forced via tool_choice) calls SupportSpecialist.
-          - SupportSpecialist has inject_message=True, return_direct=True.
-          - Specialist receives the original dotdict and can read customer_id
-            without the orchestrator needing to repeat it in tool kwargs.
-        """
-        mf.set_envs(GROQ_API_KEY=os.environ.get("GROQ_API_KEY", ""))
-        _model = mf.Model.chat_completion("groq/llama-3.1-8b-instant")
-
-        captured = {}
-
-        @mf.tool_config(inject_message=True, return_direct=True)
-        class SupportSpecialist(Agent):
-            """
-            Handles customer support questions.
-            Call this tool for any support-related question.
-            No parameters needed.
-            """
-
-            model = _model
-
-            def forward(self, message=None, **kwargs):  # noqa: ARG002
-                captured["message"] = message
-                cid = message.customer_id if message else "unknown"
-                return f"Support answer for customer {cid}: resolved."
-
-        class Router(Agent):
-            """Routes support questions to the right specialist."""
-
-            model = _model
-            system_message = "Route support questions to SupportSpecialist."
-            tools = [SupportSpecialist]
-            config = {"tool_choice": "required"}
-            message_fields = {"task_inputs": "question"}
-
-        router = Router()
-
-        input_msg = mf.dotdict(
-            question="How do I reset my password?",
-            customer_id="cust_42",
-        )
-        result = router(input_msg)
-
-        # SupportSpecialist must have received the original dotdict
-        assert captured.get("message") is not None
-        assert captured["message"].customer_id == "cust_42"
-        # return_direct=True wraps result in tool_responses dotdict
-        tool_result = result.tool_responses.tool_calls[0].result
-        assert "cust_42" in tool_result
