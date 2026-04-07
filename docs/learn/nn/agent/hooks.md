@@ -137,7 +137,6 @@ guard = Guard(validator=my_validator, on="pre")
             return {"safe": "forbidden" not in str(data).lower()}
 
         def toxicity_check(data):
-            # ... call moderation API ...
             return {"safe": True}
 
         class MultiGuardBot(nn.Agent):
@@ -274,7 +273,7 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
     === "Async Custom Hook"
 
         ```python
-        import asyncio
+        import httpx
         from msgflux.nn.hooks import Hook
 
         class AsyncWebhookHook(Hook):
@@ -287,9 +286,7 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
             def __call__(self, module, args, kwargs, output=None):
                 pass  # sync fallback — no-op
 
-            async def acall(self, module, args, kwargs, output=None):
-                # async HTTP call to webhook
-                import httpx
+            async def acall(self, module, args, kwargs, output=None):                
                 async with httpx.AsyncClient() as client:
                     await client.post(self.webhook_url, json={"status": "ok"})
         ```

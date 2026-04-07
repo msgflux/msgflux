@@ -231,8 +231,8 @@ Signatures support various field types for different use cases:
 | `int`, `float` | Numbers | `count: int`, `score: float` |
 | `bool` | Boolean | `is_valid: bool` |
 | `Literal[...]` | Constrained choices | `sentiment: Literal["pos", "neg"]` |
+| `dict[str, T]` | Dictionaries | `metadata: dict[str, float]` |
 | `List[T]` | Lists | `tags: List[str]` |
-<!--  | `dict` | Dictionaries | `metadata: dict` | -->
 | `Image` | Image input | `photo: Image` |
 | `Audio` | Audio input | `recording: Audio` |
 | `Video` | Video input | `clip: Video` |
@@ -283,7 +283,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
             confidence: float = mf.OutputField(desc="Confidence score 0-1")
 
         class Classifier(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = ImageClassifier
 
         agent = Classifier()
@@ -343,7 +343,7 @@ When using signatures, you can pass inputs in multiple ways:
         # mf.set_envs(OPENAI_API_KEY="...")
 
         class Translator(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = "english -> portuguese"
 
         agent = Translator()
@@ -362,7 +362,8 @@ When using signatures, you can pass inputs in multiple ways:
         # mf.set_envs(OPENAI_API_KEY="...")
 
         class Translator(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            signature = "english -> portuguese"
 
         agent = Translator()
         response = agent({"english": "hello world"})
@@ -386,7 +387,7 @@ When using signatures, you can pass inputs in multiple ways:
             summary: str = mf.OutputField()
 
         class Summarizer(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = Summarize
 
         agent = Summarizer()

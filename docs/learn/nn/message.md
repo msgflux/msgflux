@@ -93,9 +93,7 @@ print(msg.outputs.result)
 
 ---
 
-## 4. **In Workflows**
-
-### With inline DSL
+## 4. **Inline**
 
 ```python
 import msgflux.nn.functional as F
@@ -135,58 +133,4 @@ msg.set("images.product", ["img1.jpg", "img2.jpg"])
 
 # Files
 msg.set("user_file", "/path/to/document.pdf")
-```
-
----
-
-## 6. **Complete Example**
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
-from msgflux import Message
-
-
-class Speech2Text(nn.Transcriber):
-    model = mf.Model.speech_to_text("openai/whisper-1")
-    message_fields = {"task_multimodal": {"audio": "user_audio"}}
-    response_mode = "content"
-
-
-class Analyzer(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    message_fields = {"task": "content"}
-    response_mode = "outputs.analysis"
-
-
-class Pipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.transcriber = Speech2Text()
-        self.analyzer = Analyzer()
-        self.components = nn.ModuleDict({
-            "transcriber": self.transcriber,
-            "analyzer": self.analyzer
-        })
-        self.register_buffer("flux", "{user_audio is not None? transcriber} -> analyzer")
-
-    def forward(self, msg):
-        return F.inline(self.flux, self.components, msg)
-
-
-# Usage
-pipeline = Pipeline()
-
-# Text input
-msg = Message(content="Analyze this text for sentiment.")
-pipeline(msg)
-print(msg.outputs.analysis)
-
-# Audio input
-msg = Message()
-msg.user_audio = "/path/to/audio.mp3"
-pipeline(msg)
-print(msg.content)          # Transcription
-print(msg.outputs.analysis) # Analysis result
 ```

@@ -2,7 +2,7 @@
 
 ## ✦₊⁺ Overview
 
-The `nn.Module` class is the foundation for all AI components in msgFlux, inspired by `torch.nn.Module`**.
+The `nn.Module` class is the foundation for all AI components in msgFlux, inspired by `torch.nn.Module`.
 
 It provides a structured way to build, compose, and manage AI workflows with features like parameter serialization, hooks, and async support.
 

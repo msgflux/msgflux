@@ -203,9 +203,12 @@ The function list and `args_list` must have the same length. Each function-input
         ```python
         import msgflux.nn.functional as F
 
-        def double(x): return x * 2
-        def triple(x): return x * 3
-        def square(x): return x ** 2
+        def double(x):
+            return x * 2
+        def triple(x):
+            return x * 3
+        def square(x):
+            return x ** 2
 
         results = F.scatter_gather(
             [double, triple, square],
@@ -221,9 +224,12 @@ The function list and `args_list` must have the same length. Each function-input
         ```python
         import msgflux.nn.functional as F
 
-        def double(x): return x * 2
-        def triple(x): return x * 3
-        def square(x): return x ** 2
+        def double(x):
+            return x * 2
+        def triple(x):
+            return x * 3
+        def square(x):
+            return x ** 2
 
         results = F.scatter_gather(
             [double, triple, square],

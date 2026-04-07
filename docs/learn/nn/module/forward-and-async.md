@@ -8,40 +8,55 @@ All module logic is defined in `forward()`. The async counterpart `aforward()` e
 
 The main execution method. All module logic is defined in `forward`:
 
+
+Make synchronous HTTP requests in the main execution method:
+
 ```python
+import httpx
 import msgflux.nn as nn
 
-class Model(nn.Module):
-    def __init__(self):
+class APIConsumer(nn.Module):
+    def __init__(self, api_url: str):
         super().__init__()
-        self.register_buffer("response", "Yes I did.")
+        self.api_url = api_url
 
-    def forward(self, x, **kwargs):
-        user_name = kwargs.get("user_name", None)
-        if user_name:
-            model_response = " Hi " + user_name + self.response
-        else:
-            model_response = self.response
-        x = x + model_response
-        return x
+    def forward(self, query: str, **kwargs):
+        # Synchronous HTTP request
+        with httpx.Client() as client:
+            response = client.get(
+                f"{self.api_url}/search",
+                params={"q": query}
+            )
+            data = response.json()
+        return f"Query: {query}, Result: {data['result']}"
 
-model = Model()
-result = model("You did the work?")  # Calls forward()
-print(result)  # "You did the work?Yes I did."
+consumer = APIConsumer("https://api.example.com")
+result = consumer("what is AI?")
+print(result)
 ```
 
 ## 2. **`aforward()`**
 
-The async execution method. Called via `.acall()`:
+The async execution method enables non-blocking HTTP calls. Called via `.acall()`:
 
 ```python
-class AsyncProcessor(nn.Module):
-    async def aforward(self, data, **kwargs):
-        result = await some_async_operation(data)
-        return result
+import httpx
+import msgflux.nn as nn
 
-processor = AsyncProcessor()
-result = await processor.acall(data)  # Calls aforward()
+class AsyncAPIConsumer(APIConsumer):
+    async def aforward(self, query: str, **kwargs):
+        # Asynchronous HTTP request
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.api_url}/search",
+                params={"q": query}
+            )
+            data = response.json()
+        return f"Query: {query}, Result: {data['result']}"
+
+processor = AsyncProcessor("https://api.example.com")
+result = await processor.acall("what is AI?")  # Calls aforward()
+print(result)
 ```
 
 !!! note

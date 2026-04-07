@@ -30,11 +30,6 @@ class ExpertSupport(nn.Module):
     def forward(self, msg: str):
         return msg + self.response
 
-# Using Sequential to create a small workflow. When **experts** is run,
-# input will first be passed to **ExpertSales**. The output of
-# **ExpertSales** will be used as the input to the first
-# **ExpertSupport**; Finally, the output of
-# **ExpertSupport** will be the experts response.
 experts = nn.Sequential(ExpertSales(), ExpertSupport())
 experts("I need help with my tv.")
 ```
