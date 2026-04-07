@@ -1,22 +1,32 @@
 # Customer Support Ticket Router
 
+<span class="tag tag-teal">Beginner</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Inline</span>
+
 ---
 
 ## The Problem
 
-Support inboxes without classification treat every ticket the same way. An API outage and a feature request arrive in the same queue, get the same priority, and receive the same generic response. As the volume grows, the model's decisions become inconsistent — a ticket that mentions both a billing cycle and a login failure gets routed differently each time.
+Every support inbox has the same latent tension: tickets arrive in a single stream, but the right response depends entirely on what the ticket actually is.
 
-The problem is not the model's ability to classify. It is the absence of reference. Without labeled examples of how similar tickets were handled before, the model improvises. Two tickets phrased slightly differently but describing the same issue land with different teams.
+A billing dispute and a feature request are not the same problem. One needs an empathetic acknowledgment and a clear resolution path. The other needs a brief confirmation that the feedback was logged. Treating them the same way — with a generic reply and a default queue — frustrates the customer who needed urgency and wastes the team's time routing manually after the fact.
+
+The deeper issue is consistency. Without a structured decision process, two tickets that describe the same situation get different outcomes depending on which agent handles them, how the customer phrased the request, or what else was in the queue that day. An API outage reported in a calm, professional tone can be misread as a low-priority question. A billing confusion that mentions the subscription cycle gets sent to the billing team when the real problem is account access.
+
+What we actually want is for every incoming ticket to pass through the same decision process — one that reads the text, understands the intent, and routes accordingly — before a single word of the reply is drafted.
 
 ---
 
 ## The Plan
 
-We will build a router that classifies each incoming ticket before drafting a response. A set of labeled examples anchors the classifier to past decisions, so routing reflects established patterns rather than ad-hoc interpretation.
+We want two things from this system: correct routing and calibrated responses.
 
-A classifier reads the ticket and produces four signals: the category, the priority level, the team best suited to handle it, and the customer's sentiment. A drafter uses those signals to write a calibrated response — brief and factual for a general question, empathetic and action-oriented for a frustrated customer reporting a billing error.
+Correct routing means each ticket lands with the right team at the right priority, regardless of how it was written. Calibrated responses mean the reply matches the emotional register and urgency of the ticket — direct and factual for a general question, empathetic and action-oriented for a frustrated customer.
 
-The examples include deliberate edge cases: a ticket that mentions subscription renewal but is really an access problem, and a critical outage reported in a calm tone. These are exactly the cases where a model without labeled reference diverges from expected behavior.
+To get both, we build a two-step pipeline. A **Router** reads the ticket and produces four signals: the category, the priority level, the team best suited to handle it, and the customer's sentiment. A **Drafter** uses those signals to write a reply that is calibrated to the situation — not a generic template, but a response shaped by what the Router found.
+
+A set of labeled examples anchors the Router to past decisions, so routing reflects established patterns rather than ad-hoc interpretation. The examples include deliberate edge cases — a ticket that mentions subscription renewal but is really an access problem, and a critical outage reported in a calm tone — which are exactly the cases where a model without labeled reference diverges from expected behavior.
+
+The two steps are wired together with `Inline`: a single string declares the pipeline order, and async is handled automatically.
 
 ---
 
@@ -50,9 +60,8 @@ A handful of representative tickets covers each category — including an edge c
 
 ```python
 import msgflux as mf
-import msgflux.nn as nn
-from typing import Literal
 
+mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 TICKETS = {
@@ -69,9 +78,11 @@ TICKETS = {
 
 ## Step 2 — Signatures
 
-Two signatures define the contract for each stage. `RouteTicket` produces the routing metadata; `DraftResponse` consumes it to write a calibrated reply.
+Two signatures define the contract for each stage. `RouteTicket` produces the routing metadata. `DraftResponse` consumes it to write a calibrated reply.
 
 ```python
+from typing import Literal
+
 class RouteTicket(mf.Signature):
     """Classify the support ticket to determine routing and response strategy."""
 
@@ -200,18 +211,18 @@ examples = [
 `Router` reads the ticket from `msg`, writes the four routing fields to `msg.routing`, and carries the labeled examples. `Drafter` reads both the ticket and the routing signals, and writes the final reply to `msg.rsp`.
 
 ```python
+import msgflux.nn as nn
+
 class Router(nn.Agent):
-    """Classify the ticket and determine routing metadata."""
     model = model
+    examples = examples
     signature = RouteTicket
     message_fields = {"task": {"ticket": "ticket"}}
-    response_mode = "routing"
-    examples = examples
+    response_mode = "routing"    
     config = {"verbose": True}
 
 
 class Drafter(nn.Agent):
-    """Draft a calibrated response based on the routing signals."""
     model = model
     signature = DraftResponse
     message_fields = {
@@ -230,27 +241,16 @@ class Drafter(nn.Agent):
 
 ## Step 5 — Wiring the Pipeline
 
-`TicketRouter` runs both agents sequentially. The router always runs first — the drafter depends on `msg.routing` being populated.
+`Inline` composes the two agents into a single callable. The string declares the order — router always runs first because the drafter depends on `msg.routing` being populated. Async is handled automatically via `acall`.
 
 ```python
-class TicketRouter(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.router = Router()
-        self.drafter = Drafter()
-
-    def forward(self, msg: mf.Message) -> mf.Message:
-        self.router(msg)
-        self.drafter(msg)
-        return msg
-
-    async def aforward(self, msg: mf.Message) -> mf.Message:
-        await self.router.acall(msg)
-        await self.drafter.acall(msg)
-        return msg
-
-
-ticket_router = TicketRouter()
+flux = mf.Inline(
+    "router -> drafter",
+    {
+        "router":  Router(),
+        "drafter": Drafter(),
+    },
+)
 ```
 
 ---
@@ -264,7 +264,7 @@ ticket_router = TicketRouter()
         ```python
         msg = mf.Message()
         msg.ticket = TICKETS["billing_double_charge"]
-        ticket_router(msg)
+        flux(msg)
 
         print(f"Category:      {msg.routing.category}")
         print(f"Priority:      {msg.routing.priority}")
@@ -293,7 +293,7 @@ ticket_router = TicketRouter()
         ```python
         msg = mf.Message()
         msg.ticket = TICKETS["account_billing_edge"]
-        ticket_router(msg)
+        flux(msg)
 
         print(f"Category:      {msg.routing.category}")     # account (not billing)
         print(f"Assigned team: {msg.routing.assigned_team}")  # account_management
@@ -314,7 +314,7 @@ ticket_router = TicketRouter()
         ```python
         msg = mf.Message()
         msg.ticket = TICKETS["technical_api_outage"]
-        ticket_router(msg)
+        flux(msg)
 
         print(f"Category: {msg.routing.category}")
         print(f"Priority: {msg.routing.priority}")
@@ -340,7 +340,7 @@ ticket_router = TicketRouter()
         async def main():
             msg = mf.Message()
             msg.ticket = TICKETS["billing_double_charge"]
-            await ticket_router.acall(msg)
+            await flux.acall(msg)
             print(f"Category: {msg.routing.category}")
             print(f"Response:\n{msg.rsp.response}")
 
@@ -356,6 +356,7 @@ import msgflux as mf
 import msgflux.nn as nn
 from typing import Literal
 
+mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 TICKETS = {
@@ -438,17 +439,15 @@ examples = [
 
 
 class Router(nn.Agent):
-    """Classify the ticket and determine routing metadata."""
     model = model
+    examples = examples
     signature = RouteTicket
     message_fields = {"task": {"ticket": "ticket"}}
-    response_mode = "routing"
-    examples = examples
+    response_mode = "routing"    
     config = {"verbose": True}
 
 
 class Drafter(nn.Agent):
-    """Draft a calibrated response based on the routing signals."""
     model = model
     signature = DraftResponse
     message_fields = {
@@ -463,31 +462,13 @@ class Drafter(nn.Agent):
     config = {"verbose": True}
 
 
-class TicketRouter(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.router = Router()
-        self.drafter = Drafter()
-
-    def forward(self, msg: mf.Message) -> mf.Message:
-        self.router(msg)
-        self.drafter(msg)
-        return msg
-
-    async def aforward(self, msg: mf.Message) -> mf.Message:
-        await self.router.acall(msg)
-        await self.drafter.acall(msg)
-        return msg
-
-
-ticket_router = TicketRouter()
-
-msg = mf.Message()
-msg.ticket = TICKETS["billing_double_charge"]
-ticket_router(msg)
-print(f"Category: {msg.routing.category}")
-print(f"Priority: {msg.routing.priority}")
-print(f"Response:\n{msg.rsp.response}")
+flux = mf.Inline(
+    "router -> drafter",
+    {
+        "router":  Router(),
+        "drafter": Drafter(),
+    },
+)
 ```
 
 ---
@@ -497,3 +478,4 @@ print(f"Response:\n{msg.rsp.response}")
 - [System Prompt & Examples](../learn/nn/agent/system-prompt.md) — few-shot examples and how they are formatted in the system prompt
 - [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts for agents
 - [Task and Context](../learn/nn/agent/task-and-context.md) — reading inputs from `msg` via `message_fields`
+- [Inline DSL](../learn/inline.md) — flux syntax and pipeline composition

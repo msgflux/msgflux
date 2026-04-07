@@ -1,5 +1,7 @@
 # Email Auto Responder
 
+<span class="tag tag-purple">Intermediate</span><span class="tag tag-gray">Signature</span>
+
 ---
 
 ## The Problem
@@ -310,6 +312,7 @@ import msgflux as mf
 import msgflux.nn as nn
 from typing import Literal
 
+mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 

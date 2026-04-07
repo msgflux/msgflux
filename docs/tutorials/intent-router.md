@@ -1,5 +1,7 @@
 # Solving Agent Tool Sprawl with Intent Routing
 
+<span class="tag tag-purple">Intermediate</span><span class="tag tag-gray">Signature</span>
+
 > **Inspired by**: [Solving Agent Tool Sprawl with DSPy](https://viksit.substack.com/p/solving-agent-tool-sprawl-with-dspy)
 
 Production support systems often end up with a single agent holding dozens of tools. As the tool list grows, routing becomes unreliable and debugging becomes impossible.
@@ -131,6 +133,7 @@ def get_incident_metrics(severity: str = "all", last_days: int = 7) -> str:
 Each agent gets only the tools it needs. `config = {"verbose": True}` prints every tool call and its result, making every routing decision visible.
 
 ```python
+mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
@@ -393,13 +396,12 @@ class IntentRouter(nn.Module):
 ## Complete Script
 
 ```python
-import asyncio
-
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.generation.reasoning import ChainOfThought
 from typing import Dict, List
 
+mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
@@ -570,14 +572,6 @@ class IntentRouter(nn.Module):
 
         msg.context = "\n".join(context_parts)
         return msg
-
-
-router = IntentRouter()
-
-msg = mf.Message()
-msg.question = "What is our deployment process and how many critical incidents happened this week?"
-router(msg)
-print(msg.context)
 ```
 
 ---
