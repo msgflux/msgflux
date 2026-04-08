@@ -284,14 +284,14 @@ class PIXAssistant(nn.Module):
         self._setup_vars(msg)
         if msg.get("audio_content"):
             self.stt(msg)
-        self.chat_assistant(msg, messages=history or [])
+        self.chat_assistant(msg, messages=history)
         return msg
 
     async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
         self._setup_vars(msg)
         if msg.get("audio_content"):
             await self.stt.acall(msg)
-        await self.chat_assistant.acall(msg, messages=history or [])
+        await self.chat_assistant.acall(msg, messages=history)
         return msg
 
 
@@ -310,10 +310,7 @@ if __name__ == "__main__":
     msg.set("vars.user_full_name", "Test User")
     msg.set("user.text", f"Send R$60 to {first_name}")
     assistant.forward(msg, history=history)
-    history.extend([
-        mf.ChatBlock.user(msg.user.text),
-        mf.ChatBlock.assist(str(msg.response)),
-    ])
+    history.append(mf.ChatBlock.assist(msg.response))
     print("User:", msg.user.text)
     print("Assistant:", msg.response)
 

@@ -1,6 +1,6 @@
 # Open PIX Assistant
 
-<span class="tag tag-orange">Advanced</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Multimodal</span><span class="tag tag-gray">Retrivers</span><span class="tag tag-gray">Guardrails</span>
+<span class="tag tag-orange">Advanced</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Multimodal</span><span class="tag tag-gray">Retriver</span><span class="tag tag-gray">Guardrails</span>
 
 **PIX** is Brazil's instant payment system. A transfer needs three things: the **amount**, the **key type**, and the **key ID**.
 
@@ -473,14 +473,14 @@ class PIXAssistant(nn.Module):
         self._setup_vars(msg)
         if msg.get("audio_content"):
             self.stt(msg)
-        self.chat_assistant(msg, messages=history or [])
+        self.chat_assistant(msg, messages=history)
         return msg
 
     async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
         self._setup_vars(msg)
         if msg.get("audio_content"):
             await self.stt.acall(msg)
-        await self.chat_assistant.acall(msg, messages=history or [])
+        await self.chat_assistant.acall(msg, messages=history)
         return msg
 ```
 
@@ -509,10 +509,7 @@ class PIXAssistant(nn.Module):
         msg.image_content = "https://files.catbox.moe/9gwd7u.jpeg"
         msg.set("user.text", "Pay this bill to the PIX key in the QR code")
         assistant.forward(msg, history=history)
-        history.extend([
-            mf.ChatBlock.user(msg.user.text),
-            mf.ChatBlock.assist(str(msg.response)),
-        ])
+        history.append(mf.ChatBlock.assist(msg.response))
         print("Assistant:", msg.response)
         # → "## Extracted PIX data
         #    - amount: 140.29  - key_type: random_key  - key_id: a98476c2-...
@@ -543,10 +540,7 @@ class PIXAssistant(nn.Module):
         msg.image_content = "https://files.catbox.moe/8bj5jl.jpeg"
         msg.set("user.text", "I had the G&T Morango, send to matheus@bar.com")
         assistant.forward(msg, history=history)
-        history.extend([
-            mf.ChatBlock.user(msg.user.text),
-            mf.ChatBlock.assist(str(msg.response)),
-        ])
+        history.append(mf.ChatBlock.assist(msg.response))
         print("Assistant:", msg.response)
 
         msg = mf.Message()
@@ -572,10 +566,7 @@ class PIXAssistant(nn.Module):
         msg.image_content = "https://files.catbox.moe/otqnaa.jpeg"
         msg.set("user.text", "Split between 3, transfer my share to +5584912345678")
         assistant.forward(msg, history=history)
-        history.extend([
-            mf.ChatBlock.user(msg.user.text),
-            mf.ChatBlock.assist(str(msg.response)),
-        ])
+        history.append(mf.ChatBlock.assist(msg.response))
         print("Assistant:", msg.response)
 
         msg = mf.Message()
@@ -600,10 +591,7 @@ class PIXAssistant(nn.Module):
         msg.set("vars.user_full_name", "Ada Lovelace")
         msg.set("user.text", "Send R$60 to Fernand")
         assistant.forward(msg, history=history)
-        history.extend([
-            mf.ChatBlock.user(msg.user.text),
-            mf.ChatBlock.assist(str(msg.response)),
-        ])
+        history.append(mf.ChatBlock.assist(msg.response))
         print("Assistant:", msg.response)
         # → "## Contacts in your agenda
         #    1. Fernanda Lima | key email: fernanda.lima@email.com
@@ -998,14 +986,14 @@ class PIXAssistant(nn.Module):
         self._setup_vars(msg)
         if msg.get("audio_content"):
             self.stt(msg)
-        self.chat_assistant(msg, messages=history or [])
+        self.chat_assistant(msg, messages=history)
         return msg
 
     async def aforward(self, msg: mf.Message, history: list | None = None) -> mf.Message:
         self._setup_vars(msg)
         if msg.get("audio_content"):
             await self.stt.acall(msg)
-        await self.chat_assistant.acall(msg, messages=history or [])
+        await self.chat_assistant.acall(msg, messages=history)
         return msg
 ```
 
