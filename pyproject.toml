@@ -63,7 +63,7 @@ dev = [
 ]
 doc = [
     "markdown-include>=0.8.1",
-    "mkdocs>=1.6.1",
+    "mkdocs>=1.6.1,<2.0.0",
     "mkdocs-copy-markdown>=0.1.0",
     "mkdocs-material>=9.6.21",
     "mkdocstrings>=0.30.1",

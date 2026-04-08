@@ -1049,7 +1049,7 @@ dev = [
 ]
 doc = [
     { name = "markdown-include", specifier = ">=0.8.1" },
-    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs", specifier = ">=1.6.1,<2.0.0" },
     { name = "mkdocs-copy-markdown", specifier = ">=0.1.0" },
     { name = "mkdocs-material", specifier = ">=9.6.21" },
     { name = "mkdocstrings", specifier = ">=0.30.1" },
