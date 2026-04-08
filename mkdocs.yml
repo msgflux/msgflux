@@ -193,14 +193,14 @@ nav:
           - api-reference/nn/modules/agent.md       
   - Tutorials:
     - tutorials/index.md
-    - Sales:
-      - Lead Scoring: tutorials/lead-scoring.md
-      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
-      - Visit Report Assistant: tutorials/visit-report.md
     - Payments & Commerce:
       - PIX Assistant: tutorials/pix-assistant.md
       - Food Delivery Assistant: tutorials/food-delivery-assistant.md
       - Restaurant Supply Assistant: tutorials/restaurant-supply-assistant.md
+    - Sales:
+      - Lead Scoring: tutorials/lead-scoring.md
+      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
+      - Visit Report Assistant: tutorials/visit-report.md
     - Customer Service:
       - Support Ticket Router: tutorials/support-ticket-router.md
       - Email Auto Responder: tutorials/email-auto-responder.md
