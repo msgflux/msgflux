@@ -108,14 +108,14 @@ _JS = """\
 def _build_button(markdown: str, button_text: str) -> str:
     escaped = html_lib.escape(markdown, quote=True)
     return (
-        f'{_CSS}\n'
+        f"{_CSS}\n"
         f'<div class="copy-markdown-container" data-markdown="{escaped}">\n'
         f'  <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">\n'
         f'    <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>\n'
-        f'    <span>{html_lib.escape(button_text)}</span>\n'
-        f'  </button>\n'
-        f'</div>\n'
-        f'{_JS}'
+        f"    <span>{html_lib.escape(button_text)}</span>\n"
+        f"  </button>\n"
+        f"</div>\n"
+        f"{_JS}"
     )
 
 
