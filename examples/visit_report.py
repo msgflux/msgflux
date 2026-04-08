@@ -1,17 +1,16 @@
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux.generation.reasoning import ReAct
-from faker import Faker
-from typing import Literal, Union
 from datetime import datetime
+from faker import Faker
+from msgflux.generation.reasoning import ReAct
+from typing import Literal, Union
+
 
 chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 stt_model  = mf.Model.speech_to_text("openai/whisper-1")
 
 fake = Faker("en_US")
 
-
-# ── Corpora ───────────────────────────────────────────────────────────────────
 
 participants_corpus = [fake.name() for _ in range(60)]
 companies_corpus    = [fake.company() for _ in range(40)]
@@ -28,8 +27,6 @@ participants_fuzzy.add(participants_corpus)
 companies_fuzzy.add(companies_corpus)
 competitors_fuzzy.add(competitors_corpus)
 
-
-# ── Searchers ─────────────────────────────────────────────────────────────────
 
 SEARCH_TEMPLATE = (
     "{% if results %}"
@@ -61,8 +58,6 @@ class CompetitorSearcher(nn.Searcher):
     config    = {"top_k": 5, "threshold": 0.5, "return_score": True}
     templates = {"response": SEARCH_TEMPLATE}
 
-
-# ── Resolvers ─────────────────────────────────────────────────────────────────
 
 RESOLVER_INSTRUCTIONS = """
 You receive a name query that may contain typos, nicknames, or transcription errors.
@@ -109,8 +104,6 @@ class CompetitorResolver(EntityResolver):
     tools = [CompetitorSearcher]
 
 
-# ── query_entity tool ─────────────────────────────────────────────────────────
-
 class QueryEntity(nn.Module):
     """Validate and resolve an entity name against the registry.
 
@@ -138,8 +131,6 @@ class QueryEntity(nn.Module):
     async def aforward(self, domain: str, query: str) -> str:
         return await self.resolvers[domain].acall(query=query)
 
-
-# ── Report tools ──────────────────────────────────────────────────────────────
 
 REQUIRED_FIELDS = ["companies", "location", "participants", "purpose", "next_steps"]
 OPTIONAL_FIELDS = ["competitors", "closing_deadline", "notes"]
@@ -363,8 +354,6 @@ def _append_enriched_lines(lines: list, source: dict) -> None:
             lines.append(f"  - {c['name']}: {c['segment']}")
 
 
-# ── STT + Root Agent ──────────────────────────────────────────────────────────
-
 class STT(nn.Transcriber):
     model          = stt_model
     message_fields = {"task_multimodal": {"audio": "audio_content"}}
@@ -429,8 +418,6 @@ class VisitAssistant(nn.Agent):
     config        = {"verbose": True, "include_date": True}
 
 
-# ── Orchestrator ──────────────────────────────────────────────────────────────
-
 class VisitReportAssistant(nn.Module):
     """Entry point for the visit report conversation.
 
@@ -467,7 +454,7 @@ class VisitReportAssistant(nn.Module):
         if msg.get("audio_content"):
             self.stt(msg)
 
-        self.agent(msg, messages=history or [])
+        self.agent(msg, messages=history)
 
         msg.response = self._extract_direct_result(msg.response)
         return msg
@@ -478,15 +465,13 @@ class VisitReportAssistant(nn.Module):
         if msg.get("audio_content"):
             await self.stt.acall(msg)
 
-        await self.agent.acall(msg, messages=history or [])
+        await self.agent.acall(msg, messages=history)
 
         if isinstance(msg.response, dict) and "report_id" in msg.response:
             msg.report_id = msg.response["report_id"]
 
         return msg
 
-
-# ── Run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     assistant = VisitReportAssistant()
@@ -505,10 +490,10 @@ if __name__ == "__main__":
     def turn(text: str, label: str = "Assistant") -> None:
         msg.set("user.text", text)
         assistant(msg, history=history)
-        history.extend([mf.ChatBlock.user(text), mf.ChatBlock.assist(str(msg.response))])
+        history.append(mf.ChatBlock.assist(msg.response))
         print(f"\n[{label}]: {msg.response}")
 
-    # ── Report 1 ──────────────────────────────────────────────────────────────
+    # -- Report 1 --
     turn(
         f"Start a new visit report. I visited {_company1} in Austin today. "
         f"{_p1} and {_p2} from IT were there. "
@@ -519,7 +504,7 @@ if __name__ == "__main__":
     turn("Purpose was the ERP renewal. Next steps: send revised proposal by Friday.", "Turn 2")
     turn("Yes, save it.", "Turn 3")
 
-    # ── Report 2 ──────────────────────────────────────────────────────────────
+    # -- Report 2 --
     turn(
         f"New visit: I was at {_company2} in São Paulo. "
         f"{_p3} from procurement. Purpose: contract renewal. "
@@ -528,5 +513,5 @@ if __name__ == "__main__":
     )
     turn("Yes, go ahead and submit.", "Turn 5")
 
-    # ── See both reports ───────────────────────────────────────────────────────
+    # -- See both reports --
     turn("Show me the submitted reports.", "Turn 6")
