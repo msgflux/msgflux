@@ -304,15 +304,17 @@ if __name__ == "__main__":
     history   = []
 
     # Turn 1 — vague request
-    r1 = assistant("I want something vegan under US$15", messages=history)
-    history += [mf.ChatBlock.user("I want something vegan under US$15"), mf.ChatBlock.assist(str(r1))]
+    user_msg = "I want something vegan under US$15"
+    r1 = assistant(user_msg, messages=history)
+    history.append(mf.ChatBlock.assist(r1))
     print("Assistant:", r1)
 
     print()
 
     # Turn 2 — refinement + confirmation
-    r2 = assistant("I'll take the vegan wrap. Place the order.", messages=history)
-    history += [mf.ChatBlock.user("I'll take the vegan wrap. Place the order."), mf.ChatBlock.assist(str(r2))]
+    user_msg2 = "I'll take the vegan wrap. Place the order."
+    r2 = assistant(user_msg2, messages=history)
+    history.append(mf.ChatBlock.assist(r2))
     print("Assistant:", r2)
 
     print()

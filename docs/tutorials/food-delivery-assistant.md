@@ -1,6 +1,6 @@
 # Food Delivery Assistant
 
-<span class="tag tag-green">Beginner</span><span class="tag tag-gray">Generation Schema</span><span class="tag tag-gray">Multimodal</span><span class="tag tag-gray">Retrivers</span><span class="tag tag-gray">Guardrails</span>
+<span class="tag tag-purple">Intermediate</span><span class="tag tag-gray">Generation Schema</span><span class="tag tag-gray">Multimodal</span><span class="tag tag-gray">Retrivers</span><span class="tag tag-gray">Guardrails</span>
 
 A food ordering assistant that recommends dishes and places orders through a natural conversation.
 
@@ -523,17 +523,20 @@ assistant = FoodAssistant()
         history   = []
 
         # Turn 1 — vague
-        response = assistant("I want something Japanese today", messages=history)
-        history += [mf.ChatBlock.user("I want something Japanese today"), mf.ChatBlock.assist(str(response))]
+        user_msg_1 = "I want something Japanese today"
+        response = assistant(user_msg_1, messages=history)
+        history.append(mf.ChatBlock.assist(response))
         print("Assistant:", response)
 
         # Turn 2 — refinement
-        response = assistant("Anything gluten-free under US$15?", messages=history)
-        history += [mf.ChatBlock.user("Anything gluten-free under US$15?"), mf.ChatBlock.assist(str(response))]
+        user_msg_2 = "Anything gluten-free under US$15?"
+        response = assistant(user_msg_2, messages=history)
+        history.append(mf.ChatBlock.assist(response))
         print("Assistant:", response)
 
         # Turn 3 — confirm
-        response = assistant("I'll take the salmon sashimi. Place the order.", messages=history)
+        user_msg_3 = "I'll take the salmon sashimi. Place the order."
+        response = assistant(user_msg_3, messages=history)
         print("Assistant:", response)
         ```
 
@@ -572,11 +575,15 @@ assistant = FoodAssistant()
         assistant = FoodAssistant()
         history   = []
 
-        response = assistant("I want something vegan, under US$15, fast delivery", messages=history)
-        history += [mf.ChatBlock.user("I want something vegan, under US$15, fast delivery"), mf.ChatBlock.assist(str(response))]
+        user_msg_1 = "I want something vegan, under US$15, fast delivery"
+
+        response = assistant(user_msg_1, messages=history)
+        history.append(mf.ChatBlock.assist(response))
         print("Assistant:", response)
 
-        response = assistant("I'll take the protein bowl. Go ahead and order.", messages=history)
+        user_msg_2 = "I'll take the protein bowl. Go ahead and order."
+
+        response = assistant(user_msg_2, messages=history)
         print("Assistant:", response)
         ```
 
@@ -606,12 +613,16 @@ assistant = FoodAssistant()
         assistant = FoodAssistant()
         history   = []
 
-        response = assistant("Show me the menu at Napoli's Pizza", messages=history)
-        history += [mf.ChatBlock.user("Show me the menu at Napoli's Pizza"), mf.ChatBlock.assist(str(response))]
+        user_msg_1 = "Show me the menu at Napoli's Pizza"
+
+        response = assistant(user_msg_1, messages=history)
+        history.append(mf.ChatBlock.assist(response))
         print("Assistant:", response)
 
-        response = assistant("I'd like a Margherita and a Garlic Bread", messages=history)
-        history += [mf.ChatBlock.user("I'd like a Margherita and a Garlic Bread"), mf.ChatBlock.assist(str(response))]
+        user_msg_2 = "I'd like a Margherita and a Garlic Bread"
+
+        response = assistant(user_msg_2, messages=history)
+        history.append(mf.ChatBlock.assist(response))
         print("Assistant:", response)
 
         response = assistant("Confirm.", messages=history)
