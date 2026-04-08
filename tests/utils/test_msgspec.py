@@ -130,7 +130,9 @@ def test_lower_msgspec_struct_for_openai_lowers_dict_fields():
     assert lowered is not DictOutput
 
     schema = msgspec.json.schema(lowered)
-    entities_items = schema["$defs"][lowered.__name__]["properties"]["entities"]["items"]
+    entities_items = schema["$defs"][lowered.__name__]["properties"]["entities"][
+        "items"
+    ]
     metadata_anyof = schema["$defs"][lowered.__name__]["properties"]["metadata"][
         "anyOf"
     ]

@@ -846,7 +846,9 @@ class TestHiddenKeys:
 
     def test_hidden_key_nested_path_via_get(self):
         """Test that get() traverses paths through hidden intermediate keys."""
-        d = dotdict({"secrets": {"token": "abc", "key": "xyz"}}, hidden_keys=["secrets"])
+        d = dotdict(
+            {"secrets": {"token": "abc", "key": "xyz"}}, hidden_keys=["secrets"]
+        )
 
         assert d.get("secrets.token") == "abc"
         assert d.get("secrets.key") == "xyz"

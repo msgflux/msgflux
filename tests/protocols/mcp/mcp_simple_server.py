@@ -7,6 +7,7 @@
 Run directly with:
     uv run tests/protocols/mcp/mcp_simple_server.py
 """
+
 from fastmcp import FastMCP
 
 mcp = FastMCP("msgflux-test-server")

@@ -585,19 +585,15 @@ class Module:
     ):
         if isinstance(task, (str, dict, tuple)) or task is None:
             if isinstance(task, str) and task == "":
-                raise ValueError(
-                    f"`task` requires a string not empty given `{task}`"
-                )
+                raise ValueError(f"`task` requires a string not empty given `{task}`")
             if isinstance(task, (dict, tuple)) and not task:
                 raise ValueError(
-                    "`task` requires a dict or tuple not empty "
-                    f"given `{task}`"
+                    f"`task` requires a dict or tuple not empty given `{task}`"
                 )
             self.register_buffer("task", task)
         else:
             raise TypeError(
-                "`task` requires a string, dict or None, "
-                f"given `{type(task)}`"
+                f"`task` requires a string, dict or None, given `{type(task)}`"
             )
 
     def _set_task_multimodal(
@@ -612,8 +608,7 @@ class Module:
             self.register_buffer("task_multimodal", task_multimodal)
         else:
             raise TypeError(
-                "`task_multimodal` requires a dict "
-                f"given `{type(task_multimodal)}`"
+                f"`task_multimodal` requires a dict given `{type(task_multimodal)}`"
             )
 
     def _set_model_preference(self, model_preference: Optional[str] = None):
@@ -2042,9 +2037,7 @@ class Module:
             p.requires_grad_(requires_grad=requires_pgrad)
         return self
 
-    def zero_pgrad(
-        self, *, set_to_none: Optional[bool] = True
-    ) -> None:
+    def zero_pgrad(self, *, set_to_none: Optional[bool] = True) -> None:
         """Reset gradients of all model parameters.
 
         Args:

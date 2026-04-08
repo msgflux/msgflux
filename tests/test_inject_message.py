@@ -14,6 +14,7 @@ from msgflux.nn import Agent
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_model(text: str = "ok") -> MagicMock:
     model = MagicMock()
     model.model_type = "chat_completion"
@@ -27,6 +28,7 @@ def _mock_model(text: str = "ok") -> MagicMock:
 # ---------------------------------------------------------------------------
 # tool_config: inject_message stored correctly
 # ---------------------------------------------------------------------------
+
 
 class TestToolConfigInjectMessage:
     def test_inject_message_default_false(self):
@@ -55,6 +57,7 @@ class TestToolConfigInjectMessage:
 # ---------------------------------------------------------------------------
 # Agent-as-tool: unit tests (mocked model)
 # ---------------------------------------------------------------------------
+
 
 class TestInjectMessageAnnotations:
     """Validate that inject_message=True strips 'message' from the tool schema."""

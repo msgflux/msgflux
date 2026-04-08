@@ -249,9 +249,9 @@ class TestReActToolFlowControl:
             )
         )
 
-        action_schema = response_format["json_schema"]["schema"]["properties"]["actions"][
-            "anyOf"
-        ][0]["items"]
+        action_schema = response_format["json_schema"]["schema"]["properties"][
+            "actions"
+        ]["anyOf"][0]["items"]
         assert action_schema["properties"]["name"]["enum"] == ["store_fields"]
         assert "fields" in action_schema["properties"]
         assert "arguments" not in action_schema["properties"]

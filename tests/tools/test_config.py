@@ -90,9 +90,7 @@ class TestToolConfig:
 
     def test_tool_config_spawn_incompatible_with_return_direct(self):
         """Test that spawn=True is incompatible with return_direct=True."""
-        with pytest.raises(
-            ValueError, match="`spawn=True` is not compatible"
-        ):
+        with pytest.raises(ValueError, match="`spawn=True` is not compatible"):
 
             @tool_config(spawn=True, return_direct=True)
             def sample_function():
@@ -100,9 +98,7 @@ class TestToolConfig:
 
     def test_tool_config_spawn_incompatible_with_call_as_response(self):
         """Test that spawn=True is incompatible with call_as_response=True."""
-        with pytest.raises(
-            ValueError, match="`spawn=True` is not compatible"
-        ):
+        with pytest.raises(ValueError, match="`spawn=True` is not compatible"):
 
             @tool_config(spawn=True, call_as_response=True)
             def sample_function():

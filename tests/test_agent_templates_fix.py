@@ -38,7 +38,9 @@ def test_agent_with_signature_rejects_task_template():
     """Test that signature and templates['task'] cannot be used together."""
     model = create_mock_model()
 
-    with pytest.raises(ValueError, match="Cannot specify both 'signature' and templates"):
+    with pytest.raises(
+        ValueError, match="Cannot specify both 'signature' and templates"
+    ):
         Agent(
             name="test_agent_sig",
             model=model,

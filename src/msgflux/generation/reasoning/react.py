@@ -146,7 +146,12 @@ class ReAct(Struct, ToolFlowControl):
             "properties": {
                 "thought": {"type": "string"},
                 "actions": (
-                    {"anyOf": [{"type": "array", "items": action_items}, {"type": "null"}]}
+                    {
+                        "anyOf": [
+                            {"type": "array", "items": action_items},
+                            {"type": "null"},
+                        ]
+                    }
                     if action_items is not None
                     else {"type": "null"}
                 ),

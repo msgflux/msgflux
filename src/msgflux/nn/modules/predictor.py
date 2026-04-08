@@ -225,9 +225,7 @@ class Predictor(Module, metaclass=AutoParams):
         if isinstance(task, str) or task is None:
             self.register_buffer("task", task)
         else:
-            raise TypeError(
-                f"`task` requires a string or None, given `{type(task)}`"
-            )
+            raise TypeError(f"`task` requires a string or None, given `{type(task)}`")
 
     def _set_model_preference(self, model_preference: Optional[str] = None):
         """Set model_preference field mapping."""

@@ -31,6 +31,7 @@ def store_fields(fields: dict[str, str]) -> dict:
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
+
 class StoreAgent(nn.Agent):
     model = model
     system_message = "You are a data entry assistant."
@@ -57,8 +58,8 @@ class StoreReActAgent(nn.Agent):
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-class TestDictToolE2E:
 
+class TestDictToolE2E:
     def setup_method(self):
         _store.clear()
 

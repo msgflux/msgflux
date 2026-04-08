@@ -8,6 +8,7 @@ from msgflux.nn.modules.tool import LocalTool, ToolLibrary, _convert_module_to_n
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_local_tool(fn, transport_params=None):
     """Wrap a plain function as LocalTool without going through the agent machinery."""
     return LocalTool(
@@ -22,8 +23,8 @@ def _make_local_tool(fn, transport_params=None):
 
 # ── _restore_transport_params ─────────────────────────────────────────────────
 
-class TestRestoreTransportParams:
 
+class TestRestoreTransportParams:
     def test_scalar_params_are_left_unchanged(self):
         def fn(x: str) -> str:
             """fn"""
@@ -140,8 +141,8 @@ class TestRestoreTransportParams:
 
 # ── annotations drive restoration ────────────────────────────────────────────
 
-class TestToolAnnotations:
 
+class TestToolAnnotations:
     def test_convert_module_preserves_dict_annotation(self):
         def fn(updates: dict[str, str]) -> str:
             """A tool with a dict param."""
@@ -164,8 +165,8 @@ class TestToolAnnotations:
 
 # ── forward calls impl with restored dict ────────────────────────────────────
 
-class TestForwardRestores:
 
+class TestForwardRestores:
     def test_forward_passes_restored_dict_to_impl(self):
         received = {}
 
@@ -196,8 +197,8 @@ class TestForwardRestores:
 
 # ── JSON schema shape ─────────────────────────────────────────────────────────
 
-class TestDictToolSchema:
 
+class TestDictToolSchema:
     def test_schema_uses_entries_shape(self):
         def fn(updates: dict[str, str]) -> str:
             """A tool."""
@@ -217,10 +218,9 @@ class TestDictToolSchema:
 
         local = _convert_module_to_nn_tool(fn)
         schema = local.get_json_schema()
-        entry = (
-            schema["function"]["parameters"]["properties"]["updates"]
-            ["properties"]["entries"]["items"]
-        )
+        entry = schema["function"]["parameters"]["properties"]["updates"]["properties"][
+            "entries"
+        ]["items"]
         assert "key" in entry["properties"]
         assert "value" in entry["properties"]
         assert entry["additionalProperties"] is False

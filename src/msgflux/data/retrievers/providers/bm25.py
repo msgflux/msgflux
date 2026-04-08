@@ -225,4 +225,6 @@ class BM25LexicalRetriever(BaseLexical, BaseRetriever, LexicalRetriever):
         Returns:
             dotdict containing search results.
         """
-        return self(queries, top_k=top_k, threshold=threshold, return_score=return_score)
+        return self(
+            queries, top_k=top_k, threshold=threshold, return_score=return_score
+        )

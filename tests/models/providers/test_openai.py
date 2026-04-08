@@ -157,9 +157,12 @@ class TestOpenAIChatCompletion:
         assert typed_parser is None
         assert generation_schema is DictOutput
         assert transport_generation_schema is not DictOutput
-        assert kwargs["response_format"]["json_schema"]["schema"]["properties"][
-            "entities"
-        ]["items"]["properties"]["entries"]["type"] == "array"
+        assert (
+            kwargs["response_format"]["json_schema"]["schema"]["properties"][
+                "entities"
+            ]["items"]["properties"]["entries"]["type"]
+            == "array"
+        )
 
     def test_build_generation_params_uses_tool_definitions(self, mock_openai_client):
         """Test native tool calling is derived from ToolDefinitions."""
@@ -348,9 +351,9 @@ class TestOpenAIChatCompletion:
         assert typed_parser is None
         assert generation_schema is ReAct
         assert transport_generation_schema["decoder_schema"] is None
-        action_schema = kwargs["response_format"]["json_schema"]["schema"]["properties"][
-            "actions"
-        ]["anyOf"][0]["items"]
+        action_schema = kwargs["response_format"]["json_schema"]["schema"][
+            "properties"
+        ]["actions"]["anyOf"][0]["items"]
         assert action_schema["properties"]["name"]["enum"] == ["store_fields"]
         assert "fields" in action_schema["properties"]
         assert "arguments" not in action_schema["properties"]
@@ -458,7 +461,12 @@ class TestOpenAIChatCompletion:
         Output = type(
             "Output",
             (ReAct,),
-            {"__annotations__": {**ReAct.__annotations__, "final_answer": Optional[Outputs]}},
+            {
+                "__annotations__": {
+                    **ReAct.__annotations__,
+                    "final_answer": Optional[Outputs],
+                }
+            },
         )
 
         model = OpenAIChatCompletion(model_id="gpt-4")
@@ -496,7 +504,12 @@ class TestOpenAIChatCompletion:
         Output = type(
             "Output",
             (ReAct,),
-            {"__annotations__": {**ReAct.__annotations__, "final_answer": Optional[Outputs]}},
+            {
+                "__annotations__": {
+                    **ReAct.__annotations__,
+                    "final_answer": Optional[Outputs],
+                }
+            },
         )
 
         model = OpenAIChatCompletion(model_id="gpt-4")

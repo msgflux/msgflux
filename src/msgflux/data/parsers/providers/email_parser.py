@@ -262,4 +262,3 @@ class StandardEmailParser(BaseParser, EmailParser):
         lines.append(plain_body)
 
         return "\n".join(lines)
-

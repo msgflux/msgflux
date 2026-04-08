@@ -212,9 +212,7 @@ class Transcriber(Module, metaclass=AutoParams):
         self, message: Union[bytes, str, Dict[str, str], Message]
     ) -> bytes:
         if isinstance(message, dotdict):
-            audio_content = self._extract_message_values(
-                self.task_multimodal, message
-            )
+            audio_content = self._extract_message_values(self.task_multimodal, message)
         else:
             audio_content = message
 

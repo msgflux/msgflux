@@ -153,7 +153,9 @@ class TestStdioTransport:
         mock_process = AsyncMock()
         mock_process.stdin = AsyncMock()
         mock_process.stdout = AsyncMock()
-        mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF stops read loop
+        mock_process.stdout.readline = AsyncMock(
+            return_value=b""
+        )  # EOF stops read loop
         mock_process.stderr = AsyncMock()
         mock_subprocess.return_value = mock_process
 
@@ -175,10 +177,12 @@ class TestStdioTransport:
 
         # Mock stdout to return a response
         response_data = {"jsonrpc": "2.0", "id": "1", "result": {"success": True}}
-        mock_process.stdout.readline = AsyncMock(side_effect=[
-            (json.dumps(response_data) + "\n").encode("utf-8"),
-            b"",  # EOF stops read loop after delivering the response
-        ])
+        mock_process.stdout.readline = AsyncMock(
+            side_effect=[
+                (json.dumps(response_data) + "\n").encode("utf-8"),
+                b"",  # EOF stops read loop after delivering the response
+            ]
+        )
 
         mock_subprocess.return_value = mock_process
 
@@ -201,7 +205,9 @@ class TestStdioTransport:
         mock_process.stdin = AsyncMock()
         mock_process.stdin.write = MagicMock()  # write() is sync in StreamWriter
         mock_process.stdout = AsyncMock()
-        mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF stops read loop
+        mock_process.stdout.readline = AsyncMock(
+            return_value=b""
+        )  # EOF stops read loop
         mock_process.stderr = AsyncMock()
         mock_subprocess.return_value = mock_process
 
@@ -223,7 +229,9 @@ class TestStdioTransport:
         mock_process = AsyncMock()
         mock_process.stdin = AsyncMock()
         mock_process.stdout = AsyncMock()
-        mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF stops read loop
+        mock_process.stdout.readline = AsyncMock(
+            return_value=b""
+        )  # EOF stops read loop
         mock_process.stderr = AsyncMock()
         mock_process.terminate = Mock()
         mock_process.wait = AsyncMock()

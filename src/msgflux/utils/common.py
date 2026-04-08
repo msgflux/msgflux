@@ -1,6 +1,7 @@
 import re
 from typing import Any, Literal, Optional, Set, Tuple, Union
 
+
 def is_jinja_template(template: str) -> bool:
     """Return True if the template contains Jinja2 syntax (``{{ }}``, ``{% %}``, ``{# #}``)."""
     return bool(re.search(r"\{\{|\{%|\{#", template))

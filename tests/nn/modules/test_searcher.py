@@ -178,9 +178,7 @@ class TestSearcher:
     def test_forward_with_message(self):
         """Test Searcher forward with Message object."""
         mock_retriever = MockLexicalRetriever()
-        ret = Searcher(
-            retriever=mock_retriever, message_fields={"query": "query"}
-        )
+        ret = Searcher(retriever=mock_retriever, message_fields={"query": "query"})
 
         msg = Message()
         msg.query = "message query"
@@ -509,9 +507,7 @@ class TestSearcherWithRealBM25:
         searcher = Searcher(
             retriever=bm25,
             config={"top_k": 1, "return_score": True},
-            templates={
-                "response": "{% for r in results %}{{ r.data }}{% endfor %}"
-            },
+            templates={"response": "{% for r in results %}{{ r.data }}{% endfor %}"},
         )
 
         result = searcher("Google")
@@ -580,6 +576,7 @@ class TestSearcherAutoParams:
 
         class MySearcher(Searcher):
             """Search the knowledge base for relevant documents."""
+
             retriever = mock_retriever
 
         s = MySearcher()
@@ -618,6 +615,7 @@ class TestSearcherAutoParams:
 
         class MySearcher(Searcher):
             """This docstring is ignored."""
+
             retriever = mock_retriever
             description = "Explicit description wins."
 
@@ -632,6 +630,7 @@ class TestSearcherAutoParams:
 
         class KBSearcher(Searcher):
             """Search the company knowledge base."""
+
             retriever = mock_retriever
             config = {"top_k": 2}
 

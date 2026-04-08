@@ -276,4 +276,3 @@ class StandardCsvParser(BaseParser, CsvParser):
 
         html += "</table>"
         return html
-

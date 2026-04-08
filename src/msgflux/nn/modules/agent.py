@@ -1140,7 +1140,9 @@ class Agent(Module, metaclass=AutoParams):
             if task:
                 if isinstance(task, str):
                     task_template = self.templates["task"]
-                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):  # noqa: E501
+                    if is_jinja_template(task_template) and not has_format_placeholder(
+                        task_template
+                    ):  # noqa: E501
                         raise ValueError(
                             f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
                             "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
@@ -1208,7 +1210,9 @@ class Agent(Module, metaclass=AutoParams):
             if task:
                 if isinstance(task, str):
                     task_template = self.templates["task"]
-                    if is_jinja_template(task_template) and not has_format_placeholder(task_template):  # noqa: E501
+                    if is_jinja_template(task_template) and not has_format_placeholder(
+                        task_template
+                    ):  # noqa: E501
                         raise ValueError(
                             f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
                             "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
@@ -1243,9 +1247,7 @@ class Agent(Module, metaclass=AutoParams):
         content += task_content
         content = content.strip()  # Remove whitespace
 
-        multimodal_content = await self._arender_task_multimodal(
-            message, **kwargs
-        )
+        multimodal_content = await self._arender_task_multimodal(message, **kwargs)
         if multimodal_content:
             multimodal_content.append(ChatBlock.text(content))
             return multimodal_content
@@ -1459,19 +1461,15 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Configuration ---
 
-    def _set_task_context(
-        self, task_context: Optional[Union[str, List[str]]] = None
-    ):
+    def _set_task_context(self, task_context: Optional[Union[str, List[str]]] = None):
         if isinstance(task_context, (str, list)) or task_context is None:
             if isinstance(task_context, str) and task_context == "":
                 raise ValueError(
-                    "`task_context` requires a string not empty"
-                    f"given `{task_context}`"
+                    f"`task_context` requires a string not emptygiven `{task_context}`"
                 )
             if isinstance(task_context, list) and not task_context:
                 raise ValueError(
-                    "`task_context` requires a list not empty"
-                    f"given `{task_context}`"
+                    f"`task_context` requires a list not emptygiven `{task_context}`"
                 )
             self.register_buffer("task_context", task_context)
         else:

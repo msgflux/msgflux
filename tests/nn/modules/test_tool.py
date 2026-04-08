@@ -997,9 +997,7 @@ class TestToolLibrary:
         library = ToolLibrary(name="lib", tools=[async_tool])
 
         tool_callings = [("call_1", "async_tool", {"x": 8})]
-        result = await library.aforward(
-            tool_callings, messages={"key": "state_value"}
-        )
+        result = await library.aforward(tool_callings, messages={"key": "state_value"})
 
         assert result.tool_calls[0].result == "state_value"
         assert "x" not in result.tool_calls[0].parameters

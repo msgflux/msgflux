@@ -329,4 +329,3 @@ class JinaAIImageEmbedder(ImageEmbedderModel, JinaAITextEmbedder):
         inputs = [{"image": item} for item in data]
         response = await self._agenerate(input=inputs)
         return response
-
