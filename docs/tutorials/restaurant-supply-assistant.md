@@ -77,7 +77,7 @@ User Message
                 ├─── ItemExtractor ──→ [{name, quantity, unit}, ...]
                 │    task_context: image_description (when present)
                 │
-                └─── ProductSearcher (BM25 per item) ──→ top-3 catalog matches
+                └─── ProductSearcher (fuzzy per item) ──→ top-3 catalog matches
                           │
                           ▼
                "## Identified items\n..."
@@ -101,6 +101,10 @@ The image hint is injected into the assistant's context only when relevant — t
 ## Setup
 
 --8<-- "docs/_includes/init_chat_completion_model.md"
+
+```bash
+pip install rapidfuzz
+```
 
 ---
 
@@ -135,7 +139,7 @@ Use a vision-capable model for `vision_model` — it handles the shelf scanning 
 
 ## Step 2 — Synthetic Catalog
 
-A product catalog of 36 items across 7 categories. Each entry becomes a BM25-searchable string.
+A product catalog of 36 items across 7 categories. Each entry becomes a fuzzy-searchable string.
 
 ```python
 CATALOG = [
@@ -194,7 +198,7 @@ pip install rapidfuzz
 ```python
 def build_corpus(catalog: list[dict]) -> list[str]:
     return [
-        f"{p['id']} | {p['name']} | {p['category']} | R${p['price']:.2f}/{p['unit']}"
+        f"{p['id']} | {p['name']} | {p['category']} | US${p['price']:.2f}/{p['unit']}"
         for p in catalog
     ]
 
@@ -266,7 +270,7 @@ class ItemExtractor(nn.Agent):
     response_mode = "extracted_items"
 ```
 
-**ProductSearcher** runs a BM25 query for each extracted item name and returns the top catalog matches.
+**ProductSearcher** runs a fuzzy query for each extracted item name and returns the top catalog matches.
 
 ```python
 class ProductSearcher(nn.Searcher):
@@ -382,8 +386,8 @@ def add_item(
     running_total = sum(i["unit_price"] * i["quantity"] for i in items)
     return (
         f"Added {quantity} {unit} of {name} (ID: {product_id}, "
-        f"R${unit_price:.2f}/{unit}). "
-        f"{len(items)} item(s) queued — running total: R${running_total:.2f}."
+        f"US${unit_price:.2f}/{unit}). "
+        f"{len(items)} item(s) queued — running total: US${running_total:.2f}."
     )
 
 
@@ -401,7 +405,7 @@ def submit_order(**kwargs) -> str:
     vars["order_items"] = []
     return (
         f"Order {order_id} submitted successfully. "
-        f"{len(items)} item(s), total: R${total:.2f}."
+        f"{len(items)} item(s), total: US${total:.2f}."
     )
 ```
 
@@ -705,7 +709,7 @@ CATALOG = [
 
 def build_corpus(catalog: list[dict]) -> list[str]:
     return [
-        f"{p['id']} | {p['name']} | {p['category']} | R${p['price']:.2f}/{p['unit']}"
+        f"{p['id']} | {p['name']} | {p['category']} | US${p['price']:.2f}/{p['unit']}"
         for p in catalog
     ]
 
@@ -850,8 +854,8 @@ def add_item(
     running_total = sum(i["unit_price"] * i["quantity"] for i in items)
     return (
         f"Added {quantity} {unit} of {name} (ID: {product_id}, "
-        f"R${unit_price:.2f}/{unit}). "
-        f"{len(items)} item(s) queued — running total: R${running_total:.2f}."
+        f"US${unit_price:.2f}/{unit}). "
+        f"{len(items)} item(s) queued — running total: US${running_total:.2f}."
     )
 
 
@@ -869,7 +873,7 @@ def submit_order(**kwargs) -> str:
     vars["order_items"] = []
     return (
         f"Order {order_id} submitted successfully. "
-        f"{len(items)} item(s), total: R${total:.2f}."
+        f"{len(items)} item(s), total: US${total:.2f}."
     )
 
 

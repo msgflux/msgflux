@@ -1,6 +1,6 @@
 # Call Transcript Analysis
 
-<span class="tag tag-purple">Intermediate</span>
+<span class="tag tag-purple">Intermediate</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Reasoning</span><span class="tag tag-gray">Multimodal</span>
 
 Customer service teams review call quality manually — a supervisor listens to recordings, fills out a scorecard, and writes notes. At 5–10 minutes per call, a team handling hundreds of calls a day can review only a fraction of them.
 
@@ -35,16 +35,18 @@ You are sampling, not monitoring.
 
 We will build an analyzer that produces a structured breakdown of a call in a single pass: per-phase sentiment with a reason for each label, a sentiment arc across the conversation, resolution quality, and a predicted CSAT score.
 
-The key design choice is asking the model to reason step by step before filling any field. Classifying sentiment across three temporal phases is not a lookup — the model must locate where each phase begins, identify the language that carries sentiment, and weigh the trajectory before committing to labels. Without a shared reasoning step, each output field is filled independently and the results can contradict each other: the closing phase labeled satisfied while the resolution is flagged as absent. With step-by-step reasoning, a single interpretation is built first, all fields follow from it, and that reasoning is returned alongside the results as an audit trail you can inspect for every call.
+The input can be a plain text transcript or an audio recording — if audio is provided it is transcribed first and the rest of the pipeline runs identically.
 
-This tutorial uses the **imperative API**: the analyzer is called directly with a transcript string and returns a plain dict.
+The key design choice is asking the model to reason step by step before filling any field. Classifying sentiment across three temporal phases is not a lookup — the model must locate where each phase begins, identify the language that carries sentiment, and weigh the trajectory before committing to labels. Without a shared reasoning step, each output field is filled independently and the results can contradict each other: the closing phase labeled satisfied while the resolution is flagged as absent. With step-by-step reasoning, a single interpretation is built first, all fields follow from it, and that reasoning is returned alongside the results as an audit trail you can inspect for every call.
 
 ---
 
 ## Architecture
 
 ```
-transcript: str
+Call input (text or audio)
+       │
+       ├── audio? → Transcriber (Whisper) → transcript
        │
        ▼
   CallAnalyzer (nn.Module)
@@ -79,9 +81,7 @@ The `reasoning` field records *how* the model interpreted the conversation befor
 
 ---
 
-## Step 1 — Signature
-
-The `Signature` encodes the full analytical contract: one input field and every structured field the model must produce. Separate `reason` fields for each sentiment and for the resolution verdict force the model to provide evidence, not just labels.
+## Step 1 — Models
 
 ```python
 import msgflux as mf
@@ -92,7 +92,17 @@ from typing import Literal
 
 mf.load_dotenv()
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+stt_model  = mf.Model.speech_to_text("openai/whisper-1")
+```
+
+---
+
+## Step 2 — Signature
+
+The `Signature` encodes the full analytical contract: one input field and every structured field the model must produce. Separate `reason` fields for each sentiment and for the resolution verdict force the model to provide evidence, not just labels.
+
+```python
 
 
 class CallAnalysisSignature(Signature):
@@ -172,35 +182,60 @@ class CallAnalysisSignature(Signature):
 
 ---
 
-## Step 2 — Agent and Wrapper
+## Step 3 — Transcriber
+
+`CallTranscriber` reads `audio_content` from the message and writes the transcription to `call.transcript`. When audio is provided, `CallAnalyzer` runs this step first and then feeds the result to `_Analyzer` — so text and audio inputs flow through identical downstream logic.
+
+```python
+class CallTranscriber(nn.Transcriber):
+    """Transcribes call audio into msg.call.transcript."""
+    model          = stt_model
+    message_fields = {"task_multimodal": {"audio": "audio_content"}}
+    response_mode  = "call.transcript"
+```
+
+---
+
+## Step 4 — Analyzer
 
 `_Analyzer` is the raw agent — it takes `{"transcript": text}` and returns the fused CoT output. `CallAnalyzer` wraps it: `forward` unwraps the `final_answer` envelope and merges `reasoning` into the returned dict so all fields are accessible at the top level.
 
 ```python
 class _Analyzer(nn.Agent):
-    model = model
-    signature = CallAnalysisSignature
+    model             = chat_model
+    signature         = CallAnalysisSignature
     generation_schema = ChainOfThought
-    config = {"verbose": True}
+    config            = {"verbose": True}
 
 
 class CallAnalyzer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.agent = _Analyzer()
+        self.transcriber = CallTranscriber()
+        self.agent       = _Analyzer()
 
-    def forward(self, transcript: str) -> dict:
+    def forward(self, transcript: str | None = None, audio: bytes | None = None) -> dict:
+        if audio:
+            msg = mf.Message()
+            msg.audio_content = audio
+            self.transcriber(msg)
+            transcript = msg.call.transcript
         raw = self.agent({"transcript": transcript})
         return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 
-    async def aforward(self, transcript: str) -> dict:
+    async def aforward(self, transcript: str | None = None, audio: bytes | None = None) -> dict:
+        if audio:
+            msg = mf.Message()
+            msg.audio_content = audio
+            await self.transcriber.acall(msg)
+            transcript = msg.call.transcript
         raw = await self.agent.acall({"transcript": transcript})
         return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 ```
 
 ---
 
-## Step 3 — Run It
+## Step 5 — Run It
 
 ```python
 TRANSCRIPT_RESOLVED = """
@@ -274,7 +309,7 @@ for label, transcript in [
 
         ```python
         analyzer = CallAnalyzer()
-        analysis = analyzer(TRANSCRIPT_RESOLVED)
+        analysis = analyzer(transcript=TRANSCRIPT_RESOLVED)
 
         print(f"Trajectory : {analysis['sentiment_trajectory']}")
         print(f"Resolution : {analysis['resolution_quality']}")
@@ -286,13 +321,24 @@ for label, transcript in [
 
         ```python
         analyzer = CallAnalyzer()
-        analysis = analyzer(TRANSCRIPT_UNRESOLVED)
+        analysis = analyzer(transcript=TRANSCRIPT_UNRESOLVED)
 
         print(f"Trajectory : {analysis['sentiment_trajectory']}")
         print(f"Resolution : {analysis['resolution_quality']}")
         print(f"CSAT       : {analysis['csat_prediction']}/5")
         print(f"Opening    : {analysis['opening_sentiment']} — {analysis['opening_reason']}")
         print(f"Closing    : {analysis['closing_sentiment']} — {analysis['closing_reason']}")
+        ```
+
+    === "Audio recording"
+
+        ```python
+        analyzer = CallAnalyzer()
+        analysis = analyzer(audio=open("call.mp3", "rb").read())
+
+        print(f"Trajectory : {analysis['sentiment_trajectory']}")
+        print(f"Resolution : {analysis['resolution_quality']}")
+        print(f"CSAT       : {analysis['csat_prediction']}/5")
         ```
 
     === "Async batch"
@@ -310,7 +356,7 @@ for label, transcript in [
 
             results = await F.amap_gather(
                 analyzer,
-                args_list=[(t,) for t in transcripts],
+                kwargs_list=[{"transcript": t} for t in transcripts],
             )
 
             for i, analysis in enumerate(results, 1):
@@ -380,19 +426,21 @@ print(f"Trajectories: {dict(trajectories)}")
 
 ```python
 import asyncio
+from typing import Literal
+
 import msgflux as mf
 import msgflux.nn as nn
 import msgflux.nn.functional as F
 from msgflux import Signature, InputField, OutputField
 from msgflux.generation.reasoning import ChainOfThought
-from typing import Literal
 
 mf.load_dotenv()
 
 
-# ── Model ─────────────────────────────────────────────────────────────────────
+# ── Models ────────────────────────────────────────────────────────────────────
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+stt_model  = mf.Model.speech_to_text("openai/whisper-1")
 
 
 # ── Signature ─────────────────────────────────────────────────────────────────
@@ -459,25 +507,45 @@ class CallAnalysisSignature(Signature):
     )
 
 
-# ── Agent and Wrapper ─────────────────────────────────────────────────────────
+# ── Transcriber ───────────────────────────────────────────────────────────────
+
+class CallTranscriber(nn.Transcriber):
+    """Transcribes call audio into msg.call.transcript."""
+    model          = stt_model
+    message_fields = {"task_multimodal": {"audio": "audio_content"}}
+    response_mode  = "call.transcript"
+
+
+# ── Analyzer ──────────────────────────────────────────────────────────────────
 
 class _Analyzer(nn.Agent):
-    model = model
-    signature = CallAnalysisSignature
+    model             = chat_model
+    signature         = CallAnalysisSignature
     generation_schema = ChainOfThought
-    config = {"verbose": True}
+    config            = {"verbose": True}
 
 
 class CallAnalyzer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.agent = _Analyzer()
+        self.transcriber = CallTranscriber()
+        self.agent       = _Analyzer()
 
-    def forward(self, transcript: str) -> dict:
+    def forward(self, transcript: str | None = None, audio: bytes | None = None) -> dict:
+        if audio:
+            msg = mf.Message()
+            msg.audio_content = audio
+            self.transcriber(msg)
+            transcript = msg.call.transcript
         raw = self.agent({"transcript": transcript})
         return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 
-    async def aforward(self, transcript: str) -> dict:
+    async def aforward(self, transcript: str | None = None, audio: bytes | None = None) -> dict:
+        if audio:
+            msg = mf.Message()
+            msg.audio_content = audio
+            await self.transcriber.acall(msg)
+            transcript = msg.call.transcript
         raw = await self.agent.acall({"transcript": transcript})
         return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
 
@@ -485,12 +553,6 @@ class CallAnalyzer(nn.Module):
 # ── Report ────────────────────────────────────────────────────────────────────
 
 def print_report(a: dict) -> None:
-    trajectory_icon = {
-        "improved": "📈", "stable_positive": "✅", "stable_neutral": "➡️",
-        "stable_negative": "⚠️", "worsened": "📉", "volatile": "〰️",
-    }.get(a["sentiment_trajectory"], "❓")
-    resolution_icon = "✅" if a["was_resolved"] else "❌"
-
     print("=" * 60)
     print("CALL ANALYSIS REPORT")
     print("=" * 60)
@@ -498,12 +560,11 @@ def print_report(a: dict) -> None:
     print(f"  Opening  [{a['opening_sentiment']:>10}]  {a['opening_reason']}")
     print(f"  Middle   [{a['middle_sentiment']:>10}]  {a['middle_reason']}")
     print(f"  Closing  [{a['closing_sentiment']:>10}]  {a['closing_reason']}")
-    print(f"\n── Trajectory {trajectory_icon} ────────────────────────────────────")
-    print(f"  {a['sentiment_trajectory'].upper()}: {a['trajectory_summary']}")
-    print(f"\n── Resolution {resolution_icon} ────────────────────────────────────")
-    print(f"  Quality : {a['resolution_quality']}")
-    print(f"  Reason  : {a['resolution_reason']}")
-    print(f"\n── CSAT Prediction ({'⭐' * a['csat_prediction']}) ({a['csat_prediction']}/5)")
+    print(f"\n── Trajectory: {a['sentiment_trajectory'].upper()}")
+    print(f"  {a['trajectory_summary']}")
+    print(f"\n── Resolution: {a['resolution_quality']} ({'resolved' if a['was_resolved'] else 'unresolved'})")
+    print(f"  {a['resolution_reason']}")
+    print(f"\n── CSAT Prediction: {a['csat_prediction']}/5")
     print("\n── Reasoning Trace ─────────────────────────────────────")
     print(f"  {a['reasoning']}")
     print("=" * 60)
@@ -545,7 +606,7 @@ for label, transcript in [
     ("UNRESOLVED CALL", TRANSCRIPT_UNRESOLVED),
 ]:
     print(f"\n\n{'#' * 60}\n# {label}\n{'#' * 60}")
-    analysis = analyzer(transcript)
+    analysis = analyzer(transcript=transcript)
     print_report(analysis)
 ```
 

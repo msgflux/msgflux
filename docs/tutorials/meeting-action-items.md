@@ -1,6 +1,6 @@
 # Meeting Action Items Tracker
 
-<span class="tag tag-blue">Intermediate</span>
+<span class="tag tag-purple">Intermediate</span><span class="tag tag-gray">Signature</span><span class="tag tag-gray">Few-shot</span><span class="tag tag-gray">Multimodal</span>
 
 ---
 

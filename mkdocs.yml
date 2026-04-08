@@ -177,7 +177,6 @@ nav:
       - MediaMaker: learn/nn/mediamaker.md
       - Predictor: learn/nn/predictor.md
     - ◎ Telemetry: learn/telemetry.md
-    #- ⇄ Dependency Management: dependency-management.md
     - API Reference:
       - Models:
           - api-reference/models/model.md
@@ -194,42 +193,35 @@ nav:
           - api-reference/nn/modules/agent.md       
   - Tutorials:
     - tutorials/index.md
-    - Finance & Payments:
-      - PIX Assistant: tutorials/pix-assistant.md
-      - Restaurant Supply Assistant: tutorials/restaurant-supply-assistant.md
-      - Food Delivery Assistant: tutorials/food-delivery-assistant.md
-    - Agro & Industrial:
-      - Herd Monitor: tutorials/herd-monitor.md
-      - Smart Collar Analytics: tutorials/smart-collar-analytics.md
-    - Safety & Infrastructure:
-      - Road Collision Detector: tutorials/road-collision-detector.md
-      - PPE Compliance Monitor: tutorials/ppe-compliance-monitor.md
-      - Workplace Incident Reporter: tutorials/workplace-incident-reporter.md
-    - Routing & Classification:
-      - Intent Router: tutorials/intent-router.md
-      - Query Router with Signatures: tutorials/signature-router.md
-    - Audio & Video:
-      - Meeting Assistant: tutorials/meeting-assistant.md
-      - Call Transcript Analysis: tutorials/call-transcript-analysis.md
-      - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
-    - Research & Analysis:
-      - Research Scholar Agent: tutorials/research-scholar.md
-      - Legal Document Review: tutorials/legal-document-review.md
-    - CRM:
-      - Visit Report Assistant: tutorials/visit-report.md
-      - Email Auto Responder: tutorials/email-auto-responder.md
-      - Support Ticket Router: tutorials/support-ticket-router.md
-      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
-    - Business & Sales:
+    - Sales:
       - Lead Scoring: tutorials/lead-scoring.md
-    - Office:
+      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
+      - Visit Report Assistant: tutorials/visit-report.md
+    - Payments & Commerce:
+      - PIX Assistant: tutorials/pix-assistant.md
+      - Food Delivery Assistant: tutorials/food-delivery-assistant.md
+      - Restaurant Supply Assistant: tutorials/restaurant-supply-assistant.md
+    - Customer Service:
+      - Support Ticket Router: tutorials/support-ticket-router.md
+      - Email Auto Responder: tutorials/email-auto-responder.md
+      - Call Transcript Analysis: tutorials/call-transcript-analysis.md
+    - Meetings & Productivity:
+      - Meeting Assistant: tutorials/meeting-assistant.md
       - Meeting Action Items Tracker: tutorials/meeting-action-items.md
-    - Developer Tools:
-      - Code Generation & Debugging Agent: tutorials/code-debug-agent.md
-      - README Generator: tutorials/readme-generator.md
+      - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
     - Marketing & Creative:
       - Product Poster Generator: tutorials/product-poster.md
       - Ad Focus Group Simulator: tutorials/ad-focus-group.md
+    - Routing & Classification:
+      - Intent Router: tutorials/intent-router.md
+      - Query Router with Signatures: tutorials/signature-router.md
+    #- Vision:
+    #  - Road Collision Detector: tutorials/road-collision-detector.md
+    #  - PPE Compliance Monitor: tutorials/ppe-compliance-monitor.md
+    #  - Herd Monitor: tutorials/herd-monitor.md
+    #- Agro & Industrial:
+    #  - Smart Collar Analytics: tutorials/smart-collar-analytics.md
+    #  - Workplace Incident Reporter: tutorials/workplace-incident-reporter.md
   - Dependency Management: dependency-management.md
   - Changelog: CHANGELOG.md
   - Blog:

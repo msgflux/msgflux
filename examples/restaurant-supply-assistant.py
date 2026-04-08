@@ -65,7 +65,7 @@ CATALOG = [
 
 def build_corpus(catalog: list[dict]) -> list[str]:
     return [
-        f"{p['id']} | {p['name']} | {p['category']} | R${p['price']:.2f}/{p['unit']}"
+        f"{p['id']} | {p['name']} | {p['category']} | US${p['price']:.2f}/{p['unit']}"
         for p in catalog
     ]
 
@@ -210,8 +210,8 @@ def add_item(
     running_total = sum(i["unit_price"] * i["quantity"] for i in items)
     return (
         f"Added {quantity} {unit} of {name} (ID: {product_id}, "
-        f"R${unit_price:.2f}/{unit}). "
-        f"{len(items)} item(s) queued — running total: R${running_total:.2f}."
+        f"US${unit_price:.2f}/{unit}). "
+        f"{len(items)} item(s) queued — running total: US${running_total:.2f}."
     )
 
 
@@ -229,7 +229,7 @@ def submit_order(**kwargs) -> str:
     vars["order_items"] = []
     return (
         f"Order {order_id} submitted successfully. "
-        f"{len(items)} item(s), total: R${total:.2f}."
+        f"{len(items)} item(s), total: US${total:.2f}."
     )
 
 
