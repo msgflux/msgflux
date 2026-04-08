@@ -1107,16 +1107,16 @@ wheels = [
 
 [[package]]
 name = "msgtrace-sdk"
-version = "1.1.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cd/47/3f0c358b3f4cb5f17842b1dc5e713c793dc9a5c2ce56a41143d66ddf86e2/msgtrace_sdk-1.1.0.tar.gz", hash = "sha256:b1ad04dab5a56a39b231f5b5baf3cf7e209d25219e5c14a84f3c6964d811db61", size = 48792, upload-time = "2025-12-04T21:41:08.863Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/24/cb5f1b940398e59901a03393e3de3f32c66165f1d1bef09559b360121aaf/msgtrace_sdk-1.2.0.tar.gz", hash = "sha256:1eb09f593d422e34efbcffacba604f1c475e9b24bd40083bcb40d9cfdbf7fd15", size = 55388, upload-time = "2026-01-28T19:54:11.525Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/46/ea74f2e1a49d1f887b0392b1b6cc822720594321e299b56319a8419ddd24/msgtrace_sdk-1.1.0-py3-none-any.whl", hash = "sha256:d84681a397f289a96d6557ddbeef6046200c75b7b507fb94593b8812b1a79f23", size = 14078, upload-time = "2025-12-04T21:41:07.343Z" },
+    { url = "https://files.pythonhosted.org/packages/69/0d/039746c6bb34ab8dc4c46d1cb726b5ebfc5da91d49f48bca3990d4a86cd2/msgtrace_sdk-1.2.0-py3-none-any.whl", hash = "sha256:468c12011e7b7b3a5839b609b7cd28f4d3198b39f03bd4894d66fdd3c1510eea", size = 17312, upload-time = "2026-01-28T19:54:08.808Z" },
 ]
 
 [[package]]
