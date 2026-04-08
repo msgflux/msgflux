@@ -681,15 +681,57 @@ Use `image_block_kwargs` and `video_block_kwargs` in `config` to pass extra para
 
 ## Messages (Chat History)
 
-Pass a list of messages in ChatML format to provide conversation history. This is useful for chatbots and multi-turn conversations.
+Pass a list of messages in ChatML format to provide conversation history. The `messages` parameter has explicit opt-in semantics:
 
-Use `config={"return_messages": True}` to get back both the agent's response and the internal message history, which you can feed back into the agent for the next turn.
+| Value | Behavior |
+|-------|----------|
+| Not passed (default) | Ephemeral — no side effects on external state |
+| `[]` (empty list) | Accumulator — user input and tool calls are appended in-place |
+| `[...]` (existing list) | Continue — extends the existing history |
+
+The final assistant response is **never added automatically** — append it manually with `mf.ChatBlock.assist(response)` after each turn.
 
 ???+ note "Chat History Examples"
 
-    === "Basic Chat"
+    === "Accumulator Pattern"
 
-        Use `return_messages` to capture and reuse conversation history:
+        Pass `messages=[]` once and let the agent accumulate history in-place.
+        Only append the assistant reply manually after each turn:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class Advisor(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            system_message = "You are a helpful camera advisor."
+
+        agent = Advisor()
+        history = []
+
+        # Turn 1
+        response = agent("I'm looking for a compact camera under $500.", messages=history)
+        print(f"Assistant: {response}")
+        history.append(mf.ChatBlock.assist(response))
+        # history: [user, assistant]
+
+        # Turn 2 — user input is added automatically, just append the reply
+        response = agent("Which one has better low-light performance?", messages=history)
+        print(f"Assistant: {response}")
+        history.append(mf.ChatBlock.assist(response))
+
+        # Turn 3
+        response = agent("What about battery life?", messages=history)
+        print(f"Assistant: {response}")
+        ```
+
+    === "return_messages"
+
+        Use `config={"return_messages": True}` when you need the full internal
+        message list returned alongside the response (e.g., for logging or inspection):
 
         ```python
         # pip install msgflux[openai]
@@ -704,12 +746,12 @@ Use `config={"return_messages": True}` to get back both the agent's response and
 
         agent = Assistant()
 
-        # First message - no history yet
+        # First turn — no history yet
         result = agent("Hi, my name is Peter Parker, and I'm a photographer.")
         print(result.response)
 
-        # result.messages has the history but not the assistant reply yet
-        # Append it manually with ChatBlock.assist before the next turn
+        # result.messages has user input (+ tool calls if any), but not the reply
+        # Append it manually before the next turn
         messages = result.messages + [mf.ChatBlock.assist(result.response)]
 
         result = agent(
@@ -720,48 +762,10 @@ Use `config={"return_messages": True}` to get back both the agent's response and
         # The agent remembers you're Peter Parker and a photographer
         ```
 
-    === "Multi-turn Conversation"
-
-        Chain multiple turns by passing `messages` each time:
-
-        ```python
-        # pip install msgflux[openai]
-        import msgflux as mf
-        import msgflux.nn as nn
-
-        # mf.set_envs(OPENAI_API_KEY="...")
-
-        class Advisor(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            system_message = "You are a helpful camera advisor."
-            config = {"return_messages": True}
-
-        agent = Advisor()
-
-        # Turn 1
-        result = agent("I'm looking for a compact camera under $500.")
-        print(f"Assistant: {result.response}")
-        messages = result.messages + [mf.ChatBlock.assist(result.response)]
-
-        # Turn 2 - pass previous messages
-        result = agent(
-            "Which one has better low-light performance?",
-            messages=messages
-        )
-        print(f"Assistant: {result.response}")
-        messages = result.messages + [mf.ChatBlock.assist(result.response)]
-
-        # Turn 3 - continue the chain
-        result = agent(
-            "What about battery life?",
-            messages=messages
-        )
-        print(f"Assistant: {result.response}")
-        ```
-
     === "ChatBot Pattern"
 
-        Complete chatbot loop with streaming:
+        Complete chatbot loop with streaming. `messages=None` on the first turn
+        means ephemeral — no list is needed until history starts accumulating:
 
         ```python
         # pip install msgflux[openai]
@@ -776,17 +780,15 @@ Use `config={"return_messages": True}` to get back both the agent's response and
             config = {"stream": True, "return_messages": True}
 
         agent = ChatBot()
-        messages = None  # No history initially
+        messages = None  # ephemeral on first turn
 
         while True:
             user_input = input("You: ")
             if user_input.lower() in ["quit", "exit"]:
                 break
 
-            # Pass previous messages (None on first turn)
             result = agent(user_input, messages=messages)
 
-            # Handle streaming response
             full_response = ""
             print("Assistant: ", end="", flush=True)
             for chunk in result.consume():
@@ -794,7 +796,7 @@ Use `config={"return_messages": True}` to get back both the agent's response and
                 full_response += chunk
             print()
 
-            # Update messages for next turn (include the assistant reply)
+            # Build history for the next turn (include the assistant reply)
             messages = result.messages + [mf.ChatBlock.assist(full_response)]
         ```
 

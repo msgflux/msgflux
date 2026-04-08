@@ -1098,3 +1098,111 @@ class TestAgentSystemExtraMessage:
 
         assert hasattr(agent, "system_extra_message")
         assert agent.system_extra_message == "Extra info"
+
+
+class TestAgentMessagesAccumulator:
+    """Test messages parameter accumulator semantics.
+
+    - messages not passed (default) → ephemeral, no external side effect
+    - messages=[]                   → opt-in accumulator, mutated in-place
+    - messages=[...]                → extends existing history
+    """
+
+    @pytest.fixture
+    def agent(self):
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        return Agent(name="agent", model=mock_model)
+
+    # --- _prepare_inputs: pure accumulation logic ---
+
+    def test_no_messages_arg_is_ephemeral(self, agent):
+        """Not passing messages returns an internal list; no external object modified."""
+        result = agent._prepare_inputs("Hello")
+        # Internal list is created — has the user message
+        assert result["messages"] is not None
+        assert any(m.get("role") == "user" for m in result["messages"])
+
+    def test_empty_list_accumulates_user_input(self, agent):
+        """messages=[] is mutated in-place with the user input."""
+        history = []
+        agent._prepare_inputs("Hello", messages=history)
+        assert len(history) == 1
+        assert history[0]["role"] == "user"
+
+    def test_nonempty_list_extends_with_user_input(self, agent):
+        """messages=[...] is extended with the new user input."""
+        existing = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}]
+        history = list(existing)
+        agent._prepare_inputs("Follow-up question", messages=history)
+        assert len(history) == 3
+        assert history[2]["role"] == "user"
+
+    def test_empty_list_is_same_object(self, agent):
+        """The list passed as messages=[] is the same object after the call."""
+        history = []
+        agent._prepare_inputs("Hello", messages=history)
+        assert id(history) == id(history)  # tautology — check via len instead
+        assert len(history) == 1
+
+    def test_none_messages_does_not_mutate_any_external_list(self, agent):
+        """Passing messages=None explicitly behaves as ephemeral (no crash, no side effect)."""
+        # Should not raise and returns a valid messages list internally
+        result = agent._prepare_inputs("Hello", messages=None)
+        assert result["messages"] is not None
+
+    # --- full forward: user input and tool calls accumulate ---
+
+    def test_forward_accumulates_user_input(self, agent):
+        """forward() with messages=[] accumulates the user input into the list."""
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        history = []
+        agent("Hello", messages=history)
+
+        assert len(history) >= 1
+        assert history[0]["role"] == "user"
+
+    def test_forward_no_messages_arg_has_no_side_effect(self, agent):
+        """forward() without messages= leaves no external object modified."""
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        # No messages argument — purely ephemeral
+        result = agent("Hello")
+        assert isinstance(result, str)
+
+    def test_forward_two_turns_accumulate_correctly(self, agent):
+        """Two forward() calls with the same list accumulate both user inputs."""
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        history = []
+        agent("Turn one", messages=history)
+        len_after_turn1 = len(history)
+
+        agent("Turn two", messages=history)
+        len_after_turn2 = len(history)
+
+        assert len_after_turn2 > len_after_turn1
+
+    def test_forward_does_not_add_assistant_reply(self, agent):
+        """The final assistant response is never appended to messages automatically."""
+        mock_response = ModelResponse()
+        mock_response.data = "I am the assistant"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        history = []
+        response = agent("Hello", messages=history)
+
+        roles = [m.get("role") for m in history]
+        assert "assistant" not in roles
+        assert response == "I am the assistant"

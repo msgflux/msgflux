@@ -940,7 +940,7 @@ class Agent(Module, metaclass=AutoParams):
         # Extract reserved kwargs
         task = kwargs.pop("task", _UNSET)
         vars = kwargs.pop("vars", {})
-        messages = kwargs.pop("messages", [])
+        messages = kwargs.pop("messages", None)
         model_preference = kwargs.pop("model_preference", None)
 
         # Get remaining kwargs (potential task inputs)
@@ -988,7 +988,7 @@ class Agent(Module, metaclass=AutoParams):
 
         # Extract messages from Message if not provided
         if (
-            messages == []
+            messages is None
             and isinstance(message, dotdict)
             and self.messages is not None
         ):
@@ -996,7 +996,7 @@ class Agent(Module, metaclass=AutoParams):
 
         content = self._render_task(message, task=task, vars=vars, **kwargs)
 
-        if content is None and messages == []:
+        if content is None and not messages:
             raise ValueError(
                 "No task input provided. Expected one of:\n"
                 "  - agent('your text')\n"
@@ -1008,7 +1008,7 @@ class Agent(Module, metaclass=AutoParams):
 
         if content is not None:
             chat_content = [ChatBlock.user(content)]
-            if messages == []:
+            if messages is None:
                 messages = chat_content
             else:
                 messages.extend(chat_content)
@@ -1031,7 +1031,7 @@ class Agent(Module, metaclass=AutoParams):
         # Extract reserved kwargs
         task = kwargs.pop("task", _UNSET)
         vars = kwargs.pop("vars", {})
-        messages = kwargs.pop("messages", [])
+        messages = kwargs.pop("messages", None)
         model_preference = kwargs.pop("model_preference", None)
 
         # Get remaining kwargs (potential task inputs)
@@ -1079,7 +1079,7 @@ class Agent(Module, metaclass=AutoParams):
 
         # Extract messages from Message if not provided
         if (
-            messages == []
+            messages is None
             and isinstance(message, dotdict)
             and self.messages is not None
         ):
@@ -1087,7 +1087,7 @@ class Agent(Module, metaclass=AutoParams):
 
         content = await self._arender_task(message, task=task, vars=vars, **kwargs)
 
-        if content is None and messages == []:
+        if content is None and not messages:
             raise ValueError(
                 "No task input provided. Expected one of:\n"
                 "  - agent('your text')\n"
@@ -1099,7 +1099,7 @@ class Agent(Module, metaclass=AutoParams):
 
         if content is not None:
             chat_content = [ChatBlock.user(content)]
-            if messages == []:
+            if messages is None:
                 messages = chat_content
             else:
                 messages.extend(chat_content)
