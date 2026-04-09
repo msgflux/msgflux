@@ -40,9 +40,9 @@ class AdvisorQuestion(mf.Signature):
     confidence: Literal["high", "medium", "low"] = mf.OutputField(
         desc="Confidence in the answer based on how directly the handbook supports it"
     )
-    source_section: Literal[
-        "pricing", "refunds", "security", "support", "unknown"
-    ] = mf.OutputField(desc="Most relevant handbook section")
+    source_section: Literal["pricing", "refunds", "security", "support", "unknown"] = (
+        mf.OutputField(desc="Most relevant handbook section")
+    )
 
 
 @mf.tool_config(name_override="advisor", inject_messages=True)
