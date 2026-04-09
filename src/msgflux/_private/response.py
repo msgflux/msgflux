@@ -69,9 +69,48 @@ class BaseStreamResponse(CoreResponse):
         self.response_type = None
         self.error = None
 
+    def _finish_queue_with_none(
+        self,
+        *,
+        queue_attr: str,
+        loop_attr: str,
+        pending_attr: str,
+        lock_attr: str,
+    ) -> None:
+        with getattr(self, lock_attr):
+            queue = getattr(self, queue_attr)
+            loop = getattr(self, loop_attr)
+            pending = getattr(self, pending_attr)
+            if queue is None or loop is None or loop.is_closed():
+                pending.append(None)
+                return
+
+        loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    def _fail_stream(self, error: Exception) -> None:
+        self.set_error(error)
+        self._finish_queue_with_none(
+            queue_attr="_queue",
+            loop_attr="_queue_loop",
+            pending_attr="_pending_chunks",
+            lock_attr="_queue_lock",
+        )
+        self._finish_queue_with_none(
+            queue_attr="_reasoning_queue",
+            loop_attr="_reasoning_queue_loop",
+            pending_attr="_reasoning_pending_chunks",
+            lock_attr="_reasoning_queue_lock",
+        )
+
     def _accumulate_data(self, data: Any) -> None:
         if data is None:
             return
+
+        if not isinstance(data, (str, bytes)):
+            raise TypeError(
+                "ModelStreamResponse only supports `str` or `bytes` chunks, "
+                f"got `{type(data).__name__}`."
+            )
 
         if self.data is None:
             self.data = data
@@ -84,6 +123,11 @@ class BaseStreamResponse(CoreResponse):
         if isinstance(self.data, bytes) and isinstance(data, bytes):
             self.data += data
             return
+
+        raise TypeError(
+            "ModelStreamResponse received mixed chunk types: "
+            f"`{type(self.data).__name__}` then `{type(data).__name__}`."
+        )
 
     def set_response_type(self, response_type: str):
         super().set_response_type(response_type)
@@ -101,8 +145,14 @@ class BaseStreamResponse(CoreResponse):
         """Add data to the content stream queue in a thread-safe way."""
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
-        with self._queue_lock:
+
+        try:
             self._accumulate_data(data)
+        except Exception as e:
+            self._fail_stream(e)
+            raise
+
+        with self._queue_lock:
             queue = self._queue
             loop = self._queue_loop
             if queue is None or loop is None or loop.is_closed():
