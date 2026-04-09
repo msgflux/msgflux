@@ -15,23 +15,55 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
 
-      - name: Set up Python
-        run: uv python install 3.12
-
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --python 3.12 --group dev
 
-      - name: Run ruff format check
-        run: uv run ruff format --check
+      - name: Determine changed Python files
+        id: changed-python
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHANGED_PY=$(git diff --name-only --diff-filter=ACMR "${BASE_SHA}...${HEAD_SHA}" -- '*.py')
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            CHANGED_PY=$(git diff --name-only --diff-filter=ACMR HEAD~1 HEAD -- '*.py')
+          else
+            CHANGED_PY=$(git ls-files '*.py')
+          fi
 
-      - name: Run ruff lint
-        run: uv run ruff check --output-format=github
+          {
+            echo "files<<EOF"
+            echo "$CHANGED_PY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run ruff format check on changed files
+        if: steps.changed-python.outputs.files != ''
+        run: |
+          printf '%s\n' "${{ steps.changed-python.outputs.files }}" | xargs uv run --python 3.12 ruff format --check
+
+      - name: Run ruff lint on changed files
+        if: steps.changed-python.outputs.files != ''
+        run: |
+          printf '%s\n' "${{ steps.changed-python.outputs.files }}" | xargs uv run --python 3.12 ruff check --output-format=github
+
+      - name: Skip ruff when no Python files changed
+        if: steps.changed-python.outputs.files == ''
+        run: echo "No Python files changed; skipping Ruff."
 
   test:
     name: Test Python ${{ matrix.python-version }}
@@ -44,19 +76,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --python ${{ matrix.python-version }} --group dev
 
       - name: Run tests
-        run: uv run pytest -v --cov=src/msgflux --cov-report=xml --cov-report=term
+        run: uv run --python ${{ matrix.python-version }} pytest -v --ignore=tests/integration --cov=src/msgflux --cov-report=xml --cov-report=term
 
       - name: Upload coverage
         uses: codecov/codecov-action@v6
@@ -73,14 +107,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Set up Python
-        run: uv python install 3.12
-
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --python 3.12 --group dev
 
       - name: Build package
         run: uv build
