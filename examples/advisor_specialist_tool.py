@@ -5,9 +5,8 @@
 from typing import Literal
 
 import msgflux as mf
-import msgflux.nn as nn
+from msgflux import nn
 from msgflux.generation.reasoning import ChainOfThought
-
 
 mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
@@ -55,7 +54,8 @@ class AdvisorTool(nn.Agent):
     """
     instructions = """
     Answer using only the handbook and the shared conversation context.
-    If the handbook or the conversation context is insufficient, say so and lower confidence.
+    If the handbook or the conversation context is insufficient, say so and
+    lower confidence.
     """
     generation_schema = ChainOfThought
     signature = AdvisorQuestion
@@ -88,6 +88,5 @@ class RootAssistant(nn.Agent):
 
 assistant = RootAssistant()
 
-print(assistant("Does the Pro plan include SAML SSO?"))
-print()
-print(assistant("Can a customer get a refund 45 days after purchase?"))
+response = assistant("Does the Pro plan include SAML SSO?")
+response = assistant("Can a customer get a refund 45 days after purchase?")
