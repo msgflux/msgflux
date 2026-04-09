@@ -548,6 +548,21 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Response Processing ---
 
+    def _ensure_stream_response_ready(self, model_response: ModelStreamResponse) -> None:
+        if model_response.response_type is not None:
+            return
+
+        error = getattr(model_response, "error", None)
+        if error is not None:
+            raise RuntimeError(
+                "Model stream failed before producing a response: "
+                f"{error}"
+            ) from error
+
+        raise RuntimeError(
+            "Model stream ended before producing a response type."
+        )
+
     def _process_model_response(
         self,
         message: Union[str, Mapping[str, Any], Message],
@@ -558,6 +573,7 @@ class Agent(Module, metaclass=AutoParams):
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
         if isinstance(model_response, ModelStreamResponse):
             wait_for_event(model_response._response_type_event)
+            self._ensure_stream_response_ready(model_response)
 
         if "tool_call" in model_response.response_type:
             model_response, messages = self._process_tool_call_response(
@@ -595,6 +611,7 @@ class Agent(Module, metaclass=AutoParams):
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
         if isinstance(model_response, ModelStreamResponse):
             await await_for_event(model_response._response_type_event)
+            self._ensure_stream_response_ready(model_response)
 
         if "tool_call" in model_response.response_type:
             model_response, messages = await self._aprocess_tool_call_response(

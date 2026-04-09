@@ -483,8 +483,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         `response_format`; it may be the same type or a lowered variant that only
         exists to satisfy OpenAI Structured Outputs restrictions.
         """
-        typed_parser = kwargs.pop("typed_parser")
-        generation_schema = kwargs.pop("generation_schema")
+        typed_parser = kwargs.pop("typed_parser", None)
+        generation_schema = kwargs.pop("generation_schema", None)
         tool_definitions = kwargs.pop("tool_definitions", None)
         transport_generation_schema = None
 
@@ -523,6 +523,13 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 )
 
         return typed_parser, generation_schema, transport_generation_schema
+
+    def _prepare_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip internal generation-only args before raw streaming requests."""
+        kwargs.pop("typed_parser", None)
+        kwargs.pop("generation_schema", None)
+        kwargs.pop("tool_definitions", None)
+        return kwargs
 
     def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
         cached = self._check_cache(**kwargs)
@@ -645,6 +652,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 stream_response.first_chunk_event.set()
             stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        except Exception as e:
+            stream_response.set_error(e)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
@@ -721,6 +730,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 stream_response.first_chunk_event.set()
             stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        except Exception as e:
+            stream_response.set_error(e)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
@@ -834,6 +845,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
+            self._prepare_stream_kwargs(generation_params)
             stream_response = ModelStreamResponse(mode="sync")
             F.spawn(
                 self._stream_generate,
@@ -913,6 +925,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
+            self._prepare_stream_kwargs(generation_params)
             stream_response = ModelStreamResponse(mode="async")
             await F.aspawn(
                 self._astream_generate,

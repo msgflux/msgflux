@@ -5,7 +5,7 @@ from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
-from msgflux.models.response import ModelResponse
+from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses, ToolCall
 from msgflux.core.examples import Example
 
@@ -369,6 +369,29 @@ class TestAgentForward:
         result = agent(query="Test", messages=[])
 
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_agent_aforward_raises_explicit_stream_error(self):
+        """Async stream failures should surface as explicit agent errors."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            signature="query -> response",
+            config={"stream": True},
+        )
+
+        stream_response = ModelStreamResponse(mode="async")
+        stream_response.set_error(TypeError("backend blew up"))
+        agent.generator.acall = AsyncMock(return_value=stream_response)
+
+        with pytest.raises(
+            RuntimeError,
+            match="Model stream failed before producing a response: backend blew up",
+        ):
+            await agent.aforward(query="Test input")
 
 
 class TestAgentInspect:

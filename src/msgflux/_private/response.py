@@ -67,9 +67,33 @@ class BaseStreamResponse(CoreResponse):
 
         self.metadata = None
         self.response_type = None
+        self.error = None
+
+    def _accumulate_data(self, data: Any) -> None:
+        if data is None:
+            return
+
+        if self.data is None:
+            self.data = data
+            return
+
+        if isinstance(self.data, str) and isinstance(data, str):
+            self.data += data
+            return
+
+        if isinstance(self.data, bytes) and isinstance(data, bytes):
+            self.data += data
+            return
 
     def set_response_type(self, response_type: str):
         super().set_response_type(response_type)
+        if not self._response_type_event.is_set():
+            self._response_type_event.set()
+
+    def set_error(self, error: Exception):
+        self.error = error
+        if not self.first_chunk_event.is_set():
+            self.first_chunk_event.set()
         if not self._response_type_event.is_set():
             self._response_type_event.set()
 
@@ -78,6 +102,7 @@ class BaseStreamResponse(CoreResponse):
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
         with self._queue_lock:
+            self._accumulate_data(data)
             queue = self._queue
             loop = self._queue_loop
             if queue is None or loop is None or loop.is_closed():
@@ -138,6 +163,8 @@ class BaseStreamResponse(CoreResponse):
         while True:
             chunk = await queue.get()
             if chunk is None:
+                if self.error is not None:
+                    raise self.error
                 break
             yield chunk
 
@@ -147,5 +174,7 @@ class BaseStreamResponse(CoreResponse):
         while True:
             chunk = await queue.get()
             if chunk is None:
+                if self.error is not None:
+                    raise self.error
                 break
             yield chunk

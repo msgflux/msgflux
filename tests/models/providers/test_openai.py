@@ -3,7 +3,7 @@
 import os
 from types import SimpleNamespace
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import msgspec
 import pytest
@@ -135,6 +135,172 @@ class TestOpenAIChatCompletion:
 
         assert "max_completion_tokens" in adapted
         assert "max_tokens" not in adapted
+
+    @pytest.mark.asyncio
+    async def test_acall_stream_strips_tool_definitions_before_async_client(
+        self, mock_openai_client
+    ):
+        """Streaming async calls should not pass tool_definitions to the OpenAI SDK."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+
+        async def empty_stream():
+            if False:
+                yield None
+
+        create = AsyncMock(return_value=empty_stream())
+        mock_async_client.return_value.chat.completions.create = create
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        await model.acall(
+            messages=[{"role": "user", "content": "Check order 123"}],
+            stream=True,
+            tool_definitions=ToolDefinitions(
+                schemas=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_order_status",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "order_id": {"type": "string"},
+                                },
+                                "required": ["order_id"],
+                            },
+                        },
+                    }
+                ],
+                choice="auto",
+            ),
+        )
+
+        create.assert_awaited_once()
+        call_kwargs = create.await_args.kwargs
+        assert "tool_definitions" not in call_kwargs
+        assert call_kwargs["stream"] is True
+        assert call_kwargs["tools"][0]["function"]["name"] == "get_order_status"
+        assert call_kwargs["tool_choice"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_acall_stream_surfaces_backend_error_on_consume(
+        self, mock_openai_client
+    ):
+        """Streaming async calls should expose provider failures to consumers."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            side_effect=TypeError(
+                "AsyncCompletions.create() got an unexpected keyword argument "
+                "'tool_definitions'"
+            )
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        stream_response = await model.acall(
+            messages=[{"role": "user", "content": "Check order 123"}],
+            stream=True,
+            tool_definitions=ToolDefinitions(
+                schemas=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_order_status",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "order_id": {"type": "string"},
+                                },
+                                "required": ["order_id"],
+                            },
+                        },
+                    }
+                ],
+                choice="auto",
+            ),
+        )
+
+        with pytest.raises(
+            TypeError,
+            match="unexpected keyword argument 'tool_definitions'",
+        ):
+            async for _ in stream_response.consume():
+                pass
+
+    @pytest.mark.asyncio
+    async def test_acall_stream_accumulates_response_data(
+        self, mock_openai_client
+    ):
+        """Streaming async text responses should leave the full payload in response.data."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+
+        async def text_stream():
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content="Hello",
+                            tool_calls=None,
+                            annotations=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            )
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=" world",
+                            tool_calls=None,
+                            annotations=None,
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            )
+            yield SimpleNamespace(
+                choices=[],
+                usage=SimpleNamespace(
+                    to_dict=lambda: {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 2,
+                        "total_tokens": 5,
+                    }
+                ),
+            )
+
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            return_value=text_stream()
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        response = await model.acall(
+            messages=[{"role": "user", "content": "Say hello"}],
+            stream=True,
+        )
+
+        chunks = []
+        async for chunk in response.consume():
+            chunks.append(chunk)
+
+        assert chunks == ["Hello", " world"]
+        assert response.response_type == "text_generation"
+        assert response.data == "Hello world"
+        assert response.metadata.usage["total_tokens"] == 5
 
     def test_prepare_generate_kwargs_lowers_dict_schema(self, mock_openai_client):
         """Test OpenAI transport schema lowering for dict-based structured outputs."""
