@@ -118,9 +118,27 @@ sed -i "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" src/msgflux/vers
 # Update CHANGELOG.md (move Unreleased to new version)
 echo "   → CHANGELOG.md"
 TODAY=$(date +%Y-%m-%d)
-sed -i "/## \[Unreleased\]/a \\
+if grep -q "^## \\[Unreleased\\]" CHANGELOG.md; then
+    sed -i "/## \[Unreleased\]/a \\
 \\
 ## [$NEW_VERSION] - $TODAY" CHANGELOG.md
+elif grep -q "^# Changelog" CHANGELOG.md; then
+    awk -v version="$NEW_VERSION" -v today="$TODAY" '
+        NR == 1 && $0 ~ /^# Changelog$/ {
+            print $0
+            print ""
+            print "## [" version "] - " today
+            next
+        }
+        { print }
+    ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+else
+    cat > CHANGELOG.md <<EOF
+# Changelog
+
+## [$NEW_VERSION] - $TODAY
+EOF
+fi
 
 # SECURITY CHECK: Verify only version.py and CHANGELOG.md were modified
 echo ""
