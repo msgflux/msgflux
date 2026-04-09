@@ -68,18 +68,3 @@ _build/
 *.db-wal
 *.sqlite
 *.sqlite3
-
-# Claude Code local config
-.claude/
-
-# Temporary ignore (to be committed later)
-/next_version/
-/examples/
-
-# MCP documentation (to be moved to /docs later)
-src/msgflux/protocols/mcp/*.md
-
-# New providers (to be added in dedicated branches)
-src/msgflux/models/providers/anthropic.py
-src/msgflux/models/providers/google.py
-src/msgflux/models/providers/mistral.py

@@ -205,6 +205,7 @@ nav:
       - Support Ticket Router: tutorials/support-ticket-router.md
       - Email Auto Responder: tutorials/email-auto-responder.md
       - Call Transcript Analysis: tutorials/call-transcript-analysis.md
+      - Streaming Support Triage: tutorials/streaming-support-triage.md
     - Meetings & Productivity:
       - Meeting Assistant: tutorials/meeting-assistant.md
       - Meeting Action Items Tracker: tutorials/meeting-action-items.md
@@ -215,13 +216,8 @@ nav:
     - Routing & Classification:
       - Intent Router: tutorials/intent-router.md
       - Query Router with Signatures: tutorials/signature-router.md
-    #- Vision:
-    #  - Road Collision Detector: tutorials/road-collision-detector.md
-    #  - PPE Compliance Monitor: tutorials/ppe-compliance-monitor.md
-    #  - Herd Monitor: tutorials/herd-monitor.md
-    #- Agro & Industrial:
-    #  - Smart Collar Analytics: tutorials/smart-collar-analytics.md
-    #  - Workplace Incident Reporter: tutorials/workplace-incident-reporter.md
+      - Oracle Specialist Tool: tutorials/oracle-specialist-tool.md
+      - Plan Tool with Root Context: tutorials/plan-tool-with-root-context.md
   - Dependency Management: dependency-management.md
   - Changelog: CHANGELOG.md
   - Blog:
