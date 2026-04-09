@@ -2,6 +2,7 @@
 # Automated release script for msgflux
 # Usage: ./scripts/release.sh <version>
 # Example: ./scripts/release.sh 0.12.4
+# Example: ./scripts/release.sh 0.12.4a1
 #
 # This script creates a release PR instead of pushing directly to main.
 # This ensures all releases go through proper validation and review.
@@ -29,15 +30,29 @@ fi
 
 NEW_VERSION="$1"
 
-# Validate version format (X.Y.Z)
-if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# Validate version format (X.Y.Z, optionally with prerelease suffix)
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
     echo -e "${RED}❌ Error: Invalid version format${NC}"
-    echo "Version must be in format X.Y.Z (e.g., 0.12.3)"
+    echo "Version must be in format X.Y.Z or X.Y.ZaN / X.Y.ZbN / X.Y.ZrcN (e.g., 0.12.3, 0.12.4a1)"
     exit 1
 fi
 
 echo -e "${BLUE}🚀 msgflux Release Automation${NC}"
 echo ""
+
+extract_repo_slug() {
+    local remote_url="$1"
+    echo "$remote_url" | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##'
+}
+
+BASE_REMOTE="origin"
+if git remote get-url upstream >/dev/null 2>&1; then
+    BASE_REMOTE="upstream"
+fi
+
+ORIGIN_REPO=$(extract_repo_slug "$(git remote get-url origin)")
+BASE_REPO=$(extract_repo_slug "$(git remote get-url "$BASE_REMOTE")")
+ORIGIN_OWNER="${ORIGIN_REPO%%/*}"
 
 # Ensure we're on main branch
 CURRENT_BRANCH=$(git branch --show-current)
@@ -63,9 +78,9 @@ if [ -n "$MODIFIED_FILES" ]; then
     exit 1
 fi
 
-# Pull latest changes
-echo -e "${BLUE}📥 Pulling latest changes...${NC}"
-git pull origin main
+# Pull latest changes from the canonical base repository
+echo -e "${BLUE}📥 Pulling latest changes from ${BASE_REMOTE}/main...${NC}"
+git pull --ff-only "$BASE_REMOTE" main
 
 # Get current version
 CURRENT_VERSION=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from msgflux.version import __version__; print(__version__)")
@@ -187,8 +202,17 @@ git push -u origin "$BRANCH_NAME"
 # Create pull request
 echo ""
 echo -e "${BLUE}🔀 Creating pull request...${NC}"
+PR_TITLE="RELEASE: v$NEW_VERSION"
+PR_HEAD="$BRANCH_NAME"
+if [ "$ORIGIN_REPO" != "$BASE_REPO" ]; then
+  PR_HEAD="${ORIGIN_OWNER}:${BRANCH_NAME}"
+fi
+
 PR_URL=$(gh pr create \
-  --title "Release v$NEW_VERSION" \
+  --repo "$BASE_REPO" \
+  --base main \
+  --head "$PR_HEAD" \
+  --title "$PR_TITLE" \
   --body "## 🚀 Release v$NEW_VERSION
 
 ### Changes

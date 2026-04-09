@@ -133,6 +133,16 @@ jobs:
           VERSION=$(grep -oP '__version__ = "\K[^"]+' src/msgflux/version.py)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" =~ (a|b|rc)[0-9]+$ ]]; then
+            echo "value=true" >> $GITHUB_OUTPUT
+          else
+            echo "value=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -155,4 +165,4 @@ jobs:
             uv add msgflux==${{ steps.version.outputs.version }}
             ```
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.prerelease.outputs.value }}
