@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 from dataclasses import asdict, dataclass, field
+from copy import deepcopy
 from functools import partial
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
@@ -581,7 +582,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 Structured object containing all tool call results.
         """
         if messages is None:
-            messages = {}
+            messages = []
 
         if vars is None:
             vars = {}
@@ -650,8 +651,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add messages
-                call_params["messages"] = messages
+            if config.get("inject_messages", False):  # Add isolated copy of messages
+                call_params["messages"] = deepcopy(messages)
 
             if config.get("inject_message", False):  # Add original message/envelope
                 call_params["message"] = message
@@ -723,7 +724,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 Structured object containing all tool call results.
         """
         if messages is None:
-            messages = {}
+            messages = []
 
         if vars is None:
             vars = {}
@@ -792,8 +793,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add messages
-                call_params["messages"] = messages
+            if config.get("inject_messages", False):  # Add isolated copy of messages
+                call_params["messages"] = deepcopy(messages)
 
             if config.get("inject_message", False):  # Add original message/envelope
                 call_params["message"] = message

@@ -795,6 +795,26 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
+    def test_tool_library_with_inject_messages_copies_messages(self):
+        """Injected messages should be copied before reaching the tool."""
+
+        def stateful_tool(messages: list) -> str:
+            """Tool that mutates its injected messages copy."""
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        stateful_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "stateful_tool", {})]
+
+        result = library(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [{"role": "user", "content": "hello"}]
+
     def test_tool_library_with_inject_message(self):
         """Test ToolLibrary with inject_message config."""
 
@@ -965,6 +985,27 @@ class TestToolLibrary:
         result = await library.aforward(tool_callings, messages={"key": "state_value"})
 
         assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_inject_messages_copies_messages(self):
+        """Async injected messages should be copied before reaching the tool."""
+
+        async def async_tool(messages: list) -> str:
+            """Tool that mutates its injected messages copy."""
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        async_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "async_tool", {})]
+
+        result = await library.aforward(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [{"role": "user", "content": "hello"}]
 
     @pytest.mark.asyncio
     async def test_tool_library_aforward_inject_message(self):
