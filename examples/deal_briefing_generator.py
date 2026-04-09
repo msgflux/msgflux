@@ -1,3 +1,7 @@
+# /// script
+# dependencies = []
+# ///
+
 from typing import List
 
 import msgflux as mf

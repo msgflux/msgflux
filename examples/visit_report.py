@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+#   "faker",
+#   "rapidfuzz",
+# ]
+# ///
+
 import msgflux as mf
 import msgflux.nn as nn
 from datetime import datetime

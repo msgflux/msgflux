@@ -1,3 +1,11 @@
+# /// script
+# dependencies = [
+#   "pillow",
+#   "pyzbar",
+#   "rapidfuzz",
+# ]
+# ///
+
 import io
 import re
 import urllib.request

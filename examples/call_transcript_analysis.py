@@ -1,148 +1,167 @@
-from typing import Literal
+# /// script
+# dependencies = []
+# ///
+
+from typing import Annotated, Literal
+
+import msgspec
 
 import msgflux as mf
 import msgflux.nn as nn
-import msgflux.nn.functional as F
-from msgflux import Signature, InputField, OutputField
-from msgflux.generation.reasoning import ChainOfThought
 
 mf.load_dotenv()
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
-
 chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-stt_model  = mf.Model.speech_to_text("openai/whisper-1")
+stt_model = mf.Model.speech_to_text("openai/whisper-1")
 
 
-# ── Signature ─────────────────────────────────────────────────────────────────
-
-class CallAnalysisSignature(Signature):
-    """
-    Analyze a customer service call transcript across three conversational
-    phases and evaluate how well the issue was resolved.
-    """
-
-    transcript: str = InputField(
-        desc=(
-            "Full conversation transcript with speaker labels. "
-            "Example format:\n"
-            "[Customer]: Hello, my order hasn't arrived...\n"
-            "[Agent]: I'm sorry to hear that, let me check..."
-        )
-    )
-
-    opening_sentiment: Literal["positive", "neutral", "frustrated", "angry"] = OutputField(
-        desc="Customer sentiment in the opening phase (roughly the first third)"
-    )
-    opening_reason: str = OutputField(
-        desc="Specific words, tone, or cues from the opening that justify this sentiment"
-    )
-    middle_sentiment: Literal["positive", "neutral", "frustrated", "angry"] = OutputField(
-        desc="Customer sentiment in the middle phase (roughly the central third)"
-    )
-    middle_reason: str = OutputField(
-        desc="Specific words, tone, or cues from the middle that justify this sentiment"
-    )
-    closing_sentiment: Literal["positive", "neutral", "satisfied", "frustrated", "angry"] = OutputField(
-        desc="Customer sentiment in the closing phase (roughly the final third)"
-    )
-    closing_reason: str = OutputField(
-        desc="Specific words, tone, or cues from the closing that justify this sentiment"
-    )
-    sentiment_trajectory: Literal[
-        "improved", "stable_positive", "stable_neutral", "stable_negative", "worsened", "volatile"
-    ] = OutputField(
-        desc="Overall arc of the customer's emotional state from opening to closing"
-    )
-    trajectory_summary: str = OutputField(
-        desc="One or two sentences describing the emotional journey of this call"
-    )
-    was_resolved: bool = OutputField(
-        desc="True if the customer's core issue was addressed and closed by the end of the call"
-    )
-    resolution_quality: Literal[
-        "fully_resolved", "partially_resolved", "unresolved", "escalated"
-    ] = OutputField(
-        desc=(
-            "fully_resolved: issue closed and customer acknowledged; "
-            "partially_resolved: progress made but follow-up required; "
-            "unresolved: no tangible progress; "
-            "escalated: transferred to another team or tier"
-        )
-    )
-    resolution_reason: str = OutputField(
-        desc="Concrete evidence from the transcript that supports the resolution verdict"
-    )
-    csat_prediction: int = OutputField(
-        desc="Predicted CSAT score the customer would give (1 = very dissatisfied, 5 = very satisfied)"
-    )
+class CallPhase(msgspec.Struct):
+    stage: Annotated[
+        Literal["opening", "middle", "closing"],
+        msgspec.Meta(description="Conversation stage. Return opening, middle, and closing exactly once."),
+    ]
+    sentiment: Annotated[
+        Literal["positive", "neutral", "satisfied", "frustrated", "angry"],
+        msgspec.Meta(
+            description=(
+                "Customer sentiment in this stage. Use satisfied only when the call clearly ends well."
+            )
+        ),
+    ]
+    reason: Annotated[
+        str,
+        msgspec.Meta(description="Short evidence from the transcript that justifies the sentiment."),
+    ]
 
 
-# ── Transcriber ───────────────────────────────────────────────────────────────
+class ResolutionAssessment(msgspec.Struct):
+    was_resolved: Annotated[
+        bool,
+        msgspec.Meta(description="True if the customer's core issue was addressed by the end of the call."),
+    ]
+    quality: Annotated[
+        Literal["fully_resolved", "partially_resolved", "unresolved", "escalated"],
+        msgspec.Meta(
+            description=(
+                "fully_resolved: issue closed and customer acknowledged it; "
+                "partially_resolved: progress made but follow-up still required; "
+                "unresolved: no meaningful progress; "
+                "escalated: transferred to another team or tier."
+            )
+        ),
+    ]
+    reason: Annotated[
+        str,
+        msgspec.Meta(description="Concrete evidence from the transcript that supports the resolution verdict."),
+    ]
+
+
+class CallAnalysis(msgspec.Struct):
+    reasoning: Annotated[
+        str,
+        msgspec.Meta(
+            description="Let's think step by step in order to analyze the transcript consistently before filling the fields."
+        ),
+    ]
+    phases: Annotated[
+        list[CallPhase],
+        msgspec.Meta(description="Exactly three entries in this order: opening, middle, closing."),
+    ]
+    sentiment_trajectory: Annotated[
+        Literal["improved", "stable_positive", "stable_neutral", "stable_negative", "worsened", "volatile"],
+        msgspec.Meta(description="Overall emotional arc of the customer from opening to closing."),
+    ]
+    trajectory_summary: Annotated[
+        str,
+        msgspec.Meta(description="One or two sentences describing the emotional journey across the call."),
+    ]
+    resolution: ResolutionAssessment
+    csat_prediction: Annotated[
+        int,
+        msgspec.Meta(description="Predicted customer satisfaction score from 1 to 5."),
+    ]
+
 
 class CallTranscriber(nn.Transcriber):
     """Transcribes call audio into msg.call.transcript."""
-    model          = stt_model
+
+    model = stt_model
     message_fields = {"task_multimodal": {"audio": "audio_content"}}
-    response_mode  = "call.transcript"
+    response_mode = "call.transcript"
 
-
-# ── Analyzer ──────────────────────────────────────────────────────────────────
 
 class _Analyzer(nn.Agent):
-    model             = chat_model
-    signature         = CallAnalysisSignature
-    generation_schema = ChainOfThought
-    config            = {"verbose": True}
+    model = chat_model
+    system_message = """
+    You are a call quality analyst for customer support teams.
+    """
+    instructions = """
+    Analyze the transcript across the opening, middle, and closing stages.
+
+    Rules:
+    - Return exactly three items in phases, in this order: opening, middle, closing.
+    - Ground every sentiment and resolution judgment in transcript evidence.
+    - Use satisfied only when the closing stage clearly ends positive after progress or resolution.
+    - Mark quality as escalated when the issue is handed to another team or tier.
+    - Predict csat_prediction on a 1 to 5 scale.
+    """
+    generation_schema = CallAnalysis
+    templates = {"task": "Transcript:\n{{ transcript }}"}
+    config = {"verbose": True}
 
 
 class CallAnalyzer(nn.Module):
     def __init__(self):
         super().__init__()
         self.transcriber = CallTranscriber()
-        self.agent       = _Analyzer()
+        self.agent = _Analyzer()
 
-    def forward(self, transcript: str | None = None, audio: bytes | None = None) -> dict:
+    def forward(self, transcript: str | None = None, audio: bytes | None = None) -> CallAnalysis:
         if audio:
             msg = mf.Message()
             msg.audio_content = audio
             self.transcriber(msg)
             transcript = msg.call.transcript
-        raw = self.agent({"transcript": transcript})
-        return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
+        return self.agent(transcript=transcript)
 
-    async def aforward(self, transcript: str | None = None, audio: bytes | None = None) -> dict:
+    async def aforward(self, transcript: str | None = None, audio: bytes | None = None) -> CallAnalysis:
         if audio:
             msg = mf.Message()
             msg.audio_content = audio
             await self.transcriber.acall(msg)
             transcript = msg.call.transcript
-        raw = await self.agent.acall({"transcript": transcript})
-        return {**raw.get("final_answer", raw), "reasoning": raw.get("reasoning", "")}
+        return await self.agent.acall(transcript=transcript)
 
 
-# ── Report ────────────────────────────────────────────────────────────────────
+def get_phase(analysis: CallAnalysis, stage: str) -> CallPhase:
+    return next(phase for phase in analysis.phases if phase.stage == stage)
 
-def print_report(a: dict) -> None:
+
+def print_report(analysis: CallAnalysis) -> None:
+    opening = get_phase(analysis, "opening")
+    middle = get_phase(analysis, "middle")
+    closing = get_phase(analysis, "closing")
+
     print("=" * 60)
     print("CALL ANALYSIS REPORT")
     print("=" * 60)
-    print("\n── Sentiment by Phase ──────────────────────────────────")
-    print(f"  Opening  [{a['opening_sentiment']:>10}]  {a['opening_reason']}")
-    print(f"  Middle   [{a['middle_sentiment']:>10}]  {a['middle_reason']}")
-    print(f"  Closing  [{a['closing_sentiment']:>10}]  {a['closing_reason']}")
-    print(f"\n── Trajectory: {a['sentiment_trajectory'].upper()}")
-    print(f"  {a['trajectory_summary']}")
-    print(f"\n── Resolution: {a['resolution_quality']} ({'resolved' if a['was_resolved'] else 'unresolved'})")
-    print(f"  {a['resolution_reason']}")
-    print(f"\n── CSAT Prediction: {a['csat_prediction']}/5")
-    print("\n── Reasoning Trace ─────────────────────────────────────")
-    print(f"  {a['reasoning']}")
+    print("\n-- Sentiment by Phase ----------------------------------")
+    print(f"  Opening  [{opening.sentiment:>10}]  {opening.reason}")
+    print(f"  Middle   [{middle.sentiment:>10}]  {middle.reason}")
+    print(f"  Closing  [{closing.sentiment:>10}]  {closing.reason}")
+    print("\n-- Trajectory ------------------------------------------")
+    print(f"  {analysis.sentiment_trajectory.upper()}: {analysis.trajectory_summary}")
+    print("\n-- Resolution ------------------------------------------")
+    print(f"  Quality : {analysis.resolution.quality}")
+    print(f"  Resolved: {analysis.resolution.was_resolved}")
+    print(f"  Reason  : {analysis.resolution.reason}")
+    print(f"\n-- CSAT Prediction -------------------------------------")
+    print(f"  {analysis.csat_prediction}/5")
+    print("\n-- Reasoning -------------------------------------------")
+    print(f"  {analysis.reasoning}")
     print("=" * 60)
 
-
-# ── Transcripts ───────────────────────────────────────────────────────────────
 
 TRANSCRIPT_RESOLVED = """
 [Customer]: Hi there, I placed an order five days ago and it still hasn't shown up.
@@ -168,8 +187,6 @@ TRANSCRIPT_UNRESOLVED = """
 [Customer]: Whatever.
 """
 
-
-# ── Run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys

@@ -1,102 +1,114 @@
 # Ad Focus Group Simulator
 
-Build a creative pipeline that simulates a focus group evaluating product advertisements. Multiple AI personas review the same ad from different perspectives, then an iterative refinement loop improves the copy based on their feedback — and finally an image model generates the visual.
+<span class="tag tag-orange">Advanced</span>
 
-The entire flow is orchestrated with `Inline`, the msgFlux DSL for composing pipelines.
+Testing ad copy against real customers is slow and expensive. This tutorial builds a synthetic focus group — three AI personas review the same ad in parallel, a refinement loop iterates until the panel approves, and an image model generates the final poster.
 
-## What You'll Build
+## The Problem
+
+The typical workflow for evaluating ad copy looks like this.
 
 ```
-                    ┌──> Teenager ──────┐
-Author's brief ──> │    Professional ──┼──> evaluations
-                    └──> Budget Shopper ┘        │
-                                                 ▼
-                                          ┌─── Refiner ◄─── evaluations
-                                          │      │
-                                          │      ▼
-                                          │  refined_text
-                                          │      │
-                                          │      ▼
-                                          │  [Teenager, Professional, Budget Shopper]
-                                          │      │
-                                          │      ▼
-                                          └── score >= 8 ?  ──── done
-                                                 │
-                                                 ▼
-                                          Image Generator
-                                                 │
-                                                 ▼
-                                             poster.png
+Product brief
+       │
+       ▼
+│           SingleReviewerAgent            │
+│                                          │
+│   read ad  ←──→  rate it                │
+       │ one opinion, one score
+       ▼
+  revision (or ship it)
 ```
 
-Three levels of complexity, each building on the previous:
+- A single agent with no persona produces generic feedback. "The copy is clear and compelling" — every time.
+- There is no iterative loop. Feedback and rewriting are separate manual steps.
+- There is no image. Someone has to brief a designer separately.
+- When the copy is bad, you do not know *why* — which audience it failed with and on what dimension.
 
-| Level | What happens |
+You are guessing until it ships.
+
+---
+
+## The Plan
+
+We will build a pipeline that evaluates ad copy against three distinct customer personas in parallel, refines the text in a loop until the panel approves, and finally generates a poster image from the accepted copy.
+
+The pipeline uses the **declarative API**: the evaluation–refinement–generation sequence is expressed as a single pipeline declaration. Parallel evaluation and iterative refinement are composed naturally — no manual orchestration, no callbacks. State flows through a shared message that every module reads from and writes to.
+
+There are three levels of complexity, each building on the previous:
+
+| Level | What it adds |
 |-------|-------------|
-| **1 — Evaluate** | Multiple customer personas rate the same ad in parallel |
-| **2 — Refine** | A loop refines the text until the panel is satisfied |
-| **3 — Generate** | A creative director writes the brief, a copywriter proposes, and an image model produces the visual |
+| **1 — Evaluate** | Three personas rate the same ad simultaneously |
+| **2 — Refine** | A while loop refines the copy until the panel score reaches 8+ |
+| **3 — Generate** | A Creative Director writes the first draft; an image model produces the poster |
+
+---
+
+## Architecture
+
+```
+product_description
+         │
+         ▼
+         │ msg.ad_text                                        │
+         ▼                                                    │
+│  Teenager  Professional  Budget│                            │
+│  eval_teenager  eval_professional  eval_budget              │
+                 │ msg.avg_score, msg.iteration               │
+                 ▼                                            │
+     @{ avg_score < 8 & iteration < 3 }                      │
+                 │                                            │
+          prepare_refinement  ←── assembles refinement_input  │
+                 │                                            │
+                 │                                            │
+       [re-evaluate + rescore]                                │
+                 │ loop exits when score ≥ 8 or iter ≥ 3     │
+                 ▼                                            │
+       build_poster_prompt ── msg.poster_prompt               │
+                 │                                            │
+```
+
+The three personas share one `AdEvaluation` Signature and produce identical structured output. `message_fields` maps the shared `ad_text` field from the message to each persona's input; `response_mode` writes each evaluation to its own namespace (`eval_teenager`, `eval_professional`, `eval_budget`). The Refiner overwrites `msg.ad_text` on each pass — so the panel always re-evaluates the latest version.
 
 ---
 
 ## Setup
 
-```bash
-pip install msgflux[openai]
-```
-
-Create a `.env` file at the project root with your API keys:
-
-```bash title=".env"
-OPENAI_API_KEY=sk-...
-```
-
-Then load it at the top of your script with `mf.load_dotenv()` — this reads the `.env` file and injects the variables into `os.environ`:
-
-```python
-import msgflux as mf
-
-mf.load_dotenv()
-```
+--8<-- "docs/_includes/init_chat_completion_model.md"
 
 ---
 
 ## Level 1 — Parallel Evaluation
 
-The simplest version: define customer personas as Agents and evaluate a product ad in parallel using `bcast_gather` inside an Inline pipeline.
+The simplest version: define customer personas as Agents and evaluate a product ad in parallel.
 
-### Step 1: Define the Evaluation Signature
+### Step 1 — Evaluation Signature
 
-A class-based `Signature` defines the structured contract shared by all evaluators. The docstring becomes the agent's task instructions, `InputField` maps the input, and each `OutputField` describes exactly what the model should produce. The framework handles parsing and type validation — no manual JSON formatting needed:
+All three personas share the same `AdEvaluation` Signature. The docstring becomes the agent's task instructions, `InputField` maps the input field, and each `OutputField` constrains what the model returns. The framework builds the output schema automatically — no manual JSON formatting needed.
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
-from msgflux import Signature, InputField, OutputField
 
 mf.load_dotenv()
 
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
-class AdEvaluation(Signature):
+class AdEvaluation(mf.Signature):
     """Evaluate the advertisement from your perspective. Consider the tone,
     clarity, and appeal. Be honest and specific in your opinion."""
 
-    ad_text: str = InputField(desc="The advertisement text to evaluate")
-    opinion: str = OutputField(desc="Your honest reaction to the ad in 2-3 sentences")
-    score: int = OutputField(desc="Overall score from 1 (terrible) to 10 (perfect)")
+    ad_text: str = mf.InputField(desc="The advertisement text to evaluate")
+
+    opinion: str = mf.OutputField(desc="Your honest reaction to the ad in 2-3 sentences")
+    score: int = mf.OutputField(desc="Overall score from 1 (terrible) to 10 (perfect)")
 ```
 
-The Signature does three things at once:
+### Step 2 — Personas
 
-1. **Instructions**: the docstring becomes the agent's task instructions
-2. **Input mapping**: `InputField` tells the agent to read `ad_text` from the message
-3. **Expected output**: each `OutputField` constrains the model to return typed fields — the framework builds the output schema automatically
-
-### Step 2: Define the Personas
-
-All three personas share the same `AdEvaluation` signature, so they produce the same structured output. What differentiates them is `system_message` — the persona's personality and evaluation criteria:
+All three agents share the same Signature — so they produce the same structured output. What differentiates them is `system_message`. `message_fields` maps the signature's `ad_text` InputField to `msg.ad_text`, and `response_mode` writes each evaluation to a separate namespace so the results never overwrite each other.
 
 ```python
 class Teenager(nn.Agent):
@@ -105,7 +117,9 @@ class Teenager(nn.Agent):
     aesthetics, trends, memes, and authenticity. Focus on whether the ad feels
     authentic or corporate and whether you would share it on social media."""
     signature = AdEvaluation
+    message_fields = {"task": {"ad_text": "ad_text"}}
     response_mode = "eval_teenager"
+    config = {"verbose": True}
 
 
 class Professional(nn.Agent):
@@ -114,7 +128,9 @@ class Professional(nn.Agent):
     time-saving, and quality. Focus on whether the value proposition is clear
     and whether the ad respects your time."""
     signature = AdEvaluation
+    message_fields = {"task": {"ad_text": "ad_text"}}
     response_mode = "eval_professional"
+    config = {"verbose": True}
 
 
 class BudgetShopper(nn.Agent):
@@ -123,18 +139,16 @@ class BudgetShopper(nn.Agent):
     compare prices, and distrust hype. Focus on whether the ad mentions price
     or value and whether it feels honest or manipulative."""
     signature = AdEvaluation
+    message_fields = {"task": {"ad_text": "ad_text"}}
     response_mode = "eval_budget"
+    config = {"verbose": True}
 ```
 
-The `response_mode` writes the entire structured result to a specific field on the message (e.g., `msg.eval_teenager`), keeping the three evaluations separate. Since the output structure is identical, `compute_score` can read `.score` from any of them uniformly.
+### Step 3 — Evaluation Pipeline
 
-### Step 3: Build the Evaluation Pipeline
-
-The `[teenager, professional, budget]` syntax runs all three in parallel on the same message. Each agent reads `msg.ad_text` and writes its structured output to its own `msg.eval_*` field:
+`[teenager, professional, budget]` runs all three agents in parallel on the same message via `bcast_gather`. Each reads `msg.ad_text` and writes its structured result to its own namespace.
 
 ```python
-from msgflux import Inline, Message
-
 evaluate = Inline(
     "[teenager, professional, budget]",
     {
@@ -143,11 +157,7 @@ evaluate = Inline(
         "budget": BudgetShopper(),
     },
 )
-```
 
-### Step 4: Run It
-
-```python
 msg = Message()
 msg.ad_text = """
 Introducing CloudBrew — the smart coffee maker that learns your taste.
@@ -167,17 +177,19 @@ print("Budget Shopper:", msg.eval_budget)
 # {'opinion': '40% off and free shipping are strong...', 'score': 7}
 ```
 
-The three evaluations run concurrently — total time is roughly one API call, not three. Each result is a structured `dotdict` with typed fields, not a raw JSON string.
+The three evaluations run concurrently — total time is roughly one API call, not three. Each result is a structured `dotdict` with typed fields accessible via `msg.eval_teenager.score`, `msg.eval_professional.opinion`, etc.
 
 ---
 
 ## Level 2 — Iterative Refinement
 
-Now we close the loop: a Refiner agent reads the evaluations and improves the ad text, then the panel re-evaluates. This repeats until the average score is high enough.
+Now we close the loop: a `Refiner` reads all three evaluations and rewrites the ad copy. The panel re-evaluates and the cycle repeats until the average score reaches 8 or three iterations pass.
 
-### Step 5: Add the Refiner and Scorer
+### Step 4 — Refiner and Scorer
 
-The Refiner reads the original text and all evaluations, then produces a new version. The Scorer accesses the `.score` field directly from each structured evaluation — no JSON parsing needed:
+The `Refiner` reads `msg.refinement_input` (assembled by `prepare_refinement`) and overwrites `msg.ad_text` via `response_mode` — so the personas always re-evaluate the latest version on the next pass.
+
+`compute_score` is a plain Python function used as an Inline step. It reads `.score` directly from each structured evaluation namespace and writes the average back to `msg.avg_score`.
 
 ```python
 class Refiner(nn.Agent):
@@ -196,41 +208,37 @@ class Refiner(nn.Agent):
 
 
 def compute_score(msg):
-    """Extract scores from structured evaluations and compute the average."""
-    scores = []
-    for field in ["eval_teenager", "eval_professional", "eval_budget"]:
-        evaluation = msg.get(field)
-        if isinstance(evaluation, dict):
-            scores.append(evaluation.get("score", 5))
-        else:
-            scores.append(5)
-    msg.avg_score = sum(scores) / len(scores) if scores else 0
+    scores = [
+        msg.eval_teenager.get("score", 5),
+        msg.eval_professional.get("score", 5),
+        msg.eval_budget.get("score", 5),
+    ]
+    msg.avg_score = sum(scores) / len(scores)
     msg.iteration = msg.get("iteration", 0) + 1
-```
 
-### Step 6: Prepare Refinement Input
 
-A helper module assembles the input for the Refiner by combining the current text with all evaluations:
-
-```python
 def prepare_refinement(msg):
-    """Combine ad text + evaluations into a single refinement prompt."""
     msg.refinement_input = (
         f"Current ad:\n{msg.ad_text}\n\n"
-        f"Teenager feedback: {msg.eval_teenager.opinion} (score: {msg.eval_teenager.score})\n\n"
-        f"Professional feedback: {msg.eval_professional.opinion} (score: {msg.eval_professional.score})\n\n"
-        f"Budget shopper feedback: {msg.eval_budget.opinion} (score: {msg.eval_budget.score})\n\n"
-        f"Rewrite the ad addressing this feedback."
+        f"Teenager feedback: {msg.eval_teenager.opinion} "
+        f"(score: {msg.eval_teenager.score})\n\n"
+        f"Professional feedback: {msg.eval_professional.opinion} "
+        f"(score: {msg.eval_professional.score})\n\n"
+        f"Budget shopper feedback: {msg.eval_budget.opinion} "
+        f"(score: {msg.eval_budget.score})\n\n"
+        "Rewrite the ad addressing this feedback."
     )
 ```
 
-### Step 7: Compose the Refinement Loop
+### Step 5 — Refinement Loop
 
-The Inline DSL's `@{condition}: body;` syntax creates a while loop. The pipeline evaluates first, then enters the loop — each iteration refines, re-evaluates, and checks the score:
+The `@{condition}: body;` syntax creates a while loop. The pipeline evaluates first, then enters the loop — each iteration calls `prepare`, rewrites the copy with `refiner`, re-evaluates with the panel, and recomputes the score. The loop exits when `avg_score >= 8` or `iteration >= 3`.
 
 ```python
-pipeline = Inline(
-    "[teenager, professional, budget] -> scorer -> @{avg_score < 8 & iteration < 3}: prepare -> refiner -> [teenager, professional, budget] -> scorer;",
+pipeline = mf.Inline(
+    "[teenager, professional, budget] -> scorer"
+    " -> @{avg_score < 8 & iteration < 3}:"
+    " prepare -> refiner -> [teenager, professional, budget] -> scorer;",
     {
         "teenager": Teenager(),
         "professional": Professional(),
@@ -242,9 +250,7 @@ pipeline = Inline(
 )
 
 msg = Message()
-msg.ad_text = """
-CloudBrew. Smart coffee. Your taste. Pre-order.
-"""
+msg.ad_text = "CloudBrew. Smart coffee. Your taste. Pre-order."
 
 pipeline(msg)
 
@@ -253,19 +259,19 @@ print(f"Final score: {msg.avg_score:.1f}")
 print(f"Final ad:\n{msg.ad_text}")
 ```
 
-The loop runs at most 3 times or until the average score reaches 8+. Each iteration, the Refiner reads what all three personas said and adapts the copy.
-
 ---
 
 ## Level 3 — Full Creative Pipeline
 
-The final version adds two stages: a Creative Director who writes the brief from a product description, and a MediaMaker that generates the poster image from the refined text.
+The final version adds two stages at the front and back: a `CreativeDirector` that writes the first draft from a product description, and a `PosterMaker` that generates the poster image from the approved copy.
 
-### Step 8: Creative Director and Image Generator
+### Step 6 — Creative Director and Image Generator
+
+`CreativeDirector` reads `msg.product_description` and writes the first draft to `msg.ad_text`. `PosterMaker` is a `nn.MediaMaker` — it calls the image model with `msg.poster_prompt` and writes the raw bytes to `msg.poster`. `build_poster_prompt` is the Inline step that transforms the final ad text into an image prompt.
 
 ```python
 class CreativeDirector(nn.Agent):
-    """Writes an initial ad brief from a product description."""
+    """Writes the first ad draft from a product description."""
 
     model = model
     instructions = """
@@ -282,7 +288,7 @@ class CreativeDirector(nn.Agent):
 
 
 class PosterMaker(nn.MediaMaker):
-    """Generates a poster image from ad text."""
+    """Generates a poster image from the final ad text."""
 
     model = mf.Model.text_to_image("openai/gpt-image-1")
     message_fields = {"task": "poster_prompt"}
@@ -291,7 +297,6 @@ class PosterMaker(nn.MediaMaker):
 
 
 def build_poster_prompt(msg):
-    """Turn the final ad text into an image generation prompt."""
     msg.poster_prompt = (
         f"Professional product advertisement poster. Clean, modern design. "
         f"The ad copy reads: {msg.ad_text}. "
@@ -299,21 +304,25 @@ def build_poster_prompt(msg):
     )
 ```
 
-### Step 9: Complete Pipeline
+### Step 7 — Full Pipeline
 
-The full pipeline chains all three levels: brief, evaluate, refine loop, generate image. Reading left to right: the director writes the first draft, the panel evaluates, the loop refines, then the image is generated:
+The complete expression reads left to right: the director writes the first draft, the panel evaluates, the loop refines, then the image is generated.
 
 ```python
 full_pipeline = Inline(
-    "director -> [teenager, professional, budget] -> scorer -> @{avg_score < 8 & iteration < 3}: prepare -> refiner -> [teenager, professional, budget] -> scorer; -> poster_prompt -> poster_maker",
+    "director"
+    " -> [teenager, professional, budget] -> scorer"
+    " -> @{avg_score < 8 & iteration < 3}:"
+    " prepare -> refiner -> [teenager, professional, budget] -> scorer;"
+    " -> poster_prompt -> poster_maker",
     {
-        "director": CreativeDirector(),
-        "teenager": Teenager(),
+        "director":     CreativeDirector(),
+        "teenager":     Teenager(),
         "professional": Professional(),
-        "budget": BudgetShopper(),
-        "refiner": Refiner(),
-        "scorer": compute_score,
-        "prepare": prepare_refinement,
+        "budget":       BudgetShopper(),
+        "refiner":      Refiner(),
+        "scorer":       compute_score,
+        "prepare":      prepare_refinement,
         "poster_prompt": build_poster_prompt,
         "poster_maker": PosterMaker(),
     },
@@ -331,186 +340,6 @@ full_pipeline(msg)
 
 print(f"Iterations: {msg.iteration}")
 print(f"Final score: {msg.avg_score:.1f}")
-print(f"Final ad:\n{msg.ad_text}")
-
-with open("poster.png", "wb") as f:
-    f.write(msg.poster)
-
-print("Poster saved to poster.png")
-```
-
----
-
-## Complete Example
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from msgflux import Inline, Message, Signature, InputField, OutputField
-
-mf.load_dotenv()
-
-
-# ── Model ────────────────────────────────────────────────────────────────────
-
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-
-# ── Evaluation Signature ─────────────────────────────────────────────────────
-
-class AdEvaluation(Signature):
-    """Evaluate the advertisement from your perspective. Consider the tone,
-    clarity, and appeal. Be honest and specific in your opinion."""
-
-    ad_text: str = InputField(desc="The advertisement text to evaluate")
-    opinion: str = OutputField(desc="Your honest reaction to the ad in 2-3 sentences")
-    score: int = OutputField(desc="Overall score from 1 (terrible) to 10 (perfect)")
-
-
-# ── Personas ─────────────────────────────────────────────────────────────────
-
-class Teenager(nn.Agent):
-    model = model
-    system_message = """You are a 17-year-old social media native. You care about
-    aesthetics, trends, memes, and authenticity. Focus on whether the ad feels
-    authentic or corporate and whether you would share it on social media."""
-    signature = AdEvaluation
-    response_mode = "eval_teenager"
-
-
-class Professional(nn.Agent):
-    model = model
-    system_message = """You are a 35-year-old working professional. You value clarity,
-    time-saving, and quality. Focus on whether the value proposition is clear
-    and whether the ad respects your time."""
-    signature = AdEvaluation
-    response_mode = "eval_professional"
-
-
-class BudgetShopper(nn.Agent):
-    model = model
-    system_message = """You are a budget-conscious parent. You look for deals,
-    compare prices, and distrust hype. Focus on whether the ad mentions price
-    or value and whether it feels honest or manipulative."""
-    signature = AdEvaluation
-    response_mode = "eval_budget"
-
-
-# ── Creative Agents ──────────────────────────────────────────────────────────
-
-class CreativeDirector(nn.Agent):
-    """Writes an initial ad brief from a product description."""
-
-    model = model
-    instructions = """
-    You are a creative director at an ad agency. Given a product description,
-    write compelling ad copy (3-5 sentences). Include:
-    - A catchy headline
-    - Key benefits
-    - A call to action
-
-    Return only the ad text.
-    """
-    message_fields = {"task": "product_description"}
-    response_mode = "ad_text"
-
-
-class Refiner(nn.Agent):
-    """Rewrites ad copy based on focus group feedback."""
-
-    model = model
-    instructions = """
-    You are a senior copywriter. You receive the original ad text and feedback
-    from three customer personas (teenager, professional, budget shopper).
-
-    Rewrite the ad to address their concerns while keeping the core message.
-    Return only the new ad text — nothing else.
-    """
-    message_fields = {"task": "refinement_input"}
-    response_mode = "ad_text"
-
-
-# ── Image Generation ─────────────────────────────────────────────────────────
-
-class PosterMaker(nn.MediaMaker):
-    """Generates a poster image from ad text."""
-
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-    message_fields = {"task": "poster_prompt"}
-    response_mode = "poster"
-    config = {"size": "1536x1024", "quality": "high"}
-
-
-# ── Helper Functions ─────────────────────────────────────────────────────────
-
-def compute_score(msg):
-    """Extract scores from structured evaluations and compute the average."""
-    scores = []
-    for field in ["eval_teenager", "eval_professional", "eval_budget"]:
-        evaluation = msg.get(field)
-        if isinstance(evaluation, dict):
-            scores.append(evaluation.get("score", 5))
-        else:
-            scores.append(5)
-    msg.avg_score = sum(scores) / len(scores) if scores else 0
-    msg.iteration = msg.get("iteration", 0) + 1
-
-
-def prepare_refinement(msg):
-    """Combine ad text + evaluations into a single refinement prompt."""
-    msg.refinement_input = (
-        f"Current ad:\n{msg.ad_text}\n\n"
-        f"Teenager feedback: {msg.eval_teenager.opinion} (score: {msg.eval_teenager.score})\n\n"
-        f"Professional feedback: {msg.eval_professional.opinion} (score: {msg.eval_professional.score})\n\n"
-        f"Budget shopper feedback: {msg.eval_budget.opinion} (score: {msg.eval_budget.score})\n\n"
-        f"Rewrite the ad addressing this feedback."
-    )
-
-
-def build_poster_prompt(msg):
-    """Turn the final ad text into an image generation prompt."""
-    msg.poster_prompt = (
-        f"Professional product advertisement poster. Clean, modern design. "
-        f"The ad copy reads: {msg.ad_text}. "
-        f"Minimalist layout, premium feel, warm lighting, brand-quality photography."
-    )
-
-
-# ── Pipeline ─────────────────────────────────────────────────────────────────
-
-pipeline = Inline(
-    "director -> [teenager, professional, budget] -> scorer"
-    " -> @{avg_score < 8 & iteration < 3}:"
-    " prepare -> refiner -> [teenager, professional, budget] -> scorer;"
-    " -> poster_prompt -> poster_maker",
-    {
-        "director": CreativeDirector(),
-        "teenager": Teenager(),
-        "professional": Professional(),
-        "budget": BudgetShopper(),
-        "refiner": Refiner(),
-        "scorer": compute_score,
-        "prepare": prepare_refinement,
-        "poster_prompt": build_poster_prompt,
-        "poster_maker": PosterMaker(),
-    },
-)
-
-
-# ── Run ──────────────────────────────────────────────────────────────────────
-
-msg = Message()
-msg.product_description = """
-CloudBrew is a Wi-Fi-enabled coffee maker with a built-in taste profile system.
-It learns your preferences over time and adjusts brew strength, temperature,
-and grind size automatically. Compatible with any ground coffee or pods.
-Retail price: $149. Launch promotion: 40% off pre-orders with free shipping.
-"""
-
-pipeline(msg)
-
-print(f"Iterations: {msg.iteration}")
-print(f"Final score: {msg.avg_score:.1f}")
 print(f"\nFinal ad:\n{msg.ad_text}")
 
 with open("poster.png", "wb") as f:
@@ -521,32 +350,295 @@ print("\nPoster saved to poster.png")
 
 ---
 
-## How It Works
+## Examples
 
-The pipeline is a single `Inline` expression that reads naturally from left to right:
+???+ example
 
+    === "Level 1 — Evaluate only"
+
+        ```python
+        evaluate = Inline(
+            "[teenager, professional, budget]",
+            {
+                "teenager": Teenager(),
+                "professional": Professional(),
+                "budget": BudgetShopper(),
+            },
+        )
+
+        msg = Message()
+        msg.ad_text = """
+        BrewBot: the coffee maker that knows you.
+        Personalized coffee, no buttons, no hassle. Free shipping today.
+        """
+
+        evaluate(msg)
+
+        for persona, field in [
+            ("Teenager", "eval_teenager"),
+            ("Professional", "eval_professional"),
+            ("Budget Shopper", "eval_budget"),
+        ]:
+            ev = msg.get(field)
+            print(f"{persona}: {ev['opinion']} (score: {ev['score']})")
+        ```
+
+    === "Level 2 — Refine until approved"
+
+        ```python
+        pipeline = Inline(
+            "[teenager, professional, budget] -> scorer"
+            " -> @{avg_score < 8 & iteration < 3}:"
+            " prepare -> refiner -> [teenager, professional, budget] -> scorer;",
+            {
+                "teenager": Teenager(),
+                "professional": Professional(),
+                "budget": BudgetShopper(),
+                "refiner": Refiner(),
+                "scorer": compute_score,
+                "prepare": prepare_refinement,
+            },
+        )
+
+        msg = Message()
+        msg.ad_text = "BrewBot. Smart coffee. Order now."
+
+        pipeline(msg)
+
+        print(f"Iterations: {msg.iteration}  |  Final score: {msg.avg_score:.1f}")
+        print(f"\nFinal ad:\n{msg.ad_text}")
+        ```
+
+    === "Level 3 — Full pipeline"
+
+        ```python
+        msg = Message()
+        msg.product_description = """
+        BrewBot is a compact, Wi-Fi-connected espresso machine for home baristas.
+        It syncs with a mobile app, supports 12 brew profiles, and uses any ground
+        coffee or pods. Price: $199. Launch discount: 25% off, free shipping.
+        """
+
+        full_pipeline(msg)
+
+        print(f"Final score: {msg.avg_score:.1f}")
+        print(f"Final ad:\n{msg.ad_text}")
+
+        with open("brewbot_poster.png", "wb") as f:
+            f.write(msg.poster)
+        ```
+
+---
+
+## Extending
+
+### Adding a new persona
+
+Define a new `Agent` with the same `AdEvaluation` signature and add it to every Inline dictionary that includes the evaluation group:
+
+```python
+class SeniorCitizen(nn.Agent):
+    model = model
+    system_message = """You are a 68-year-old retiree. You value simplicity,
+    reliability, and good support. Focus on whether the ad is easy to understand
+    and whether the product seems trustworthy."""
+    signature = AdEvaluation
+    message_fields = {"task": {"ad_text": "ad_text"}}
+    response_mode = "eval_senior"
+    config = {"verbose": True}
 ```
-director → [teenager, professional, budget] → scorer → @{loop} → poster_prompt → poster_maker
+
+Then add `"senior": SeniorCitizen()` to the Inline registry and include `senior` in the `[...]` group. Update `compute_score` to read from `eval_senior`.
+
+### Raising the quality bar
+
+Change the loop condition to require a higher average score or more iterations:
+
+```python
+" -> @{avg_score < 9 & iteration < 5}: ..."
 ```
 
-| Stage | What happens | Inline syntax |
-|-------|-------------|---------------|
-| **Brief** | CreativeDirector writes the first draft from `product_description` | `director` |
-| **Evaluate** | Three personas rate the ad in parallel | `[teenager, professional, budget]` |
-| **Score** | `compute_score` reads `.score` from each structured evaluation | `scorer` |
-| **Refine loop** | While score < 8 and iteration < 3: refine and re-evaluate | `@{avg_score < 8 & iteration < 3}: ...;` |
-| **Image prompt** | `build_poster_prompt` turns the final text into an image prompt | `poster_prompt` |
-| **Generate** | MediaMaker calls the image model and writes bytes to `msg.poster` | `poster_maker` |
+### Logging iteration history
 
-Every module reads from and writes to the same `Message` object. The parallel bracket `[...]` runs all three evaluators concurrently via `bcast_gather` — each writes to a disjoint field (`eval_teenager`, `eval_professional`, `eval_budget`), so there are no race conditions.
+Capture each iteration's ad text and scores before the Refiner overwrites them:
 
-All three personas share a single `AdEvaluation` Signature that defines the structured output (`opinion`, `score`). The Signature docstring becomes the task instructions, and each `OutputField` description constrains what the model produces. What differentiates the personas is `system_message` — each agent gets its own personality and evaluation criteria while producing the same typed output. The `response_mode` then writes each result to a separate path on the message.
+```python
+def save_iteration(msg):
+    history = msg.get("history", [])
+    history.append({
+        "iteration": msg.iteration,
+        "ad_text": msg.ad_text,
+        "avg_score": msg.avg_score,
+    })
+    msg.history = history
+```
 
-The `@{condition}: body;` while loop is the key to iterative refinement. Each pass through the loop:
+Add `"save": save_iteration` to the registry and insert `save ->` before `prepare` in the loop body.
 
-1. `prepare` — assembles the feedback into a single prompt
-2. `refiner` — rewrites `msg.ad_text` based on the feedback
-3. `[teenager, professional, budget]` — re-evaluates the new version
-4. `scorer` — recomputes `msg.avg_score` and increments `msg.iteration`
+---
 
-When the score reaches 8+ or 3 iterations pass, the loop exits and the pipeline continues to image generation.
+## Complete Script
+
+??? example "Expand full script"
+    ```python
+    # /// script
+    # dependencies = []
+    # ///
+
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    mf.load_dotenv()
+
+
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+
+
+    class AdEvaluation(mf.Signature):
+        """Evaluate the advertisement from your perspective. Consider the tone,
+        clarity, and appeal. Be honest and specific in your opinion."""
+
+        ad_text: str = mf.InputField(desc="The advertisement text to evaluate")
+
+        opinion: str = mf.OutputField(desc="Your honest reaction to the ad in 2-3 sentences")
+        score: int = mf.OutputField(desc="Overall score from 1 (terrible) to 10 (perfect)")
+
+
+
+    class Teenager(nn.Agent):
+        model = model
+        system_message = """You are a 17-year-old social media native. You care about
+        aesthetics, trends, memes, and authenticity. Focus on whether the ad feels
+        authentic or corporate and whether you would share it on social media."""
+        signature = AdEvaluation
+        message_fields = {"task": {"ad_text": "ad_text"}}
+        response_mode = "eval_teenager"
+
+
+    class Professional(nn.Agent):
+        model = model
+        system_message = """You are a 35-year-old working professional. You value clarity,
+        time-saving, and quality. Focus on whether the value proposition is clear
+        and whether the ad respects your time."""
+        signature = AdEvaluation
+        message_fields = {"task": {"ad_text": "ad_text"}}
+        response_mode = "eval_professional"
+
+
+    class BudgetShopper(nn.Agent):
+        model = model
+        system_message = """You are a budget-conscious parent. You look for deals,
+        compare prices, and distrust hype. Focus on whether the ad mentions price
+        or value and whether it feels honest or manipulative."""
+        signature = AdEvaluation
+        message_fields = {"task": {"ad_text": "ad_text"}}
+        response_mode = "eval_budget"
+
+
+
+    class CreativeDirector(nn.Agent):
+        """Writes the first ad draft from a product description."""
+
+        model = model
+        instructions = """
+        You are a creative director at an ad agency. Given a product description,
+        write compelling ad copy (3-5 sentences). Include:
+        - A catchy headline
+        - Key benefits
+        - A call to action
+
+        Return only the ad text.
+        """
+        message_fields = {"task": "product_description"}
+        response_mode = "ad_text"
+
+
+    class Refiner(nn.Agent):
+        """Rewrites ad copy based on focus group feedback."""
+
+        model = model
+        instructions = """
+        You are a senior copywriter. You receive the original ad text and feedback
+        from three customer personas (teenager, professional, budget shopper).
+
+        Rewrite the ad to address their concerns while keeping the core message.
+        Return only the new ad text — nothing else.
+        """
+        message_fields = {"task": "refinement_input"}
+        response_mode = "ad_text"
+
+
+
+    def compute_score(msg):
+        scores = [
+            msg.eval_teenager.get("score", 5),
+            msg.eval_professional.get("score", 5),
+            msg.eval_budget.get("score", 5),
+        ]
+        msg.avg_score = sum(scores) / len(scores)
+        msg.iteration = msg.get("iteration", 0) + 1
+
+
+    def prepare_refinement(msg):
+        msg.refinement_input = (
+            f"Current ad:\n{msg.ad_text}\n\n"
+            f"Teenager feedback: {msg.eval_teenager.opinion} "
+            f"(score: {msg.eval_teenager.score})\n\n"
+            f"Professional feedback: {msg.eval_professional.opinion} "
+            f"(score: {msg.eval_professional.score})\n\n"
+            f"Budget shopper feedback: {msg.eval_budget.opinion} "
+            f"(score: {msg.eval_budget.score})\n\n"
+            "Rewrite the ad addressing this feedback."
+        )
+
+
+
+    pipeline = mf.Inline(
+        "director"
+        " -> [teenager, professional, budget] -> scorer"
+        " -> @{avg_score < 8 & iteration < 3}:"
+        " prepare -> refiner -> [teenager, professional, budget] -> scorer;",
+        {
+            "director":     CreativeDirector(),
+            "teenager":     Teenager(),
+            "professional": Professional(),
+            "budget":       BudgetShopper(),
+            "refiner":      Refiner(),
+            "scorer":       compute_score,
+            "prepare":      prepare_refinement,
+        },
+    )
+
+
+    msg = Message()
+    msg.product_description = """
+    CloudBrew is a Wi-Fi-enabled coffee maker with a built-in taste profile system.
+    It learns your preferences over time and adjusts brew strength, temperature,
+    and grind size automatically. Compatible with any ground coffee or pods.
+    Retail price: $149. Launch promotion: 40% off pre-orders with free shipping.
+    """
+
+    pipeline(msg)
+
+    print("\n" + "=" * 60)
+    print("FOCUS GROUP RESULTS")
+    print("=" * 60)
+    print(f"\nIterations: {msg.iteration}  |  Final score: {msg.avg_score:.1f}/10")
+    print(f"\nFinal ad:\n{msg.ad_text}")
+    print("\n--- Evaluations ---")
+    for label, field in [
+        ("Teenager",       "eval_teenager"),
+        ("Professional",   "eval_professional"),
+        ("Budget Shopper", "eval_budget"),
+    ]:
+        ev = msg.get(field)
+        print(f"\n{label} ({ev['score']}/10): {ev['opinion']}")
+    ```
+
+## Further Reading
+
+- [Inline DSL](../learn/inline.md) — pipeline syntax, parallel steps, and while loops
+- [nn.Agent](../learn/nn/agent/index.md) — `message_fields`, `response_mode`, and structured output
+- [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts
+- [nn.MediaMaker](../learn/nn/mediamaker.md) — image and video generation

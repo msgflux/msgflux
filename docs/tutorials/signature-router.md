@@ -12,11 +12,9 @@ Here is the system most teams start with.
 User Query
     │
     ▼
-┌──────────────────────────────────────────┐
 │           GeneralAssistant               │
 │                                          │
 │  what kind of question?  ←──→  answer   │
-└──────────────────────────────────────────┘
          │ improvises the output shape
          ▼
   {"response": "..."} or {"answer": "..."} or just a string
@@ -79,6 +77,7 @@ Before dispatching to a specialist, the router needs to know what kind of questi
 import msgflux as mf
 import msgflux.nn as nn
 
+mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
@@ -280,142 +279,141 @@ class QueryRouter(nn.Module):
 
 ## Complete Script
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from typing import Literal, Optional
+??? example "Expand full script"
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+    from typing import Literal, Optional
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-
-class QueryClassification(mf.Signature):
-    """Classify the query to route it to the best specialist."""
-
-    query: str = mf.InputField(desc="The user's question")
-
-    topic: Literal["technical", "business", "creative", "general"] = mf.OutputField(
-        desc="The primary domain of the query"
-    )
-    complexity: Literal["simple", "complex"] = mf.OutputField(
-        desc="'simple' for direct answers, 'complex' for deep research"
-    )
-    keywords: list[str] = mf.OutputField(desc="Key terms that identify the domain")
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
-class TechnicalAnswer(mf.Signature):
-    """Answer technical questions clearly with practical examples."""
+    class QueryClassification(mf.Signature):
+        """Classify the query to route it to the best specialist."""
 
-    query: str = mf.InputField(desc="The technical question")
-    answer: str = mf.OutputField(desc="Clear and accurate explanation")
-    code_example: Optional[str] = mf.OutputField(desc="Illustrative code snippet, if applicable")
-    references: list[str] = mf.OutputField(desc="Relevant documentation or resources")
+        query: str = mf.InputField(desc="The user's question")
 
-
-class BusinessAnswer(mf.Signature):
-    """Analyze business questions with strategic perspective."""
-
-    query: str = mf.InputField(desc="The business question")
-    analysis: str = mf.OutputField(desc="Situation analysis")
-    key_points: list[str] = mf.OutputField(desc="Key points to consider")
-    recommendation: str = mf.OutputField(desc="Practical, actionable recommendation")
+        topic: Literal["technical", "business", "creative", "general"] = mf.OutputField(
+            desc="The primary domain of the query"
+        )
+        complexity: Literal["simple", "complex"] = mf.OutputField(
+            desc="'simple' for direct answers, 'complex' for deep research"
+        )
+        keywords: list[str] = mf.OutputField(desc="Key terms that identify the domain")
 
 
-class CreativeAnswer(mf.Signature):
-    """Generate creative and inspiring ideas."""
+    class TechnicalAnswer(mf.Signature):
+        """Answer technical questions clearly with practical examples."""
 
-    query: str = mf.InputField(desc="The creative challenge or question")
-    ideas: list[str] = mf.OutputField(desc="3 to 5 original ideas")
-    suggestions: list[str] = mf.OutputField(desc="Tips to develop the ideas further")
-    inspiration: str = mf.OutputField(desc="An inspiring phrase or concept")
-
-
-class GeneralAnswer(mf.Signature):
-    """Answer general questions thoroughly."""
-
-    query: str = mf.InputField(desc="The user's question")
-    answer: str = mf.OutputField(desc="Direct and informative response")
-    follow_up_questions: list[str] = mf.OutputField(desc="Questions the user might want to explore next")
+        query: str = mf.InputField(desc="The technical question")
+        answer: str = mf.OutputField(desc="Clear and accurate explanation")
+        code_example: Optional[str] = mf.OutputField(desc="Illustrative code snippet, if applicable")
+        references: list[str] = mf.OutputField(desc="Relevant documentation or resources")
 
 
-class QueryClassifier(nn.Agent):
-    model = model
-    signature = QueryClassification
-    config = {"verbose": True}
+    class BusinessAnswer(mf.Signature):
+        """Analyze business questions with strategic perspective."""
+
+        query: str = mf.InputField(desc="The business question")
+        analysis: str = mf.OutputField(desc="Situation analysis")
+        key_points: list[str] = mf.OutputField(desc="Key points to consider")
+        recommendation: str = mf.OutputField(desc="Practical, actionable recommendation")
 
 
-class TechnicalExpert(nn.Agent):
-    model = model
-    signature = TechnicalAnswer
-    config = {"verbose": True}
+    class CreativeAnswer(mf.Signature):
+        """Generate creative and inspiring ideas."""
+
+        query: str = mf.InputField(desc="The creative challenge or question")
+        ideas: list[str] = mf.OutputField(desc="3 to 5 original ideas")
+        suggestions: list[str] = mf.OutputField(desc="Tips to develop the ideas further")
+        inspiration: str = mf.OutputField(desc="An inspiring phrase or concept")
 
 
-class BusinessAnalyst(nn.Agent):
-    model = model
-    signature = BusinessAnswer
-    config = {"verbose": True}
+    class GeneralAnswer(mf.Signature):
+        """Answer general questions thoroughly."""
+
+        query: str = mf.InputField(desc="The user's question")
+        answer: str = mf.OutputField(desc="Direct and informative response")
+        follow_up_questions: list[str] = mf.OutputField(desc="Questions the user might want to explore next")
 
 
-class CreativeAdvisor(nn.Agent):
-    model = model
-    signature = CreativeAnswer
-    config = {"verbose": True}
+    class QueryClassifier(nn.Agent):
+        model = model
+        signature = QueryClassification
+        config = {"verbose": True}
 
 
-class GeneralAssistant(nn.Agent):
-    model = model
-    signature = GeneralAnswer
-    config = {"verbose": True}
+    class TechnicalExpert(nn.Agent):
+        model = model
+        signature = TechnicalAnswer
+        config = {"verbose": True}
 
 
-class QueryRouter(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.classifier = QueryClassifier()
-        self.experts = nn.ModuleDict({
-            "technical": TechnicalExpert(),
-            "business":  BusinessAnalyst(),
-            "creative":  CreativeAdvisor(),
-            "general":   GeneralAssistant(),
-        })
-
-    def forward(self, msg):
-        self.classifier(msg)
-        expert = self.experts.get(msg.topic, self.experts["general"])
-        expert(msg)
-        return msg
-
-    async def aforward(self, msg):
-        await self.classifier.acall(msg)
-        expert = self.experts.get(msg.topic, self.experts["general"])
-        await expert.acall(msg)
-        return msg
+    class BusinessAnalyst(nn.Agent):
+        model = model
+        signature = BusinessAnswer
+        config = {"verbose": True}
 
 
-router = QueryRouter()
+    class CreativeAdvisor(nn.Agent):
+        model = model
+        signature = CreativeAnswer
+        config = {"verbose": True}
 
-queries = [
-    "How do I implement an LRU cache in Python?",
-    "What pricing model should I use for a freemium product?",
-    "Give me ideas for a mental wellness app.",
-    "What is the Kyoto Protocol?",
-]
 
-for query in queries:
-    msg = mf.Message(query=query)
-    router(msg)
+    class GeneralAssistant(nn.Agent):
+        model = model
+        signature = GeneralAnswer
+        config = {"verbose": True}
 
-    print(f"\n{'─' * 60}")
-    print(f"Query:    {msg.query}")
-    print(f"Topic:    {msg.topic} ({msg.complexity})")
-    print(f"Keywords: {msg.keywords}")
 
-    for field in ("answer", "analysis", "ideas"):
-        if msg.get(field):
-            print(f"\n{field.capitalize()}:\n{msg[field]}")
-            break
-```
+    class QueryRouter(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.classifier = QueryClassifier()
+            self.experts = nn.ModuleDict({
+                "technical": TechnicalExpert(),
+                "business":  BusinessAnalyst(),
+                "creative":  CreativeAdvisor(),
+                "general":   GeneralAssistant(),
+            })
 
----
+        def forward(self, msg):
+            self.classifier(msg)
+            expert = self.experts.get(msg.topic, self.experts["general"])
+            expert(msg)
+            return msg
+
+        async def aforward(self, msg):
+            await self.classifier.acall(msg)
+            expert = self.experts.get(msg.topic, self.experts["general"])
+            await expert.acall(msg)
+            return msg
+
+
+    router = QueryRouter()
+
+    queries = [
+        "How do I implement an LRU cache in Python?",
+        "What pricing model should I use for a freemium product?",
+        "Give me ideas for a mental wellness app.",
+        "What is the Kyoto Protocol?",
+    ]
+
+    for query in queries:
+        msg = mf.Message(query=query)
+        router(msg)
+
+        print(f"\n{'─' * 60}")
+        print(f"Query:    {msg.query}")
+        print(f"Topic:    {msg.topic} ({msg.complexity})")
+        print(f"Keywords: {msg.keywords}")
+
+        for field in ("answer", "analysis", "ideas"):
+            if msg.get(field):
+                print(f"\n{field.capitalize()}:\n{msg[field]}")
+                break
+    ```
 
 ## Further Reading
 

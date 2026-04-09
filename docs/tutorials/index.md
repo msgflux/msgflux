@@ -103,6 +103,14 @@ Learn good AI system design through real problems. Each tutorial turns an indust
 
     `Signature` · `Reasoning` · `Multimodal`
 
+-   [**Streaming Support Triage**](./streaming-support-triage.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Stream a support reply while the agent checks order status and decides whether to answer directly or escalate. A compact example of real-time output plus tool calls.
+
+    `Streaming` · `Tools` · `Signature`
+
 </div>
 </div>
 
@@ -185,6 +193,22 @@ Learn good AI system design through real problems. Each tutorial turns an indust
     Dispatch queries across multiple backends — SQL, vector DB, knowledge base — using a typed routing layer with one Signature per specialist.
 
     `Signature`
+
+-   [**Oracle Specialist Tool**](./oracle-specialist-tool.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Build a root assistant that delegates product and policy questions to an Oracle specialist agent. A compact example of agent-as-tool, ChainOfThought, and response templating.
+
+    `Tools` · `ChainOfThought` · `Templates`
+
+-   [**Plan Tool with Root Context**](./plan-tool-with-root-context.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Delegate planning to a specialist tool that receives both the root task and the full conversation history. A compact example of `inject_messages=True`.
+
+    `Tools` · `ChainOfThought` · `Templates`
 
 </div>
 </div>

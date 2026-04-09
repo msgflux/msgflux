@@ -12,11 +12,9 @@ Here is how most teams handle incoming email at first.
 Incoming email
        │
        ▼
-┌──────────────────────────────────────────┐
 │           GeneralAgent                   │
 │                                          │
 │   read email  ←──→  write reply          │
-└──────────────────────────────────────────┘
          │ sends whatever comes out
          ▼
       reply (unreviewed)
@@ -48,7 +46,6 @@ Incoming email
   Classifier ──── Signature: email_body → intent, urgency, tone, sender_name
        │
        ▼
-  Drafter ──────── Signature: email_body, intent, urgency, tone → draft
        │
        ▼
   Reviewer ─────── Signature: email_body, draft → approved, feedback, score
@@ -307,104 +304,103 @@ Pass the email in and let the flux run. Each agent writes to its own namespace o
 
 ## Complete Script
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from typing import Literal
+??? example "Expand full script"
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+    from typing import Literal
 
-mf.load_dotenv()
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    mf.load_dotenv()
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
-class ClassifyEmail(mf.Signature):
-    """Classify the incoming email to inform the reply strategy."""
+    class ClassifyEmail(mf.Signature):
+        """Classify the incoming email to inform the reply strategy."""
 
-    email_body: str = mf.InputField(desc="The full text of the incoming email")
-    intent: Literal[
-        "question", "complaint", "request", "follow_up", "cancellation", "praise"
-    ] = mf.OutputField(desc="Primary intent of the email")
-    urgency: Literal["low", "medium", "high"] = mf.OutputField(
-        desc="How urgently this email needs a response"
+        email_body: str = mf.InputField(desc="The full text of the incoming email")
+        intent: Literal[
+            "question", "complaint", "request", "follow_up", "cancellation", "praise"
+        ] = mf.OutputField(desc="Primary intent of the email")
+        urgency: Literal["low", "medium", "high"] = mf.OutputField(
+            desc="How urgently this email needs a response"
+        )
+        tone: Literal["formal", "neutral", "informal"] = mf.OutputField(
+            desc="Appropriate reply tone based on sender style"
+        )
+        sender_name: str = mf.OutputField(desc="Sender's first name extracted from the email")
+
+
+    class DraftReply(mf.Signature):
+        """Draft a professional reply to the email."""
+
+        email_body: str = mf.InputField(desc="The original email")
+        intent: str = mf.InputField(desc="Classified intent")
+        urgency: str = mf.InputField(desc="Urgency level")
+        tone: str = mf.InputField(desc="Reply tone to use")
+        draft: str = mf.OutputField(desc="A complete, ready-to-send reply addressing all points raised")
+
+
+    class ReviewDraft(mf.Signature):
+        """Review a draft reply for quality, accuracy, and tone before sending."""
+
+        email_body: str = mf.InputField(desc="The original email")
+        draft: str = mf.InputField(desc="The draft reply to review")
+        feedback: str = mf.OutputField(desc="Specific, actionable feedback if not approved")
+        approved: bool = mf.OutputField(desc="True if the draft is ready to send")    
+        score: float = mf.OutputField(desc="Quality score from 0.0 to 1.0")
+
+
+    class ReviseDraft(mf.Signature):
+        """Revise a draft based on reviewer feedback."""
+
+        current_draft: str = mf.InputField(desc="The current draft that needs improvement")
+        feedback: str = mf.InputField(desc="Specific feedback from the reviewer")
+        draft: str = mf.OutputField(desc="Improved version of the draft")
+
+
+    class Classifier(nn.Agent):
+        model = model
+        signature = ClassifyEmail
+        message_fields = {"task": {"email_body": "email_body"}}
+        response_mode = "cls"
+        config = {"verbose": True}
+
+
+    class Drafter(nn.Agent):
+        model = model
+        signature = DraftReply
+        message_fields = {"task": {"email_body": "email_body", "intent": "cls.intent", "urgency": "cls.urgency", "tone": "cls.tone"}}
+        response_mode = "rsp"
+        config = {"verbose": True}
+
+
+    class Reviewer(nn.Agent):
+        model = model
+        signature = ReviewDraft
+        message_fields = {"task": {"email_body": "email_body", "draft": "rsp.draft"}}
+        response_mode = "rev"
+        config = {"verbose": True}
+
+
+    class Reviser(nn.Agent):
+        model = model
+        signature = ReviseDraft
+        message_fields = {"task": {"current_draft": "rsp.draft", "feedback": "rev.feedback"}}
+        response_mode = "rsp"
+        config = {"verbose": True}
+
+
+    flux = mf.Inline(
+        "classifier -> drafter -> reviewer -> @{rev.approved == False}: reviser -> reviewer;",
+        {
+            "classifier": Classifier(),
+            "drafter":    Drafter(),
+            "reviewer":   Reviewer(),
+            "reviser":    Reviser(),
+        },
+        max_iterations=5,
     )
-    tone: Literal["formal", "neutral", "informal"] = mf.OutputField(
-        desc="Appropriate reply tone based on sender style"
-    )
-    sender_name: str = mf.OutputField(desc="Sender's first name extracted from the email")
-
-
-class DraftReply(mf.Signature):
-    """Draft a professional reply to the email."""
-
-    email_body: str = mf.InputField(desc="The original email")
-    intent: str = mf.InputField(desc="Classified intent")
-    urgency: str = mf.InputField(desc="Urgency level")
-    tone: str = mf.InputField(desc="Reply tone to use")
-    draft: str = mf.OutputField(desc="A complete, ready-to-send reply addressing all points raised")
-
-
-class ReviewDraft(mf.Signature):
-    """Review a draft reply for quality, accuracy, and tone before sending."""
-
-    email_body: str = mf.InputField(desc="The original email")
-    draft: str = mf.InputField(desc="The draft reply to review")
-    feedback: str = mf.OutputField(desc="Specific, actionable feedback if not approved")
-    approved: bool = mf.OutputField(desc="True if the draft is ready to send")    
-    score: float = mf.OutputField(desc="Quality score from 0.0 to 1.0")
-
-
-class ReviseDraft(mf.Signature):
-    """Revise a draft based on reviewer feedback."""
-
-    current_draft: str = mf.InputField(desc="The current draft that needs improvement")
-    feedback: str = mf.InputField(desc="Specific feedback from the reviewer")
-    draft: str = mf.OutputField(desc="Improved version of the draft")
-
-
-class Classifier(nn.Agent):
-    model = model
-    signature = ClassifyEmail
-    message_fields = {"task": {"email_body": "email_body"}}
-    response_mode = "cls"
-    config = {"verbose": True}
-
-
-class Drafter(nn.Agent):
-    model = model
-    signature = DraftReply
-    message_fields = {"task": {"email_body": "email_body", "intent": "cls.intent", "urgency": "cls.urgency", "tone": "cls.tone"}}
-    response_mode = "rsp"
-    config = {"verbose": True}
-
-
-class Reviewer(nn.Agent):
-    model = model
-    signature = ReviewDraft
-    message_fields = {"task": {"email_body": "email_body", "draft": "rsp.draft"}}
-    response_mode = "rev"
-    config = {"verbose": True}
-
-
-class Reviser(nn.Agent):
-    model = model
-    signature = ReviseDraft
-    message_fields = {"task": {"current_draft": "rsp.draft", "feedback": "rev.feedback"}}
-    response_mode = "rsp"
-    config = {"verbose": True}
-
-
-flux = mf.Inline(
-    "classifier -> drafter -> reviewer -> @{rev.approved == False}: reviser -> reviewer;",
-    {
-        "classifier": Classifier(),
-        "drafter":    Drafter(),
-        "reviewer":   Reviewer(),
-        "reviser":    Reviser(),
-    },
-    max_iterations=5,
-)
-```
-
----
+    ```
 
 ## Further Reading
 

@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+#   "rapidfuzz",
+#   "typing-extensions",
+# ]
+# ///
+
 import uuid
 from typing import List, Optional
 

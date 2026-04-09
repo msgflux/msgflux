@@ -31,7 +31,6 @@ The tutorial is split into two phases.
 
 ```
 Phase 1 — Ingestion
-──────────────────────────────────────────────────────
 random → restaurants (rating, delivery_min, min_order)
 raw dish names (name only)
                     │
@@ -44,14 +43,12 @@ raw dish names (name only)
           Enriched catalog
           + backfill restaurant tags
                     │
-          ┌─────────┴─────────┐
           ▼                   ▼
    dish_fuzzy          restaurant_fuzzy
    (name + desc          (name + cuisine
     + tags)               + tags)
 
 Phase 2 — Assistant
-──────────────────────────────────────────────────────
 User message
       │
       ▼
@@ -791,24 +788,28 @@ print(result["reasoning"])
 ## Complete Script
 
 ??? example "Expand full script"
-
     ```python
+    # /// script
+    # dependencies = [
+    #   "rapidfuzz",
+    #   "typing-extensions",
+    # ]
+    # ///
+
     import uuid
     import random
     from typing import List, Literal
-    
+
     from msgspec import Meta, Struct
     from typing_extensions import Annotated
-    
+
     import msgflux as mf
     import msgflux.nn as nn
     import msgflux.nn.functional as F
-    
+
     mf.load_dotenv()
     chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    
-    
-    
+
     RAW_RESTAURANTS = [
         {"id": "REST001", "name": "Napoli's Pizza",   "cuisine": "pizza"},
         {"id": "REST002", "name": "Tokyo Garden",     "cuisine": "japanese"},
@@ -821,7 +822,7 @@ print(result["reasoning"])
         {"id": "REST009", "name": "Chicken House",    "cuisine": "brazilian"},
         {"id": "REST010", "name": "Pasta Mia",        "cuisine": "italian"},
     ]
-    
+
     RAW_DISHES = [
         # Napoli's Pizza
         {"restaurant_id": "REST001", "raw_name": "margherita"},
@@ -887,13 +888,13 @@ print(result["reasoning"])
         {"restaurant_id": "REST010", "raw_name": "mushroom risotto"},
         {"restaurant_id": "REST010", "raw_name": "tiramisu"},
     ]
-    
+
     _DELIVERY_BY_CUISINE = {
         "burger":   (20, 30), "brazilian": (30, 45), "pizza":    (30, 40),
         "japanese": (35, 50), "arabic":    (25, 35), "vegan":    (30, 40),
         "chinese":  (25, 35), "mexican":   (20, 30), "italian":  (30, 45),
     }
-    
+
     def generate_restaurant_metadata(raw: list[dict]) -> list[dict]:
         enriched = []
         for r in raw:
@@ -906,10 +907,10 @@ print(result["reasoning"])
                 "tags":         [],  # populated after dish enrichment
             })
         return enriched
-    
+
     RESTAURANTS = generate_restaurant_metadata(RAW_RESTAURANTS)
     _rest_by_id = {r["id"]: r for r in RESTAURANTS}
-    
+
     class DishEntry(Struct):
         name:        str
         description: str
@@ -920,8 +921,8 @@ print(result["reasoning"])
         price:       Annotated[float,      Meta(description="Price in US$ — delivery app range: side $3-7, starter $5-10, main $9-18, dessert $4-8, drink $2-5")]
         tags:        Annotated[List[str],  Meta(description="Cuisine and flavor tags")]
         dietary:     Annotated[List[str],  Meta(description="Dietary tags: vegetarian, vegan, gluten-free, spicy, etc.")]
-    
-    
+
+
     class DishEnricher(nn.Agent):
         """Expands a raw dish name into a full catalog entry."""
         model             = chat_model
@@ -935,10 +936,10 @@ print(result["reasoning"])
         """
         generation_schema = DishEntry
         templates         = {"task": "Dish: {{ raw_name }}\nCuisine: {{ cuisine }}"}
-    
-    
+
+
     enricher = DishEnricher()
-    
+
     enriched = F.map_gather(
         enricher,
         args_list=[() for _ in RAW_DISHES],
@@ -947,7 +948,7 @@ print(result["reasoning"])
             for d in RAW_DISHES
         ],
     )
-    
+
     DISHES = []
     for i, (raw, result) in enumerate(zip(RAW_DISHES, enriched), start=1):
         DISHES.append({
@@ -955,9 +956,9 @@ print(result["reasoning"])
             "restaurant_id": raw["restaurant_id"],
             **result,
         })
-    
+
     _dish_by_id = {d["id"]: d for d in DISHES}
-    
+
     for rest in RESTAURANTS:
         dish_tags = [
             tag
@@ -966,7 +967,7 @@ print(result["reasoning"])
             for tag in d.get("tags", [])
         ]
         rest["tags"] = list(dict.fromkeys(dish_tags))[:8]  # deduplicated, top 8
-    
+
     def _dish_corpus(dishes: list[dict]) -> list[str]:
         entries = []
         for d in dishes:
@@ -978,8 +979,8 @@ print(result["reasoning"])
                 f"| US${d['price']:.2f} | {tags}"
             )
         return entries
-    
-    
+
+
     def _restaurant_corpus(restaurants: list[dict]) -> list[str]:
         return [
             f"{r['id']} | {r['name']} | {r['cuisine']} | "
@@ -987,14 +988,14 @@ print(result["reasoning"])
             f"mín: US${r['min_order']:.0f} | {' '.join(r['tags'])}"
             for r in restaurants
         ]
-    
-    
+
+
     dish_fuzzy = mf.Retriever.fuzzy("rapidfuzz")
     dish_fuzzy.add(_dish_corpus(DISHES))
-    
+
     restaurant_fuzzy = mf.Retriever.fuzzy("rapidfuzz")
     restaurant_fuzzy.add(_restaurant_corpus(RESTAURANTS))
-    
+
     class DishSearcher(nn.Searcher):
         """
         Search for dishes by name, description, ingredients, cuisine, or dietary tag.
@@ -1005,8 +1006,8 @@ print(result["reasoning"])
         retriever = dish_fuzzy
         config    = {"top_k": 5}
         templates = {"response": "{% for r in results %}{{ r.data }}\n{% endfor %}"}
-    
-    
+
+
     class RestaurantSearcher(nn.Searcher):
         """
         Search for restaurants by name, cuisine type, or tags.
@@ -1017,7 +1018,7 @@ print(result["reasoning"])
         retriever = restaurant_fuzzy
         config    = {"top_k": 5}
         templates = {"response": "{% for r in results %}{{ r.data }}\n{% endfor %}"}
-    
+
     def get_menu(restaurant_id: str) -> str:
         """
         Get the full menu of a restaurant, including prices, descriptions, and dietary tags.
@@ -1026,7 +1027,7 @@ print(result["reasoning"])
         rest = _rest_by_id.get(restaurant_id)
         if not rest:
             return f"Restaurant {restaurant_id} not found."
-    
+
         dishes = [d for d in DISHES if d["restaurant_id"] == restaurant_id]
         lines  = [
             f"# {rest['name']} ({rest['cuisine']})",
@@ -1038,7 +1039,7 @@ print(result["reasoning"])
             lines.append(f"{d['id']} | {d['name']} — US${d['price']:.2f}{dietary}")
             lines.append(f"     {d.get('description', '')}")
         return "\n".join(lines)    
-    
+
     def place_order(
         restaurant_id: str,
         dish_ids:      list[str],
@@ -1052,21 +1053,21 @@ print(result["reasoning"])
         rest = _rest_by_id.get(restaurant_id)
         if not rest:
             return f"Restaurant {restaurant_id} not found."
-    
+
         order_id = str(uuid.uuid4())[:8].upper()
         total    = 0.0
         lines    = [f"Order {order_id} confirmed at {rest['name']}", ""]
-    
+
         for dish_id, name, qty in zip(dish_ids, names, quantities):
             dish   = _dish_by_id.get(dish_id)
             price  = dish["price"] if dish else 0.0
             total += price * qty
             lines.append(f"  {qty}x {name} — US${price * qty:.2f}")
-    
+
         lines += ["", f"Total: US${total:.2f}", f"Estimated delivery: {rest['delivery_min']}min"]
         return "\n".join(lines)
-    
-    
+
+
     class FoodAssistant(nn.Agent):
         """Food delivery assistant with restaurant and dish search."""
         model           = chat_model
@@ -1075,7 +1076,7 @@ print(result["reasoning"])
         """
         instructions    = """
         Help the user find and order food through a natural conversation.
-    
+
         Available tools:
         - search_dishes: search by name, ingredient, cuisine, or dietary tag
         - search_restaurants: search by name or cuisine type
@@ -1094,13 +1095,32 @@ print(result["reasoning"])
         """
         tools  = [DishSearcher, RestaurantSearcher, get_menu, place_order]
         config = {"verbose": True}
-    
-    
-    assistant = FoodAssistant()
+
+
+    if __name__ == "__main__":
+        assistant = FoodAssistant()
+        history   = []
+
+        # Turn 1 — vague request
+        user_msg = "I want something vegan under US$15"
+        r1 = assistant(user_msg, messages=history)
+        history.append(mf.ChatBlock.assist(r1))
+        print("Assistant:", r1)
+
+        print()
+
+        # Turn 2 — refinement + confirmation
+        user_msg2 = "I'll take the vegan wrap. Place the order."
+        r2 = assistant(user_msg2, messages=history)
+        history.append(mf.ChatBlock.assist(r2))
+        print("Assistant:", r2)
+
+        print()
+
+        # Turn 3 — confirm quantity
+        r3 = assistant("1 item.", messages=history)
+        print("Assistant:", r3)
     ```
-
-
----
 
 ## Further Reading
 

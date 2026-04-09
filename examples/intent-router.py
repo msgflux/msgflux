@@ -1,3 +1,7 @@
+# /// script
+# dependencies = []
+# ///
+
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.generation.reasoning import ChainOfThought

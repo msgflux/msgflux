@@ -351,127 +351,126 @@ flux = mf.Inline(
 
 ## Complete Script
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from typing import Literal
+??? example "Expand full script"
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+    from typing import Literal
 
-mf.load_dotenv()
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    mf.load_dotenv()
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-TICKETS = {
-    "billing_double_charge": "I was charged twice this month — $49 on the 3rd and again on the 5th. Order #ORD-2847.",
-    "technical_api_outage":  "All API calls returning 503 since 14:00 UTC. Our entire product is down. This is urgent.",
-    "account_login":         "Can't log in after renewing my subscription. It says my account is inactive.",
-    "account_billing_edge":  "Can't access my account since the subscription renewed. Shows active but I get 'access denied'.",
-    "feature_request":       "Would love a dark mode. The white background is really hard on the eyes during long sessions.",
-    "general":               "Hi, quick question — does the Pro plan include API access?",
-}
-
-
-class RouteTicket(mf.Signature):
-    """Classify the support ticket to determine routing and response strategy."""
-
-    ticket: str = mf.InputField(desc="The full text of the support ticket")
-    category: Literal["billing", "technical", "account", "feature_request", "general"] = mf.OutputField(
-        desc="Primary category of the ticket"
-    )
-    priority: Literal["low", "medium", "high", "critical"] = mf.OutputField(
-        desc="critical for outages/data loss, high for blocking issues, medium for degraded service, low for questions"
-    )
-    assigned_team: Literal["billing", "engineering", "account_management", "product", "support"] = mf.OutputField(
-        desc="Team best suited to handle this ticket"
-    )
-    sentiment: Literal["neutral", "frustrated", "angry", "satisfied"] = mf.OutputField(
-        desc="Customer's emotional tone"
-    )
-
-
-class DraftResponse(mf.Signature):
-    """Draft a support response calibrated to the ticket classification."""
-
-    ticket: str = mf.InputField(desc="The original ticket text")
-    category: str = mf.InputField(desc="Ticket category")
-    priority: str = mf.InputField(desc="Priority level")
-    sentiment: str = mf.InputField(desc="Customer sentiment")
-    response: str = mf.OutputField(
-        desc="A ready-to-send reply. Empathetic for frustrated/angry customers, direct for general questions."
-    )
-
-
-examples = [
-    mf.Example(
-        inputs="I was charged twice this month. My card was billed $49 on the 3rd and again on the 5th.",
-        labels={"category": "billing", "priority": "high", "assigned_team": "billing", "sentiment": "frustrated"},
-        title="Double charge",
-    ),
-    mf.Example(
-        inputs="The export button does nothing when I click it. Tried Firefox and Chrome, same issue.",
-        labels={"category": "technical", "priority": "medium", "assigned_team": "engineering", "sentiment": "neutral"},
-        title="Broken export button",
-    ),
-    mf.Example(
-        inputs="All API calls have been returning 503 since 14:00 UTC. Our entire product is down.",
-        labels={"category": "technical", "priority": "critical", "assigned_team": "engineering", "sentiment": "angry"},
-        title="API outage",
-    ),
-    mf.Example(
-        inputs="I can't log in. It says my account doesn't exist but I've been a customer for 2 years.",
-        labels={"category": "account", "priority": "high", "assigned_team": "account_management", "sentiment": "frustrated"},
-        title="Login failure — existing customer",
-    ),
-    mf.Example(
-        inputs="Can't access my account since the subscription renewed. Shows active but I get 'access denied'.",
-        labels={"category": "account", "priority": "high", "assigned_team": "account_management", "sentiment": "frustrated"},
-        title="Access denied after renewal",
-    ),
-    mf.Example(
-        inputs="Would it be possible to add CSV import? Right now we enter all data manually.",
-        labels={"category": "feature_request", "priority": "low", "assigned_team": "product", "sentiment": "neutral"},
-        title="CSV import request",
-    ),
-    mf.Example(
-        inputs="Hi, quick question — does the Pro plan include API access?",
-        labels={"category": "general", "priority": "low", "assigned_team": "support", "sentiment": "neutral"},
-        title="Plan inquiry",
-    ),
-]
-
-
-class Router(nn.Agent):
-    model = model
-    examples = examples
-    signature = RouteTicket
-    message_fields = {"task": {"ticket": "ticket"}}
-    response_mode = "routing"    
-    config = {"verbose": True}
-
-
-class Drafter(nn.Agent):
-    model = model
-    signature = DraftResponse
-    message_fields = {
-        "task": {
-            "ticket":    "ticket",
-            "category":  "routing.category",
-            "priority":  "routing.priority",
-            "sentiment": "routing.sentiment",
-        }
+    TICKETS = {
+        "billing_double_charge": "I was charged twice this month — $49 on the 3rd and again on the 5th. Order #ORD-2847.",
+        "technical_api_outage":  "All API calls returning 503 since 14:00 UTC. Our entire product is down. This is urgent.",
+        "account_login":         "Can't log in after renewing my subscription. It says my account is inactive.",
+        "account_billing_edge":  "Can't access my account since the subscription renewed. Shows active but I get 'access denied'.",
+        "feature_request":       "Would love a dark mode. The white background is really hard on the eyes during long sessions.",
+        "general":               "Hi, quick question — does the Pro plan include API access?",
     }
-    response_mode = "rsp"
-    config = {"verbose": True}
 
 
-flux = mf.Inline(
-    "router -> drafter",
-    {
-        "router":  Router(),
-        "drafter": Drafter(),
-    },
-)
-```
+    class RouteTicket(mf.Signature):
+        """Classify the support ticket to determine routing and response strategy."""
 
----
+        ticket: str = mf.InputField(desc="The full text of the support ticket")
+        category: Literal["billing", "technical", "account", "feature_request", "general"] = mf.OutputField(
+            desc="Primary category of the ticket"
+        )
+        priority: Literal["low", "medium", "high", "critical"] = mf.OutputField(
+            desc="critical for outages/data loss, high for blocking issues, medium for degraded service, low for questions"
+        )
+        assigned_team: Literal["billing", "engineering", "account_management", "product", "support"] = mf.OutputField(
+            desc="Team best suited to handle this ticket"
+        )
+        sentiment: Literal["neutral", "frustrated", "angry", "satisfied"] = mf.OutputField(
+            desc="Customer's emotional tone"
+        )
+
+
+    class DraftResponse(mf.Signature):
+        """Draft a support response calibrated to the ticket classification."""
+
+        ticket: str = mf.InputField(desc="The original ticket text")
+        category: str = mf.InputField(desc="Ticket category")
+        priority: str = mf.InputField(desc="Priority level")
+        sentiment: str = mf.InputField(desc="Customer sentiment")
+        response: str = mf.OutputField(
+            desc="A ready-to-send reply. Empathetic for frustrated/angry customers, direct for general questions."
+        )
+
+
+    examples = [
+        mf.Example(
+            inputs="I was charged twice this month. My card was billed $49 on the 3rd and again on the 5th.",
+            labels={"category": "billing", "priority": "high", "assigned_team": "billing", "sentiment": "frustrated"},
+            title="Double charge",
+        ),
+        mf.Example(
+            inputs="The export button does nothing when I click it. Tried Firefox and Chrome, same issue.",
+            labels={"category": "technical", "priority": "medium", "assigned_team": "engineering", "sentiment": "neutral"},
+            title="Broken export button",
+        ),
+        mf.Example(
+            inputs="All API calls have been returning 503 since 14:00 UTC. Our entire product is down.",
+            labels={"category": "technical", "priority": "critical", "assigned_team": "engineering", "sentiment": "angry"},
+            title="API outage",
+        ),
+        mf.Example(
+            inputs="I can't log in. It says my account doesn't exist but I've been a customer for 2 years.",
+            labels={"category": "account", "priority": "high", "assigned_team": "account_management", "sentiment": "frustrated"},
+            title="Login failure — existing customer",
+        ),
+        mf.Example(
+            inputs="Can't access my account since the subscription renewed. Shows active but I get 'access denied'.",
+            labels={"category": "account", "priority": "high", "assigned_team": "account_management", "sentiment": "frustrated"},
+            title="Access denied after renewal",
+        ),
+        mf.Example(
+            inputs="Would it be possible to add CSV import? Right now we enter all data manually.",
+            labels={"category": "feature_request", "priority": "low", "assigned_team": "product", "sentiment": "neutral"},
+            title="CSV import request",
+        ),
+        mf.Example(
+            inputs="Hi, quick question — does the Pro plan include API access?",
+            labels={"category": "general", "priority": "low", "assigned_team": "support", "sentiment": "neutral"},
+            title="Plan inquiry",
+        ),
+    ]
+
+
+    class Router(nn.Agent):
+        model = model
+        examples = examples
+        signature = RouteTicket
+        message_fields = {"task": {"ticket": "ticket"}}
+        response_mode = "routing"    
+        config = {"verbose": True}
+
+
+    class Drafter(nn.Agent):
+        model = model
+        signature = DraftResponse
+        message_fields = {
+            "task": {
+                "ticket":    "ticket",
+                "category":  "routing.category",
+                "priority":  "routing.priority",
+                "sentiment": "routing.sentiment",
+            }
+        }
+        response_mode = "rsp"
+        config = {"verbose": True}
+
+
+    flux = mf.Inline(
+        "router -> drafter",
+        {
+            "router":  Router(),
+            "drafter": Drafter(),
+        },
+    )
+    ```
 
 ## Further Reading
 

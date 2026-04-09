@@ -309,45 +309,32 @@ def save_poster(msg: mf.Message, out_dir: str = ".") -> str:
 
 ## Complete Script
 
-```python
-import asyncio
-import base64
-from urllib.parse import urljoin
+??? example "Expand full script"
+    ```python
+    import asyncio
+    import base64
+    from urllib.parse import urljoin
 
-import httpx
-import msgflux as mf
-import msgflux.nn as nn
+    import httpx
+    import msgflux as mf
+    import msgflux.nn as nn
 
-mf.load_dotenv()
+    mf.load_dotenv()
 
-PRODUCT_URL = "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"
-
-
-# Models
-vision_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-image_model  = mf.Model.text_to_image("openai/gpt-image-1.5")
+    PRODUCT_URL = "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"
 
 
-# Scraper
-class ProductScraper:
-    """Fetches a product page and downloads its main image."""
+    # Models
+    vision_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    image_model  = mf.Model.text_to_image("openai/gpt-image-1.5")
 
-    def _fetch(self, url: str) -> tuple[str, bytes]:
-        r = httpx.get(url, follow_redirects=True, timeout=30)
-        r.raise_for_status()
-        parser = mf.Parser.html("beautifulsoup", extract_images=True)
-        parsed = parser(r.content)
-        text   = parsed.data["text"]
-        images = parsed.data["images"]
-        if not images:
-            raise ValueError("No images found on the product page")
-        img = httpx.get(urljoin(url, images[0]["url"]), follow_redirects=True, timeout=30)
-        img.raise_for_status()
-        return text, img.content
 
-    async def _afetch(self, url: str) -> tuple[str, bytes]:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            r = await client.get(url)
+    # Scraper
+    class ProductScraper:
+        """Fetches a product page and downloads its main image."""
+
+        def _fetch(self, url: str) -> tuple[str, bytes]:
+            r = httpx.get(url, follow_redirects=True, timeout=30)
             r.raise_for_status()
             parser = mf.Parser.html("beautifulsoup", extract_images=True)
             parsed = parser(r.content)
@@ -355,74 +342,86 @@ class ProductScraper:
             images = parsed.data["images"]
             if not images:
                 raise ValueError("No images found on the product page")
-            img = await client.get(urljoin(url, images[0]["url"]))
+            img = httpx.get(urljoin(url, images[0]["url"]), follow_redirects=True, timeout=30)
             img.raise_for_status()
-        return text, img.content
+            return text, img.content
 
-    def __call__(self, msg: mf.Message) -> mf.Message:
-        msg.product_text, msg.product_image = self._fetch(msg.product_url)
-        return msg
+        async def _afetch(self, url: str) -> tuple[str, bytes]:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+                parser = mf.Parser.html("beautifulsoup", extract_images=True)
+                parsed = parser(r.content)
+                text   = parsed.data["text"]
+                images = parsed.data["images"]
+                if not images:
+                    raise ValueError("No images found on the product page")
+                img = await client.get(urljoin(url, images[0]["url"]))
+                img.raise_for_status()
+            return text, img.content
 
-    async def acall(self, msg: mf.Message) -> mf.Message:
-        msg.product_text, msg.product_image = await self._afetch(msg.product_url)
-        return msg
+        def __call__(self, msg: mf.Message) -> mf.Message:
+            msg.product_text, msg.product_image = self._fetch(msg.product_url)
+            return msg
 
-
-# Agents
-class PosterPromptAgent(nn.Agent):
-    """Analyzes a product and crafts a poster generation prompt."""
-    model        = vision_model
-    instructions = """
-    You are an expert creative director specializing in product advertising.
-    Given a product description and its image, create a highly detailed prompt
-    for generating a professional marketing poster.
-    Include: visual style, lighting, mood, composition, color palette, and
-    typography hints. Return only the image generation prompt.
-    """
-    message_fields = {
-        "task":            "product_text",
-        "task_multimodal": {"image": "product_image"},
-    }
-    response_mode = "poster_prompt"
+        async def acall(self, msg: mf.Message) -> mf.Message:
+            msg.product_text, msg.product_image = await self._afetch(msg.product_url)
+            return msg
 
 
-class PosterMaker(nn.MediaMaker):
-    """Generates a marketing poster from a descriptive prompt."""
-    model          = image_model
-    message_fields = {"task": "poster_prompt"}
-    response_mode  = "poster"
+    # Agents
+    class PosterPromptAgent(nn.Agent):
+        """Analyzes a product and crafts a poster generation prompt."""
+        model        = vision_model
+        instructions = """
+        You are an expert creative director specializing in product advertising.
+        Given a product description and its image, create a highly detailed prompt
+        for generating a professional marketing poster.
+        Include: visual style, lighting, mood, composition, color palette, and
+        typography hints. Return only the image generation prompt.
+        """
+        message_fields = {
+            "task":            "product_text",
+            "task_multimodal": {"image": "product_image"},
+        }
+        response_mode = "poster_prompt"
 
 
-# Pipeline
-flux = mf.Inline(
-    "scraper -> prompt_agent -> poster_maker",
-    {
-        "scraper":      ProductScraper(),
-        "prompt_agent": PosterPromptAgent(),
-        "poster_maker": PosterMaker(),
-    },
-)
+    class PosterMaker(nn.MediaMaker):
+        """Generates a marketing poster from a descriptive prompt."""
+        model          = image_model
+        message_fields = {"task": "poster_prompt"}
+        response_mode  = "poster"
 
 
-# Run
-def save_poster(data: str | bytes, path: str = "poster.png") -> None:
-    if isinstance(data, str):
-        data = base64.b64decode(data)
-    with open(path, "wb") as f:
-        f.write(data)
+    # Pipeline
+    flux = mf.Inline(
+        "scraper -> prompt_agent -> poster_maker",
+        {
+            "scraper":      ProductScraper(),
+            "prompt_agent": PosterPromptAgent(),
+            "poster_maker": PosterMaker(),
+        },
+    )
 
 
-msg = mf.Message()
-msg.product_url = PRODUCT_URL
+    # Run
+    def save_poster(data: str | bytes, path: str = "poster.png") -> None:
+        if isinstance(data, str):
+            data = base64.b64decode(data)
+        with open(path, "wb") as f:
+            f.write(data)
 
-flux(msg)
 
-print("Prompt used:\n", msg.poster_prompt)
-save_poster(msg.poster)
-print("Poster saved to poster.png")
-```
+    msg = mf.Message()
+    msg.product_url = PRODUCT_URL
 
----
+    flux(msg)
+
+    print("Prompt used:\n", msg.poster_prompt)
+    save_poster(msg.poster)
+    print("Poster saved to poster.png")
+    ```
 
 ## Further Reading
 

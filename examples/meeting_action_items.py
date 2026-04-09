@@ -1,3 +1,7 @@
+# /// script
+# dependencies = []
+# ///
+
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux import Signature, InputField, OutputField
@@ -8,7 +12,6 @@ mf.load_dotenv()
 model     = mf.Model.chat_completion("openai/gpt-4.1-mini")
 stt_model = mf.Model.speech_to_text("openai/whisper-1")
 
-# ── Signatures ────────────────────────────────────────────────────────────────
 
 class ExtractItems(Signature):
     """Extract action items from a meeting transcript."""
@@ -31,7 +34,6 @@ class FormatChecklist(Signature):
     summary:   str = OutputField(desc="One sentence: total items, confirmed vs. vague/implicit, assignees involved.")
 
 
-# ── Few-shot examples ─────────────────────────────────────────────────────────
 
 examples = [
     mf.Example(
@@ -81,7 +83,6 @@ examples = [
 ]
 
 
-# ── Agents ────────────────────────────────────────────────────────────────────
 
 class AudioTranscriber(nn.Transcriber):
     """Transcribes meeting audio into msg.meeting.transcript."""
@@ -104,7 +105,6 @@ class Formatter(nn.Agent):
     signature = FormatChecklist
 
 
-# ── Pipeline ──────────────────────────────────────────────────────────────────
 
 class MeetingTracker(nn.Module):
     def __init__(self):
@@ -188,7 +188,6 @@ class MeetingTracker(nn.Module):
         }
 
 
-# ── Run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     tracker = MeetingTracker()
