@@ -194,11 +194,11 @@ Learn good AI system design through real problems. Each tutorial turns an indust
 
     `Signature`
 
--   [**Oracle Specialist Tool**](./oracle-specialist-tool.md) <span class="tag tag-green">Beginner</span>
+-   [**Advisor Specialist Tool**](./advisor-specialist-tool.md) <span class="tag tag-green">Beginner</span>
 
     ---
 
-    Build a root assistant that delegates product and policy questions to an Oracle specialist agent. A compact example of agent-as-tool, ChainOfThought, and response templating.
+    Build a root assistant that delegates product and policy questions to an Advisor specialist agent. A compact example of agent-as-tool, ChainOfThought, and response templating.
 
     `Tools` · `ChainOfThought` · `Templates`
 

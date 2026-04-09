@@ -1,10 +1,10 @@
-# Oracle Specialist Tool
+# Advisor Specialist Tool
 
 <span class="tag tag-green">Beginner</span><span class="tag tag-gray">Tools</span><span class="tag tag-gray">ChainOfThought</span><span class="tag tag-gray">Templates</span>
 
 Some questions should not be answered by the root assistant directly. Pricing, refunds, and product policy change over time, and they are easier to maintain in one specialist than inside the root prompt.
 
-In this tutorial, the root assistant delegates those questions to an `oracle` tool.
+In this tutorial, the root assistant delegates those questions to an `advisor` tool.
 
 ## The Problem
 
@@ -23,9 +23,9 @@ The cleaner design is delegation. Let the root assistant manage the conversation
 
 We will build a small two-agent setup.
 
-The **root assistant** handles the conversation. When the user asks about pricing, refunds, security, or support policy, it calls the **oracle specialist** instead of answering from memory.
+The **root assistant** handles the conversation. When the user asks about pricing, refunds, security, or support policy, it calls the **advisor specialist** instead of answering from memory.
 
-The Oracle reads a small internal handbook and returns a clean tool response that the root assistant can use in its final answer.
+The Advisor reads a small internal handbook and returns a clean tool response that the root assistant can use in its final answer.
 
 ---
 
@@ -38,10 +38,10 @@ User question
 RootAssistant
      │
      ├── direct answer for simple conversation
-     └── oracle(question=...)
+     └── advisor(question=...)
              │
              ▼
-      OracleTool (Agent-as-Tool)
+      AdvisorTool (Agent-as-Tool)
              │
              ├── Signature
              ├── ChainOfThought
@@ -90,15 +90,15 @@ Support:
 
 ---
 
-## Step 2 - Oracle Signature
+## Step 2 - Advisor Signature
 
-The Oracle should answer with a compact, typed payload. The root assistant does not need raw chain-of-thought text; it needs a reliable answer plus enough metadata to decide how much to trust it.
+The Advisor should answer with a compact, typed payload. The root assistant does not need raw chain-of-thought text; it needs a reliable answer plus enough metadata to decide how much to trust it.
 
 ```python
 from typing import Literal
 
 
-class OracleQuestion(mf.Signature):
+class AdvisorQuestion(mf.Signature):
     """Answer handbook questions using only the provided internal documentation."""
 
     question: str = mf.InputField(desc="Question delegated by the root assistant")
@@ -113,33 +113,64 @@ class OracleQuestion(mf.Signature):
 
 ---
 
-## Step 3 - Oracle as a Tool
+## Step 3 - Advisor as a Tool
 
 This is the key pattern: the tool is itself an `nn.Agent`.
 
-`ChainOfThought` helps the Oracle think before answering. The response template keeps the tool output clean, so the root assistant receives a short, readable result instead of the raw structured payload.
+`ChainOfThought` helps the Advisor think before answering. The response template keeps the tool output clean, so the root assistant receives a short, readable result instead of the raw structured payload.
 
 ```python
 from msgflux.generation.reasoning import ChainOfThought
 
 
-@mf.tool_config(name_override="oracle")
-class OracleTool(nn.Agent):
+@mf.tool_config(name_override="advisor")
+class AdvisorTool(nn.Agent):
     """Specialist that answers product and policy questions from the handbook."""
 
     model = model
     system_message = """
-    You are the Oracle specialist.
+    You are the Advisor specialist.
     """
     instructions = """
     Answer using only the handbook.
     If the handbook is insufficient, say so and lower confidence.
     """
     generation_schema = ChainOfThought
-    signature = OracleQuestion
+    signature = AdvisorQuestion
     templates = {
         "response": (
-            "Oracle answer "
+            "Advisor answer "
+            "(section={{ final_answer.source_section }}, "
+            "confidence={{ final_answer.confidence }}): "
+            "{{ final_answer.answer }}"
+        )
+    }
+    context_cache = HANDBOOK
+    config = {"verbose": True}
+```
+
+## Extending
+
+If you want the Advisor to see the same conversation context as the root assistant, add `inject_messages=True` to the tool config. The tool still receives the delegated task from the root, but it also gets the root message history as `messages`, which is useful when the answer depends on earlier turns.
+
+```python
+@mf.tool_config(name_override="advisor", inject_messages=True)
+class AdvisorTool(nn.Agent):
+    """Specialist that answers product and policy questions from the handbook."""
+
+    model = model
+    system_message = """
+    You are the Advisor specialist.
+    """
+    instructions = """
+    Answer using only the handbook and the shared conversation context.
+    If the handbook or the conversation context is insufficient, say so and lower confidence.
+    """
+    generation_schema = ChainOfThought
+    signature = AdvisorQuestion
+    templates = {
+        "response": (
+            "Advisor answer "
             "(section={{ final_answer.source_section }}, "
             "confidence={{ final_answer.confidence }}): "
             "{{ final_answer.answer }}"
@@ -151,7 +182,7 @@ class OracleTool(nn.Agent):
 
 ## Step 4 - Root Assistant
 
-The root assistant owns the conversation and decides when to call `oracle`.
+The root assistant owns the conversation and decides when to call `advisor`.
 
 ```python
 class RootAssistant(nn.Agent):
@@ -160,12 +191,12 @@ class RootAssistant(nn.Agent):
     You are the root assistant for AcmeCloud.
     """
     instructions = """
-    Use the oracle tool for product, pricing, refund, security, and support-policy
+    Use the advisor tool for product, pricing, refund, security, and support-policy
     questions. For greetings or general conversational help, answer directly.
 
-    If oracle returns low confidence, say that the answer needs human follow-up.
+    If advisor returns low confidence, say that the answer needs human follow-up.
     """
-    tools = [OracleTool]
+    tools = [AdvisorTool]
     config = {"verbose": True}
 
 
@@ -176,7 +207,7 @@ assistant = RootAssistant()
 
 ## Examples
 
-The user asks the root assistant a product question. The root decides to call `oracle`, receives the formatted tool output, and then answers the user.
+The user asks the root assistant a product question. The root decides to call `advisor`, receives the formatted tool output, and then answers the user.
 
 !!! example
 
@@ -187,8 +218,8 @@ The user asks the root assistant a product question. The root decides to call `o
 
     Expected behavior:
 
-    - the root agent calls `oracle(question="Does the Pro plan include SAML SSO?")`;
-    - the Oracle reasons with `ChainOfThought`;
+    - the root agent calls `advisor(question="Does the Pro plan include SAML SSO?")`;
+    - the Advisor reasons with `ChainOfThought`;
     - the response template turns the structured output into a clean string;
     - the root assistant uses that tool result in its final answer.
 
@@ -232,7 +263,7 @@ The user asks the root assistant a product question. The root decides to call `o
     """
 
 
-    class OracleQuestion(mf.Signature):
+    class AdvisorQuestion(mf.Signature):
         """Answer handbook questions using only the provided internal documentation."""
 
         question: str = mf.InputField(desc="Question delegated by the root assistant")
@@ -245,23 +276,23 @@ The user asks the root assistant a product question. The root decides to call `o
         ] = mf.OutputField(desc="Most relevant handbook section")
 
 
-    @mf.tool_config(name_override="oracle")
-    class OracleTool(nn.Agent):
+    @mf.tool_config(name_override="advisor", inject_messages=True)
+    class AdvisorTool(nn.Agent):
         """Specialist that answers product and policy questions from the handbook."""
 
         model = model
         system_message = """
-        You are the Oracle specialist.
+        You are the Advisor specialist.
         """
         instructions = """
-        Answer using only the handbook.
-        If the handbook is insufficient, say so and lower confidence.
+        Answer using only the handbook and the shared conversation context.
+        If the handbook or the conversation context is insufficient, say so and lower confidence.
         """
         generation_schema = ChainOfThought
-        signature = OracleQuestion
+        signature = AdvisorQuestion
         templates = {
             "response": (
-                "Oracle answer "
+                "Advisor answer "
                 "(section={{ final_answer.source_section }}, "
                 "confidence={{ final_answer.confidence }}): "
                 "{{ final_answer.answer }}"
@@ -277,12 +308,12 @@ The user asks the root assistant a product question. The root decides to call `o
         You are the root assistant for AcmeCloud.
         """
         instructions = """
-        Use the oracle tool for product, pricing, refund, security, and support-policy
+        Use the advisor tool for product, pricing, refund, security, and support-policy
         questions. For greetings or general conversational help, answer directly.
 
-        If oracle returns low confidence, say that the answer needs human follow-up.
+        If advisor returns low confidence, say that the answer needs human follow-up.
         """
-        tools = [OracleTool]
+        tools = [AdvisorTool]
         config = {"verbose": True}
 
 
