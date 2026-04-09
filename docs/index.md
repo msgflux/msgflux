@@ -32,15 +32,15 @@ hide:
 </div>
 </div>
 
-msgFlux is an open-source framework for building dynamic AI systems using **composable modules**. It provides a lightweight definition of how AI systems are structured and how their components interact. Architecture, data flow, and prompts are independent layers that compose freely, adapting to different ways of thinking and building.
+msgFlux is an open-source framework for building dynamic AI systems with **composable modules**. It treats prompts, signatures, tools, and message flow as explicit program structure instead of ad-hoc glue. Architecture, data flow, and prompting remain separate layers, so systems can evolve by changing contracts, modules, or routes without forcing everything to change together.
 
 ## **AI Systems *not* ML Systems**
 
-**ML systems** are systems *for* AI — training, evaluating, and deploying models. **AI systems** are systems *with* AI — software where pretrained models are components within a larger application. The model is not the product; it is a building block. You are not training a model — you are *programming with one*. This is the space msgFlux occupies.
+**ML systems** are systems *for* AI - they train, evaluate, and deploy models. **AI systems** are systems *with* AI - software where pretrained models operate as components inside a broader application. In that setting, the model is not the whole product; it is one building block among many. You are not optimizing weights - you are designing behavior, interfaces, and flow around a model. This is the space msgFlux occupies.
 
 ## **Declarative and Imperative**
 
-One of the core ideas in msgFlux is that **interaction style is a module-level decision**. Each module can operate in one of two complementary modes — and both have native access to **vars**: runtime variables rendered into Jinja2 templates and optionally injected into tools.
+One of the core ideas in msgFlux is that **interaction style is a module-level decision**. A module should be able to behave like a regular callable or like a message-bound operator, depending on the role it plays in the system. msgFlux therefore supports two complementary modes, and both have native access to **vars**: runtime variables rendered into Jinja2 templates and optionally injected into tools.
 
 - **Imperative**: the module receives inputs and vars explicitly and returns outputs directly.
 
@@ -112,17 +112,17 @@ One of the core ideas in msgFlux is that **interaction style is a module-level d
     3. Vars are extracted from the message and rendered into Jinja2 templates — `{{ user_name }}` and `{% if is_vip %}` resolve automatically.
     4. After execution, the result is available on the message — no return value needed.
 
-In the imperative model, a module behaves like a regular Python callable. Inputs and vars are passed directly, execution is explicit, and outputs are immediately returned. This is ideal for simple pipelines, scripts, or cases where control flow is clear and localized.
+In the imperative model, a module behaves like a regular Python callable. Inputs and vars are passed directly, execution is explicit, and outputs are immediately returned. This is ideal when the caller owns control flow and the composition should stay obvious at the call site - for example in scripts, local pipelines, or tightly scoped orchestration code.
 
-In the declarative model, a module is configured with knowledge about the structure of the message it operates on. Instead of receiving arguments, it knows *which fields to read* and *which fields to populate*. This enables complex workflows where data flows through multiple modules without manual wiring, making composition and orchestration significantly easier.
+In the declarative model, a module is configured with knowledge about the structure of the message it operates on. Instead of receiving arguments, it knows *which fields to read* and *which fields to populate*. This is especially useful once multiple agents, tools, or modalities are operating over shared state, because composition becomes a matter of declaring contracts instead of hand-wiring every edge in the flow.
 
 ## **Prompting and Programming**
 
-On top of this interaction model, msgFlux deliberately distinguishes between **programming** and **prompting**, treating them as complementary but separate responsibilities.
+On top of this interaction model, msgFlux deliberately distinguishes between **programming** and **prompting**, treating them as complementary but separate responsibilities. This view comes primarily from a PyTorch-style way of building systems: modules, composition, explicit interfaces, and controlled data flow. msgFlux also adopts **signatures** as a useful abstraction for LM programming, because typed contracts are a strong way to describe what a component should consume and produce.
 
-- **Prompting** is where you define behavior *expressively*. Instead of embedding logic into code, you describe intent, instructions, roles, and constraints directly in natural language. These prompts are written explicitly and intentionally, but remain scoped by the signatures and modules that contain them.
+- **Prompting** is where you define behavior *expressively*. Instead of embedding all behavior into code, you describe intent, instructions, roles, and constraints directly in natural language. These prompts are written explicitly and intentionally, but remain scoped by the signatures and modules that contain them.
 
-- **Programming** is where you define the system structurally. This includes defining modules, agents, and especially **[signatures](https://dspy.ai/learn/programming/signatures/)**: typed, explicit contracts that describe inputs and outputs. Signatures formalize the behavior of a component and allow reasoning, validation, and optimization at the code level.
+- **Programming** is where you define the system structurally. This includes defining modules, agents, routing, and especially **[signatures](https://dspy.ai/learn/programming/signatures/)**: typed, explicit contracts that describe inputs and outputs. In msgFlux, signatures are one tool within a larger module system. They formalize the behavior of a component and make it possible to reason about, validate, and optimize it at the code level.
 
 === "Programming"
 
@@ -178,11 +178,11 @@ On top of this interaction model, msgFlux deliberately distinguishes between **p
     result = classifier("I loved the movie, but the ending was disappointing.")
     ```
 
-In this model, prompts are not loose strings passed around arbitrarily. They are written artifacts that live inside well-defined modules, constrained by signatures and executed within a programmed architecture.
+In this model, prompts are not loose strings passed around arbitrarily. They are written artifacts that live inside well-defined modules, constrained by signatures, and executed within a programmed architecture.
 
-The portability of declarative signatures allows your system to survive a model update without needing to rewrite its behavior, shifting from defining *how* to defining *what*.
+Declarative signatures can also make systems more resilient to model updates, because the contract stays stable even when the underlying model changes. The center of gravity shifts from micromanaging *how* a prompt is phrased to specifying *what* the component must produce.
 
-By combining imperative and declarative modules with a clear separation between programming (signatures and structure) and prompting (written intent), msgFlux bridges classic software engineering and modern LM-based development. The result is a system that scales from simple experiments to complex, production-ready AI applications while remaining explicit, composable, and maintainable.
+By combining imperative and declarative modules with a clear separation between programming (signatures, structure, and flow) and prompting (written intent), msgFlux brings software architecture discipline to LM-based development. The result is a system that scales from simple experiments to complex AI applications while remaining explicit, composable, and maintainable.
 
 ## Modules
 
