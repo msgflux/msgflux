@@ -199,8 +199,6 @@ class Signature(metaclass=_SignatureMeta):
         outputs = [f"{key}: {dtype}" for key, dtype in cls._get_outputs().items()]
         return ", ".join(inputs) + " -> " + ", ".join(outputs)
 
-    # TODO: tem bugs no parser quando usa optional
-
     @classmethod
     def get_inputs_info(cls) -> List[FieldInfo]:
         """Returns a list of objects containing the input field name,
