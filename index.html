@@ -3854,14 +3854,14 @@
   
   
     <li class="md-nav__item">
-      <a href="tutorials/oracle-specialist-tool/" class="md-nav__link">
+      <a href="tutorials/advisor-specialist-tool/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Oracle Specialist Tool
+    Advisor Specialist Tool
   
 
     
@@ -4649,13 +4649,13 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         # From URL
         response = agent(
             &quot;Summarize the key contributions of this paper.&quot;,
-            task_multimodal_inputs={&quot;file&quot;: &quot;https://arxiv.org/pdf/2106.09685.pdf&quot;}
+            task_multimodal={&quot;file&quot;: &quot;https://arxiv.org/pdf/2106.09685.pdf&quot;}
         )
 
         # From local file
         response = agent(
             &quot;Summarize the key contributions of this paper.&quot;,
-            task_multimodal_inputs={&quot;file&quot;: &quot;./lora.pdf&quot;}
+            task_multimodal={&quot;file&quot;: &quot;./lora.pdf&quot;}
         )
         ```
 
@@ -5608,13 +5608,13 @@ We are grateful to the authors and maintainers of these projects.
 </span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10"></a><span class="c1"># From URL</span>
 </span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span>
 </span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12"></a>    <span class="s2">&quot;Summarize the key contributions of this paper.&quot;</span><span class="p">,</span>
-</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13"></a>    <span class="n">task_multimodal_inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="s2">&quot;https://arxiv.org/pdf/2106.09685.pdf&quot;</span><span class="p">}</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13"></a>    <span class="n">task_multimodal</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="s2">&quot;https://arxiv.org/pdf/2106.09685.pdf&quot;</span><span class="p">}</span>
 </span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14"></a><span class="p">)</span>
 </span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15"></a>
 </span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16"></a><span class="c1"># From local file</span>
 </span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span>
 </span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18"></a>    <span class="s2">&quot;Summarize the key contributions of this paper.&quot;</span><span class="p">,</span>
-</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19"></a>    <span class="n">task_multimodal_inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="s2">&quot;./lora.pdf&quot;</span><span class="p">}</span>
+</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19"></a>    <span class="n">task_multimodal</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="s2">&quot;./lora.pdf&quot;</span><span class="p">}</span>
 </span><span id="__span-14-20"><a id="__codelineno-14-20" name="__codelineno-14-20"></a><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
 <p><strong>Possible Output:</strong>

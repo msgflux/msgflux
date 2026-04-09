@@ -12,7 +12,7 @@
         <meta name="author" content="Vilson Rodrigues">
       
       
-        <link rel="canonical" href="https://msgflux.com/tutorials/oracle-specialist-tool/">
+        <link rel="canonical" href="https://msgflux.com/tutorials/advisor-specialist-tool/">
       
       
         <link rel="prev" href="../signature-router/">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Oracle Specialist Tool - msgFlux</title>
+        <title>Advisor Specialist Tool - msgFlux</title>
       
     
     
@@ -88,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#oracle-specialist-tool" class="md-skip">
+        <a href="#advisor-specialist-tool" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Oracle Specialist Tool
+              Advisor Specialist Tool
             
           </span>
         </div>
@@ -3872,7 +3872,7 @@
   <span class="md-ellipsis">
     
   
-    Oracle Specialist Tool
+    Advisor Specialist Tool
   
 
     
@@ -3890,7 +3890,7 @@
   <span class="md-ellipsis">
     
   
-    Oracle Specialist Tool
+    Advisor Specialist Tool
   
 
     
@@ -3971,10 +3971,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-2-oracle-signature" class="md-nav__link">
+  <a href="#step-2-advisor-signature" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 2 - Oracle Signature
+        Step 2 - Advisor Signature
       
     </span>
   </a>
@@ -3982,10 +3982,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-oracle-as-a-tool" class="md-nav__link">
+  <a href="#step-3-advisor-as-a-tool" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3 - Oracle as a Tool
+        Step 3 - Advisor as a Tool
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extending" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extending
       
     </span>
   </a>
@@ -4484,10 +4495,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-2-oracle-signature" class="md-nav__link">
+  <a href="#step-2-advisor-signature" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 2 - Oracle Signature
+        Step 2 - Advisor Signature
       
     </span>
   </a>
@@ -4495,10 +4506,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-oracle-as-a-tool" class="md-nav__link">
+  <a href="#step-3-advisor-as-a-tool" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3 - Oracle as a Tool
+        Step 3 - Advisor as a Tool
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extending" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extending
       
     </span>
   </a>
@@ -4618,7 +4640,7 @@
   
 
 
-<h1 id="oracle-specialist-tool">Oracle Specialist Tool</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<h1 id="advisor-specialist-tool">Advisor Specialist Tool</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <style>
 .copy-markdown-button {
     background: transparent;
@@ -4638,13 +4660,13 @@
 .copy-markdown-button:active { transform: translateY(1px); }
 #copy-icon { transition: opacity 0.1s ease; }
 </style>
-<div class="copy-markdown-container" data-markdown="# Oracle Specialist Tool
+<div class="copy-markdown-container" data-markdown="# Advisor Specialist Tool
 
 &lt;span class=&quot;tag tag-green&quot;&gt;Beginner&lt;/span&gt;&lt;span class=&quot;tag tag-gray&quot;&gt;Tools&lt;/span&gt;&lt;span class=&quot;tag tag-gray&quot;&gt;ChainOfThought&lt;/span&gt;&lt;span class=&quot;tag tag-gray&quot;&gt;Templates&lt;/span&gt;
 
 Some questions should not be answered by the root assistant directly. Pricing, refunds, and product policy change over time, and they are easier to maintain in one specialist than inside the root prompt.
 
-In this tutorial, the root assistant delegates those questions to an `oracle` tool.
+In this tutorial, the root assistant delegates those questions to an `advisor` tool.
 
 ## The Problem
 
@@ -4663,9 +4685,9 @@ The cleaner design is delegation. Let the root assistant manage the conversation
 
 We will build a small two-agent setup.
 
-The **root assistant** handles the conversation. When the user asks about pricing, refunds, security, or support policy, it calls the **oracle specialist** instead of answering from memory.
+The **root assistant** handles the conversation. When the user asks about pricing, refunds, security, or support policy, it calls the **advisor specialist** instead of answering from memory.
 
-The Oracle reads a small internal handbook and returns a clean tool response that the root assistant can use in its final answer.
+The Advisor reads a small internal handbook and returns a clean tool response that the root assistant can use in its final answer.
 
 ---
 
@@ -4678,10 +4700,10 @@ User question
 RootAssistant
      │
      ├── direct answer for simple conversation
-     └── oracle(question=...)
+     └── advisor(question=...)
              │
              ▼
-      OracleTool (Agent-as-Tool)
+      AdvisorTool (Agent-as-Tool)
              │
              ├── Signature
              ├── ChainOfThought
@@ -4730,15 +4752,15 @@ Support:
 
 ---
 
-## Step 2 - Oracle Signature
+## Step 2 - Advisor Signature
 
-The Oracle should answer with a compact, typed payload. The root assistant does not need raw chain-of-thought text; it needs a reliable answer plus enough metadata to decide how much to trust it.
+The Advisor should answer with a compact, typed payload. The root assistant does not need raw chain-of-thought text; it needs a reliable answer plus enough metadata to decide how much to trust it.
 
 ```python
 from typing import Literal
 
 
-class OracleQuestion(mf.Signature):
+class AdvisorQuestion(mf.Signature):
     &quot;&quot;&quot;Answer handbook questions using only the provided internal documentation.&quot;&quot;&quot;
 
     question: str = mf.InputField(desc=&quot;Question delegated by the root assistant&quot;)
@@ -4753,33 +4775,64 @@ class OracleQuestion(mf.Signature):
 
 ---
 
-## Step 3 - Oracle as a Tool
+## Step 3 - Advisor as a Tool
 
 This is the key pattern: the tool is itself an `nn.Agent`.
 
-`ChainOfThought` helps the Oracle think before answering. The response template keeps the tool output clean, so the root assistant receives a short, readable result instead of the raw structured payload.
+`ChainOfThought` helps the Advisor think before answering. The response template keeps the tool output clean, so the root assistant receives a short, readable result instead of the raw structured payload.
 
 ```python
 from msgflux.generation.reasoning import ChainOfThought
 
 
-@mf.tool_config(name_override=&quot;oracle&quot;)
-class OracleTool(nn.Agent):
+@mf.tool_config(name_override=&quot;advisor&quot;)
+class AdvisorTool(nn.Agent):
     &quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;
 
     model = model
     system_message = &quot;&quot;&quot;
-    You are the Oracle specialist.
+    You are the Advisor specialist.
     &quot;&quot;&quot;
     instructions = &quot;&quot;&quot;
     Answer using only the handbook.
     If the handbook is insufficient, say so and lower confidence.
     &quot;&quot;&quot;
     generation_schema = ChainOfThought
-    signature = OracleQuestion
+    signature = AdvisorQuestion
     templates = {
         &quot;response&quot;: (
-            &quot;Oracle answer &quot;
+            &quot;Advisor answer &quot;
+            &quot;(section={{ final_answer.source_section }}, &quot;
+            &quot;confidence={{ final_answer.confidence }}): &quot;
+            &quot;{{ final_answer.answer }}&quot;
+        )
+    }
+    context_cache = HANDBOOK
+    config = {&quot;verbose&quot;: True}
+```
+
+## Extending
+
+If you want the Advisor to see the same conversation context as the root assistant, add `inject_messages=True` to the tool config. The tool still receives the delegated task from the root, but it also gets the root message history as `messages`, which is useful when the answer depends on earlier turns.
+
+```python
+@mf.tool_config(name_override=&quot;advisor&quot;, inject_messages=True)
+class AdvisorTool(nn.Agent):
+    &quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;
+
+    model = model
+    system_message = &quot;&quot;&quot;
+    You are the Advisor specialist.
+    &quot;&quot;&quot;
+    instructions = &quot;&quot;&quot;
+    Answer using only the handbook and the shared conversation context.
+    If the handbook or the conversation context is insufficient, say so and lower confidence.
+    &quot;&quot;&quot;
+    generation_schema = ChainOfThought
+    signature = AdvisorQuestion
+    templates = {
+        &quot;response&quot;: (
+            &quot;Advisor answer &quot;
             &quot;(section={{ final_answer.source_section }}, &quot;
             &quot;confidence={{ final_answer.confidence }}): &quot;
             &quot;{{ final_answer.answer }}&quot;
@@ -4791,7 +4844,7 @@ class OracleTool(nn.Agent):
 
 ## Step 4 - Root Assistant
 
-The root assistant owns the conversation and decides when to call `oracle`.
+The root assistant owns the conversation and decides when to call `advisor`.
 
 ```python
 class RootAssistant(nn.Agent):
@@ -4800,12 +4853,12 @@ class RootAssistant(nn.Agent):
     You are the root assistant for AcmeCloud.
     &quot;&quot;&quot;
     instructions = &quot;&quot;&quot;
-    Use the oracle tool for product, pricing, refund, security, and support-policy
+    Use the advisor tool for product, pricing, refund, security, and support-policy
     questions. For greetings or general conversational help, answer directly.
 
-    If oracle returns low confidence, say that the answer needs human follow-up.
+    If advisor returns low confidence, say that the answer needs human follow-up.
     &quot;&quot;&quot;
-    tools = [OracleTool]
+    tools = [AdvisorTool]
     config = {&quot;verbose&quot;: True}
 
 
@@ -4816,7 +4869,7 @@ assistant = RootAssistant()
 
 ## Examples
 
-The user asks the root assistant a product question. The root decides to call `oracle`, receives the formatted tool output, and then answers the user.
+The user asks the root assistant a product question. The root decides to call `advisor`, receives the formatted tool output, and then answers the user.
 
 !!! example
 
@@ -4827,8 +4880,8 @@ The user asks the root assistant a product question. The root decides to call `o
 
     Expected behavior:
 
-    - the root agent calls `oracle(question=&quot;Does the Pro plan include SAML SSO?&quot;)`;
-    - the Oracle reasons with `ChainOfThought`;
+    - the root agent calls `advisor(question=&quot;Does the Pro plan include SAML SSO?&quot;)`;
+    - the Advisor reasons with `ChainOfThought`;
     - the response template turns the structured output into a clean string;
     - the root assistant uses that tool result in its final answer.
 
@@ -4872,7 +4925,7 @@ The user asks the root assistant a product question. The root decides to call `o
     &quot;&quot;&quot;
 
 
-    class OracleQuestion(mf.Signature):
+    class AdvisorQuestion(mf.Signature):
         &quot;&quot;&quot;Answer handbook questions using only the provided internal documentation.&quot;&quot;&quot;
 
         question: str = mf.InputField(desc=&quot;Question delegated by the root assistant&quot;)
@@ -4885,23 +4938,23 @@ The user asks the root assistant a product question. The root decides to call `o
         ] = mf.OutputField(desc=&quot;Most relevant handbook section&quot;)
 
 
-    @mf.tool_config(name_override=&quot;oracle&quot;)
-    class OracleTool(nn.Agent):
+    @mf.tool_config(name_override=&quot;advisor&quot;, inject_messages=True)
+    class AdvisorTool(nn.Agent):
         &quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;
 
         model = model
         system_message = &quot;&quot;&quot;
-        You are the Oracle specialist.
+        You are the Advisor specialist.
         &quot;&quot;&quot;
         instructions = &quot;&quot;&quot;
-        Answer using only the handbook.
-        If the handbook is insufficient, say so and lower confidence.
+        Answer using only the handbook and the shared conversation context.
+        If the handbook or the conversation context is insufficient, say so and lower confidence.
         &quot;&quot;&quot;
         generation_schema = ChainOfThought
-        signature = OracleQuestion
+        signature = AdvisorQuestion
         templates = {
             &quot;response&quot;: (
-                &quot;Oracle answer &quot;
+                &quot;Advisor answer &quot;
                 &quot;(section={{ final_answer.source_section }}, &quot;
                 &quot;confidence={{ final_answer.confidence }}): &quot;
                 &quot;{{ final_answer.answer }}&quot;
@@ -4917,12 +4970,12 @@ The user asks the root assistant a product question. The root decides to call `o
         You are the root assistant for AcmeCloud.
         &quot;&quot;&quot;
         instructions = &quot;&quot;&quot;
-        Use the oracle tool for product, pricing, refund, security, and support-policy
+        Use the advisor tool for product, pricing, refund, security, and support-policy
         questions. For greetings or general conversational help, answer directly.
 
-        If oracle returns low confidence, say that the answer needs human follow-up.
+        If advisor returns low confidence, say that the answer needs human follow-up.
         &quot;&quot;&quot;
-        tools = [OracleTool]
+        tools = [AdvisorTool]
         config = {&quot;verbose&quot;: True}
 
 
@@ -5009,7 +5062,7 @@ The user asks the root assistant a product question. The root decides to call `o
 </script>
 <p><span class="tag tag-green">Beginner</span><span class="tag tag-gray">Tools</span><span class="tag tag-gray">ChainOfThought</span><span class="tag tag-gray">Templates</span></p>
 <p>Some questions should not be answered by the root assistant directly. Pricing, refunds, and product policy change over time, and they are easier to maintain in one specialist than inside the root prompt.</p>
-<p>In this tutorial, the root assistant delegates those questions to an <code>oracle</code> tool.</p>
+<p>In this tutorial, the root assistant delegates those questions to an <code>advisor</code> tool.</p>
 <h2 id="the-problem">The Problem</h2>
 <p>The root assistant has two competing jobs:</p>
 <ul>
@@ -5021,8 +5074,8 @@ The user asks the root assistant a product question. The root decides to call `o
 <hr />
 <h2 id="the-plan">The Plan</h2>
 <p>We will build a small two-agent setup.</p>
-<p>The <strong>root assistant</strong> handles the conversation. When the user asks about pricing, refunds, security, or support policy, it calls the <strong>oracle specialist</strong> instead of answering from memory.</p>
-<p>The Oracle reads a small internal handbook and returns a clean tool response that the root assistant can use in its final answer.</p>
+<p>The <strong>root assistant</strong> handles the conversation. When the user asks about pricing, refunds, security, or support policy, it calls the <strong>advisor specialist</strong> instead of answering from memory.</p>
+<p>The Advisor reads a small internal handbook and returns a clean tool response that the root assistant can use in its final answer.</p>
 <hr />
 <h2 id="architecture">Architecture</h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>User question
@@ -5031,10 +5084,10 @@ The user asks the root assistant a product question. The root decides to call `o
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>RootAssistant
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>     │
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>     ├── direct answer for simple conversation
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>     └── oracle(question=...)
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>     └── advisor(question=...)
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>             │
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>             ▼
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>      OracleTool (Agent-as-Tool)
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>      AdvisorTool (Agent-as-Tool)
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>             │
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>             ├── Signature
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>             ├── ChainOfThought
@@ -5143,12 +5196,12 @@ The user asks the root assistant a product question. The root decides to call `o
 </span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="s2">&quot;&quot;&quot;</span>
 </span></code></pre></div>
 <hr />
-<h2 id="step-2-oracle-signature">Step 2 - Oracle Signature</h2>
-<p>The Oracle should answer with a compact, typed payload. The root assistant does not need raw chain-of-thought text; it needs a reliable answer plus enough metadata to decide how much to trust it.</p>
+<h2 id="step-2-advisor-signature">Step 2 - Advisor Signature</h2>
+<p>The Advisor should answer with a compact, typed payload. The root assistant does not need raw chain-of-thought text; it needs a reliable answer plus enough metadata to decide how much to trust it.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
 </span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">OracleQuestion</span><span class="p">(</span><span class="n">mf</span><span class="o">.</span><span class="n">Signature</span><span class="p">):</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">AdvisorQuestion</span><span class="p">(</span><span class="n">mf</span><span class="o">.</span><span class="n">Signature</span><span class="p">):</span>
 </span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Answer handbook questions using only the provided internal documentation.&quot;&quot;&quot;</span>
 </span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
 </span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">InputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Question delegated by the root assistant&quot;</span><span class="p">)</span>
@@ -5161,29 +5214,29 @@ The user asks the root assistant a product question. The root decides to call `o
 </span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="p">)</span>
 </span></code></pre></div>
 <hr />
-<h2 id="step-3-oracle-as-a-tool">Step 3 - Oracle as a Tool</h2>
+<h2 id="step-3-advisor-as-a-tool">Step 3 - Advisor as a Tool</h2>
 <p>This is the key pattern: the tool is itself an <code>nn.Agent</code>.</p>
-<p><code>ChainOfThought</code> helps the Oracle think before answering. The response template keeps the tool output clean, so the root assistant receives a short, readable result instead of the raw structured payload.</p>
+<p><code>ChainOfThought</code> helps the Advisor think before answering. The response template keeps the tool output clean, so the root assistant receives a short, readable result instead of the raw structured payload.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.reasoning</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChainOfThought</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
 </span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">name_override</span><span class="o">=</span><span class="s2">&quot;oracle&quot;</span><span class="p">)</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">OracleTool</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">name_override</span><span class="o">=</span><span class="s2">&quot;advisor&quot;</span><span class="p">)</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">AdvisorTool</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
 </span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;</span>
 </span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
 </span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
 </span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="s2">    You are the Oracle specialist.</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="s2">    You are the Advisor specialist.</span>
 </span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="s2">    &quot;&quot;&quot;</span>
 </span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
 </span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="s2">    Answer using only the handbook.</span>
 </span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="s2">    If the handbook is insufficient, say so and lower confidence.</span>
 </span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="s2">    &quot;&quot;&quot;</span>
 </span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>    <span class="n">generation_schema</span> <span class="o">=</span> <span class="n">ChainOfThought</span>
-</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">OracleQuestion</span>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">AdvisorQuestion</span>
 </span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="n">templates</span> <span class="o">=</span> <span class="p">{</span>
 </span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>        <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="p">(</span>
-</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>            <span class="s2">&quot;Oracle answer &quot;</span>
+</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>            <span class="s2">&quot;Advisor answer &quot;</span>
 </span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>            <span class="s2">&quot;(section={{ final_answer.source_section }}, &quot;</span>
 </span><span id="__span-12-22"><a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>            <span class="s2">&quot;confidence={{ final_answer.confidence }}): &quot;</span>
 </span><span id="__span-12-23"><a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>            <span class="s2">&quot;{{ final_answer.answer }}&quot;</span>
@@ -5192,37 +5245,64 @@ The user asks the root assistant a product question. The root decides to call `o
 </span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>    <span class="n">context_cache</span> <span class="o">=</span> <span class="n">HANDBOOK</span>
 </span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
 </span></code></pre></div>
+<h2 id="extending">Extending</h2>
+<p>If you want the Advisor to see the same conversation context as the root assistant, add <code>inject_messages=True</code> to the tool config. The tool still receives the delegated task from the root, but it also gets the root message history as <code>messages</code>, which is useful when the answer depends on earlier turns.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">name_override</span><span class="o">=</span><span class="s2">&quot;advisor&quot;</span><span class="p">,</span> <span class="n">inject_messages</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">AdvisorTool</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="s2">    You are the Advisor specialist.</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="s2">    Answer using only the handbook and the shared conversation context.</span>
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="s2">    If the handbook or the conversation context is insufficient, say so and lower confidence.</span>
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>    <span class="n">generation_schema</span> <span class="o">=</span> <span class="n">ChainOfThought</span>
+</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">AdvisorQuestion</span>
+</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>    <span class="n">templates</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>        <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="p">(</span>
+</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>            <span class="s2">&quot;Advisor answer &quot;</span>
+</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>            <span class="s2">&quot;(section={{ final_answer.source_section }}, &quot;</span>
+</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>            <span class="s2">&quot;confidence={{ final_answer.confidence }}): &quot;</span>
+</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>            <span class="s2">&quot;{{ final_answer.answer }}&quot;</span>
+</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>        <span class="p">)</span>
+</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>    <span class="p">}</span>
+</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    <span class="n">context_cache</span> <span class="o">=</span> <span class="n">HANDBOOK</span>
+</span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span></code></pre></div>
 <h2 id="step-4-root-assistant">Step 4 - Root Assistant</h2>
-<p>The root assistant owns the conversation and decides when to call <code>oracle</code>.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">RootAssistant</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="s2">    You are the root assistant for AcmeCloud.</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="s2">    &quot;&quot;&quot;</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="s2">    Use the oracle tool for product, pricing, refund, security, and support-policy</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="s2">    questions. For greetings or general conversational help, answer directly.</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="s2">    If oracle returns low confidence, say that the answer needs human follow-up.</span>
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="s2">    &quot;&quot;&quot;</span>
-</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">OracleTool</span><span class="p">]</span>
-</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>
-</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>
-</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="n">assistant</span> <span class="o">=</span> <span class="n">RootAssistant</span><span class="p">()</span>
+<p>The root assistant owns the conversation and decides when to call <code>advisor</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">RootAssistant</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="s2">    You are the root assistant for AcmeCloud.</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="s2">    Use the advisor tool for product, pricing, refund, security, and support-policy</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="s2">    questions. For greetings or general conversational help, answer directly.</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="s2">    If advisor returns low confidence, say that the answer needs human follow-up.</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">AdvisorTool</span><span class="p">]</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="n">assistant</span> <span class="o">=</span> <span class="n">RootAssistant</span><span class="p">()</span>
 </span></code></pre></div>
 <hr />
 <h2 id="examples">Examples</h2>
-<p>The user asks the root assistant a product question. The root decides to call <code>oracle</code>, receives the formatted tool output, and then answers the user.</p>
+<p>The user asks the root assistant a product question. The root decides to call <code>advisor</code>, receives the formatted tool output, and then answers the user.</p>
 <div class="admonition example">
 <p class="admonition-title">Example</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Does the Pro plan include SAML SSO?&quot;</span><span class="p">)</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Does the Pro plan include SAML SSO?&quot;</span><span class="p">)</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Expected behavior:</p>
 <ul>
-<li>the root agent calls <code>oracle(question="Does the Pro plan include SAML SSO?")</code>;</li>
-<li>the Oracle reasons with <code>ChainOfThought</code>;</li>
+<li>the root agent calls <code>advisor(question="Does the Pro plan include SAML SSO?")</code>;</li>
+<li>the Advisor reasons with <code>ChainOfThought</code>;</li>
 <li>the response template turns the structured output into a clean string;</li>
 <li>the root assistant uses that tool result in its final answer.</li>
 </ul>
@@ -5231,99 +5311,99 @@ The user asks the root assistant a product question. The root decides to call `o
 <h2 id="complete-script">Complete Script</h2>
 <details class="example">
 <summary>Expand full script</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># /// script</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="c1"># dependencies = []</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># ///</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.reasoning</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChainOfThought</span>
-</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
-</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>
-</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="n">mf</span><span class="o">.</span><span class="n">load_dotenv</span><span class="p">()</span>
-</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>
-</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="n">HANDBOOK</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="s2">Pricing:</span>
-</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="s2">- Starter costs US$29/month.</span>
-</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="s2">- Pro costs US$99/month and includes API access plus webhooks.</span>
-</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="s2">- Team costs US$249/month and adds SAML SSO plus audit logs.</span>
-</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>
-</span><span id="__span-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a><span class="s2">Refunds:</span>
-</span><span id="__span-15-22"><a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="s2">- First-time purchases are refundable within 30 days.</span>
-</span><span id="__span-15-23"><a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a><span class="s2">- Renewals are refundable only within 7 days.</span>
-</span><span id="__span-15-24"><a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>
-</span><span id="__span-15-25"><a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a><span class="s2">Security:</span>
-</span><span id="__span-15-26"><a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a><span class="s2">- Data is encrypted in transit and at rest.</span>
-</span><span id="__span-15-27"><a id="__codelineno-15-27" name="__codelineno-15-27" href="#__codelineno-15-27"></a><span class="s2">- SAML SSO is available only on the Team plan.</span>
-</span><span id="__span-15-28"><a id="__codelineno-15-28" name="__codelineno-15-28" href="#__codelineno-15-28"></a>
-</span><span id="__span-15-29"><a id="__codelineno-15-29" name="__codelineno-15-29" href="#__codelineno-15-29"></a><span class="s2">Support:</span>
-</span><span id="__span-15-30"><a id="__codelineno-15-30" name="__codelineno-15-30" href="#__codelineno-15-30"></a><span class="s2">- Starter receives email support.</span>
-</span><span id="__span-15-31"><a id="__codelineno-15-31" name="__codelineno-15-31" href="#__codelineno-15-31"></a><span class="s2">- Pro and Team receive priority email support.</span>
-</span><span id="__span-15-32"><a id="__codelineno-15-32" name="__codelineno-15-32" href="#__codelineno-15-32"></a><span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-15-33"><a id="__codelineno-15-33" name="__codelineno-15-33" href="#__codelineno-15-33"></a>
-</span><span id="__span-15-34"><a id="__codelineno-15-34" name="__codelineno-15-34" href="#__codelineno-15-34"></a>
-</span><span id="__span-15-35"><a id="__codelineno-15-35" name="__codelineno-15-35" href="#__codelineno-15-35"></a><span class="k">class</span><span class="w"> </span><span class="nc">OracleQuestion</span><span class="p">(</span><span class="n">mf</span><span class="o">.</span><span class="n">Signature</span><span class="p">):</span>
-</span><span id="__span-15-36"><a id="__codelineno-15-36" name="__codelineno-15-36" href="#__codelineno-15-36"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Answer handbook questions using only the provided internal documentation.&quot;&quot;&quot;</span>
-</span><span id="__span-15-37"><a id="__codelineno-15-37" name="__codelineno-15-37" href="#__codelineno-15-37"></a>
-</span><span id="__span-15-38"><a id="__codelineno-15-38" name="__codelineno-15-38" href="#__codelineno-15-38"></a>    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">InputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Question delegated by the root assistant&quot;</span><span class="p">)</span>
-</span><span id="__span-15-39"><a id="__codelineno-15-39" name="__codelineno-15-39" href="#__codelineno-15-39"></a>    <span class="n">answer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Short factual answer grounded in the handbook&quot;</span><span class="p">)</span>
-</span><span id="__span-15-40"><a id="__codelineno-15-40" name="__codelineno-15-40" href="#__codelineno-15-40"></a>    <span class="n">confidence</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;high&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;low&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">(</span>
-</span><span id="__span-15-41"><a id="__codelineno-15-41" name="__codelineno-15-41" href="#__codelineno-15-41"></a>        <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Confidence in the answer based on how directly the handbook supports it&quot;</span>
-</span><span id="__span-15-42"><a id="__codelineno-15-42" name="__codelineno-15-42" href="#__codelineno-15-42"></a>    <span class="p">)</span>
-</span><span id="__span-15-43"><a id="__codelineno-15-43" name="__codelineno-15-43" href="#__codelineno-15-43"></a>    <span class="n">source_section</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span>
-</span><span id="__span-15-44"><a id="__codelineno-15-44" name="__codelineno-15-44" href="#__codelineno-15-44"></a>        <span class="s2">&quot;pricing&quot;</span><span class="p">,</span> <span class="s2">&quot;refunds&quot;</span><span class="p">,</span> <span class="s2">&quot;security&quot;</span><span class="p">,</span> <span class="s2">&quot;support&quot;</span><span class="p">,</span> <span class="s2">&quot;unknown&quot;</span>
-</span><span id="__span-15-45"><a id="__codelineno-15-45" name="__codelineno-15-45" href="#__codelineno-15-45"></a>    <span class="p">]</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Most relevant handbook section&quot;</span><span class="p">)</span>
-</span><span id="__span-15-46"><a id="__codelineno-15-46" name="__codelineno-15-46" href="#__codelineno-15-46"></a>
-</span><span id="__span-15-47"><a id="__codelineno-15-47" name="__codelineno-15-47" href="#__codelineno-15-47"></a>
-</span><span id="__span-15-48"><a id="__codelineno-15-48" name="__codelineno-15-48" href="#__codelineno-15-48"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">name_override</span><span class="o">=</span><span class="s2">&quot;oracle&quot;</span><span class="p">)</span>
-</span><span id="__span-15-49"><a id="__codelineno-15-49" name="__codelineno-15-49" href="#__codelineno-15-49"></a><span class="k">class</span><span class="w"> </span><span class="nc">OracleTool</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-15-50"><a id="__codelineno-15-50" name="__codelineno-15-50" href="#__codelineno-15-50"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;</span>
-</span><span id="__span-15-51"><a id="__codelineno-15-51" name="__codelineno-15-51" href="#__codelineno-15-51"></a>
-</span><span id="__span-15-52"><a id="__codelineno-15-52" name="__codelineno-15-52" href="#__codelineno-15-52"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-15-53"><a id="__codelineno-15-53" name="__codelineno-15-53" href="#__codelineno-15-53"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-15-54"><a id="__codelineno-15-54" name="__codelineno-15-54" href="#__codelineno-15-54"></a><span class="s2">    You are the Oracle specialist.</span>
-</span><span id="__span-15-55"><a id="__codelineno-15-55" name="__codelineno-15-55" href="#__codelineno-15-55"></a><span class="s2">    &quot;&quot;&quot;</span>
-</span><span id="__span-15-56"><a id="__codelineno-15-56" name="__codelineno-15-56" href="#__codelineno-15-56"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-15-57"><a id="__codelineno-15-57" name="__codelineno-15-57" href="#__codelineno-15-57"></a><span class="s2">    Answer using only the handbook.</span>
-</span><span id="__span-15-58"><a id="__codelineno-15-58" name="__codelineno-15-58" href="#__codelineno-15-58"></a><span class="s2">    If the handbook is insufficient, say so and lower confidence.</span>
-</span><span id="__span-15-59"><a id="__codelineno-15-59" name="__codelineno-15-59" href="#__codelineno-15-59"></a><span class="s2">    &quot;&quot;&quot;</span>
-</span><span id="__span-15-60"><a id="__codelineno-15-60" name="__codelineno-15-60" href="#__codelineno-15-60"></a>    <span class="n">generation_schema</span> <span class="o">=</span> <span class="n">ChainOfThought</span>
-</span><span id="__span-15-61"><a id="__codelineno-15-61" name="__codelineno-15-61" href="#__codelineno-15-61"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">OracleQuestion</span>
-</span><span id="__span-15-62"><a id="__codelineno-15-62" name="__codelineno-15-62" href="#__codelineno-15-62"></a>    <span class="n">templates</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-15-63"><a id="__codelineno-15-63" name="__codelineno-15-63" href="#__codelineno-15-63"></a>        <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="p">(</span>
-</span><span id="__span-15-64"><a id="__codelineno-15-64" name="__codelineno-15-64" href="#__codelineno-15-64"></a>            <span class="s2">&quot;Oracle answer &quot;</span>
-</span><span id="__span-15-65"><a id="__codelineno-15-65" name="__codelineno-15-65" href="#__codelineno-15-65"></a>            <span class="s2">&quot;(section={{ final_answer.source_section }}, &quot;</span>
-</span><span id="__span-15-66"><a id="__codelineno-15-66" name="__codelineno-15-66" href="#__codelineno-15-66"></a>            <span class="s2">&quot;confidence={{ final_answer.confidence }}): &quot;</span>
-</span><span id="__span-15-67"><a id="__codelineno-15-67" name="__codelineno-15-67" href="#__codelineno-15-67"></a>            <span class="s2">&quot;{{ final_answer.answer }}&quot;</span>
-</span><span id="__span-15-68"><a id="__codelineno-15-68" name="__codelineno-15-68" href="#__codelineno-15-68"></a>        <span class="p">)</span>
-</span><span id="__span-15-69"><a id="__codelineno-15-69" name="__codelineno-15-69" href="#__codelineno-15-69"></a>    <span class="p">}</span>
-</span><span id="__span-15-70"><a id="__codelineno-15-70" name="__codelineno-15-70" href="#__codelineno-15-70"></a>    <span class="n">context_cache</span> <span class="o">=</span> <span class="n">HANDBOOK</span>
-</span><span id="__span-15-71"><a id="__codelineno-15-71" name="__codelineno-15-71" href="#__codelineno-15-71"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-15-72"><a id="__codelineno-15-72" name="__codelineno-15-72" href="#__codelineno-15-72"></a>
-</span><span id="__span-15-73"><a id="__codelineno-15-73" name="__codelineno-15-73" href="#__codelineno-15-73"></a>
-</span><span id="__span-15-74"><a id="__codelineno-15-74" name="__codelineno-15-74" href="#__codelineno-15-74"></a><span class="k">class</span><span class="w"> </span><span class="nc">RootAssistant</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-15-75"><a id="__codelineno-15-75" name="__codelineno-15-75" href="#__codelineno-15-75"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-15-76"><a id="__codelineno-15-76" name="__codelineno-15-76" href="#__codelineno-15-76"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-15-77"><a id="__codelineno-15-77" name="__codelineno-15-77" href="#__codelineno-15-77"></a><span class="s2">    You are the root assistant for AcmeCloud.</span>
-</span><span id="__span-15-78"><a id="__codelineno-15-78" name="__codelineno-15-78" href="#__codelineno-15-78"></a><span class="s2">    &quot;&quot;&quot;</span>
-</span><span id="__span-15-79"><a id="__codelineno-15-79" name="__codelineno-15-79" href="#__codelineno-15-79"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-15-80"><a id="__codelineno-15-80" name="__codelineno-15-80" href="#__codelineno-15-80"></a><span class="s2">    Use the oracle tool for product, pricing, refund, security, and support-policy</span>
-</span><span id="__span-15-81"><a id="__codelineno-15-81" name="__codelineno-15-81" href="#__codelineno-15-81"></a><span class="s2">    questions. For greetings or general conversational help, answer directly.</span>
-</span><span id="__span-15-82"><a id="__codelineno-15-82" name="__codelineno-15-82" href="#__codelineno-15-82"></a>
-</span><span id="__span-15-83"><a id="__codelineno-15-83" name="__codelineno-15-83" href="#__codelineno-15-83"></a><span class="s2">    If oracle returns low confidence, say that the answer needs human follow-up.</span>
-</span><span id="__span-15-84"><a id="__codelineno-15-84" name="__codelineno-15-84" href="#__codelineno-15-84"></a><span class="s2">    &quot;&quot;&quot;</span>
-</span><span id="__span-15-85"><a id="__codelineno-15-85" name="__codelineno-15-85" href="#__codelineno-15-85"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">OracleTool</span><span class="p">]</span>
-</span><span id="__span-15-86"><a id="__codelineno-15-86" name="__codelineno-15-86" href="#__codelineno-15-86"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-15-87"><a id="__codelineno-15-87" name="__codelineno-15-87" href="#__codelineno-15-87"></a>
-</span><span id="__span-15-88"><a id="__codelineno-15-88" name="__codelineno-15-88" href="#__codelineno-15-88"></a>
-</span><span id="__span-15-89"><a id="__codelineno-15-89" name="__codelineno-15-89" href="#__codelineno-15-89"></a><span class="n">assistant</span> <span class="o">=</span> <span class="n">RootAssistant</span><span class="p">()</span>
-</span><span id="__span-15-90"><a id="__codelineno-15-90" name="__codelineno-15-90" href="#__codelineno-15-90"></a>
-</span><span id="__span-15-91"><a id="__codelineno-15-91" name="__codelineno-15-91" href="#__codelineno-15-91"></a><span class="nb">print</span><span class="p">(</span><span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Does the Pro plan include SAML SSO?&quot;</span><span class="p">))</span>
-</span><span id="__span-15-92"><a id="__codelineno-15-92" name="__codelineno-15-92" href="#__codelineno-15-92"></a><span class="nb">print</span><span class="p">()</span>
-</span><span id="__span-15-93"><a id="__codelineno-15-93" name="__codelineno-15-93" href="#__codelineno-15-93"></a><span class="nb">print</span><span class="p">(</span><span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Can a customer get a refund 45 days after purchase?&quot;</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># /// script</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="c1"># dependencies = []</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># ///</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.reasoning</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChainOfThought</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="n">mf</span><span class="o">.</span><span class="n">load_dotenv</span><span class="p">()</span>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="n">HANDBOOK</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="s2">Pricing:</span>
+</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a><span class="s2">- Starter costs US$29/month.</span>
+</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="s2">- Pro costs US$99/month and includes API access plus webhooks.</span>
+</span><span id="__span-16-19"><a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="s2">- Team costs US$249/month and adds SAML SSO plus audit logs.</span>
+</span><span id="__span-16-20"><a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a>
+</span><span id="__span-16-21"><a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a><span class="s2">Refunds:</span>
+</span><span id="__span-16-22"><a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="s2">- First-time purchases are refundable within 30 days.</span>
+</span><span id="__span-16-23"><a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a><span class="s2">- Renewals are refundable only within 7 days.</span>
+</span><span id="__span-16-24"><a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a>
+</span><span id="__span-16-25"><a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a><span class="s2">Security:</span>
+</span><span id="__span-16-26"><a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a><span class="s2">- Data is encrypted in transit and at rest.</span>
+</span><span id="__span-16-27"><a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a><span class="s2">- SAML SSO is available only on the Team plan.</span>
+</span><span id="__span-16-28"><a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a>
+</span><span id="__span-16-29"><a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a><span class="s2">Support:</span>
+</span><span id="__span-16-30"><a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a><span class="s2">- Starter receives email support.</span>
+</span><span id="__span-16-31"><a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a><span class="s2">- Pro and Team receive priority email support.</span>
+</span><span id="__span-16-32"><a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a><span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-16-33"><a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a>
+</span><span id="__span-16-34"><a id="__codelineno-16-34" name="__codelineno-16-34" href="#__codelineno-16-34"></a>
+</span><span id="__span-16-35"><a id="__codelineno-16-35" name="__codelineno-16-35" href="#__codelineno-16-35"></a><span class="k">class</span><span class="w"> </span><span class="nc">AdvisorQuestion</span><span class="p">(</span><span class="n">mf</span><span class="o">.</span><span class="n">Signature</span><span class="p">):</span>
+</span><span id="__span-16-36"><a id="__codelineno-16-36" name="__codelineno-16-36" href="#__codelineno-16-36"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Answer handbook questions using only the provided internal documentation.&quot;&quot;&quot;</span>
+</span><span id="__span-16-37"><a id="__codelineno-16-37" name="__codelineno-16-37" href="#__codelineno-16-37"></a>
+</span><span id="__span-16-38"><a id="__codelineno-16-38" name="__codelineno-16-38" href="#__codelineno-16-38"></a>    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">InputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Question delegated by the root assistant&quot;</span><span class="p">)</span>
+</span><span id="__span-16-39"><a id="__codelineno-16-39" name="__codelineno-16-39" href="#__codelineno-16-39"></a>    <span class="n">answer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Short factual answer grounded in the handbook&quot;</span><span class="p">)</span>
+</span><span id="__span-16-40"><a id="__codelineno-16-40" name="__codelineno-16-40" href="#__codelineno-16-40"></a>    <span class="n">confidence</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;high&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;low&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">(</span>
+</span><span id="__span-16-41"><a id="__codelineno-16-41" name="__codelineno-16-41" href="#__codelineno-16-41"></a>        <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Confidence in the answer based on how directly the handbook supports it&quot;</span>
+</span><span id="__span-16-42"><a id="__codelineno-16-42" name="__codelineno-16-42" href="#__codelineno-16-42"></a>    <span class="p">)</span>
+</span><span id="__span-16-43"><a id="__codelineno-16-43" name="__codelineno-16-43" href="#__codelineno-16-43"></a>    <span class="n">source_section</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span>
+</span><span id="__span-16-44"><a id="__codelineno-16-44" name="__codelineno-16-44" href="#__codelineno-16-44"></a>        <span class="s2">&quot;pricing&quot;</span><span class="p">,</span> <span class="s2">&quot;refunds&quot;</span><span class="p">,</span> <span class="s2">&quot;security&quot;</span><span class="p">,</span> <span class="s2">&quot;support&quot;</span><span class="p">,</span> <span class="s2">&quot;unknown&quot;</span>
+</span><span id="__span-16-45"><a id="__codelineno-16-45" name="__codelineno-16-45" href="#__codelineno-16-45"></a>    <span class="p">]</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Most relevant handbook section&quot;</span><span class="p">)</span>
+</span><span id="__span-16-46"><a id="__codelineno-16-46" name="__codelineno-16-46" href="#__codelineno-16-46"></a>
+</span><span id="__span-16-47"><a id="__codelineno-16-47" name="__codelineno-16-47" href="#__codelineno-16-47"></a>
+</span><span id="__span-16-48"><a id="__codelineno-16-48" name="__codelineno-16-48" href="#__codelineno-16-48"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">name_override</span><span class="o">=</span><span class="s2">&quot;advisor&quot;</span><span class="p">,</span> <span class="n">inject_messages</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-16-49"><a id="__codelineno-16-49" name="__codelineno-16-49" href="#__codelineno-16-49"></a><span class="k">class</span><span class="w"> </span><span class="nc">AdvisorTool</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-16-50"><a id="__codelineno-16-50" name="__codelineno-16-50" href="#__codelineno-16-50"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist that answers product and policy questions from the handbook.&quot;&quot;&quot;</span>
+</span><span id="__span-16-51"><a id="__codelineno-16-51" name="__codelineno-16-51" href="#__codelineno-16-51"></a>
+</span><span id="__span-16-52"><a id="__codelineno-16-52" name="__codelineno-16-52" href="#__codelineno-16-52"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-16-53"><a id="__codelineno-16-53" name="__codelineno-16-53" href="#__codelineno-16-53"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-16-54"><a id="__codelineno-16-54" name="__codelineno-16-54" href="#__codelineno-16-54"></a><span class="s2">    You are the Advisor specialist.</span>
+</span><span id="__span-16-55"><a id="__codelineno-16-55" name="__codelineno-16-55" href="#__codelineno-16-55"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-16-56"><a id="__codelineno-16-56" name="__codelineno-16-56" href="#__codelineno-16-56"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-16-57"><a id="__codelineno-16-57" name="__codelineno-16-57" href="#__codelineno-16-57"></a><span class="s2">    Answer using only the handbook and the shared conversation context.</span>
+</span><span id="__span-16-58"><a id="__codelineno-16-58" name="__codelineno-16-58" href="#__codelineno-16-58"></a><span class="s2">    If the handbook or the conversation context is insufficient, say so and lower confidence.</span>
+</span><span id="__span-16-59"><a id="__codelineno-16-59" name="__codelineno-16-59" href="#__codelineno-16-59"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-16-60"><a id="__codelineno-16-60" name="__codelineno-16-60" href="#__codelineno-16-60"></a>    <span class="n">generation_schema</span> <span class="o">=</span> <span class="n">ChainOfThought</span>
+</span><span id="__span-16-61"><a id="__codelineno-16-61" name="__codelineno-16-61" href="#__codelineno-16-61"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">AdvisorQuestion</span>
+</span><span id="__span-16-62"><a id="__codelineno-16-62" name="__codelineno-16-62" href="#__codelineno-16-62"></a>    <span class="n">templates</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-16-63"><a id="__codelineno-16-63" name="__codelineno-16-63" href="#__codelineno-16-63"></a>        <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="p">(</span>
+</span><span id="__span-16-64"><a id="__codelineno-16-64" name="__codelineno-16-64" href="#__codelineno-16-64"></a>            <span class="s2">&quot;Advisor answer &quot;</span>
+</span><span id="__span-16-65"><a id="__codelineno-16-65" name="__codelineno-16-65" href="#__codelineno-16-65"></a>            <span class="s2">&quot;(section={{ final_answer.source_section }}, &quot;</span>
+</span><span id="__span-16-66"><a id="__codelineno-16-66" name="__codelineno-16-66" href="#__codelineno-16-66"></a>            <span class="s2">&quot;confidence={{ final_answer.confidence }}): &quot;</span>
+</span><span id="__span-16-67"><a id="__codelineno-16-67" name="__codelineno-16-67" href="#__codelineno-16-67"></a>            <span class="s2">&quot;{{ final_answer.answer }}&quot;</span>
+</span><span id="__span-16-68"><a id="__codelineno-16-68" name="__codelineno-16-68" href="#__codelineno-16-68"></a>        <span class="p">)</span>
+</span><span id="__span-16-69"><a id="__codelineno-16-69" name="__codelineno-16-69" href="#__codelineno-16-69"></a>    <span class="p">}</span>
+</span><span id="__span-16-70"><a id="__codelineno-16-70" name="__codelineno-16-70" href="#__codelineno-16-70"></a>    <span class="n">context_cache</span> <span class="o">=</span> <span class="n">HANDBOOK</span>
+</span><span id="__span-16-71"><a id="__codelineno-16-71" name="__codelineno-16-71" href="#__codelineno-16-71"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-16-72"><a id="__codelineno-16-72" name="__codelineno-16-72" href="#__codelineno-16-72"></a>
+</span><span id="__span-16-73"><a id="__codelineno-16-73" name="__codelineno-16-73" href="#__codelineno-16-73"></a>
+</span><span id="__span-16-74"><a id="__codelineno-16-74" name="__codelineno-16-74" href="#__codelineno-16-74"></a><span class="k">class</span><span class="w"> </span><span class="nc">RootAssistant</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-16-75"><a id="__codelineno-16-75" name="__codelineno-16-75" href="#__codelineno-16-75"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-16-76"><a id="__codelineno-16-76" name="__codelineno-16-76" href="#__codelineno-16-76"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-16-77"><a id="__codelineno-16-77" name="__codelineno-16-77" href="#__codelineno-16-77"></a><span class="s2">    You are the root assistant for AcmeCloud.</span>
+</span><span id="__span-16-78"><a id="__codelineno-16-78" name="__codelineno-16-78" href="#__codelineno-16-78"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-16-79"><a id="__codelineno-16-79" name="__codelineno-16-79" href="#__codelineno-16-79"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-16-80"><a id="__codelineno-16-80" name="__codelineno-16-80" href="#__codelineno-16-80"></a><span class="s2">    Use the advisor tool for product, pricing, refund, security, and support-policy</span>
+</span><span id="__span-16-81"><a id="__codelineno-16-81" name="__codelineno-16-81" href="#__codelineno-16-81"></a><span class="s2">    questions. For greetings or general conversational help, answer directly.</span>
+</span><span id="__span-16-82"><a id="__codelineno-16-82" name="__codelineno-16-82" href="#__codelineno-16-82"></a>
+</span><span id="__span-16-83"><a id="__codelineno-16-83" name="__codelineno-16-83" href="#__codelineno-16-83"></a><span class="s2">    If advisor returns low confidence, say that the answer needs human follow-up.</span>
+</span><span id="__span-16-84"><a id="__codelineno-16-84" name="__codelineno-16-84" href="#__codelineno-16-84"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-16-85"><a id="__codelineno-16-85" name="__codelineno-16-85" href="#__codelineno-16-85"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">AdvisorTool</span><span class="p">]</span>
+</span><span id="__span-16-86"><a id="__codelineno-16-86" name="__codelineno-16-86" href="#__codelineno-16-86"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-16-87"><a id="__codelineno-16-87" name="__codelineno-16-87" href="#__codelineno-16-87"></a>
+</span><span id="__span-16-88"><a id="__codelineno-16-88" name="__codelineno-16-88" href="#__codelineno-16-88"></a>
+</span><span id="__span-16-89"><a id="__codelineno-16-89" name="__codelineno-16-89" href="#__codelineno-16-89"></a><span class="n">assistant</span> <span class="o">=</span> <span class="n">RootAssistant</span><span class="p">()</span>
+</span><span id="__span-16-90"><a id="__codelineno-16-90" name="__codelineno-16-90" href="#__codelineno-16-90"></a>
+</span><span id="__span-16-91"><a id="__codelineno-16-91" name="__codelineno-16-91" href="#__codelineno-16-91"></a><span class="nb">print</span><span class="p">(</span><span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Does the Pro plan include SAML SSO?&quot;</span><span class="p">))</span>
+</span><span id="__span-16-92"><a id="__codelineno-16-92" name="__codelineno-16-92" href="#__codelineno-16-92"></a><span class="nb">print</span><span class="p">()</span>
+</span><span id="__span-16-93"><a id="__codelineno-16-93" name="__codelineno-16-93" href="#__codelineno-16-93"></a><span class="nb">print</span><span class="p">(</span><span class="n">assistant</span><span class="p">(</span><span class="s2">&quot;Can a customer get a refund 45 days after purchase?&quot;</span><span class="p">))</span>
 </span></code></pre></div>
 </details>
 <h2 id="further-reading">Further Reading</h2>
