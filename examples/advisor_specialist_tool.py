@@ -5,9 +5,8 @@
 from typing import Literal
 
 import msgflux as mf
-import msgflux.nn as nn
+from msgflux import nn
 from msgflux.generation.reasoning import ChainOfThought
-
 
 mf.load_dotenv()
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
@@ -32,7 +31,7 @@ Support:
 """
 
 
-class OracleQuestion(mf.Signature):
+class AdvisorQuestion(mf.Signature):
     """Answer handbook questions using only the provided internal documentation."""
 
     question: str = mf.InputField(desc="Question delegated by the root assistant")
@@ -40,28 +39,29 @@ class OracleQuestion(mf.Signature):
     confidence: Literal["high", "medium", "low"] = mf.OutputField(
         desc="Confidence in the answer based on how directly the handbook supports it"
     )
-    source_section: Literal[
-        "pricing", "refunds", "security", "support", "unknown"
-    ] = mf.OutputField(desc="Most relevant handbook section")
+    source_section: Literal["pricing", "refunds", "security", "support", "unknown"] = (
+        mf.OutputField(desc="Most relevant handbook section")
+    )
 
 
-@mf.tool_config(name_override="oracle")
-class OracleTool(nn.Agent):
+@mf.tool_config(name_override="advisor", inject_messages=True)
+class AdvisorTool(nn.Agent):
     """Specialist that answers product and policy questions from the handbook."""
 
     model = model
     system_message = """
-    You are the Oracle specialist.
+    You are the Advisor specialist.
     """
     instructions = """
-    Answer using only the handbook.
-    If the handbook is insufficient, say so and lower confidence.
+    Answer using only the handbook and the shared conversation context.
+    If the handbook or the conversation context is insufficient, say so and
+    lower confidence.
     """
     generation_schema = ChainOfThought
-    signature = OracleQuestion
+    signature = AdvisorQuestion
     templates = {
         "response": (
-            "Oracle answer "
+            "Advisor answer "
             "(section={{ final_answer.source_section }}, "
             "confidence={{ final_answer.confidence }}): "
             "{{ final_answer.answer }}"
@@ -77,17 +77,16 @@ class RootAssistant(nn.Agent):
     You are the root assistant for AcmeCloud.
     """
     instructions = """
-    Use the oracle tool for product, pricing, refund, security, and support-policy
+    Use the advisor tool for product, pricing, refund, security, and support-policy
     questions. For greetings or general conversational help, answer directly.
 
-    If oracle returns low confidence, say that the answer needs human follow-up.
+    If advisor returns low confidence, say that the answer needs human follow-up.
     """
-    tools = [OracleTool]
+    tools = [AdvisorTool]
     config = {"verbose": True}
 
 
 assistant = RootAssistant()
 
-print(assistant("Does the Pro plan include SAML SSO?"))
-print()
-print(assistant("Can a customer get a refund 45 days after purchase?"))
+response = assistant("Does the Pro plan include SAML SSO?")
+response = assistant("Can a customer get a refund 45 days after purchase?")
