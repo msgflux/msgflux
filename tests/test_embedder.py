@@ -55,8 +55,10 @@ class MockNonBatchEmbedder:
         response = ModelResponse()
         response.set_response_type("text_embedding")
 
-        # Always return single embedding
-        embedding = [[0.5, 0.6, 0.7]]
+        # Return an embedding derived from the input so tests can verify order.
+        text = data if isinstance(data, str) else data[0]
+        suffix = int(text[-1]) if isinstance(text, str) and text[-1].isdigit() else 0
+        embedding = [[0.5 + suffix, 0.6 + suffix, 0.7 + suffix]]
         response.add(embedding)
         return response
 
@@ -117,15 +119,18 @@ def test_embedder_with_non_batch_model_multiple_texts():
     # Should call model 3 times (once per text via F.map_gather)
     assert model.call_count == 3
 
-    # Should call with individual texts
+    # Parallel execution should process every text exactly once.
     assert len(model.all_calls) == 3
-    assert model.all_calls[0] == "text1"
-    assert model.all_calls[1] == "text2"
-    assert model.all_calls[2] == "text3"
+    assert sorted(model.all_calls) == sorted(texts)
 
-    # Should return list of embeddings
+    # Results should preserve the input order.
     assert isinstance(result, list)
     assert len(result) == 3
+    assert [embedding[0] for embedding in result] == [
+        [1.5, 1.6, 1.7],
+        [2.5, 2.6, 2.7],
+        [3.5, 3.6, 3.7],
+    ]
 
 
 def test_embedder_with_non_batch_model_single_text():
