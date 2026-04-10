@@ -239,13 +239,13 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         # From URL
         response = agent(
             "Summarize the key contributions of this paper.",
-            task_multimodal_inputs={"file": "https://arxiv.org/pdf/2106.09685.pdf"}
+            task_multimodal={"file": "https://arxiv.org/pdf/2106.09685.pdf"}
         )
 
         # From local file
         response = agent(
             "Summarize the key contributions of this paper.",
-            task_multimodal_inputs={"file": "./lora.pdf"}
+            task_multimodal={"file": "./lora.pdf"}
         )
         ```
 
