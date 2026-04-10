@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Any, Callable, TypeVar, overload
 
 T = TypeVar("T", bound=Callable[..., Any])
@@ -37,14 +38,33 @@ class Registry:
         self._entries: dict[str, Any] = {}
 
     def _resolve_name(self, obj: Any) -> str:
-        """Extract a name from the callable: .name > .__name__."""
+        """Extract a registration name from a callable-like object."""
         if hasattr(obj, "name"):
             name = obj.name
             if callable(name) and not isinstance(name, str):
                 name = name()
             if isinstance(name, str) and name:
                 return name
-        return obj.__name__
+
+        dunder_name = getattr(obj, "__name__", None)
+        if isinstance(dunder_name, str) and dunder_name:
+            return dunder_name
+
+        if isinstance(obj, partial):
+            return self._resolve_name(obj.func)
+
+        wrapped = getattr(obj, "__wrapped__", None)
+        if wrapped is not None:
+            return self._resolve_name(wrapped)
+
+        class_name = getattr(obj.__class__, "__name__", None)
+        if isinstance(class_name, str) and class_name:
+            return class_name
+
+        raise TypeError(
+            "Unable to resolve a registry name. Provide `name=` or define `.name` "
+            "or `.__name__` on the registered object."
+        )
 
     @overload
     def __call__(self, obj: T) -> T: ...

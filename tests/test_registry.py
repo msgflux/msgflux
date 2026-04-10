@@ -1,5 +1,7 @@
 """Tests for msgflux.core.registry.Registry."""
 
+from functools import partial
+
 from msgflux.core.registry import Registry
 
 
@@ -23,6 +25,13 @@ class _ObjWithName:
         pass
 
 
+class _CallableWithoutName:
+    """Callable instance without a .name or .__name__ attribute."""
+
+    def __call__(self):
+        pass
+
+
 # ── bare decorator ───────────────────────────────────────────────────────────
 
 def test_bare_decorator_uses_dunder_name():
@@ -41,6 +50,25 @@ def test_bare_decorator_prefers_dot_name():
     assert result is obj
     assert "my_tool" in reg
     assert reg.get("my_tool") is obj
+
+
+def test_bare_decorator_uses_partial_wrapped_name():
+    reg = Registry()
+    fn = _make_fn("search")
+    wrapped = partial(fn)
+    result = reg(wrapped)
+    assert result is wrapped
+    assert "search" in reg
+    assert reg.get("search") is wrapped
+
+
+def test_bare_decorator_uses_callable_instance_class_name():
+    reg = Registry()
+    obj = _CallableWithoutName()
+    result = reg(obj)
+    assert result is obj
+    assert "_CallableWithoutName" in reg
+    assert reg.get("_CallableWithoutName") is obj
 
 
 # ── decorator with explicit name (positional) ───────────────────────────────
