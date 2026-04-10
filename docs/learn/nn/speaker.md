@@ -41,6 +41,25 @@ The `nn.Speaker` module converts text into natural-sounding speech using text-to
         audio_path = speaker("Hello world")
         ```
 
+## String shorthand
+
+When you do not need to configure extra model parameters, you can pass a
+`"provider/model-id"` string directly as the `model` argument. msgFlux will
+call `Model.text_to_speech` internally.
+
+```python
+import msgflux.nn as nn
+
+speaker = nn.Speaker("openai/gpt-4o-mini-tts")
+audio_path = speaker("Hello world")
+```
+
+The shorthand also works when reassigning `speaker.model` after construction:
+
+```python
+speaker.model = "openai/gpt-4o-mini-tts"
+```
+
 ---
 
 ## 2. **Audio Formats**
