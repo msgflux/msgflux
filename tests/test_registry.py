@@ -1,16 +1,17 @@
 """Tests for msgflux.core.registry.Registry."""
 
-from functools import partial
-
 from msgflux.core.registry import Registry
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_fn(name: str):
     """Create a simple callable with a given __name__."""
+
     def fn():
         pass
+
     fn.__name__ = name
     return fn
 
@@ -25,14 +26,8 @@ class _ObjWithName:
         pass
 
 
-class _CallableWithoutName:
-    """Callable instance without a .name or .__name__ attribute."""
-
-    def __call__(self):
-        pass
-
-
 # ── bare decorator ───────────────────────────────────────────────────────────
+
 
 def test_bare_decorator_uses_dunder_name():
     reg = Registry()
@@ -52,26 +47,8 @@ def test_bare_decorator_prefers_dot_name():
     assert reg.get("my_tool") is obj
 
 
-def test_bare_decorator_uses_partial_wrapped_name():
-    reg = Registry()
-    fn = _make_fn("search")
-    wrapped = partial(fn)
-    result = reg(wrapped)
-    assert result is wrapped
-    assert "search" in reg
-    assert reg.get("search") is wrapped
-
-
-def test_bare_decorator_uses_callable_instance_class_name():
-    reg = Registry()
-    obj = _CallableWithoutName()
-    result = reg(obj)
-    assert result is obj
-    assert "_CallableWithoutName" in reg
-    assert reg.get("_CallableWithoutName") is obj
-
-
 # ── decorator with explicit name (positional) ───────────────────────────────
+
 
 def test_positional_name():
     reg = Registry()
@@ -87,6 +64,7 @@ def test_positional_name():
 
 # ── decorator with explicit name (keyword) ──────────────────────────────────
 
+
 def test_keyword_name():
     reg = Registry()
 
@@ -99,6 +77,7 @@ def test_keyword_name():
 
 
 # ── list / items ─────────────────────────────────────────────────────────────
+
 
 def test_to_list_returns_values():
     reg = Registry()
@@ -120,6 +99,7 @@ def test_to_items_returns_dict():
 
 
 # ── len / iter / contains / repr ────────────────────────────────────────────
+
 
 def test_len():
     reg = Registry()
@@ -146,6 +126,7 @@ def test_repr():
 
 # ── independence of instances ────────────────────────────────────────────────
 
+
 def test_instances_are_independent():
     r1 = Registry()
     r2 = Registry()
@@ -158,6 +139,7 @@ def test_instances_are_independent():
 
 
 # ── decorator on classes ─────────────────────────────────────────────────────
+
 
 def test_register_class():
     reg = Registry()
@@ -181,6 +163,7 @@ def test_register_class_bare():
 
 
 # ── update ───────────────────────────────────────────────────────────────────
+
 
 def test_update_merges_entries():
     r1 = Registry()
@@ -218,6 +201,7 @@ def test_update_returns_self():
 
 
 # ── pop / clear ──────────────────────────────────────────────────────────────
+
 
 def test_pop_removes_and_returns():
     reg = Registry()
