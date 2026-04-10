@@ -4557,7 +4557,7 @@ On top of this interaction model, msgFlux deliberately distinguishes between **p
         signature = ClassifySentiment
 
     classifier = Classifier()
-    result = classifier(&quot;I loved the movie, but the ending was disappointing.&quot;)
+    result = classifier(sentence=&quot;I loved the movie, but the ending was disappointing.&quot;)
     # {&#x27;sentiment&#x27;: &#x27;neutral&#x27;, &#x27;confidence&#x27;: 0.75}
     ```
 
@@ -4680,7 +4680,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
             config = {&quot;verbose&quot;: True}
 
         extractor = Extractor()
-        result = extractor(&quot;The new iPhone has an amazing camera but the battery life is disappointing.&quot;)
+        result = extractor(text=&quot;The new iPhone has an amazing camera but the battery life is disappointing.&quot;)
         ```
 
         **Possible Output:**
@@ -5406,7 +5406,7 @@ We are grateful to the authors and maintainers of these projects.
 </span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">ClassifySentiment</span>
 </span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17"></a>
 </span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18"></a><span class="n">classifier</span> <span class="o">=</span> <span class="n">Classifier</span><span class="p">()</span>
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19"></a><span class="n">result</span> <span class="o">=</span> <span class="n">classifier</span><span class="p">(</span><span class="s2">&quot;I loved the movie, but the ending was disappointing.&quot;</span><span class="p">)</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19"></a><span class="n">result</span> <span class="o">=</span> <span class="n">classifier</span><span class="p">(</span><span class="n">sentence</span><span class="o">=</span><span class="s2">&quot;I loved the movie, but the ending was disappointing.&quot;</span><span class="p">)</span>
 </span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20"></a><span class="c1"># {&#39;sentiment&#39;: &#39;neutral&#39;, &#39;confidence&#39;: 0.75}</span>
 </span></code></pre></div></td></tr></table></div>
 <ol>
@@ -5643,7 +5643,7 @@ We are grateful to the authors and maintainers of these projects.
 </span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
 </span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8"></a>
 </span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9"></a><span class="n">extractor</span> <span class="o">=</span> <span class="n">Extractor</span><span class="p">()</span>
-</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10"></a><span class="n">result</span> <span class="o">=</span> <span class="n">extractor</span><span class="p">(</span><span class="s2">&quot;The new iPhone has an amazing camera but the battery life is disappointing.&quot;</span><span class="p">)</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10"></a><span class="n">result</span> <span class="o">=</span> <span class="n">extractor</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s2">&quot;The new iPhone has an amazing camera but the battery life is disappointing.&quot;</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
 <p><strong>Possible Output:</strong>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>{&#39;summary&#39;: &#39;...&#39;, &#39;topics&#39;: [&#39;iPhone&#39;, &#39;camera&#39;, &#39;battery&#39;], &#39;sentiment&#39;: &#39;mixed&#39;}
