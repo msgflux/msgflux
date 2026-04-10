@@ -1155,7 +1155,10 @@ class TestAgentMessagesAccumulator:
 
     def test_nonempty_list_extends_with_user_input(self, agent):
         """messages=[...] is extended with the new user input."""
-        existing = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}]
+        existing = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+        ]
         history = list(existing)
         agent._prepare_inputs("Follow-up question", messages=history)
         assert len(history) == 3
@@ -1165,8 +1168,9 @@ class TestAgentMessagesAccumulator:
         """The list passed as messages=[] is the same object after the call."""
         history = []
         agent._prepare_inputs("Hello", messages=history)
-        assert id(history) == id(history)  # tautology — check via len instead
         assert len(history) == 1
+        assert history[0]["role"] == "user"
+        assert history[0]["content"] == "<task>Hello</task>"
 
     def test_none_messages_does_not_mutate_any_external_list(self, agent):
         """Passing messages=None explicitly behaves as ephemeral (no crash, no side effect)."""
