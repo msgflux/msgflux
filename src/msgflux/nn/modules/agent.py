@@ -585,13 +585,10 @@ class Agent(Module, metaclass=AutoParams):
         error = getattr(model_response, "error", None)
         if error is not None:
             raise RuntimeError(
-                "Model stream failed before producing a response: "
-                f"{error}"
+                f"Model stream failed before producing a response: {error}"
             ) from error
 
-        raise RuntimeError(
-            "Model stream ended before producing a response type."
-        )
+        raise RuntimeError("Model stream ended before producing a response type.")
 
     def _process_model_response(
         self,
