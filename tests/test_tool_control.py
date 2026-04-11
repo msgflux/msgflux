@@ -158,6 +158,11 @@ class TestToolFilterIntegration:
         mock_model.model_type = "chat_completion"
         return Agent(name="agent", model=mock_model, tools=[search, browser], **kwargs)
 
+    def _tool_names(self, params):
+        return [
+            schema["function"]["name"] for schema in params.tool_definitions.schemas
+        ]
+
     def test_inspect_model_execution_params_accepts_tool_filter(self):
         """tool_filter should work with inspect_model_execution_params."""
 
@@ -167,15 +172,14 @@ class TestToolFilterIntegration:
             "What is the weather?", tool_filter={"allow": "search"}
         )
 
-        names = [schema["function"]["name"] for schema in params.tool_schemas]
-        assert names == ["search"]
+        assert self._tool_names(params) == ["search"]
 
     def test_message_fields_tool_filter_is_applied(self):
         """tool_filter can be loaded from Message via message_fields."""
 
         agent = self._create_agent(
             message_fields={
-                "task_inputs": "content",
+                "task": "content",
                 "tool_filter": "extra.tool_filter",
             }
         )
@@ -184,15 +188,14 @@ class TestToolFilterIntegration:
 
         params = agent.inspect_model_execution_params(message)
 
-        names = [schema["function"]["name"] for schema in params.tool_schemas]
-        assert names == ["search"]
+        assert self._tool_names(params) == ["search"]
 
     def test_runtime_tool_filter_overrides_message_field(self):
         """Explicit runtime tool_filter should override message_fields value."""
 
         agent = self._create_agent(
             message_fields={
-                "task_inputs": "content",
+                "task": "content",
                 "tool_filter": "extra.tool_filter",
             }
         )
@@ -203,8 +206,7 @@ class TestToolFilterIntegration:
             message, tool_filter={"allow": "search"}
         )
 
-        names = [schema["function"]["name"] for schema in params.tool_schemas]
-        assert names == ["search"]
+        assert self._tool_names(params) == ["search"]
 
     def test_tool_choice_is_reconciled_after_filtering(self):
         """tool_choice should not point to a filtered-out tool."""
@@ -215,10 +217,8 @@ class TestToolFilterIntegration:
             "What is the weather?", tool_filter={"allow": "search"}
         )
 
-        assert [schema["function"]["name"] for schema in params.tool_schemas] == [
-            "search"
-        ]
-        assert params.tool_choice == "auto"
+        assert self._tool_names(params) == ["search"]
+        assert params.tool_definitions.choice == "auto"
 
 
 class TestMaxToolTurnsConfig:
@@ -287,12 +287,18 @@ class TestMaxToolTurnsBehavior:
             def get_messages(self):
                 return []
 
-        first = SimpleNamespace(response_type="tool_call", data=RawResponse("first"))
-        second = SimpleNamespace(response_type="tool_call", data=RawResponse("second"))
-        final = SimpleNamespace(response_type="text_generation", data="done")
+        first = SimpleNamespace(
+            response_type="tool_call", data=RawResponse("first"), reasoning=None
+        )
+        second = SimpleNamespace(
+            response_type="tool_call", data=RawResponse("second"), reasoning=None
+        )
+        final = SimpleNamespace(
+            response_type="text_generation", data="done", reasoning=None
+        )
         queued_responses = [second, final]
 
-        def process_tool_call(tool_callings, messages, vars):
+        def process_tool_call(tool_callings, message, messages, vars):
             processed_tool_turns.append(tool_callings[0][1])
             return ToolResults()
 
@@ -303,7 +309,9 @@ class TestMaxToolTurnsBehavior:
         agent._process_tool_call = process_tool_call
         agent._execute_model = execute_model
 
-        result, messages = agent._process_tool_call_response(first, [], {}, None, None)
+        result, messages = agent._process_tool_call_response(
+            None, first, [], {}, None, None
+        )
 
         assert processed_tool_turns == ["first"]
         assert execution_filters == [None, {"block": "*"}]
