@@ -1623,7 +1623,7 @@ class Agent(Module, metaclass=AutoParams):
         )
         return model_execution_params
 
-    # -- Tool filtering -------------------------------------------------
+    # --- Tool Filtering ---
 
     def _apply_tool_filter(
         self,
