@@ -591,7 +591,7 @@ This is useful when another module or router decides which tools should be avail
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
         tools = [web_search, calculator]
         message_fields = {
-            "task_inputs": "content",
+            "task": "content",
             "tool_filter": "control.tool_filter",
         }
 
