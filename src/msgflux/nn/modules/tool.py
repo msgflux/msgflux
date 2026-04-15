@@ -1,8 +1,9 @@
 import asyncio
 import inspect
-from dataclasses import asdict, dataclass, field
 from copy import deepcopy
+from dataclasses import asdict, dataclass, field
 from functools import partial
+from importlib import import_module
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 import msgspec
@@ -34,9 +35,8 @@ def _should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) ->
     if not config.get("inject_messages", False):
         return False
 
-    from msgflux.nn.modules.agent import Agent
-
-    return isinstance(getattr(tool, "impl", tool), Agent)
+    agent_type = import_module("msgflux.nn.modules.agent").Agent
+    return isinstance(getattr(tool, "impl", tool), agent_type)
 
 
 @dataclass
