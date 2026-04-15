@@ -506,7 +506,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     transport_generation_schema = {
                         "decoder_schema": None,
                         "normalize": lambda payload: (
-                            generation_schema.normalize_provider_response(  # noqa: E501
+                            generation_schema.normalize_provider_response(
                                 payload,
                                 tool_definitions=tool_definitions,
                             )
