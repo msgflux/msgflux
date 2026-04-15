@@ -505,9 +505,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 if response_format is not None:
                     transport_generation_schema = {
                         "decoder_schema": None,
-                        "normalize": lambda payload: generation_schema.normalize_provider_response(  # noqa: E501
-                            payload,
-                            tool_definitions=tool_definitions,
+                        "normalize": lambda payload: (
+                            generation_schema.normalize_provider_response(  # noqa: E501
+                                payload,
+                                tool_definitions=tool_definitions,
+                            )
                         ),
                     }
                     kwargs["response_format"] = response_format

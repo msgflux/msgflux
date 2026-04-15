@@ -235,9 +235,7 @@ class TestOpenAIChatCompletion:
                 pass
 
     @pytest.mark.asyncio
-    async def test_acall_stream_accumulates_response_data(
-        self, mock_openai_client
-    ):
+    async def test_acall_stream_accumulates_response_data(self, mock_openai_client):
         """Streaming async text responses should leave the full payload in response.data."""
         pytest.importorskip("openai")
 
@@ -366,9 +364,7 @@ class TestOpenAIChatCompletion:
         }
         assert params["parallel_tool_calls"] is model.parallel_tool_calls
 
-    def test_build_generation_params_does_not_mutate_messages(
-        self, mock_openai_client
-    ):
+    def test_build_generation_params_does_not_mutate_messages(self, mock_openai_client):
         """Provider-side system prompt injection must not mutate caller history."""
         pytest.importorskip("openai")
 
@@ -419,9 +415,7 @@ class TestOpenAIChatCompletion:
         assert history == [{"role": "user", "content": "Hello"}]
 
     @pytest.mark.asyncio
-    async def test_acall_prefilling_does_not_mutate_messages(
-        self, mock_openai_client
-    ):
+    async def test_acall_prefilling_does_not_mutate_messages(self, mock_openai_client):
         """Async provider-side prefilling must not mutate caller history."""
         pytest.importorskip("openai")
 
