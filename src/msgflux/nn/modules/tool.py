@@ -30,6 +30,15 @@ from msgflux.utils.msgspec import restore_transport_value
 from msgflux.utils.tenacity import apply_retry, default_tool_retry
 
 
+def _should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> bool:
+    if not config.get("inject_messages", False):
+        return False
+
+    from msgflux.nn.modules.agent import Agent
+
+    return isinstance(getattr(tool, "impl", tool), Agent)
+
+
 @dataclass
 class ToolCall:
     """Represents the execution of a single tool call."""
@@ -651,8 +660,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add isolated copy of messages
-                call_params["messages"] = deepcopy(messages)
+            if config.get("inject_messages", False):
+                if _should_copy_injected_messages(tool, config):
+                    call_params["messages"] = deepcopy(messages)
+                else:
+                    call_params["messages"] = messages
 
             if config.get("inject_message", False):  # Add original message/envelope
                 call_params["message"] = message
@@ -793,8 +805,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add isolated copy of messages
-                call_params["messages"] = deepcopy(messages)
+            if config.get("inject_messages", False):
+                if _should_copy_injected_messages(tool, config):
+                    call_params["messages"] = deepcopy(messages)
+                else:
+                    call_params["messages"] = messages
 
             if config.get("inject_message", False):  # Add original message/envelope
                 call_params["message"] = message

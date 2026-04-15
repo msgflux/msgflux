@@ -5,6 +5,7 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Optional
 
 from msgflux.core.dotdict import dotdict
+from msgflux.nn.modules.agent import Agent
 from msgflux.nn.modules.tool import (
     ToolCall,
     ToolResponses,
@@ -13,6 +14,7 @@ from msgflux.nn.modules.tool import (
     MCPTool,
     ToolLibrary,
     _convert_module_to_nn_tool,
+    _should_copy_injected_messages,
 )
 
 
@@ -795,11 +797,11 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
-    def test_tool_library_with_inject_messages_copies_messages(self):
-        """Injected messages should be copied before reaching the tool."""
+    def test_tool_library_with_inject_messages_preserves_shared_messages(self):
+        """Non-agent tools should receive the original messages reference."""
 
         def stateful_tool(messages: list) -> str:
-            """Tool that mutates its injected messages copy."""
+            """Tool that mutates the shared conversation messages."""
             messages.append({"role": "tool", "content": "mutated"})
             messages[0]["content"] = "changed"
             return str(len(messages))
@@ -813,7 +815,45 @@ class TestToolLibrary:
         result = library(tool_callings, messages=original_messages)
 
         assert result.tool_calls[0].result == "2"
+        assert original_messages == [
+            {"role": "user", "content": "changed"},
+            {"role": "tool", "content": "mutated"},
+        ]
+
+    def test_tool_library_with_agent_inject_messages_copies_per_subagent(self):
+        """Forced agent isolation should copy messages per tool call."""
+
+        def stateful_tool(messages: list) -> str:
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        stateful_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "stateful_tool", {})]
+
+        with patch(
+            "msgflux.nn.modules.tool._should_copy_injected_messages",
+            return_value=True,
+        ):
+            result = library(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
         assert original_messages == [{"role": "user", "content": "hello"}]
+
+    def test_should_copy_injected_messages_for_wrapped_agent(self):
+        """Wrapped Agent tools should opt into isolated message copies."""
+
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(name="child_agent", model=mock_model)
+        agent.tool_config = {"inject_messages": True, "disable_input": True}
+
+        local_tool = _convert_module_to_nn_tool(agent)
+
+        assert _should_copy_injected_messages(local_tool, local_tool.tool_config) is True
 
     def test_tool_library_with_inject_message(self):
         """Test ToolLibrary with inject_message config."""
@@ -987,11 +1027,13 @@ class TestToolLibrary:
         assert "8-state_value" in result.tool_calls[0].result
 
     @pytest.mark.asyncio
-    async def test_tool_library_aforward_inject_messages_copies_messages(self):
-        """Async injected messages should be copied before reaching the tool."""
+    async def test_tool_library_aforward_inject_messages_preserves_shared_messages(
+        self,
+    ):
+        """Async non-agent tools should receive the original messages reference."""
 
         async def async_tool(messages: list) -> str:
-            """Tool that mutates its injected messages copy."""
+            """Tool that mutates the shared conversation messages."""
             messages.append({"role": "tool", "content": "mutated"})
             messages[0]["content"] = "changed"
             return str(len(messages))
@@ -1003,6 +1045,35 @@ class TestToolLibrary:
         tool_callings = [("call_1", "async_tool", {})]
 
         result = await library.aforward(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [
+            {"role": "user", "content": "changed"},
+            {"role": "tool", "content": "mutated"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_agent_inject_messages_copies_per_subagent(
+        self,
+    ):
+        """Async forced agent isolation should copy messages per tool call."""
+
+        async def async_tool(messages: list) -> str:
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        async_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "async_tool", {})]
+
+        with patch(
+            "msgflux.nn.modules.tool._should_copy_injected_messages",
+            return_value=True,
+        ):
+            result = await library.aforward(tool_callings, messages=original_messages)
 
         assert result.tool_calls[0].result == "2"
         assert original_messages == [{"role": "user", "content": "hello"}]
