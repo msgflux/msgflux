@@ -198,7 +198,8 @@ git checkout -b "$BRANCH_NAME"
 # Commit changes
 echo -e "${BLUE}💾 Committing changes...${NC}"
 git add src/msgflux/version.py CHANGELOG.md
-git commit -m "RELEASE: v$NEW_VERSION
+COMMIT_MSG=$(cat <<EOF
+RELEASE: v$NEW_VERSION
 
 This release updates:
 - version.py: $CURRENT_VERSION → $NEW_VERSION
@@ -208,10 +209,9 @@ After merging this PR:
 - publish.yml workflow will trigger automatically
 - Package will be built and published to PyPI
 - GitHub release will be created with tag v$NEW_VERSION
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
+EOF
+)
+git commit -m "$COMMIT_MSG"
 
 # Push release branch
 echo -e "${BLUE}📤 Pushing release branch...${NC}"
@@ -226,12 +226,8 @@ if [ "$ORIGIN_REPO" != "$BASE_REPO" ]; then
   PR_HEAD="${ORIGIN_OWNER}:${BRANCH_NAME}"
 fi
 
-PR_URL=$(gh pr create \
-  --repo "$BASE_REPO" \
-  --base main \
-  --head "$PR_HEAD" \
-  --title "$PR_TITLE" \
-  --body "## 🚀 Release v$NEW_VERSION
+PR_BODY=$(cat <<EOF
+## 🚀 Release v$NEW_VERSION
 
 ### Changes
 - **Version**: $CURRENT_VERSION → $NEW_VERSION
@@ -252,11 +248,16 @@ PR_URL=$(gh pr create \
 ### Merge Instructions
 After CI passes, merge this PR using one of:
 - Merge bot: Comment \`@mergebot merge\`
-- GitHub UI: Use \"Squash and merge\"
+- GitHub UI: Use "Squash and merge"
+EOF
+)
 
----
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
+PR_URL=$(gh pr create \
+  --repo "$BASE_REPO" \
+  --base main \
+  --head "$PR_HEAD" \
+  --title "$PR_TITLE" \
+  --body "$PR_BODY" \
   --label "release" \
   --label "automerge")
 
