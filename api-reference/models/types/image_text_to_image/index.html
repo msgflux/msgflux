@@ -4426,20 +4426,7 @@
 
               <details class="quote">
                 <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1309">1309</a></span>
-<span class="normal"><a href="#__codelineno-0-1310">1310</a></span>
-<span class="normal"><a href="#__codelineno-0-1311">1311</a></span>
-<span class="normal"><a href="#__codelineno-0-1312">1312</a></span>
-<span class="normal"><a href="#__codelineno-0-1313">1313</a></span>
-<span class="normal"><a href="#__codelineno-0-1314">1314</a></span>
-<span class="normal"><a href="#__codelineno-0-1315">1315</a></span>
-<span class="normal"><a href="#__codelineno-0-1316">1316</a></span>
-<span class="normal"><a href="#__codelineno-0-1317">1317</a></span>
-<span class="normal"><a href="#__codelineno-0-1318">1318</a></span>
-<span class="normal"><a href="#__codelineno-0-1319">1319</a></span>
-<span class="normal"><a href="#__codelineno-0-1320">1320</a></span>
-<span class="normal"><a href="#__codelineno-0-1321">1321</a></span>
-<span class="normal"><a href="#__codelineno-0-1322">1322</a></span>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1322">1322</a></span>
 <span class="normal"><a href="#__codelineno-0-1323">1323</a></span>
 <span class="normal"><a href="#__codelineno-0-1324">1324</a></span>
 <span class="normal"><a href="#__codelineno-0-1325">1325</a></span>
@@ -4517,98 +4504,111 @@
 <span class="normal"><a href="#__codelineno-0-1397">1397</a></span>
 <span class="normal"><a href="#__codelineno-0-1398">1398</a></span>
 <span class="normal"><a href="#__codelineno-0-1399">1399</a></span>
-<span class="normal"><a href="#__codelineno-0-1400">1400</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1309"><a id="__codelineno-0-1309" name="__codelineno-0-1309"></a><span class="nd">@register_model</span>
-</span><span id="__span-0-1310"><a id="__codelineno-0-1310" name="__codelineno-0-1310"></a><span class="k">class</span><span class="w"> </span><span class="nc">OpenAIImageTextToImage</span><span class="p">(</span><span class="n">ImageTextToImageModel</span><span class="p">,</span> <span class="n">OpenAITextToImage</span><span class="p">):</span>
-</span><span id="__span-0-1311"><a id="__codelineno-0-1311" name="__codelineno-0-1311"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;OpenAI Image Edit.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1312"><a id="__codelineno-0-1312" name="__codelineno-0-1312"></a>
-</span><span id="__span-0-1313"><a id="__codelineno-0-1313" name="__codelineno-0-1313"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_execute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-1314"><a id="__codelineno-0-1314" name="__codelineno-0-1314"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">images</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">sampling_run_params</span><span class="p">)</span>
-</span><span id="__span-0-1315"><a id="__codelineno-0-1315" name="__codelineno-0-1315"></a>        <span class="k">return</span> <span class="n">model_output</span>
-</span><span id="__span-0-1316"><a id="__codelineno-0-1316" name="__codelineno-0-1316"></a>
-</span><span id="__span-0-1317"><a id="__codelineno-0-1317" name="__codelineno-0-1317"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_aexecute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-1318"><a id="__codelineno-0-1318" name="__codelineno-0-1318"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">aclient</span><span class="o">.</span><span class="n">images</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span>
-</span><span id="__span-0-1319"><a id="__codelineno-0-1319" name="__codelineno-0-1319"></a>            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">sampling_run_params</span>
-</span><span id="__span-0-1320"><a id="__codelineno-0-1320" name="__codelineno-0-1320"></a>        <span class="p">)</span>
-</span><span id="__span-0-1321"><a id="__codelineno-0-1321" name="__codelineno-0-1321"></a>        <span class="k">return</span> <span class="n">model_output</span>
-</span><span id="__span-0-1322"><a id="__codelineno-0-1322" name="__codelineno-0-1322"></a>
-</span><span id="__span-0-1323"><a id="__codelineno-0-1323" name="__codelineno-0-1323"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_prepare_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">):</span>
-</span><span id="__span-0-1324"><a id="__codelineno-0-1324" name="__codelineno-0-1324"></a>        <span class="n">inputs</span> <span class="o">=</span> <span class="p">{}</span>
-</span><span id="__span-0-1325"><a id="__codelineno-0-1325" name="__codelineno-0-1325"></a>        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">)):</span>
-</span><span id="__span-0-1326"><a id="__codelineno-0-1326" name="__codelineno-0-1326"></a>            <span class="n">image</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span>
-</span><span id="__span-0-1327"><a id="__codelineno-0-1327" name="__codelineno-0-1327"></a>        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">encode_data_to_bytes</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">image</span><span class="p">]</span>
-</span><span id="__span-0-1328"><a id="__codelineno-0-1328" name="__codelineno-0-1328"></a>        <span class="k">if</span> <span class="n">mask</span><span class="p">:</span>
-</span><span id="__span-0-1329"><a id="__codelineno-0-1329" name="__codelineno-0-1329"></a>            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;mask&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">encode_data_to_bytes</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span>
-</span><span id="__span-0-1330"><a id="__codelineno-0-1330" name="__codelineno-0-1330"></a>        <span class="k">return</span> <span class="n">inputs</span>
-</span><span id="__span-0-1331"><a id="__codelineno-0-1331" name="__codelineno-0-1331"></a>
-</span><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
-</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a>        <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a>        <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
-</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>        <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>        <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>        <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>        <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Args:</span>
-</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a><span class="sd">        prompt:</span>
-</span><span id="__span-0-1343"><a id="__codelineno-0-1343" name="__codelineno-0-1343"></a><span class="sd">            A text description of the desired image(s).</span>
-</span><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a><span class="sd">        image:</span>
-</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a><span class="sd">            The image(s) to edit. Can be a path, an url or base64 string.</span>
-</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a><span class="sd">        mask:</span>
-</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a><span class="sd">            An additional image whose fully transparent areas</span>
-</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a><span class="sd">            (e.g. where alpha is zero) indicate where image</span>
-</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a><span class="sd">            should be edited. If there are multiple images provided,</span>
-</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a><span class="sd">            the mask will be applied on the first image.</span>
-</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a><span class="sd">        response_format:</span>
-</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a><span class="sd">            Format in which images are returned.</span>
-</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a><span class="sd">        n:</span>
-</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a><span class="sd">            The number of images to generate.</span>
-</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a><span class="sd">        &quot;&quot;&quot;</span>
-</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a>        <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a>
-</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a>            <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-</span><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a>                <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
-</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a>            <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
-</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a>
-</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a>        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
-</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a>        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
-</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a>        <span class="k">return</span> <span class="n">response</span>
-</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a>
-</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
-</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>        <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>        <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
-</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>        <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>        <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>        <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>        <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
-</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a><span class="sd">        prompt:</span>
-</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a><span class="sd">            A text description of the desired image(s).</span>
-</span><span id="__span-0-1379"><a id="__codelineno-0-1379" name="__codelineno-0-1379"></a><span class="sd">        image:</span>
-</span><span id="__span-0-1380"><a id="__codelineno-0-1380" name="__codelineno-0-1380"></a><span class="sd">            The image(s) to edit. Can be a path, an url or base64 string.</span>
-</span><span id="__span-0-1381"><a id="__codelineno-0-1381" name="__codelineno-0-1381"></a><span class="sd">        mask:</span>
-</span><span id="__span-0-1382"><a id="__codelineno-0-1382" name="__codelineno-0-1382"></a><span class="sd">            An additional image whose fully transparent areas</span>
-</span><span id="__span-0-1383"><a id="__codelineno-0-1383" name="__codelineno-0-1383"></a><span class="sd">            (e.g. where alpha is zero) indicate where image</span>
-</span><span id="__span-0-1384"><a id="__codelineno-0-1384" name="__codelineno-0-1384"></a><span class="sd">            should be edited. If there are multiple images provided,</span>
-</span><span id="__span-0-1385"><a id="__codelineno-0-1385" name="__codelineno-0-1385"></a><span class="sd">            the mask will be applied on the first image.</span>
-</span><span id="__span-0-1386"><a id="__codelineno-0-1386" name="__codelineno-0-1386"></a><span class="sd">        response_format:</span>
-</span><span id="__span-0-1387"><a id="__codelineno-0-1387" name="__codelineno-0-1387"></a><span class="sd">            Format in which images are returned.</span>
-</span><span id="__span-0-1388"><a id="__codelineno-0-1388" name="__codelineno-0-1388"></a><span class="sd">        n:</span>
-</span><span id="__span-0-1389"><a id="__codelineno-0-1389" name="__codelineno-0-1389"></a><span class="sd">            The number of images to generate.</span>
-</span><span id="__span-0-1390"><a id="__codelineno-0-1390" name="__codelineno-0-1390"></a><span class="sd">        &quot;&quot;&quot;</span>
-</span><span id="__span-0-1391"><a id="__codelineno-0-1391" name="__codelineno-0-1391"></a>        <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-1392"><a id="__codelineno-0-1392" name="__codelineno-0-1392"></a>
-</span><span id="__span-0-1393"><a id="__codelineno-0-1393" name="__codelineno-0-1393"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1394"><a id="__codelineno-0-1394" name="__codelineno-0-1394"></a>            <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-</span><span id="__span-0-1395"><a id="__codelineno-0-1395" name="__codelineno-0-1395"></a>                <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
-</span><span id="__span-0-1396"><a id="__codelineno-0-1396" name="__codelineno-0-1396"></a>            <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
-</span><span id="__span-0-1397"><a id="__codelineno-0-1397" name="__codelineno-0-1397"></a>
-</span><span id="__span-0-1398"><a id="__codelineno-0-1398" name="__codelineno-0-1398"></a>        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
-</span><span id="__span-0-1399"><a id="__codelineno-0-1399" name="__codelineno-0-1399"></a>        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
-</span><span id="__span-0-1400"><a id="__codelineno-0-1400" name="__codelineno-0-1400"></a>        <span class="k">return</span> <span class="n">response</span>
+<span class="normal"><a href="#__codelineno-0-1400">1400</a></span>
+<span class="normal"><a href="#__codelineno-0-1401">1401</a></span>
+<span class="normal"><a href="#__codelineno-0-1402">1402</a></span>
+<span class="normal"><a href="#__codelineno-0-1403">1403</a></span>
+<span class="normal"><a href="#__codelineno-0-1404">1404</a></span>
+<span class="normal"><a href="#__codelineno-0-1405">1405</a></span>
+<span class="normal"><a href="#__codelineno-0-1406">1406</a></span>
+<span class="normal"><a href="#__codelineno-0-1407">1407</a></span>
+<span class="normal"><a href="#__codelineno-0-1408">1408</a></span>
+<span class="normal"><a href="#__codelineno-0-1409">1409</a></span>
+<span class="normal"><a href="#__codelineno-0-1410">1410</a></span>
+<span class="normal"><a href="#__codelineno-0-1411">1411</a></span>
+<span class="normal"><a href="#__codelineno-0-1412">1412</a></span>
+<span class="normal"><a href="#__codelineno-0-1413">1413</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1322"><a id="__codelineno-0-1322" name="__codelineno-0-1322"></a><span class="nd">@register_model</span>
+</span><span id="__span-0-1323"><a id="__codelineno-0-1323" name="__codelineno-0-1323"></a><span class="k">class</span><span class="w"> </span><span class="nc">OpenAIImageTextToImage</span><span class="p">(</span><span class="n">ImageTextToImageModel</span><span class="p">,</span> <span class="n">OpenAITextToImage</span><span class="p">):</span>
+</span><span id="__span-0-1324"><a id="__codelineno-0-1324" name="__codelineno-0-1324"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;OpenAI Image Edit.&quot;&quot;&quot;</span>
+</span><span id="__span-0-1325"><a id="__codelineno-0-1325" name="__codelineno-0-1325"></a>
+</span><span id="__span-0-1326"><a id="__codelineno-0-1326" name="__codelineno-0-1326"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_execute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-1327"><a id="__codelineno-0-1327" name="__codelineno-0-1327"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">images</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">sampling_run_params</span><span class="p">)</span>
+</span><span id="__span-0-1328"><a id="__codelineno-0-1328" name="__codelineno-0-1328"></a>        <span class="k">return</span> <span class="n">model_output</span>
+</span><span id="__span-0-1329"><a id="__codelineno-0-1329" name="__codelineno-0-1329"></a>
+</span><span id="__span-0-1330"><a id="__codelineno-0-1330" name="__codelineno-0-1330"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_aexecute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-1331"><a id="__codelineno-0-1331" name="__codelineno-0-1331"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">aclient</span><span class="o">.</span><span class="n">images</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span>
+</span><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a>            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">sampling_run_params</span>
+</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a>        <span class="p">)</span>
+</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a>        <span class="k">return</span> <span class="n">model_output</span>
+</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a>
+</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_prepare_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">):</span>
+</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>        <span class="n">inputs</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">)):</span>
+</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>            <span class="n">image</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span>
+</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a>        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">encode_data_to_bytes</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">image</span><span class="p">]</span>
+</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a>        <span class="k">if</span> <span class="n">mask</span><span class="p">:</span>
+</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a>            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;mask&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">encode_data_to_bytes</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span>
+</span><span id="__span-0-1343"><a id="__codelineno-0-1343" name="__codelineno-0-1343"></a>        <span class="k">return</span> <span class="n">inputs</span>
+</span><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a>
+</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a>        <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a>        <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a>        <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a>        <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a>        <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a>        <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Args:</span>
+</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a><span class="sd">        prompt:</span>
+</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a><span class="sd">            A text description of the desired image(s).</span>
+</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a><span class="sd">        image:</span>
+</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a><span class="sd">            The image(s) to edit. Can be a path, an url or base64 string.</span>
+</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a><span class="sd">        mask:</span>
+</span><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a><span class="sd">            An additional image whose fully transparent areas</span>
+</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a><span class="sd">            (e.g. where alpha is zero) indicate where image</span>
+</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a><span class="sd">            should be edited. If there are multiple images provided,</span>
+</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a><span class="sd">            the mask will be applied on the first image.</span>
+</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a><span class="sd">        response_format:</span>
+</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a><span class="sd">            Format in which images are returned.</span>
+</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a><span class="sd">        n:</span>
+</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a><span class="sd">            The number of images to generate.</span>
+</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a><span class="sd">        &quot;&quot;&quot;</span>
+</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>        <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>
+</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>            <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>                <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
+</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>            <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
+</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a>
+</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a>        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a>        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a>        <span class="k">return</span> <span class="n">response</span>
+</span><span id="__span-0-1379"><a id="__codelineno-0-1379" name="__codelineno-0-1379"></a>
+</span><span id="__span-0-1380"><a id="__codelineno-0-1380" name="__codelineno-0-1380"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
+</span><span id="__span-0-1381"><a id="__codelineno-0-1381" name="__codelineno-0-1381"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-1382"><a id="__codelineno-0-1382" name="__codelineno-0-1382"></a>        <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-1383"><a id="__codelineno-0-1383" name="__codelineno-0-1383"></a>        <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+</span><span id="__span-0-1384"><a id="__codelineno-0-1384" name="__codelineno-0-1384"></a>        <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-1385"><a id="__codelineno-0-1385" name="__codelineno-0-1385"></a>        <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1386"><a id="__codelineno-0-1386" name="__codelineno-0-1386"></a>        <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1387"><a id="__codelineno-0-1387" name="__codelineno-0-1387"></a>        <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-1388"><a id="__codelineno-0-1388" name="__codelineno-0-1388"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-1389"><a id="__codelineno-0-1389" name="__codelineno-0-1389"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
+</span><span id="__span-0-1390"><a id="__codelineno-0-1390" name="__codelineno-0-1390"></a><span class="sd">        prompt:</span>
+</span><span id="__span-0-1391"><a id="__codelineno-0-1391" name="__codelineno-0-1391"></a><span class="sd">            A text description of the desired image(s).</span>
+</span><span id="__span-0-1392"><a id="__codelineno-0-1392" name="__codelineno-0-1392"></a><span class="sd">        image:</span>
+</span><span id="__span-0-1393"><a id="__codelineno-0-1393" name="__codelineno-0-1393"></a><span class="sd">            The image(s) to edit. Can be a path, an url or base64 string.</span>
+</span><span id="__span-0-1394"><a id="__codelineno-0-1394" name="__codelineno-0-1394"></a><span class="sd">        mask:</span>
+</span><span id="__span-0-1395"><a id="__codelineno-0-1395" name="__codelineno-0-1395"></a><span class="sd">            An additional image whose fully transparent areas</span>
+</span><span id="__span-0-1396"><a id="__codelineno-0-1396" name="__codelineno-0-1396"></a><span class="sd">            (e.g. where alpha is zero) indicate where image</span>
+</span><span id="__span-0-1397"><a id="__codelineno-0-1397" name="__codelineno-0-1397"></a><span class="sd">            should be edited. If there are multiple images provided,</span>
+</span><span id="__span-0-1398"><a id="__codelineno-0-1398" name="__codelineno-0-1398"></a><span class="sd">            the mask will be applied on the first image.</span>
+</span><span id="__span-0-1399"><a id="__codelineno-0-1399" name="__codelineno-0-1399"></a><span class="sd">        response_format:</span>
+</span><span id="__span-0-1400"><a id="__codelineno-0-1400" name="__codelineno-0-1400"></a><span class="sd">            Format in which images are returned.</span>
+</span><span id="__span-0-1401"><a id="__codelineno-0-1401" name="__codelineno-0-1401"></a><span class="sd">        n:</span>
+</span><span id="__span-0-1402"><a id="__codelineno-0-1402" name="__codelineno-0-1402"></a><span class="sd">            The number of images to generate.</span>
+</span><span id="__span-0-1403"><a id="__codelineno-0-1403" name="__codelineno-0-1403"></a><span class="sd">        &quot;&quot;&quot;</span>
+</span><span id="__span-0-1404"><a id="__codelineno-0-1404" name="__codelineno-0-1404"></a>        <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-1405"><a id="__codelineno-0-1405" name="__codelineno-0-1405"></a>
+</span><span id="__span-0-1406"><a id="__codelineno-0-1406" name="__codelineno-0-1406"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1407"><a id="__codelineno-0-1407" name="__codelineno-0-1407"></a>            <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1408"><a id="__codelineno-0-1408" name="__codelineno-0-1408"></a>                <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
+</span><span id="__span-0-1409"><a id="__codelineno-0-1409" name="__codelineno-0-1409"></a>            <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
+</span><span id="__span-0-1410"><a id="__codelineno-0-1410" name="__codelineno-0-1410"></a>
+</span><span id="__span-0-1411"><a id="__codelineno-0-1411" name="__codelineno-0-1411"></a>        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+</span><span id="__span-0-1412"><a id="__codelineno-0-1412" name="__codelineno-0-1412"></a>        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+</span><span id="__span-0-1413"><a id="__codelineno-0-1413" name="__codelineno-0-1413"></a>        <span class="k">return</span> <span class="n">response</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 
@@ -4657,20 +4657,7 @@ n:
 
             <details class="quote">
               <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1332">1332</a></span>
-<span class="normal"><a href="#__codelineno-0-1333">1333</a></span>
-<span class="normal"><a href="#__codelineno-0-1334">1334</a></span>
-<span class="normal"><a href="#__codelineno-0-1335">1335</a></span>
-<span class="normal"><a href="#__codelineno-0-1336">1336</a></span>
-<span class="normal"><a href="#__codelineno-0-1337">1337</a></span>
-<span class="normal"><a href="#__codelineno-0-1338">1338</a></span>
-<span class="normal"><a href="#__codelineno-0-1339">1339</a></span>
-<span class="normal"><a href="#__codelineno-0-1340">1340</a></span>
-<span class="normal"><a href="#__codelineno-0-1341">1341</a></span>
-<span class="normal"><a href="#__codelineno-0-1342">1342</a></span>
-<span class="normal"><a href="#__codelineno-0-1343">1343</a></span>
-<span class="normal"><a href="#__codelineno-0-1344">1344</a></span>
-<span class="normal"><a href="#__codelineno-0-1345">1345</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1345">1345</a></span>
 <span class="normal"><a href="#__codelineno-0-1346">1346</a></span>
 <span class="normal"><a href="#__codelineno-0-1347">1347</a></span>
 <span class="normal"><a href="#__codelineno-0-1348">1348</a></span>
@@ -4690,40 +4677,53 @@ n:
 <span class="normal"><a href="#__codelineno-0-1362">1362</a></span>
 <span class="normal"><a href="#__codelineno-0-1363">1363</a></span>
 <span class="normal"><a href="#__codelineno-0-1364">1364</a></span>
-<span class="normal"><a href="#__codelineno-0-1365">1365</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a><span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
-</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a>    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a>    <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
-</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>    <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>    <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>    <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Args:</span>
-</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a><span class="sd">    prompt:</span>
-</span><span id="__span-0-1343"><a id="__codelineno-0-1343" name="__codelineno-0-1343"></a><span class="sd">        A text description of the desired image(s).</span>
-</span><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a><span class="sd">    image:</span>
-</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a><span class="sd">        The image(s) to edit. Can be a path, an url or base64 string.</span>
-</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a><span class="sd">    mask:</span>
-</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a><span class="sd">        An additional image whose fully transparent areas</span>
-</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a><span class="sd">        (e.g. where alpha is zero) indicate where image</span>
-</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a><span class="sd">        should be edited. If there are multiple images provided,</span>
-</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a><span class="sd">        the mask will be applied on the first image.</span>
-</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a><span class="sd">    response_format:</span>
-</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a><span class="sd">        Format in which images are returned.</span>
-</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a><span class="sd">    n:</span>
-</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a><span class="sd">        The number of images to generate.</span>
-</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a>    <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a>
-</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a>    <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-</span><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a>            <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
-</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a>        <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
-</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a>
-</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a>    <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
-</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a>    <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
-</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a>    <span class="k">return</span> <span class="n">response</span>
+<span class="normal"><a href="#__codelineno-0-1365">1365</a></span>
+<span class="normal"><a href="#__codelineno-0-1366">1366</a></span>
+<span class="normal"><a href="#__codelineno-0-1367">1367</a></span>
+<span class="normal"><a href="#__codelineno-0-1368">1368</a></span>
+<span class="normal"><a href="#__codelineno-0-1369">1369</a></span>
+<span class="normal"><a href="#__codelineno-0-1370">1370</a></span>
+<span class="normal"><a href="#__codelineno-0-1371">1371</a></span>
+<span class="normal"><a href="#__codelineno-0-1372">1372</a></span>
+<span class="normal"><a href="#__codelineno-0-1373">1373</a></span>
+<span class="normal"><a href="#__codelineno-0-1374">1374</a></span>
+<span class="normal"><a href="#__codelineno-0-1375">1375</a></span>
+<span class="normal"><a href="#__codelineno-0-1376">1376</a></span>
+<span class="normal"><a href="#__codelineno-0-1377">1377</a></span>
+<span class="normal"><a href="#__codelineno-0-1378">1378</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a><span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a>    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a>    <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a>    <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a>    <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a>    <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Args:</span>
+</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a><span class="sd">    prompt:</span>
+</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a><span class="sd">        A text description of the desired image(s).</span>
+</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a><span class="sd">    image:</span>
+</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a><span class="sd">        The image(s) to edit. Can be a path, an url or base64 string.</span>
+</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a><span class="sd">    mask:</span>
+</span><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a><span class="sd">        An additional image whose fully transparent areas</span>
+</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a><span class="sd">        (e.g. where alpha is zero) indicate where image</span>
+</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a><span class="sd">        should be edited. If there are multiple images provided,</span>
+</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a><span class="sd">        the mask will be applied on the first image.</span>
+</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a><span class="sd">    response_format:</span>
+</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a><span class="sd">        Format in which images are returned.</span>
+</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a><span class="sd">    n:</span>
+</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a><span class="sd">        The number of images to generate.</span>
+</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>    <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>
+</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>    <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>            <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
+</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>        <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
+</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a>
+</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a>    <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a>    <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a>    <span class="k">return</span> <span class="n">response</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -4767,20 +4767,7 @@ n:
 
             <details class="quote">
               <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1367">1367</a></span>
-<span class="normal"><a href="#__codelineno-0-1368">1368</a></span>
-<span class="normal"><a href="#__codelineno-0-1369">1369</a></span>
-<span class="normal"><a href="#__codelineno-0-1370">1370</a></span>
-<span class="normal"><a href="#__codelineno-0-1371">1371</a></span>
-<span class="normal"><a href="#__codelineno-0-1372">1372</a></span>
-<span class="normal"><a href="#__codelineno-0-1373">1373</a></span>
-<span class="normal"><a href="#__codelineno-0-1374">1374</a></span>
-<span class="normal"><a href="#__codelineno-0-1375">1375</a></span>
-<span class="normal"><a href="#__codelineno-0-1376">1376</a></span>
-<span class="normal"><a href="#__codelineno-0-1377">1377</a></span>
-<span class="normal"><a href="#__codelineno-0-1378">1378</a></span>
-<span class="normal"><a href="#__codelineno-0-1379">1379</a></span>
-<span class="normal"><a href="#__codelineno-0-1380">1380</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1380">1380</a></span>
 <span class="normal"><a href="#__codelineno-0-1381">1381</a></span>
 <span class="normal"><a href="#__codelineno-0-1382">1382</a></span>
 <span class="normal"><a href="#__codelineno-0-1383">1383</a></span>
@@ -4800,40 +4787,53 @@ n:
 <span class="normal"><a href="#__codelineno-0-1397">1397</a></span>
 <span class="normal"><a href="#__codelineno-0-1398">1398</a></span>
 <span class="normal"><a href="#__codelineno-0-1399">1399</a></span>
-<span class="normal"><a href="#__codelineno-0-1400">1400</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
-</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>    <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
-</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>    <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>    <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>    <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
-</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a><span class="sd">    prompt:</span>
-</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a><span class="sd">        A text description of the desired image(s).</span>
-</span><span id="__span-0-1379"><a id="__codelineno-0-1379" name="__codelineno-0-1379"></a><span class="sd">    image:</span>
-</span><span id="__span-0-1380"><a id="__codelineno-0-1380" name="__codelineno-0-1380"></a><span class="sd">        The image(s) to edit. Can be a path, an url or base64 string.</span>
-</span><span id="__span-0-1381"><a id="__codelineno-0-1381" name="__codelineno-0-1381"></a><span class="sd">    mask:</span>
-</span><span id="__span-0-1382"><a id="__codelineno-0-1382" name="__codelineno-0-1382"></a><span class="sd">        An additional image whose fully transparent areas</span>
-</span><span id="__span-0-1383"><a id="__codelineno-0-1383" name="__codelineno-0-1383"></a><span class="sd">        (e.g. where alpha is zero) indicate where image</span>
-</span><span id="__span-0-1384"><a id="__codelineno-0-1384" name="__codelineno-0-1384"></a><span class="sd">        should be edited. If there are multiple images provided,</span>
-</span><span id="__span-0-1385"><a id="__codelineno-0-1385" name="__codelineno-0-1385"></a><span class="sd">        the mask will be applied on the first image.</span>
-</span><span id="__span-0-1386"><a id="__codelineno-0-1386" name="__codelineno-0-1386"></a><span class="sd">    response_format:</span>
-</span><span id="__span-0-1387"><a id="__codelineno-0-1387" name="__codelineno-0-1387"></a><span class="sd">        Format in which images are returned.</span>
-</span><span id="__span-0-1388"><a id="__codelineno-0-1388" name="__codelineno-0-1388"></a><span class="sd">    n:</span>
-</span><span id="__span-0-1389"><a id="__codelineno-0-1389" name="__codelineno-0-1389"></a><span class="sd">        The number of images to generate.</span>
-</span><span id="__span-0-1390"><a id="__codelineno-0-1390" name="__codelineno-0-1390"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1391"><a id="__codelineno-0-1391" name="__codelineno-0-1391"></a>    <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-1392"><a id="__codelineno-0-1392" name="__codelineno-0-1392"></a>
-</span><span id="__span-0-1393"><a id="__codelineno-0-1393" name="__codelineno-0-1393"></a>    <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1394"><a id="__codelineno-0-1394" name="__codelineno-0-1394"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-</span><span id="__span-0-1395"><a id="__codelineno-0-1395" name="__codelineno-0-1395"></a>            <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
-</span><span id="__span-0-1396"><a id="__codelineno-0-1396" name="__codelineno-0-1396"></a>        <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
-</span><span id="__span-0-1397"><a id="__codelineno-0-1397" name="__codelineno-0-1397"></a>
-</span><span id="__span-0-1398"><a id="__codelineno-0-1398" name="__codelineno-0-1398"></a>    <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
-</span><span id="__span-0-1399"><a id="__codelineno-0-1399" name="__codelineno-0-1399"></a>    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
-</span><span id="__span-0-1400"><a id="__codelineno-0-1400" name="__codelineno-0-1400"></a>    <span class="k">return</span> <span class="n">response</span>
+<span class="normal"><a href="#__codelineno-0-1400">1400</a></span>
+<span class="normal"><a href="#__codelineno-0-1401">1401</a></span>
+<span class="normal"><a href="#__codelineno-0-1402">1402</a></span>
+<span class="normal"><a href="#__codelineno-0-1403">1403</a></span>
+<span class="normal"><a href="#__codelineno-0-1404">1404</a></span>
+<span class="normal"><a href="#__codelineno-0-1405">1405</a></span>
+<span class="normal"><a href="#__codelineno-0-1406">1406</a></span>
+<span class="normal"><a href="#__codelineno-0-1407">1407</a></span>
+<span class="normal"><a href="#__codelineno-0-1408">1408</a></span>
+<span class="normal"><a href="#__codelineno-0-1409">1409</a></span>
+<span class="normal"><a href="#__codelineno-0-1410">1410</a></span>
+<span class="normal"><a href="#__codelineno-0-1411">1411</a></span>
+<span class="normal"><a href="#__codelineno-0-1412">1412</a></span>
+<span class="normal"><a href="#__codelineno-0-1413">1413</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1380"><a id="__codelineno-0-1380" name="__codelineno-0-1380"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
+</span><span id="__span-0-1381"><a id="__codelineno-0-1381" name="__codelineno-0-1381"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-1382"><a id="__codelineno-0-1382" name="__codelineno-0-1382"></a>    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-1383"><a id="__codelineno-0-1383" name="__codelineno-0-1383"></a>    <span class="n">image</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+</span><span id="__span-0-1384"><a id="__codelineno-0-1384" name="__codelineno-0-1384"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-1385"><a id="__codelineno-0-1385" name="__codelineno-0-1385"></a>    <span class="n">mask</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1386"><a id="__codelineno-0-1386" name="__codelineno-0-1386"></a>    <span class="n">response_format</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">,</span> <span class="s2">&quot;base64&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1387"><a id="__codelineno-0-1387" name="__codelineno-0-1387"></a>    <span class="n">n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-1388"><a id="__codelineno-0-1388" name="__codelineno-0-1388"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-1389"><a id="__codelineno-0-1389" name="__codelineno-0-1389"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
+</span><span id="__span-0-1390"><a id="__codelineno-0-1390" name="__codelineno-0-1390"></a><span class="sd">    prompt:</span>
+</span><span id="__span-0-1391"><a id="__codelineno-0-1391" name="__codelineno-0-1391"></a><span class="sd">        A text description of the desired image(s).</span>
+</span><span id="__span-0-1392"><a id="__codelineno-0-1392" name="__codelineno-0-1392"></a><span class="sd">    image:</span>
+</span><span id="__span-0-1393"><a id="__codelineno-0-1393" name="__codelineno-0-1393"></a><span class="sd">        The image(s) to edit. Can be a path, an url or base64 string.</span>
+</span><span id="__span-0-1394"><a id="__codelineno-0-1394" name="__codelineno-0-1394"></a><span class="sd">    mask:</span>
+</span><span id="__span-0-1395"><a id="__codelineno-0-1395" name="__codelineno-0-1395"></a><span class="sd">        An additional image whose fully transparent areas</span>
+</span><span id="__span-0-1396"><a id="__codelineno-0-1396" name="__codelineno-0-1396"></a><span class="sd">        (e.g. where alpha is zero) indicate where image</span>
+</span><span id="__span-0-1397"><a id="__codelineno-0-1397" name="__codelineno-0-1397"></a><span class="sd">        should be edited. If there are multiple images provided,</span>
+</span><span id="__span-0-1398"><a id="__codelineno-0-1398" name="__codelineno-0-1398"></a><span class="sd">        the mask will be applied on the first image.</span>
+</span><span id="__span-0-1399"><a id="__codelineno-0-1399" name="__codelineno-0-1399"></a><span class="sd">    response_format:</span>
+</span><span id="__span-0-1400"><a id="__codelineno-0-1400" name="__codelineno-0-1400"></a><span class="sd">        Format in which images are returned.</span>
+</span><span id="__span-0-1401"><a id="__codelineno-0-1401" name="__codelineno-0-1401"></a><span class="sd">    n:</span>
+</span><span id="__span-0-1402"><a id="__codelineno-0-1402" name="__codelineno-0-1402"></a><span class="sd">        The number of images to generate.</span>
+</span><span id="__span-0-1403"><a id="__codelineno-0-1403" name="__codelineno-0-1403"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1404"><a id="__codelineno-0-1404" name="__codelineno-0-1404"></a>    <span class="n">generation_params</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">n</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-1405"><a id="__codelineno-0-1405" name="__codelineno-0-1405"></a>
+</span><span id="__span-0-1406"><a id="__codelineno-0-1406" name="__codelineno-0-1406"></a>    <span class="k">if</span> <span class="n">response_format</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1407"><a id="__codelineno-0-1407" name="__codelineno-0-1407"></a>        <span class="k">if</span> <span class="n">response_format</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1408"><a id="__codelineno-0-1408" name="__codelineno-0-1408"></a>            <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;b64_json&quot;</span>
+</span><span id="__span-0-1409"><a id="__codelineno-0-1409" name="__codelineno-0-1409"></a>        <span class="n">generation_params</span><span class="o">.</span><span class="n">response_format</span> <span class="o">=</span> <span class="n">response_format</span>
+</span><span id="__span-0-1410"><a id="__codelineno-0-1410" name="__codelineno-0-1410"></a>
+</span><span id="__span-0-1411"><a id="__codelineno-0-1411" name="__codelineno-0-1411"></a>    <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_inputs</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">mask</span><span class="p">)</span>
+</span><span id="__span-0-1412"><a id="__codelineno-0-1412" name="__codelineno-0-1412"></a>    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="o">**</span><span class="n">generation_params</span><span class="p">,</span> <span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+</span><span id="__span-0-1413"><a id="__codelineno-0-1413" name="__codelineno-0-1413"></a>    <span class="k">return</span> <span class="n">response</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
