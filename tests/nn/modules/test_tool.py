@@ -853,7 +853,9 @@ class TestToolLibrary:
 
         local_tool = _convert_module_to_nn_tool(agent)
 
-        assert _should_copy_injected_messages(local_tool, local_tool.tool_config) is True
+        assert (
+            _should_copy_injected_messages(local_tool, local_tool.tool_config) is True
+        )
 
     def test_tool_library_with_inject_message(self):
         """Test ToolLibrary with inject_message config."""
