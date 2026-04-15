@@ -1,4 +1,3 @@
-from copy import deepcopy
 from datetime import datetime, timezone
 from inspect import cleandoc
 from typing import (
@@ -532,7 +531,7 @@ class Agent(Module, metaclass=AutoParams):
                 system_prompt = flow_control_tools
 
         model_execution_params = dotdict(
-            messages=deepcopy(messages),
+            messages=messages,
             system_prompt=system_prompt or None,
             prefilling=prefilling,
             stream=self.config.get("stream", False),
@@ -548,20 +547,19 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Response Processing ---
 
-    def _ensure_stream_response_ready(self, model_response: ModelStreamResponse) -> None:
+    def _ensure_stream_response_ready(
+        self, model_response: ModelStreamResponse
+    ) -> None:
         if model_response.response_type is not None:
             return
 
         error = getattr(model_response, "error", None)
         if error is not None:
             raise RuntimeError(
-                "Model stream failed before producing a response: "
-                f"{error}"
+                f"Model stream failed before producing a response: {error}"
             ) from error
 
-        raise RuntimeError(
-            "Model stream ended before producing a response type."
-        )
+        raise RuntimeError("Model stream ended before producing a response type.")
 
     def _process_model_response(
         self,
@@ -1159,7 +1157,7 @@ class Agent(Module, metaclass=AutoParams):
                     task_template = self.templates["task"]
                     if is_jinja_template(task_template) and not has_format_placeholder(
                         task_template
-                    ):  # noqa: E501
+                    ):
                         raise ValueError(
                             f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
                             "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
@@ -1229,7 +1227,7 @@ class Agent(Module, metaclass=AutoParams):
                     task_template = self.templates["task"]
                     if is_jinja_template(task_template) and not has_format_placeholder(
                         task_template
-                    ):  # noqa: E501
+                    ):
                         raise ValueError(
                             f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
                             "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
