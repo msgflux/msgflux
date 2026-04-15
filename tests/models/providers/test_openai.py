@@ -366,6 +366,93 @@ class TestOpenAIChatCompletion:
         }
         assert params["parallel_tool_calls"] is model.parallel_tool_calls
 
+    def test_build_generation_params_does_not_mutate_messages(
+        self, mock_openai_client
+    ):
+        """Provider-side system prompt injection must not mutate caller history."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        history = [{"role": "user", "content": "Hello"}]
+
+        params = model._build_generation_params(
+            messages=history,
+            system_prompt="You are helpful.",
+            prefilling=None,
+            tool_definitions=None,
+        )
+
+        assert history == [{"role": "user", "content": "Hello"}]
+        assert params["messages"][0]["role"] == "system"
+        assert params["messages"][1] == history[0]
+
+    def test_call_prefilling_does_not_mutate_messages(self, mock_openai_client):
+        """Provider-side prefilling must not mutate caller history."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        history = [{"role": "user", "content": "Hello"}]
+
+        response = model(messages=history, prefilling="Start here")
+
+        assert response.data == "done"
+        assert history == [{"role": "user", "content": "Hello"}]
+
+    @pytest.mark.asyncio
+    async def test_acall_prefilling_does_not_mutate_messages(
+        self, mock_openai_client
+    ):
+        """Async provider-side prefilling must not mutate caller history."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content="done",
+                            tool_calls=None,
+                            audio=None,
+                            annotations=None,
+                        ),
+                    )
+                ],
+            )
+        )
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        history = [{"role": "user", "content": "Hello"}]
+
+        response = await model.acall(messages=history, prefilling="Start here")
+
+        assert response.data == "done"
+        assert history == [{"role": "user", "content": "Hello"}]
+
     def test_process_completion_model_output_restores_dict_shape(
         self, mock_openai_client
     ):

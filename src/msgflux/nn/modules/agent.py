@@ -1,4 +1,3 @@
-from copy import deepcopy
 from datetime import datetime, timezone
 from inspect import cleandoc
 from typing import (
@@ -532,7 +531,7 @@ class Agent(Module, metaclass=AutoParams):
                 system_prompt = flow_control_tools
 
         model_execution_params = dotdict(
-            messages=deepcopy(messages),
+            messages=messages,
             system_prompt=system_prompt or None,
             prefilling=prefilling,
             stream=self.config.get("stream", False),

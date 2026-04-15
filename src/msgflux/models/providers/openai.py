@@ -1,6 +1,7 @@
 import base64
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
+from copy import deepcopy
 from functools import partial
 from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Union
@@ -329,20 +330,28 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         stream_response.add_reasoning(chunk)
 
     def _execute_model(self, **kwargs):
-        prefilling = kwargs.pop("prefilling")
-        if prefilling:
-            kwargs.get("messages").append({"role": "assistant", "content": prefilling})
+        prefilling = kwargs.get("prefilling")
         params = {**kwargs, **self.sampling_run_params}
+        params.pop("prefilling", None)
+        if prefilling:
+            params["messages"] = [
+                *params["messages"],
+                {"role": "assistant", "content": prefilling},
+            ]
         adapted_params = self._adapt_params(params)
         model_output = self.client.chat.completions.create(**adapted_params)
 
         return model_output
 
     async def _aexecute_model(self, **kwargs):
-        prefilling = kwargs.pop("prefilling")
-        if prefilling:
-            kwargs.get("messages").append({"role": "assistant", "content": prefilling})
+        prefilling = kwargs.get("prefilling")
         params = {**kwargs, **self.sampling_run_params}
+        params.pop("prefilling", None)
+        if prefilling:
+            params["messages"] = [
+                *params["messages"],
+                {"role": "assistant", "content": prefilling},
+            ]
         adapted_params = self._adapt_params(params)
         model_output = await self.aclient.chat.completions.create(**adapted_params)
 
@@ -750,6 +759,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     ) -> Dict[str, Any]:
         if isinstance(messages, str):
             messages = [ChatBlock.user(messages)]
+        else:
+            messages = deepcopy(messages)
         if isinstance(system_prompt, str):
             messages.insert(0, ChatBlock.system(system_prompt))
 
