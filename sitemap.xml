@@ -2,482 +2,482 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://msgflux.com/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/CHANGELOG/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/changelog/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/dependency-management/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/_includes/init_chat_completion_model/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/_includes/install/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/_includes/install_openai/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/agent/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/chat-schema-utils/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/dict-lowering-and-restoration/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/logical-vs-provider-schema/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/msgspec-transport-lowering/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/openai-chat-completion/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/react-provider-schemas/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/signatures/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/tool-flow-control/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/anatomy/tool-library/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/databases/database/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/databases/types/kv/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/databases/types/vector/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/model/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/model_gateway/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/chat_completion/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/image_classifier/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/image_embedder/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/image_text_to_image/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/moderation/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/speech_to_text/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/text_classifier/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/text_embedder/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/text_reranker/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/text_to_image/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/models/types/text_to_speech/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/functional/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/agent/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/module/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/module_dict/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/module_list/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/predictor/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/searcher/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/sequential/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/speaker/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/tool/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/api-reference/nn/modules/transcriber/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/blog/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/blog/2026/04/09/why-msgflux-exists/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/dotdict/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/inline/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/parsers/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/telemetry/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/chat_completion/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/image_text_to_image/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/model/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/model_gateway/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/moderation/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/speech_to_text/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/text_classifier/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/text_embedder/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/text_reranker/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/text_to_image/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/models/text_to_speech/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/functional/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/mediamaker/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/message/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/predictor/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/searcher/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/speaker/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/transcriber/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/async/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/debug/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/generation-schemas/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/hooks/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/model-gateway/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/prefilling/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/quickstart/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/reasoning/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/signatures/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/streaming/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/system-prompt/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/task-and-context/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/tools/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/agent/vars/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/composing/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/core-concepts/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/forward-and-async/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/module-dict/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/module-list/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/sequential/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/nn/module/visualization/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/retrievers/fuzzy/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/retrievers/lexical/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/retrievers/retriever/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/learn/retrievers/web/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/ad-focus-group/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/advisor-specialist-tool/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/call-transcript-analysis/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/deal-briefing-generator/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/email-auto-responder/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/food-delivery-assistant/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/intent-router/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/lead-scoring/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/meeting-action-items/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/meeting-assistant/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/pix-assistant/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/plan-tool-with-root-context/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/product-poster/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/restaurant-supply-assistant/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/signature-router/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/streaming-support-triage/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/support-ticket-router/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/visit-report/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/workplace-incident-reporter/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/tutorials/youtube-cut-detector/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/blog/archive/2026/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
     <url>
          <loc>https://msgflux.com/blog/category/architecture/</loc>
-         <lastmod>2026-04-15</lastmod>
+         <lastmod>2026-04-17</lastmod>
     </url>
 </urlset>
