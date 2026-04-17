@@ -20,5 +20,7 @@ jobs:
     steps:
       - name: Update Release Draft
         uses: release-drafter/release-drafter@v7
+        with:
+          commitish: ${{ github.event.pull_request.base.ref || github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
