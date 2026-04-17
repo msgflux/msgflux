@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Parse command
         id: command
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const comment = context.payload.comment.body.toLowerCase().trim();
@@ -50,7 +50,7 @@ jobs:
 
       - name: React to comment
         if: steps.command.outputs.should_merge == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             // Add rocket emoji to show bot is processing
@@ -64,7 +64,7 @@ jobs:
       - name: Check permissions
         if: steps.command.outputs.should_merge == 'true'
         id: check_perms
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const user = context.payload.comment.user.login;
@@ -102,7 +102,7 @@ jobs:
       - name: Get PR info
         if: steps.check_perms.outputs.has_permission == 'true'
         id: pr_info
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -124,7 +124,7 @@ jobs:
       - name: Check if PR is ready
         if: steps.check_perms.outputs.has_permission == 'true'
         id: ready
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const mergeable = '${{ steps.pr_info.outputs.mergeable }}';
@@ -157,7 +157,7 @@ jobs:
       - name: Wait for checks
         if: steps.ready.outputs.ready == 'true'
         id: wait_checks
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const sha = '${{ steps.pr_info.outputs.sha }}';
@@ -218,7 +218,7 @@ jobs:
 
       - name: Merge PR
         if: steps.wait_checks.outputs.checks_passed == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const user = context.payload.comment.user.login;
@@ -262,7 +262,7 @@ jobs:
 
       - name: Delete branch
         if: steps.wait_checks.outputs.checks_passed == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({

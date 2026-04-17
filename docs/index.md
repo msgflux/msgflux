@@ -147,7 +147,7 @@ On top of this interaction model, msgFlux deliberately distinguishes between **p
         signature = ClassifySentiment
 
     classifier = Classifier()
-    result = classifier("I loved the movie, but the ending was disappointing.")
+    result = classifier(sentence="I loved the movie, but the ending was disappointing.")
     # {'sentiment': 'neutral', 'confidence': 0.75}
     ```
 
@@ -239,13 +239,13 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         # From URL
         response = agent(
             "Summarize the key contributions of this paper.",
-            task_multimodal_inputs={"file": "https://arxiv.org/pdf/2106.09685.pdf"}
+            task_multimodal={"file": "https://arxiv.org/pdf/2106.09685.pdf"}
         )
 
         # From local file
         response = agent(
             "Summarize the key contributions of this paper.",
-            task_multimodal_inputs={"file": "./lora.pdf"}
+            task_multimodal={"file": "./lora.pdf"}
         )
         ```
 
@@ -270,7 +270,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
             config = {"verbose": True}
 
         extractor = Extractor()
-        result = extractor("The new iPhone has an amazing camera but the battery life is disappointing.")
+        result = extractor(text="The new iPhone has an amazing camera but the battery life is disappointing.")
         ```
 
         **Possible Output:**
