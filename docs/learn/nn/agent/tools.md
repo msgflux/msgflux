@@ -241,6 +241,86 @@ When the model decides to use a tool, the Agent intercepts the response, execute
         response = agent("Tell me about the history of the Python programming language")
         ```
 
+### Registry
+
+Use `mf.Registry` to collect tools with a decorator instead of building a list by hand.
+This is especially useful when tools are spread across multiple files or when you want
+to keep them decoupled from the agent definition.
+
+```python
+import msgflux as mf
+
+tools = mf.Registry()
+
+@tools
+def add(a: float, b: float) -> str:
+    """Sum two numbers.
+
+    Args:
+        a: First number.
+        b: Second number.
+
+    Returns:
+        The result of the addition.
+    """
+    return f"{a} + {b} = {a + b}"
+
+@tools(name="multiply")
+def mul(a: float, b: float) -> str:
+    """Multiply two numbers.
+
+    Args:
+        a: First number.
+        b: Second number.
+
+    Returns:
+        The result of the multiplication.
+    """
+    return f"{a} * {b} = {a * b}"
+
+print(tools.to_list())   # [<function add ...>, <function mul ...>]
+print(tools.to_items())  # {"add": <function add ...>, "multiply": <function mul ...>}
+```
+
+The decorator captures the callable's name automatically (`.__name__` for functions,
+`.name` attribute if available). Pass `name=` to override:
+
+| Usage | Captured name |
+|-------|---------------|
+| `@tools` | `add` (from `__name__`) |
+| `@tools("custom")` | `custom` |
+| `@tools(name="custom")` | `custom` |
+
+Pass the registry directly to an Agent:
+
+```python
+import msgflux.nn as nn
+
+class Calculator(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    tools = tools.to_list()
+```
+
+You can have multiple independent registries — each is an isolated instance:
+
+```python
+read_tools = mf.Registry()
+write_tools = mf.Registry()
+
+@read_tools
+def get_data(key: str) -> str:
+    """Retrieve data by key."""
+    return f"value_for_{key}"
+
+@write_tools
+def save_data(key: str, value: str) -> str:
+    """Persist a key-value pair."""
+    return f"saved {key}={value}"
+
+print(len(read_tools))   # 1
+print(len(write_tools))  # 1
+```
+
 ### Writing Good Tools
 
 #### Tool Names
