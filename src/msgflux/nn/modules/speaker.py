@@ -4,6 +4,7 @@ from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.exceptions import _GuardInterrupt
+from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import TextToSpeechModel
@@ -16,7 +17,7 @@ class Speaker(Module, metaclass=AutoParams):
 
     def __init__(
         self,
-        model: Union[TextToSpeechModel, ModelGateway],
+        model: Union[TextToSpeechModel, ModelGateway, str],
         *,
         hooks: Optional[list] = None,
         message_fields: Optional[Dict[str, Any]] = None,
@@ -32,7 +33,11 @@ class Speaker(Module, metaclass=AutoParams):
 
         Args:
         model:
-            Text-to-Speech Model client.
+            Text-to-Speech model client. Accepts a `TextToSpeechModel`,
+            `ModelGateway`, or a shorthand string in the form
+            ``"provider/model-id"`` (e.g. ``"openai/gpt-4o-mini-tts"``).
+            When a string is provided, `Model.text_to_speech` is called
+            internally with no extra configuration.
         hooks:
             List of Hook instances to register on the model.
         message_fields:
@@ -183,7 +188,9 @@ class Speaker(Module, metaclass=AutoParams):
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 
-    def _set_model(self, model: Union[TextToSpeechModel, ModelGateway]):
+    def _set_model(self, model: Union[TextToSpeechModel, ModelGateway, str]):
+        if isinstance(model, str):
+            model = Model.text_to_speech(model)
         if model.model_type == "text_to_speech":
             self.generator = Generator(model)
         else:
@@ -195,6 +202,10 @@ class Speaker(Module, metaclass=AutoParams):
     def model(self):
         """Access underlying model."""
         return self.generator.model
+
+    @model.setter
+    def model(self, value: Union[TextToSpeechModel, ModelGateway, str]):
+        self._set_model(value)
 
     def _set_response_format(self, response_format: str):
         supported_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
