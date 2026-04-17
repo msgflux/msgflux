@@ -2204,6 +2204,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#string-shorthand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        String shorthand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#2-input-types" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4420,6 +4431,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#string-shorthand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        String shorthand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#2-input-types" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4629,6 +4651,26 @@ The `nn.Transcriber` module wraps speech-to-text models to **transcribe audio** 
         )
         result = transcriber(&quot;/path/to/audio.mp3&quot;)
         ```
+
+## String shorthand
+
+When you do not need to configure extra model parameters, you can pass a
+`&quot;provider/model-id&quot;` string directly as the `model` argument. msgFlux will
+call `Model.speech_to_text` internally.
+
+```python
+import msgflux.nn as nn
+
+transcriber = nn.Transcriber(&quot;openai/whisper-1&quot;)
+result = transcriber(&quot;/path/to/audio.mp3&quot;)
+```
+
+The shorthand also works when reassigning `transcriber.model` after
+construction:
+
+```python
+transcriber.model = &quot;openai/whisper-1&quot;
+```
 
 ---
 
@@ -4895,6 +4937,19 @@ print(params)
 </div>
 </div>
 </div>
+<h2 id="string-shorthand">String shorthand</h2>
+<p>When you do not need to configure extra model parameters, you can pass a
+<code>"provider/model-id"</code> string directly as the <code>model</code> argument. msgFlux will
+call <code>Model.speech_to_text</code> internally.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The shorthand also works when reassigning <code>transcriber.model</code> after
+construction:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">transcriber</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="s2">&quot;openai/whisper-1&quot;</span>
+</span></code></pre></div>
 <hr />
 <h2 id="2-input-types">2. <strong>Input Types</strong></h2>
 <div class="admonition info">
@@ -4902,35 +4957,35 @@ print(params)
 <div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">File path</label><label for="__tabbed_2_2">URL</label><label for="__tabbed_2_3">Bytes</label><label for="__tabbed_2_4">Message</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;https://example.com/audio.wav&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;https://example.com/audio.wav&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;audio.mp3&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">audio_bytes</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="n">audio_bytes</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;audio.mp3&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">audio_bytes</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="n">audio_bytes</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <p>Extract audio from a structured message via <code>message_fields</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Speech2Text</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">model</span>          <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">message_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;task_multimodal&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;audio&quot;</span><span class="p">:</span> <span class="s2">&quot;user_audio&quot;</span><span class="p">}}</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">response_mode</span>  <span class="o">=</span> <span class="s2">&quot;transcription&quot;</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">Speech2Text</span><span class="p">()</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="n">msg</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">(</span><span class="n">user_audio</span><span class="o">=</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="n">transcriber</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">transcription</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Speech2Text</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">model</span>          <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">message_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;task_multimodal&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;audio&quot;</span><span class="p">:</span> <span class="s2">&quot;user_audio&quot;</span><span class="p">}}</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">response_mode</span>  <span class="o">=</span> <span class="s2">&quot;transcription&quot;</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">Speech2Text</span><span class="p">()</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="n">msg</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">(</span><span class="n">user_audio</span><span class="o">=</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="n">transcriber</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">transcription</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -4984,35 +5039,35 @@ print(params)
 <div class="tabbed-content">
 <div class="tabbed-block">
 <p>Specify the spoken language to improve accuracy and speed via <code>config</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">PortugueseTranscriber</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">model</span>  <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;language&quot;</span><span class="p">:</span> <span class="s2">&quot;pt&quot;</span><span class="p">}</span>  <span class="c1"># ISO 639-1 code</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">PortugueseTranscriber</span><span class="p">()</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;audio.mp3&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">PortugueseTranscriber</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">model</span>  <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;language&quot;</span><span class="p">:</span> <span class="s2">&quot;pt&quot;</span><span class="p">}</span>  <span class="c1"># ISO 639-1 code</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">PortugueseTranscriber</span><span class="p">()</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;audio.mp3&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <p>Request word or segment-level timestamps. Requires <code>response_format="verbose_json"</code> and <code>whisper-1</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TimestampTranscriber</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">model</span>           <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;verbose_json&quot;</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">config</span>          <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;timestamp_granularities&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;word&quot;</span><span class="p">]}</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">TimestampTranscriber</span><span class="p">()</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;audio.mp3&quot;</span><span class="p">)</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="c1"># result[&quot;text&quot;]  — full transcript</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="c1"># result[&quot;words&quot;] — [{&quot;word&quot;: &quot;Hello&quot;, &quot;start&quot;: 0.0, &quot;end&quot;: 0.5}, ...]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TimestampTranscriber</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">model</span>           <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;verbose_json&quot;</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">config</span>          <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;timestamp_granularities&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;word&quot;</span><span class="p">]}</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">TimestampTranscriber</span><span class="p">()</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">transcriber</span><span class="p">(</span><span class="s2">&quot;audio.mp3&quot;</span><span class="p">)</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># result[&quot;text&quot;]  — full transcript</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="c1"># result[&quot;words&quot;] — [{&quot;word&quot;: &quot;Hello&quot;, &quot;start&quot;: 0.0, &quot;end&quot;: 0.5}, ...]</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <p>Export directly as SRT or VTT for video workflows:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">SubtitleGenerator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">model</span>           <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;srt&quot;</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">gen</span> <span class="o">=</span> <span class="n">SubtitleGenerator</span><span class="p">()</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">srt_content</span> <span class="o">=</span> <span class="n">gen</span><span class="p">(</span><span class="s2">&quot;video_audio.mp3&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">SubtitleGenerator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">model</span>           <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">response_format</span> <span class="o">=</span> <span class="s2">&quot;srt&quot;</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">gen</span> <span class="o">=</span> <span class="n">SubtitleGenerator</span><span class="p">()</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">srt_content</span> <span class="o">=</span> <span class="n">gen</span><span class="p">(</span><span class="s2">&quot;video_audio.mp3&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -5023,42 +5078,42 @@ print(params)
 <p>Transcribers are often the first step in a voice processing pipeline.</p>
 <div class="admonition info">
 <p class="admonition-title">Transcriber → Agent pipeline</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Speech2Text</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">model</span>          <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">message_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;task_multimodal&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;audio&quot;</span><span class="p">:</span> <span class="s2">&quot;user_audio&quot;</span><span class="p">}}</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">response_mode</span>  <span class="o">=</span> <span class="s2">&quot;content&quot;</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
-</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">Analyzer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Analyzes the transcribed text.&quot;&quot;&quot;</span>
-</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">model</span>          <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="n">message_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;content&quot;</span><span class="p">}</span>
-</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="n">response_mode</span>  <span class="o">=</span> <span class="s2">&quot;analysis&quot;</span>
-</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>
-</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">Speech2Text</span><span class="p">()</span>
-</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="n">analyzer</span> <span class="o">=</span> <span class="n">Analyzer</span><span class="p">()</span>
-</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>
-</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="n">pipeline</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Inline</span><span class="p">(</span>
-</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="s2">&quot;{user_audio is not None? transcriber} -&gt; analyzer&quot;</span><span class="p">,</span>
-</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="p">{</span><span class="s2">&quot;transcriber&quot;</span><span class="p">:</span> <span class="n">transcriber</span><span class="p">,</span> <span class="s2">&quot;analyzer&quot;</span><span class="p">:</span> <span class="n">analyzer</span><span class="p">},</span>
-</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="p">)</span>
-</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>
-</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a><span class="n">msg</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">(</span><span class="n">user_audio</span><span class="o">=</span><span class="s2">&quot;/path/to/voice_note.mp3&quot;</span><span class="p">)</span>
-</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a><span class="n">pipeline</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
-</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transcript: </span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Analysis: </span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">analysis</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Speech2Text</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Transcriber</span><span class="p">):</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">model</span>          <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">speech_to_text</span><span class="p">(</span><span class="s2">&quot;openai/whisper-1&quot;</span><span class="p">)</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">message_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;task_multimodal&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;audio&quot;</span><span class="p">:</span> <span class="s2">&quot;user_audio&quot;</span><span class="p">}}</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">response_mode</span>  <span class="o">=</span> <span class="s2">&quot;content&quot;</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">Analyzer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Analyzes the transcribed text.&quot;&quot;&quot;</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="n">model</span>          <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="n">message_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;content&quot;</span><span class="p">}</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="n">response_mode</span>  <span class="o">=</span> <span class="s2">&quot;analysis&quot;</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="n">transcriber</span> <span class="o">=</span> <span class="n">Speech2Text</span><span class="p">()</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="n">analyzer</span> <span class="o">=</span> <span class="n">Analyzer</span><span class="p">()</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>
+</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="n">pipeline</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Inline</span><span class="p">(</span>
+</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>    <span class="s2">&quot;{user_audio is not None? transcriber} -&gt; analyzer&quot;</span><span class="p">,</span>
+</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>    <span class="p">{</span><span class="s2">&quot;transcriber&quot;</span><span class="p">:</span> <span class="n">transcriber</span><span class="p">,</span> <span class="s2">&quot;analyzer&quot;</span><span class="p">:</span> <span class="n">analyzer</span><span class="p">},</span>
+</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="p">)</span>
+</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>
+</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a><span class="n">msg</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">(</span><span class="n">user_audio</span><span class="o">=</span><span class="s2">&quot;/path/to/voice_note.mp3&quot;</span><span class="p">)</span>
+</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a><span class="n">pipeline</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transcript: </span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Analysis: </span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">analysis</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <hr />
 <h2 id="6-async">6. <strong>Async</strong></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transcriber</span><span class="o">.</span><span class="n">acall</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transcriber</span><span class="o">.</span><span class="n">acall</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <hr />
 <h2 id="7-debugging">7. <strong>Debugging</strong></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">params</span> <span class="o">=</span> <span class="n">transcriber</span><span class="o">.</span><span class="n">inspect_model_execution_params</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">params</span> <span class="o">=</span> <span class="n">transcriber</span><span class="o">.</span><span class="n">inspect_model_execution_params</span><span class="p">(</span><span class="s2">&quot;/path/to/audio.mp3&quot;</span><span class="p">)</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
 </span></code></pre></div>
 
 
