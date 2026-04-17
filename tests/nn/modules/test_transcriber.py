@@ -1,7 +1,7 @@
 """Tests for msgflux.nn.modules.transcriber module."""
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from msgflux.nn.modules.transcriber import Transcriber
 from msgflux.models.base import BaseModel
@@ -48,6 +48,19 @@ class TestTranscriber:
         assert transcriber.model is mock_model
         assert transcriber.response_format == "text"
 
+    def test_transcriber_string_model_calls_speech_to_text(self):
+        """Passing a string model must call Model.speech_to_text."""
+        mock_model = MockSTTModel()
+
+        with patch(
+            "msgflux.nn.modules.transcriber.Model.speech_to_text",
+            return_value=mock_model,
+        ) as mock_factory:
+            transcriber = Transcriber(model="openai/whisper-1")
+
+        mock_factory.assert_called_once_with("openai/whisper-1")
+        assert transcriber.model is mock_model
+
     def test_transcriber_initialization_with_config(self):
         """Test Transcriber initialization with configuration."""
         mock_model = MockSTTModel()
@@ -64,6 +77,22 @@ class TestTranscriber:
 
         with pytest.raises(TypeError, match="need be a `speech_to_text` model"):
             Transcriber(model=mock_model)
+
+    def test_transcriber_string_model_setter_calls_speech_to_text(self):
+        """Assigning a string to transcriber.model must call Model.speech_to_text."""
+        mock_model = MockSTTModel()
+        transcriber = Transcriber(model=mock_model)
+
+        new_mock = MockSTTModel()
+
+        with patch(
+            "msgflux.nn.modules.transcriber.Model.speech_to_text",
+            return_value=new_mock,
+        ) as mock_factory:
+            transcriber.model = "openai/whisper-1"
+
+        mock_factory.assert_called_once_with("openai/whisper-1")
+        assert transcriber.model is new_mock
 
     def test_transcriber_with_response_format(self):
         """Test Transcriber with custom response_format."""

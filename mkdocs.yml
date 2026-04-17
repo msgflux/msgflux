@@ -216,7 +216,7 @@ nav:
     - Routing & Classification:
       - Intent Router: tutorials/intent-router.md
       - Query Router with Signatures: tutorials/signature-router.md
-      - Oracle Specialist Tool: tutorials/oracle-specialist-tool.md
+      - Advisor Specialist Tool: tutorials/advisor-specialist-tool.md
       - Plan Tool with Root Context: tutorials/plan-tool-with-root-context.md
   - Dependency Management: dependency-management.md
   - Changelog: CHANGELOG.md

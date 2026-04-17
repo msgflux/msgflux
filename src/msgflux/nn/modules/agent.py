@@ -1,4 +1,3 @@
-from copy import deepcopy
 from datetime import datetime, timezone
 from inspect import cleandoc
 from typing import (
@@ -34,6 +33,7 @@ from msgflux.generation.templates import (
     SYSTEM_PROMPT_TEMPLATE,
     PromptSpec,
 )
+from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import ChatCompletionModel
@@ -112,7 +112,7 @@ class Agent(Module, metaclass=AutoParams):
     def __init__(  # noqa: C901
         self,
         name: str,
-        model: Union[ChatCompletionModel, ModelGateway, "Generator"],
+        model: Union[ChatCompletionModel, ModelGateway, "Generator", str],
         *,
         system_message: Optional[str] = None,
         instructions: Optional[str] = None,
@@ -140,7 +140,11 @@ class Agent(Module, metaclass=AutoParams):
         name:
             Agent name in snake case format.
         model:
-            Chat Completation Model client.
+            Chat completion model client. Accepts a `ChatCompletionModel`,
+            `ModelGateway`, `Generator`, or a shorthand string in the form
+            ``"provider/model-id"`` (e.g. ``"openai/gpt-4.1-mini"``).
+            When a string is provided, `Model.chat_completion` is called
+            internally with no extra configuration.
         system_message:
             The Agent behaviour.
         instructions:
@@ -532,7 +536,7 @@ class Agent(Module, metaclass=AutoParams):
                 system_prompt = flow_control_tools
 
         model_execution_params = dotdict(
-            messages=deepcopy(messages),
+            messages=messages,
             system_prompt=system_prompt or None,
             prefilling=prefilling,
             stream=self.config.get("stream", False),
@@ -548,20 +552,19 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Response Processing ---
 
-    def _ensure_stream_response_ready(self, model_response: ModelStreamResponse) -> None:
+    def _ensure_stream_response_ready(
+        self, model_response: ModelStreamResponse
+    ) -> None:
         if model_response.response_type is not None:
             return
 
         error = getattr(model_response, "error", None)
         if error is not None:
             raise RuntimeError(
-                "Model stream failed before producing a response: "
-                f"{error}"
+                f"Model stream failed before producing a response: {error}"
             ) from error
 
-        raise RuntimeError(
-            "Model stream ended before producing a response type."
-        )
+        raise RuntimeError("Model stream ended before producing a response type.")
 
     def _process_model_response(
         self,
@@ -1159,12 +1162,14 @@ class Agent(Module, metaclass=AutoParams):
                     task_template = self.templates["task"]
                     if is_jinja_template(task_template) and not has_format_placeholder(
                         task_template
-                    ):  # noqa: E501
-                        raise ValueError(
-                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
-                            "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
-                            "variable names, or use message_fields to map from the message."  # noqa: E501
+                    ):
+                        error_message = (
+                            f"[{self.name}] task_template uses Jinja2 variables but "
+                            "'task' was passed as a plain string. "
+                            "Pass 'task' as a dict with the required variable names "
+                            "or use message_fields to map from the message."
                         )
+                        raise ValueError(error_message)
                     pre_task = self._format_task_template(vars)
                     task_content = self._format_template(task, pre_task)
                 elif isinstance(task, Mapping):
@@ -1229,12 +1234,14 @@ class Agent(Module, metaclass=AutoParams):
                     task_template = self.templates["task"]
                     if is_jinja_template(task_template) and not has_format_placeholder(
                         task_template
-                    ):  # noqa: E501
-                        raise ValueError(
-                            f"[{self.name}] task_template uses Jinja2 variables but 'task' was "  # noqa: E501
-                            "passed as a plain string. Pass 'task' as a dict with the required "  # noqa: E501
-                            "variable names, or use message_fields to map from the message."  # noqa: E501
+                    ):
+                        error_message = (
+                            f"[{self.name}] task_template uses Jinja2 variables but "
+                            "'task' was passed as a plain string. "
+                            "Pass 'task' as a dict with the required variable names "
+                            "or use message_fields to map from the message."
                         )
+                        raise ValueError(error_message)
                     pre_task = self._format_task_template(vars)
                     task_content = self._format_template(task, pre_task)
                 elif isinstance(task, Mapping):
@@ -1534,7 +1541,11 @@ class Agent(Module, metaclass=AutoParams):
                 f"given `{type(generation_schema)}`"
             )
 
-    def _set_model(self, model: Union[ChatCompletionModel, ModelGateway, "Generator"]):
+    def _set_model(
+        self, model: Union[ChatCompletionModel, ModelGateway, "Generator", str]
+    ):
+        if isinstance(model, str):
+            model = Model.chat_completion(model)
         if isinstance(model, Generator):
             self.generator = model
         else:
@@ -1553,7 +1564,7 @@ class Agent(Module, metaclass=AutoParams):
         return self.generator.model
 
     @model.setter
-    def model(self, value: Union[ChatCompletionModel, ModelGateway, "Generator"]):
+    def model(self, value: Union[ChatCompletionModel, ModelGateway, "Generator", str]):
         self._set_model(value)
 
     def _set_system_message(self, system_message: Optional[str] = None):

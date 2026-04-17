@@ -92,6 +92,7 @@ plot = [
 [tool.ruff]
 target-version = "py39"
 line-length = 88
+extend-exclude = ["examples"]
 
 [tool.ruff.lint]
 select = [
