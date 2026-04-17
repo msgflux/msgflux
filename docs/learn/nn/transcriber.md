@@ -38,6 +38,26 @@ The `nn.Transcriber` module wraps speech-to-text models to **transcribe audio** 
         result = transcriber("/path/to/audio.mp3")
         ```
 
+## String shorthand
+
+When you do not need to configure extra model parameters, you can pass a
+`"provider/model-id"` string directly as the `model` argument. msgFlux will
+call `Model.speech_to_text` internally.
+
+```python
+import msgflux.nn as nn
+
+transcriber = nn.Transcriber("openai/whisper-1")
+result = transcriber("/path/to/audio.mp3")
+```
+
+The shorthand also works when reassigning `transcriber.model` after
+construction:
+
+```python
+transcriber.model = "openai/whisper-1"
+```
+
 ---
 
 ## 2. **Input Types**
