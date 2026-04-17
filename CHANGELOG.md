@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0] - 2026-04-17
+
+- Features: added `provider/model-id` string shorthand support to `Agent`, `Speaker`, and `Transcriber` (#26, #27, #28), plus runtime tool controls for `Agent` (#30).
+- Fixes: fixed registry naming for generic callables (#29).
+- Maintenance: updated release automation and cleaned up the release script (#36, #49).
+
 ## [0.1.1] - 2026-04-15
 
 - Fixed message copying in the OpenAI provider (#47).
