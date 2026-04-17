@@ -77,10 +77,12 @@ export MSGTRACE_TELEMETRY_ENABLED=true
 ```
 
 ```python
+import msgflux as mf
+import msgflux.nn as nn
 from msgflux import Spans
-from msgflux.nn import Agent, LM
 
-agent = Agent(lm=LM("gpt-4o-mini"), name="MyAgent")
+model = mf.ChatCompletion("openai/gpt-4.1-mini")
+agent = nn.Agent("MyAgent", model)
 result = agent("What is the capital of France?")
 # Span output will be printed to the console
 ```
@@ -179,9 +181,11 @@ async with Spans.ainit_flow("my-pipeline") as span:
 Every call to a `Module` subclass automatically creates a span. When the module is the entry point (no parent span), a **flow** span is created; nested modules get **module** spans.
 
 ```python
-from msgflux.nn import Agent, LM
+import msgflux as mf
+import msgflux.nn as nn
 
-agent = Agent(lm=LM("gpt-4o-mini"), name="Summarizer")
+model = mf.ChatCompletion("openai/gpt-4.1-mini")
+agent = nn.Agent("Summarizer", model)
 
 # Emits: flow > module(Summarizer) > model call
 result = agent("Summarize this document...")

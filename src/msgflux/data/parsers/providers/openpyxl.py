@@ -331,4 +331,3 @@ class OpenPyxlXlsxParser(BaseParser, XlsxParser):
         html += "</table>"
 
         return html
-

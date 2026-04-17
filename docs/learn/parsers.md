@@ -24,7 +24,7 @@ import msgflux as mf
 | HTML | `mf.Parser.html()` | `"beautifulsoup"` |
 | Email (.eml) | `mf.Parser.email()` | `"email"` |
 
-For installation instructions see [Dependency Management](../../dependency-management.md#parsers).
+For installation instructions see [Dependency Management](../dependency-management.md#parsers).
 
 To inspect available providers at runtime:
 

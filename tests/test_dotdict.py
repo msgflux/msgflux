@@ -1,5 +1,7 @@
 """Tests for msgflux.dotdict module."""
 
+from dataclasses import asdict, dataclass
+
 import msgspec
 import pytest
 
@@ -66,6 +68,42 @@ class TestDotdictInitialization:
         assert isinstance(d["items"], list)
         assert isinstance(d["items"][0], dotdict)
         assert d["items"][0]["name"] == "item1"
+
+    def test_init_with_iterable_of_pairs(self):
+        """Test initializing dotdict from an iterable of key/value pairs."""
+        d = dotdict((("name", "Alice"), ("age", 30)))
+
+        assert d["name"] == "Alice"
+        assert d["age"] == 30
+
+    def test_dataclasses_asdict_accepts_nested_dotdict(self):
+        """Test stdlib asdict can rebuild nested dotdict instances."""
+
+        @dataclass
+        class Payload:
+            metadata: dotdict
+
+        payload = Payload(
+            metadata=dotdict(
+                {
+                    "participants": [
+                        {"name": "Alice", "role": "speaker"},
+                        {"name": "Bob", "role": "listener"},
+                    ]
+                }
+            )
+        )
+
+        result = asdict(payload)
+
+        assert result == {
+            "metadata": {
+                "participants": [
+                    {"name": "Alice", "role": "speaker"},
+                    {"name": "Bob", "role": "listener"},
+                ]
+            }
+        }
 
     def test_init_frozen(self):
         """Test initializing frozen dotdict."""
@@ -808,7 +846,9 @@ class TestHiddenKeys:
 
     def test_hidden_key_nested_path_via_get(self):
         """Test that get() traverses paths through hidden intermediate keys."""
-        d = dotdict({"secrets": {"token": "abc", "key": "xyz"}}, hidden_keys=["secrets"])
+        d = dotdict(
+            {"secrets": {"token": "abc", "key": "xyz"}}, hidden_keys=["secrets"]
+        )
 
         assert d.get("secrets.token") == "abc"
         assert d.get("secrets.key") == "xyz"

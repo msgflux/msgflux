@@ -2,7 +2,10 @@
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from typing import Optional
 
+from msgflux.core.dotdict import dotdict
+from msgflux.nn.modules.agent import Agent
 from msgflux.nn.modules.tool import (
     ToolCall,
     ToolResponses,
@@ -11,6 +14,7 @@ from msgflux.nn.modules.tool import (
     MCPTool,
     ToolLibrary,
     _convert_module_to_nn_tool,
+    _should_copy_injected_messages,
 )
 
 
@@ -80,6 +84,31 @@ class TestToolResponses:
         result_json = responses.to_json()
 
         assert isinstance(result_json, bytes)
+
+    def test_tool_responses_to_dict_accepts_nested_dotdict(self):
+        """Test ToolResponses.to_dict handles nested dotdict payloads."""
+        call = ToolCall(
+            id="call_dotdict",
+            name="report",
+            result=dotdict(
+                {
+                    "participants_data": [
+                        {"name": "Alice", "company": "OpenAI"},
+                        {"name": "Bob", "company": "Msgflux"},
+                    ]
+                }
+            ),
+        )
+        responses = ToolResponses(return_directly=False, tool_calls=[call])
+
+        result_dict = responses.to_dict()
+
+        assert result_dict["tool_calls"][0]["result"] == {
+            "participants_data": [
+                {"name": "Alice", "company": "OpenAI"},
+                {"name": "Bob", "company": "Msgflux"},
+            ]
+        }
 
     def test_tool_responses_get_by_id(self):
         """Test ToolResponses get_by_id method."""
@@ -162,6 +191,32 @@ class TestLocalTool:
 
         assert tool.name == "my_tool"
         assert tool.description == "A test tool"
+
+    def test_local_tool_uses_python_default_when_null_is_given(self):
+        """Test null transport values are omitted when the callable has a default."""
+
+        def my_func(query: str, limit: int = 5) -> int:
+            """Test function."""
+            return limit
+
+        tool = _convert_module_to_nn_tool(my_func)
+
+        result = tool(query="hello", limit=None)
+
+        assert result == 5
+
+    def test_local_tool_keeps_none_without_python_default(self):
+        """Test null values are preserved when the callable requires the param."""
+
+        def my_func(query: Optional[str]) -> Optional[str]:
+            """Test function."""
+            return query
+
+        tool = _convert_module_to_nn_tool(my_func)
+
+        result = tool(query=None)
+
+        assert result is None
         assert tool.impl == my_func
 
     def test_local_tool_forward_sync_function(self):
@@ -349,6 +404,19 @@ class TestConvertModuleToNNTool:
         tool = _convert_module_to_nn_tool(transfer_tool)
 
         assert tool.name.startswith("transfer_to_")
+        assert tool.annotations == {}
+
+    def test_convert_with_disable_input_config(self):
+        """Test converting with disable_input configuration."""
+
+        def background_tool(task: str) -> str:
+            """Run with runtime-only context."""
+            return task
+
+        background_tool.tool_config = {"disable_input": True}
+        tool = _convert_module_to_nn_tool(background_tool)
+
+        assert tool.name == "background_tool"
         assert tool.annotations == {}
 
     def test_convert_with_spawn_config(self):
@@ -729,6 +797,102 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
+    def test_tool_library_with_inject_messages_preserves_shared_messages(self):
+        """Non-agent tools should receive the original messages reference."""
+
+        def stateful_tool(messages: list) -> str:
+            """Tool that mutates the shared conversation messages."""
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        stateful_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "stateful_tool", {})]
+
+        result = library(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [
+            {"role": "user", "content": "changed"},
+            {"role": "tool", "content": "mutated"},
+        ]
+
+    def test_tool_library_with_agent_inject_messages_copies_per_subagent(self):
+        """Forced agent isolation should copy messages per tool call."""
+
+        def stateful_tool(messages: list) -> str:
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        stateful_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "stateful_tool", {})]
+
+        with patch(
+            "msgflux.nn.modules.tool._should_copy_injected_messages",
+            return_value=True,
+        ):
+            result = library(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [{"role": "user", "content": "hello"}]
+
+    def test_should_copy_injected_messages_for_wrapped_agent(self):
+        """Wrapped Agent tools should opt into isolated message copies."""
+
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(name="child_agent", model=mock_model)
+        agent.tool_config = {"inject_messages": True, "disable_input": True}
+
+        local_tool = _convert_module_to_nn_tool(agent)
+
+        assert (
+            _should_copy_injected_messages(local_tool, local_tool.tool_config) is True
+        )
+
+    def test_tool_library_with_inject_message(self):
+        """Test ToolLibrary with inject_message config."""
+
+        def stateful_tool(x: int, message: dict) -> str:
+            """Tool that uses the original message envelope."""
+            return f"{x}-{message.get('key', 'none')}"
+
+        stateful_tool.tool_config = {"inject_message": True}
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        tool_callings = [("call_1", "stateful_tool", {"x": 5})]
+        message = {"key": "value"}
+
+        result = library(tool_callings, message=message)
+
+        assert result.tool_calls[0].result == "5-value"
+
+    def test_tool_library_with_disable_input_ignores_model_params(self):
+        """Test ToolLibrary ignores model-supplied params when input is disabled."""
+
+        def stateful_tool(messages: dict) -> str:
+            """Tool that relies only on injected runtime state."""
+            return messages.get("key", "none")
+
+        stateful_tool.tool_config = {
+            "disable_input": True,
+            "inject_messages": True,
+        }
+        library = ToolLibrary(name="lib", tools=[stateful_tool])
+
+        tool_callings = [("call_1", "stateful_tool", {"x": 5})]
+        result = library(tool_callings, messages={"key": "value"})
+
+        assert result.tool_calls[0].result == "value"
+        assert "x" not in result.tool_calls[0].parameters
+
     @pytest.mark.asyncio
     async def test_tool_library_aforward_tool_not_found(self):
         """Test async ToolLibrary forward with non-existent tool."""
@@ -863,6 +1027,94 @@ class TestToolLibrary:
         result = await library.aforward(tool_callings, messages={"key": "state_value"})
 
         assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_inject_messages_preserves_shared_messages(
+        self,
+    ):
+        """Async non-agent tools should receive the original messages reference."""
+
+        async def async_tool(messages: list) -> str:
+            """Tool that mutates the shared conversation messages."""
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        async_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "async_tool", {})]
+
+        result = await library.aforward(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [
+            {"role": "user", "content": "changed"},
+            {"role": "tool", "content": "mutated"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_agent_inject_messages_copies_per_subagent(
+        self,
+    ):
+        """Async forced agent isolation should copy messages per tool call."""
+
+        async def async_tool(messages: list) -> str:
+            messages.append({"role": "tool", "content": "mutated"})
+            messages[0]["content"] = "changed"
+            return str(len(messages))
+
+        async_tool.tool_config = {"inject_messages": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        original_messages = [{"role": "user", "content": "hello"}]
+        tool_callings = [("call_1", "async_tool", {})]
+
+        with patch(
+            "msgflux.nn.modules.tool._should_copy_injected_messages",
+            return_value=True,
+        ):
+            result = await library.aforward(tool_callings, messages=original_messages)
+
+        assert result.tool_calls[0].result == "2"
+        assert original_messages == [{"role": "user", "content": "hello"}]
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_inject_message(self):
+        """Test async ToolLibrary inject_message."""
+
+        async def async_tool(x: int, message: dict) -> str:
+            """Tool with original message envelope."""
+            return f"{x}-{message['key']}"
+
+        async_tool.tool_config = {"inject_message": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        tool_callings = [("call_1", "async_tool", {"x": 8})]
+        result = await library.aforward(tool_callings, message={"key": "state_value"})
+
+        assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_disable_input_ignores_model_params(self):
+        """Test async ToolLibrary ignores model params when input is disabled."""
+
+        async def async_tool(messages: dict) -> str:
+            """Tool that relies only on injected runtime state."""
+            return messages["key"]
+
+        async_tool.tool_config = {
+            "disable_input": True,
+            "inject_messages": True,
+        }
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        tool_callings = [("call_1", "async_tool", {"x": 8})]
+        result = await library.aforward(tool_callings, messages={"key": "state_value"})
+
+        assert result.tool_calls[0].result == "state_value"
+        assert "x" not in result.tool_calls[0].parameters
 
     def test_tool_library_forward_spawn(self):
         """Test ToolLibrary spawn execution in sync mode."""

@@ -38,7 +38,9 @@ def test_agent_with_signature_rejects_task_template():
     """Test that signature and templates['task'] cannot be used together."""
     model = create_mock_model()
 
-    with pytest.raises(ValueError, match="Cannot specify both 'signature' and templates"):
+    with pytest.raises(
+        ValueError, match="Cannot specify both 'signature' and templates"
+    ):
         Agent(
             name="test_agent_sig",
             model=model,
@@ -84,7 +86,7 @@ def test_templates_initialization_order():
         model=model,
         signature="x: int -> y: int",
         templates={
-            "context": "Context: {{ctx}}",
+            "task_context": "Context: {{ctx}}",
             "response": "Result: {{y}}",
         },
     )
@@ -93,7 +95,7 @@ def test_templates_initialization_order():
     assert "x" in agent.templates["task"]
 
     # Other templates should be preserved
-    assert agent.templates["context"] == "Context: {{ctx}}"
+    assert agent.templates["task_context"] == "Context: {{ctx}}"
     assert agent.templates["response"] == "Result: {{y}}"
 
     print("✓ Test 4 passed: Template initialization order is correct")

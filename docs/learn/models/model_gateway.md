@@ -1,7 +1,7 @@
 
 # `ModelGateway` — Resilient Model Manager
 
-The [`ModelGateway`](../../api-reference/models/gateway.md) class is an **orchestration layer** over multiple models of the same type (e.g., multiple `chat_completion` models), allowing:
+The [`ModelGateway`](../../api-reference/models/model_gateway.md) class is an **orchestration layer** over multiple models of the same type (e.g., multiple `chat_completion` models), allowing:
 
 - **Automatic fallback** between models.
 - **Time-based** model availability constraints.

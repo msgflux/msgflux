@@ -13,20 +13,20 @@ A `Guard` validates inputs and/or outputs of a Module. Each Guard wraps a **vali
 - **`target`** — submodule to register on. Defaults to `"generator"`.
 - **`include_data`** — if `True`, attaches the data that triggered the guard to the raised exception via `exc.data`. Defaults to `False` for security (the data may contain unsafe content).
 
-The validator receives `data=...` and returns a dict with `"safe"` (bool).
+The validator receives `data` as a positional argument and must return either a dict with `"safe"` (bool) or a `ModelResponse` (auto-consumed by Guard).
 
 ```python
-import msgflux as mf
+from msgflux.nn.hooks import Guard
 
 def my_validator(data):
     text = str(data).lower()
     return {"safe": "hack" not in text}
 
 # Returns message as response when safe=False
-guard = mf.Guard(validator=my_validator, on="pre", message="Not allowed.")
+guard = Guard(validator=my_validator, on="pre", message="Not allowed.")
 
 # Raises exception when safe=False
-guard = mf.Guard(validator=my_validator, on="pre")
+guard = Guard(validator=my_validator, on="pre")
 ```
 
 ???+ note "Guard Examples"
@@ -38,6 +38,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
         BLOCKED = {"hack", "exploit", "malware"}
 
@@ -50,7 +51,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=keyword_filter,
                     on="pre",
                     message="Sorry, that content is not allowed.",
@@ -73,6 +74,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
         from msgflux.exceptions import UnsafeUserInputError
 
         def keyword_filter(data):
@@ -82,7 +84,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
             """A bot that raises on unsafe input."""
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            hooks = [mf.Guard(validator=keyword_filter, on="pre")]
+            hooks = [Guard(validator=keyword_filter, on="pre")]
 
         agent = StrictBot()
 
@@ -94,29 +96,27 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
     === "With Moderation Model"
 
-        Use OpenAI's moderation model as a guard validator:
+        Pass a moderation model directly as the validator — Guard calls it with the
+        input data and auto-consumes the `ModelResponse`:
 
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
         moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
-
-        def moderation_validator(data):
-            response = moderation_model(data=str(data))
-            return {"safe": response.data.safe}
 
         class ModeratedBot(nn.Agent):
             """A bot with pre and post moderation."""
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
-                    validator=moderation_validator,
+                Guard(
+                    validator=moderation_model,
                     on="pre",
                     message="Your message was flagged by our safety system.",
                 ),
-                mf.Guard(validator=moderation_validator, on="post"),
+                Guard(validator=moderation_model, on="post"),
             ]
 
         agent = ModeratedBot()
@@ -131,12 +131,12 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
 
         def keyword_filter(data):
             return {"safe": "forbidden" not in str(data).lower()}
 
         def toxicity_check(data):
-            # ... call moderation API ...
             return {"safe": True}
 
         class MultiGuardBot(nn.Agent):
@@ -144,12 +144,12 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=keyword_filter,
                     on="pre",
                     message="That topic is not allowed.",
                 ),
-                mf.Guard(validator=toxicity_check, on="post"),
+                Guard(validator=toxicity_check, on="post"),
             ]
 
         agent = MultiGuardBot()
@@ -165,6 +165,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
         ```python
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
         from msgflux.exceptions import UnsafeUserInputError
 
         def keyword_filter(data):
@@ -175,7 +176,7 @@ guard = mf.Guard(validator=my_validator, on="pre")
 
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             hooks = [
-                mf.Guard(
+                Guard(
                     validator=keyword_filter,
                     on="pre",
                     include_data=True,  # opt-in: attach data to exception
@@ -272,7 +273,7 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
     === "Async Custom Hook"
 
         ```python
-        import asyncio
+        import httpx
         from msgflux.nn.hooks import Hook
 
         class AsyncWebhookHook(Hook):
@@ -285,9 +286,7 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
             def __call__(self, module, args, kwargs, output=None):
                 pass  # sync fallback — no-op
 
-            async def acall(self, module, args, kwargs, output=None):
-                # async HTTP call to webhook
-                import httpx
+            async def acall(self, module, args, kwargs, output=None):                
                 async with httpx.AsyncClient() as client:
                     await client.post(self.webhook_url, json={"status": "ok"})
         ```
@@ -314,6 +313,7 @@ You can also register hooks manually via `hook.register()`:
 ```python
 import msgflux as mf
 import msgflux.nn as nn
+from msgflux.nn.hooks import Guard
 
 class Bot(nn.Agent):
     model = model
@@ -323,7 +323,7 @@ agent = Bot()
 def my_validator(data):
     return {"safe": "blocked" not in str(data).lower()}
 
-guard = mf.Guard(validator=my_validator, on="pre", message="Nope.")
+guard = Guard(validator=my_validator, on="pre", message="Nope.")
 handle = guard.register(agent.generator)  # returns RemovableHandle
 handle.remove()  # unregister when done
 ```

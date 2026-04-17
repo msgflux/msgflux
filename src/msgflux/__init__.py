@@ -2,7 +2,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from msgspec_ext.fast_dotenv import load_dotenv
+    from msgspec_ext import load_dotenv
 
     from msgflux.cache import response_cache
     from msgflux.core.dotdict import dotdict
@@ -84,7 +84,7 @@ _LAZY_IMPORTS = {
     "dotdict": ("msgflux.core.dotdict", "dotdict"),
     "get_fn_name": ("msgflux.utils.inspect", "get_fn_name"),
     "load": ("msgflux.utils.msgspec", "load"),
-    "load_dotenv": ("msgspec_ext.fast_dotenv", "load_dotenv"),
+    "load_dotenv": ("msgspec_ext", "load_dotenv"),
     "msgspec_dumps": ("msgflux.utils.msgspec", "msgspec_dumps"),
     "response_cache": ("msgflux.cache", "response_cache"),
     "save": ("msgflux.utils.msgspec", "save"),

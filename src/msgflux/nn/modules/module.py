@@ -31,8 +31,8 @@ from opentelemetry.trace import Status, StatusCode
 
 from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
-from msgflux.envs import envs
 from msgflux.core.message import Message
+from msgflux.envs import envs
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
@@ -580,40 +580,35 @@ class Module:
         else:
             raise ValueError("For non-dotdict objects, `response_mode` must be None")
 
-    def _set_task_inputs(
-        self, task_inputs: Optional[Union[str, Dict[str, str], Tuple[str, ...]]] = None
+    def _set_task(
+        self, task: Optional[Union[str, Dict[str, str], Tuple[str, ...]]] = None
     ):
-        if isinstance(task_inputs, (str, dict, tuple)) or task_inputs is None:
-            if isinstance(task_inputs, str) and task_inputs == "":
+        if isinstance(task, (str, dict, tuple)) or task is None:
+            if isinstance(task, str) and task == "":
+                raise ValueError(f"`task` requires a string not empty given `{task}`")
+            if isinstance(task, (dict, tuple)) and not task:
                 raise ValueError(
-                    f"`task_inputs` requires a string not empty given `{task_inputs}`"
+                    f"`task` requires a dict or tuple not empty given `{task}`"
                 )
-            if isinstance(task_inputs, (dict, tuple)) and not task_inputs:
-                raise ValueError(
-                    "`task_inputs` requires a dict or tuple not empty "
-                    f"given `{task_inputs}`"
-                )
-            self.register_buffer("task_inputs", task_inputs)
+            self.register_buffer("task", task)
         else:
             raise TypeError(
-                "`task_inputs` requires a string, dict or None, "
-                f"given `{type(task_inputs)}`"
+                f"`task` requires a string, dict or None, given `{type(task)}`"
             )
 
-    def _set_task_multimodal_inputs(
-        self, task_multimodal_inputs: Optional[Dict[str, List[str]]] = None
+    def _set_task_multimodal(
+        self, task_multimodal: Optional[Dict[str, List[str]]] = None
     ):
-        if isinstance(task_multimodal_inputs, dict) or task_multimodal_inputs is None:
-            if not task_multimodal_inputs and task_multimodal_inputs is not None:
+        if isinstance(task_multimodal, dict) or task_multimodal is None:
+            if not task_multimodal and task_multimodal is not None:
                 raise ValueError(
-                    "`task_multimodal_inputs` requires a dict not empty"
-                    f"given `{task_multimodal_inputs}`"
+                    "`task_multimodal` requires a dict not empty"
+                    f"given `{task_multimodal}`"
                 )
-            self.register_buffer("task_multimodal_inputs", task_multimodal_inputs)
+            self.register_buffer("task_multimodal", task_multimodal)
         else:
             raise TypeError(
-                "`task_multimodal_inputs` requires a dict "
-                f"given `{type(task_multimodal_inputs)}`"
+                f"`task_multimodal` requires a dict given `{type(task_multimodal)}`"
             )
 
     def _set_model_preference(self, model_preference: Optional[str] = None):
@@ -664,19 +659,19 @@ class Module:
 
         Args:
             message_fields: Dictionary mapping field names to their values.
-                Valid keys: "task_inputs", "task_multimodal_inputs", "model_preference"
+                Valid keys: "task", "task_multimodal", "model_preference"
 
         Raises:
             TypeError: If message_fields is not a dict or None
             ValueError: If invalid keys are provided
         """
         # Define valid keys for base Module class
-        valid_keys = {"task_inputs", "task_multimodal_inputs", "model_preference"}
+        valid_keys = {"task", "task_multimodal", "model_preference"}
 
         if message_fields is None:
             # Set all fields to None
-            self._set_task_inputs(None)
-            self._set_task_multimodal_inputs(None)
+            self._set_task(None)
+            self._set_task_multimodal(None)
             self._set_model_preference(None)
             return
 
@@ -695,8 +690,8 @@ class Module:
             )
 
         # Set each field using its setter, defaulting to None if not provided
-        self._set_task_inputs(message_fields.get("task_inputs"))
-        self._set_task_multimodal_inputs(message_fields.get("task_multimodal_inputs"))
+        self._set_task(message_fields.get("task"))
+        self._set_task_multimodal(message_fields.get("task_multimodal"))
         self._set_model_preference(message_fields.get("model_preference"))
 
     def _set_templates(self, templates: Optional[Dict[str, str]] = None):
@@ -704,17 +699,18 @@ class Module:
 
         Args:
             templates: Dictionary mapping template types to Jinja template strings.
-                Valid keys: "task", "response", "context", "system_prompt"
+                Valid keys: "task", "response", "task_context", "system_prompt"
 
         Raises:
             TypeError: If templates is not a dict or None
             ValueError: If invalid keys are provided
 
         Note:
-            The "context" template applies only to context_inputs, not to context_cache.
+            The "task_context" template applies only to task context, not to
+            context_cache.
         """
         # Define valid keys
-        valid_keys = {"task", "response", "context", "system_prompt"}
+        valid_keys = {"task", "response", "task_context", "system_prompt"}
 
         if templates is None:
             self.templates = {}
@@ -2041,9 +2037,7 @@ class Module:
             p.requires_grad_(requires_grad=requires_pgrad)
         return self
 
-    def zero_pgrad(
-        self, *, set_to_none: Optional[bool] = True
-    ) -> None:
+    def zero_pgrad(self, *, set_to_none: Optional[bool] = True) -> None:
         """Reset gradients of all model parameters.
 
         Args:

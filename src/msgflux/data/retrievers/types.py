@@ -16,3 +16,9 @@ class WebRetriever:
     """Retriever web content based-on queries."""
 
     retriever_type = "web"
+
+
+class FuzzyRetriever:
+    """Use approximate string matching to find similar documents."""
+
+    retriever_type = "fuzzy"

@@ -1,5 +1,4 @@
 from typing import Any, Dict, Optional, Union
-from uuid import uuid4
 
 from msgflux.core.dotdict import dotdict
 
@@ -15,9 +14,6 @@ class Message(dotdict):
         images: Optional[Dict[str, Any]] = None,
         videos: Optional[Dict[str, Any]] = None,
         extra: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-        user_name: Optional[str] = None,
-        chat_id: Optional[str] = None,
     ):
         if extra is None:
             extra = {}
@@ -32,12 +28,6 @@ class Message(dotdict):
         if context is None:
             context = {}
         super().__init__()
-        self.metadata = {
-            "execution_id": str(uuid4()),
-            "user_id": user_id,
-            "user_name": user_name,
-            "chat_id": chat_id,
-        }
         self.content = content
         self.texts = texts
         self.context = context

@@ -64,15 +64,16 @@ class ToolCallAggregator:
 
     def get_messages(self) -> List[Dict[str, Any]]:
         """Generates a list of messages to send to the model:
-        1. The first message contains all the function call requests.
+        1. The first message contains all the function call requests
+           (with reasoning in <think> tags if present).
         2. Subsequent messages insert the results of the functions, one at a time.
         """
-        # First message: function calls
+        # First message: function calls (reasoning embedded in content with <think>)
         tool_calls = [
             ChatBlock.tool_call(call["id"], call["name"], call["arguments"])
             for call in self.tool_calls.values()
         ]
-        messages = [ChatBlock.assist_tool_calls(tool_calls)]
+        messages = [ChatBlock.assist_tool_calls(tool_calls, reasoning=self.reasoning)]
 
         # Adding the results of function calls as separate messages
         for call in self.tool_calls.values():
@@ -80,8 +81,5 @@ class ToolCallAggregator:
                 if not isinstance(call["result"], str):  # convert to str
                     call["result"] = msgspec_dumps(call["result"])
                 messages.append(ChatBlock.tool(call["id"], call["result"]))
-
-        if self.reasoning is not None:
-            messages.insert(0, ChatBlock.assist(self.reasoning))
 
         return messages

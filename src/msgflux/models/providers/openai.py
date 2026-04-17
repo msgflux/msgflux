@@ -1,6 +1,8 @@
 import base64
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
+from copy import deepcopy
+from functools import partial
 from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Union
 
@@ -25,6 +27,7 @@ import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
 from msgflux.dsl.typed_parsers import typed_parser_registry
 from msgflux.exceptions import TypedParserNotFoundError
+from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.models.base import BaseModel
 from msgflux.models.cache import ResponseCache, generate_cache_key
 from msgflux.models.profiles import get_model_profile
@@ -40,11 +43,17 @@ from msgflux.models.types import (
     TextToImageModel,
     TextToSpeechModel,
 )
+from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.console import cprint
 from msgflux.utils.encode import encode_data_to_bytes
-from msgflux.utils.msgspec import struct_to_dict
+from msgflux.utils.msgspec import (
+    lower_msgspec_struct_for_openai,
+    restore_openai_structured_output,
+    struct_to_dict,
+)
 from msgflux.utils.tenacity import apply_retry, default_model_retry
+from msgflux.utils.validation import is_subclass_of
 
 
 class _BaseOpenAI(BaseModel):
@@ -279,61 +288,108 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         if stop_reason is not None:
             metadata.stop_reason = stop_reason
 
-    def _set_reasoning_fields(self, response_content: Any, reasoning_content: str):
-        if response_content is None or isinstance(response_content, str):
-            return
-        response_content.think = reasoning_content
-        response_content.reasoning_content = reasoning_content
-        response_content.reasoning_text = reasoning_content
+    @staticmethod
+    def _extract_reasoning(message) -> Optional[str]:
+        return (
+            getattr(message, "reasoning_content", None)
+            or getattr(message, "reasoning", None)
+            or getattr(message, "thinking", None)
+        )
+
+    @staticmethod
+    def _extract_finish_reason(choice) -> Optional[str]:
+        return getattr(choice, "finish_reason", None)
+
+    @staticmethod
+    def _extract_annotations(message) -> Optional[list]:
+        annotations = getattr(message, "annotations", None)
+        if annotations:
+            return [item.model_dump() for item in annotations]
+        return None
+
+    @staticmethod
+    def _process_stream_tool_calls(delta, stream_response, aggregator):
+        tool_call = delta.tool_calls[0]
+        if stream_response.response_type is None:
+            stream_response.set_response_type("tool_call")
+        aggregator.process(
+            tool_call.index,
+            tool_call.id,
+            tool_call.function.name,
+            tool_call.function.arguments,
+        )
+
+    @staticmethod
+    def _stream_add_chunk(stream_response, chunk, response_type):
+        if stream_response.response_type is None:
+            stream_response.set_response_type(response_type)
+        stream_response.add(chunk)
+
+    @staticmethod
+    def _stream_add_reasoning_chunk(stream_response, chunk):
+        stream_response.add_reasoning(chunk)
 
     def _execute_model(self, **kwargs):
-        prefilling = kwargs.pop("prefilling")
-        if prefilling:
-            kwargs.get("messages").append({"role": "assistant", "content": prefilling})
+        prefilling = kwargs.get("prefilling")
         params = {**kwargs, **self.sampling_run_params}
+        params.pop("prefilling", None)
+        if prefilling:
+            params["messages"] = [
+                *params["messages"],
+                {"role": "assistant", "content": prefilling},
+            ]
         adapted_params = self._adapt_params(params)
         model_output = self.client.chat.completions.create(**adapted_params)
 
         return model_output
 
     async def _aexecute_model(self, **kwargs):
-        prefilling = kwargs.pop("prefilling")
-        if prefilling:
-            kwargs.get("messages").append({"role": "assistant", "content": prefilling})
+        prefilling = kwargs.get("prefilling")
         params = {**kwargs, **self.sampling_run_params}
+        params.pop("prefilling", None)
+        if prefilling:
+            params["messages"] = [
+                *params["messages"],
+                {"role": "assistant", "content": prefilling},
+            ]
         adapted_params = self._adapt_params(params)
         model_output = await self.aclient.chat.completions.create(**adapted_params)
 
         return model_output
 
     def _process_completion_model_output(  # noqa: C901
-        self, model_output, typed_parser=None, generation_schema=None
+        self,
+        model_output,
+        typed_parser=None,
+        generation_schema=None,
+        transport_generation_schema=None,
     ):
+        """Build a ModelResponse from the raw OpenAI completion output.
+
+        `generation_schema` is the canonical msgflux schema exposed to callers.
+        `transport_generation_schema` is an OpenAI-specific wire schema used when
+        the canonical schema must be lowered to satisfy Structured Outputs
+        constraints, for example lowering ``Dict[K, V]`` to an ``entries`` list.
+        """
         response = ModelResponse()
         metadata = self._build_usage_metadata(model_output)
 
         choice = model_output.choices[0]
-        finish_reason = getattr(choice, "finish_reason", None)
-        self._set_stop_metadata(metadata, finish_reason=finish_reason)
-
-        reasoning = (
-            getattr(choice.message, "reasoning_content", None)
-            or getattr(choice.message, "reasoning", None)
-            or getattr(choice.message, "thinking", None)
+        self._set_stop_metadata(
+            metadata, finish_reason=self._extract_finish_reason(choice)
         )
+
+        reasoning = self._extract_reasoning(choice.message)
 
         reasoning_tool_call = reasoning if self.reasoning_in_tool_call else None
 
-        prefix_response_type = ""
         reasoning_content = None
         if self.return_reasoning is True and reasoning is not None:
             reasoning_content = reasoning
-            prefix_response_type = "reasoning_"
 
-        if choice.message.annotations:
-            metadata.annotations = [
-                item.model_dump() for item in choice.message.annotations
-            ]
+        annotations = self._extract_annotations(choice.message)
+        if annotations:
+            metadata.annotations = annotations
 
         if choice.message.tool_calls:
             aggregator = ToolCallAggregator(reasoning_tool_call)
@@ -349,23 +405,37 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 repr_str = f"[{self.model_id}][raw_response] {choice.message.content}"
                 cprint(repr_str, lc="r", ls="b")
             if typed_parser is not None:
-                response.set_response_type(f"{prefix_response_type}structured")
+                response.set_response_type("structured")
                 parser = typed_parser_registry[typed_parser]
                 response_content = dotdict(parser.decode(choice.message.content))
                 if generation_schema and self.validate_typed_parser_output:
                     decoder = self._get_decoder(generation_schema)
                     decoder.decode(self._encoder.encode(response_content))
             elif generation_schema is not None:
-                response.set_response_type(f"{prefix_response_type}structured")
+                response.set_response_type("structured")
+                # The raw payload follows the OpenAI transport schema, which may be
+                # a lowered or dynamically generated version of the logical msgflux
+                # generation schema.
+                transport_info = transport_generation_schema or {}
+                decoder_schema = transport_info.get("decoder_schema", generation_schema)
+                normalize = transport_info.get("normalize")
+
+                if decoder_schema is None:
+                    response_content = msgspec.json.decode(choice.message.content)
+                else:
+                    decoder = self._get_decoder(decoder_schema)
+                    struct = decoder.decode(choice.message.content)
+                    response_content = struct_to_dict(struct)
+
+                if normalize is not None:
+                    response_content = normalize(response_content)
+
                 decoder = self._get_decoder(generation_schema)
-                struct = decoder.decode(choice.message.content)
+                struct = decoder.decode(self._encoder.encode(response_content))
                 response_content = dotdict(struct_to_dict(struct))
             else:
-                response.set_response_type(f"{prefix_response_type}text_generation")
-                if reasoning_content is not None:
-                    response_content = dotdict({"answer": choice.message.content})
-                else:
-                    response_content = choice.message.content
+                response.set_response_type("text_generation")
+                response_content = choice.message.content
         elif choice.message.audio:
             response_content = dotdict(
                 {
@@ -382,94 +452,148 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             response.set_response_type("text_generation")
             response_content = ""
 
-        if reasoning_content is not None:
-            if isinstance(response_content, str):
-                response_content = dotdict({"answer": response_content})
-            self._set_reasoning_fields(response_content, reasoning_content)
-
+        response.reasoning = reasoning_content
         response.add(response_content)
         response.set_metadata(metadata)
         return response
 
     def _process_model_output(
-        self, model_output, typed_parser=None, generation_schema=None
+        self,
+        model_output,
+        typed_parser=None,
+        generation_schema=None,
+        transport_generation_schema=None,
     ):
         return self._process_completion_model_output(
-            model_output, typed_parser, generation_schema
+            model_output,
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
         )
 
-    def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
-        typed_parser = kwargs.get("typed_parser")
-        generation_schema = kwargs.get("generation_schema")
-
-        # Check cache if enabled
+    def _check_cache(self, **kwargs):
         if self.enable_cache and self._response_cache:
             cache_key = generate_cache_key(**kwargs)
             hit, cached_response = self._response_cache.get(cache_key)
             if hit:
                 return cached_response
+        return None
 
-        # Pop after cache check to avoid modifying kwargs during cache key generation
-        typed_parser = kwargs.pop("typed_parser")
-        generation_schema = kwargs.pop("generation_schema")
+    def _store_cache(self, response, **kwargs):
+        if self.enable_cache and self._response_cache:
+            cache_key = generate_cache_key(**kwargs)
+            self._response_cache.set(cache_key, response)
+
+    def _prepare_generate_kwargs(self, kwargs):
+        """Prepare generation kwargs and derive the OpenAI transport schema.
+
+        `generation_schema` remains the canonical schema for msgflux.
+        `transport_generation_schema` is the schema sent to OpenAI in
+        `response_format`; it may be the same type or a lowered variant that only
+        exists to satisfy OpenAI Structured Outputs restrictions.
+        """
+        typed_parser = kwargs.pop("typed_parser", None)
+        generation_schema = kwargs.pop("generation_schema", None)
+        tool_definitions = kwargs.pop("tool_definitions", None)
+        transport_generation_schema = None
 
         if generation_schema is not None and typed_parser is None:
-            response_format = response_format_from_msgspec_struct(generation_schema)
-            kwargs["response_format"] = response_format
+            if issubclass(generation_schema, ToolFlowControl):
+                response_format = generation_schema.build_provider_response_format(
+                    tool_definitions
+                )
+                if response_format is not None:
+                    transport_generation_schema = {
+                        "decoder_schema": None,
+                        "normalize": lambda payload: (
+                            generation_schema.normalize_provider_response(
+                                payload,
+                                tool_definitions=tool_definitions,
+                            )
+                        ),
+                    }
+                    kwargs["response_format"] = response_format
+
+            if transport_generation_schema is None:
+                # Lower only for the OpenAI transport layer; the logical schema
+                # stays unchanged so decoded outputs can be restored to the
+                # original shape.
+                decoder_schema = lower_msgspec_struct_for_openai(generation_schema)
+                normalize = None
+                if decoder_schema is not generation_schema:
+                    normalize = partial(
+                        restore_openai_structured_output,
+                        logical_type=generation_schema,
+                    )
+                transport_generation_schema = {
+                    "decoder_schema": decoder_schema,
+                    "normalize": normalize,
+                }
+                kwargs["response_format"] = response_format_from_msgspec_struct(
+                    decoder_schema
+                )
+
+        return typed_parser, generation_schema, transport_generation_schema
+
+    def _prepare_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip internal generation-only args before raw streaming requests."""
+        kwargs.pop("typed_parser", None)
+        kwargs.pop("generation_schema", None)
+        kwargs.pop("tool_definitions", None)
+        return kwargs
+
+    def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        cached = self._check_cache(**kwargs)
+        if cached:
+            return cached
+
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = self._prepare_generate_kwargs(kwargs)
 
         model_output = self._execute_model(**kwargs)
         response = self._process_model_output(
-            model_output, typed_parser, generation_schema
+            model_output,
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
         )
 
-        # Store in cache if enabled
-        if self.enable_cache and self._response_cache:
-            # Re-add popped values for cache key
-            cache_kwargs = {
-                **kwargs,
-                "typed_parser": typed_parser,
-                "generation_schema": generation_schema,
-            }
-            cache_key = generate_cache_key(**cache_kwargs)
-            self._response_cache.set(cache_key, response)
-
+        self._store_cache(
+            response,
+            **kwargs,
+            typed_parser=typed_parser,
+            generation_schema=generation_schema,
+        )
         return response
 
     async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
-        typed_parser = kwargs.get("typed_parser")
-        generation_schema = kwargs.get("generation_schema")
+        cached = self._check_cache(**kwargs)
+        if cached:
+            return cached
 
-        # Check cache if enabled
-        if self.enable_cache and self._response_cache:
-            cache_key = generate_cache_key(**kwargs)
-            hit, cached_response = self._response_cache.get(cache_key)
-            if hit:
-                return cached_response
-
-        # Pop after cache check to avoid modifying kwargs during cache key generation
-        typed_parser = kwargs.pop("typed_parser")
-        generation_schema = kwargs.pop("generation_schema")
-
-        if generation_schema is not None and typed_parser is None:
-            response_format = response_format_from_msgspec_struct(generation_schema)
-            kwargs["response_format"] = response_format
+        (
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
+        ) = self._prepare_generate_kwargs(kwargs)
 
         model_output = await self._aexecute_model(**kwargs)
         response = self._process_model_output(
-            model_output, typed_parser, generation_schema
+            model_output,
+            typed_parser,
+            generation_schema,
+            transport_generation_schema,
         )
 
-        # Store in cache if enabled
-        if self.enable_cache and self._response_cache:
-            # Re-add popped values for cache key
-            cache_kwargs = {
-                **kwargs,
-                "typed_parser": typed_parser,
-                "generation_schema": generation_schema,
-            }
-            cache_key = generate_cache_key(**cache_kwargs)
-            self._response_cache.set(cache_key, response)
-
+        self._store_cache(
+            response,
+            **kwargs,
+            typed_parser=typed_parser,
+            generation_schema=generation_schema,
+        )
         return response
 
     def _stream_generate(  # noqa: C901
@@ -478,6 +602,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         stream_response = kwargs.pop("stream_response")
         metadata = dotdict()
         reasoning_tool_call = ""
+        reasoning_accumulated = ""
 
         try:
             aggregator = ToolCallAggregator()
@@ -488,49 +613,42 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 if chunk.choices:
                     choice = chunk.choices[0]
                     delta = choice.delta
-                    if getattr(choice, "finish_reason", None) is not None:
-                        finish_reason = choice.finish_reason
+                    fr = self._extract_finish_reason(choice)
+                    if fr is not None:
+                        finish_reason = fr
 
-                    reasoning_chunk = (
-                        getattr(delta, "reasoning_content", None)
-                        or getattr(delta, "reasoning", None)
-                        or getattr(delta, "thinking", None)
-                    )
+                    reasoning_chunk = self._extract_reasoning(delta)
 
-                    if self.reasoning_in_tool_call and reasoning_chunk:
-                        reasoning_tool_call += reasoning_chunk
-
-                    if self.return_reasoning and reasoning_chunk:
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type(
-                                "reasoning_text_generation"
+                    if reasoning_chunk:
+                        if self.reasoning_in_tool_call:
+                            reasoning_tool_call += reasoning_chunk
+                        if self.return_reasoning:
+                            reasoning_accumulated += reasoning_chunk
+                            self._stream_add_reasoning_chunk(
+                                stream_response,
+                                reasoning_chunk,
                             )
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(reasoning_chunk)
                         continue
 
                     if getattr(delta, "content", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("text_generation")
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(delta.content)
+                        self._stream_add_chunk(
+                            stream_response,
+                            delta.content,
+                            "text_generation",
+                        )
                         continue
 
                     if getattr(delta, "tool_calls", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("tool_call")
-                        tool_call = delta.tool_calls[0]
-                        call_index = tool_call.index
-                        tool_id = tool_call.id
-                        name = tool_call.function.name
-                        arguments = tool_call.function.arguments
-                        aggregator.process(call_index, tool_id, name, arguments)
+                        self._process_stream_tool_calls(
+                            delta,
+                            stream_response,
+                            aggregator,
+                        )
                         continue
 
-                    if hasattr(delta, "annotations") and delta.annotations is not None:
-                        metadata.annotations = [
-                            item.model_dump() for item in delta.annotations
-                        ]
+                    annotations = self._extract_annotations(delta)
+                    if annotations:
+                        metadata.annotations = annotations
                         continue
 
                 elif chunk.usage:
@@ -543,11 +661,17 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     aggregator.reasoning = reasoning_tool_call
                 stream_response.data = aggregator
                 stream_response.first_chunk_event.set()
+            stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        except Exception as e:
+            stream_response.set_error(e)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
+            if not stream_response._response_type_event.is_set():
+                stream_response._response_type_event.set()
             stream_response.set_metadata(metadata)
+            stream_response.add_reasoning(None)
             stream_response.add(None)
 
     async def _astream_generate(  # noqa: C901
@@ -556,6 +680,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         stream_response = kwargs.pop("stream_response")
         metadata = dotdict()
         reasoning_tool_call = ""
+        reasoning_accumulated = ""
 
         try:
             aggregator = ToolCallAggregator()
@@ -566,49 +691,42 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 if chunk.choices:
                     choice = chunk.choices[0]
                     delta = choice.delta
-                    if getattr(choice, "finish_reason", None) is not None:
-                        finish_reason = choice.finish_reason
+                    fr = self._extract_finish_reason(choice)
+                    if fr is not None:
+                        finish_reason = fr
 
-                    reasoning_chunk = (
-                        getattr(delta, "reasoning_content", None)
-                        or getattr(delta, "reasoning", None)
-                        or getattr(delta, "thinking", None)
-                    )
+                    reasoning_chunk = self._extract_reasoning(delta)
 
-                    if self.reasoning_in_tool_call and reasoning_chunk:
-                        reasoning_tool_call += reasoning_chunk
-
-                    if self.return_reasoning and reasoning_chunk:
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type(
-                                "reasoning_text_generation"
+                    if reasoning_chunk:
+                        if self.reasoning_in_tool_call:
+                            reasoning_tool_call += reasoning_chunk
+                        if self.return_reasoning:
+                            reasoning_accumulated += reasoning_chunk
+                            self._stream_add_reasoning_chunk(
+                                stream_response,
+                                reasoning_chunk,
                             )
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(reasoning_chunk)
                         continue
 
                     if getattr(delta, "content", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("text_generation")
-                            stream_response.first_chunk_event.set()
-                        stream_response.add(delta.content)
+                        self._stream_add_chunk(
+                            stream_response,
+                            delta.content,
+                            "text_generation",
+                        )
                         continue
 
                     if getattr(delta, "tool_calls", None):
-                        if stream_response.response_type is None:
-                            stream_response.set_response_type("tool_call")
-                        tool_call = delta.tool_calls[0]
-                        call_index = tool_call.index
-                        tool_id = tool_call.id
-                        name = tool_call.function.name
-                        arguments = tool_call.function.arguments
-                        aggregator.process(call_index, tool_id, name, arguments)
+                        self._process_stream_tool_calls(
+                            delta,
+                            stream_response,
+                            aggregator,
+                        )
                         continue
 
-                    if hasattr(delta, "annotations") and delta.annotations is not None:
-                        metadata.annotations = [
-                            item.model_dump() for item in delta.annotations
-                        ]
+                    annotations = self._extract_annotations(delta)
+                    if annotations:
+                        metadata.annotations = annotations
                         continue
 
                 elif chunk.usage:
@@ -621,12 +739,69 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     aggregator.reasoning = reasoning_tool_call
                 stream_response.data = aggregator
                 stream_response.first_chunk_event.set()
+            stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        except Exception as e:
+            stream_response.set_error(e)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
+            if not stream_response._response_type_event.is_set():
+                stream_response._response_type_event.set()
             stream_response.set_metadata(metadata)
+            stream_response.add_reasoning(None)
             stream_response.add(None)
+
+    def _build_generation_params(
+        self,
+        messages: Union[str, List[Dict[str, Any]]],
+        system_prompt: Optional[str],
+        prefilling: Optional[str],
+        tool_definitions: Optional[ToolDefinitions],
+    ) -> Dict[str, Any]:
+        if isinstance(messages, str):
+            messages = [ChatBlock.user(messages)]
+        else:
+            messages = deepcopy(messages)
+        if isinstance(system_prompt, str):
+            messages.insert(0, ChatBlock.system(system_prompt))
+
+        tool_choice = tool_definitions.choice if tool_definitions else None
+        if isinstance(tool_choice, str):
+            if tool_choice not in ["auto", "required", "none"]:
+                tool_choice = {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
+
+        generation_params = {
+            "messages": messages,
+            "prefilling": prefilling,
+            "model": self.model_id,
+        }
+
+        if tool_definitions and tool_definitions.schemas:
+            generation_params["tools"] = tool_definitions.schemas
+            generation_params["tool_choice"] = tool_choice
+            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+
+        return generation_params
+
+    @staticmethod
+    def _validate_chat_completion_options(
+        *,
+        prefilling: Optional[str],
+        generation_schema: Optional[msgspec.Struct],
+        typed_parser: Optional[str],
+        stream: Optional[bool],
+    ) -> None:
+        if prefilling is not None and generation_schema is not None:
+            raise ValueError(
+                "`prefilling` is not compatible with `generation_schema` in "
+                "OpenAI chat completions."
+            )
+        if stream is True and typed_parser is not None:
+            raise ValueError("`typed_parser` is not `stream=True` compatible")
 
     def __call__(
         self,
@@ -636,8 +811,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefilling: Optional[str] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
-        tool_schemas: Optional[Dict] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Args:
@@ -653,17 +827,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 Whether generation should be in streaming mode.
             generation_schema:
                 Schema that defines how the output should be structured.
-            tool_schemas:
-                JSON schema containing available tools.
-            tool_choice:
-                By default the model will determine when and how many tools to use.
-                You can force specific behavior with the tool_choice parameter.
-                    1. auto:
-                        (Default) Call zero, one, or multiple functions.
-                    2. required:
-                        Call one or more functions.
-                    3. Forced Tool:
-                        Call exactly one specific tool e.g: "get_weather".
+            tool_definitions:
+                Optional container with tool schemas, annotations, and
+                tool-choice metadata. This is the single tool-calling entrypoint
+                for the provider.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -674,33 +841,24 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
-        if isinstance(messages, str):
-            messages = [ChatBlock.user(messages)]
-        if isinstance(system_prompt, str):
-            messages.insert(0, ChatBlock.system(system_prompt))
-
-        if isinstance(tool_choice, str):
-            if tool_choice not in ["auto", "required", "none"]:
-                tool_choice = {
-                    "type": "function",
-                    "function": {"name": tool_choice},
-                }
-
-        generation_params = {
-            "messages": messages,
-            "prefilling": prefilling,
-            "model": self.model_id,
-        }
-
-        if tool_schemas:
-            generation_params["tools"] = tool_schemas
-            generation_params["tool_choice"] = tool_choice
-            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+        self._validate_chat_completion_options(
+            prefilling=prefilling,
+            generation_schema=generation_schema,
+            typed_parser=typed_parser,
+            stream=stream,
+        )
+        is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
+        generation_params = self._build_generation_params(
+            messages,
+            system_prompt,
+            prefilling,
+            None if is_flow_control else tool_definitions,
+        )
+        if tool_definitions is not None:
+            generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
-            if typed_parser is not None:
-                raise ValueError("`typed_parser` is not `stream=True` compatible")
-
+            self._prepare_stream_kwargs(generation_params)
             stream_response = ModelStreamResponse(mode="sync")
             F.spawn(
                 self._stream_generate,
@@ -733,8 +891,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         prefilling: Optional[str] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
-        tool_schemas: Optional[Dict] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Async version of __call__. Args:
@@ -750,17 +907,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 Whether generation should be in streaming mode.
             generation_schema:
                 Schema that defines how the output should be structured.
-            tool_schemas:
-                JSON schema containing available tools.
-            tool_choice:
-                By default the model will determine when and how many tools to use.
-                You can force specific behavior with the tool_choice parameter.
-                    1. auto:
-                        (Default) Call zero, one, or multiple functions.
-                    2. required:
-                        Call one or more functions.
-                    3. Forced Tool:
-                        Call exactly one specific tool e.g: "get_weather".
+            tool_definitions:
+                Optional container with tool schemas, annotations, and
+                tool-choice metadata. This is the single tool-calling entrypoint
+                for the provider.
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
@@ -771,33 +921,24 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ValueError:
                 Raised if `typed_xml=True` and `stream=True`.
         """
-        if isinstance(messages, str):
-            messages = [ChatBlock.user(messages)]
-        if isinstance(system_prompt, str):
-            messages.insert(0, ChatBlock.system(system_prompt))
-
-        if isinstance(tool_choice, str):
-            if tool_choice not in ["auto", "required", "none"]:
-                tool_choice = {
-                    "type": "function",
-                    "function": {"name": tool_choice},
-                }
-
-        generation_params = {
-            "messages": messages,
-            "prefilling": prefilling,
-            "model": self.model_id,
-        }
-
-        if tool_schemas:
-            generation_params["tools"] = tool_schemas
-            generation_params["tool_choice"] = tool_choice
-            generation_params["parallel_tool_calls"] = self.parallel_tool_calls
+        self._validate_chat_completion_options(
+            prefilling=prefilling,
+            generation_schema=generation_schema,
+            typed_parser=typed_parser,
+            stream=stream,
+        )
+        is_flow_control = is_subclass_of(generation_schema, ToolFlowControl)
+        generation_params = self._build_generation_params(
+            messages,
+            system_prompt,
+            prefilling,
+            None if is_flow_control else tool_definitions,
+        )
+        if tool_definitions is not None:
+            generation_params["tool_definitions"] = tool_definitions
 
         if stream is True:
-            if typed_parser is not None:
-                raise ValueError("`typed_parser` is not `stream=True` compatible")
-
+            self._prepare_stream_kwargs(generation_params)
             stream_response = ModelStreamResponse(mode="async")
             await F.aspawn(
                 self._astream_generate,
@@ -896,7 +1037,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
                 suffix=f".{kwargs.get('response_format')}", delete=False
             ) as temp_file:
                 temp_file_path = temp_file.name
-                await model_output.astream_to_file(temp_file_path)
+                await model_output.stream_to_file(temp_file_path)
 
             response.set_response_type("audio_generation")
             response.add(temp_file_path)
@@ -920,7 +1061,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         stream_response.set_response_type("audio_generation")
 
         async with self._aexecute_model(**kwargs) as model_output:
-            async for chunk in model_output.aiter_bytes(chunk_size=1024):
+            async for chunk in model_output.iter_bytes(chunk_size=1024):
                 stream_response.add(chunk)
                 if not stream_response.first_chunk_event.is_set():
                     stream_response.first_chunk_event.set()
@@ -1328,18 +1469,17 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         else:
             if model_output.text:
                 transcript["text"] = model_output.text
-            if model_output.words:
-                words = [
-                    {"word": w.word, "start": w.start, "end": w.end}
-                    for w in model_output.words
+            words = getattr(model_output, "words", None)
+            if words:
+                transcript["words"] = [
+                    {"word": w.word, "start": w.start, "end": w.end} for w in words
                 ]
-                transcript["words"] = words
-            if model_output.segment:
-                segments = [
+            segments = getattr(model_output, "segments", None)
+            if segments:
+                transcript["segments"] = [
                     {"id": seg.id, "start": seg.start, "end": seg.end, "text": seg.text}
-                    for seg in model_output.segments
+                    for seg in segments
                 ]
-                transcript["segments"] = segments
 
         response.add(transcript)
 
@@ -1359,16 +1499,16 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         else:
             if model_output.text:
                 transcript["text"] = model_output.text
-            if model_output.words:
-                words = [
-                    {"word": w.word, "start": w.start, "end": w.end}
-                    for w in model_output.words
+            words = getattr(model_output, "words", None)
+            if words:
+                transcript["words"] = [
+                    {"word": w.word, "start": w.start, "end": w.end} for w in words
                 ]
-                transcript["words"] = words
-            if model_output.segment:
-                segments = [
+            segments = getattr(model_output, "segments", None)
+            if segments:
+                transcript["segments"] = [
                     {"id": seg.id, "start": seg.start, "end": seg.end, "text": seg.text}
-                    for seg in model_output.segments
+                    for seg in segments
                 ]
                 transcript["segments"] = segments
 
@@ -1383,12 +1523,13 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         model_output = self._execute_model(**kwargs)
 
         for event in model_output:
-            chunk = event.transcript.text.delta
-            if chunk:
-                stream_response.add(chunk)
-                if not stream_response.first_chunk_event.is_set():
-                    stream_response.first_chunk_event.set()
-            elif event.transcript.text.done:
+            if event.type == "transcript.text.delta":
+                chunk = event.delta
+                if chunk:
+                    stream_response.add(chunk)
+                    if not stream_response.first_chunk_event.is_set():
+                        stream_response.first_chunk_event.set()
+            elif event.type == "transcript.text.done":
                 stream_response.add(None)
 
         return stream_response
@@ -1400,12 +1541,13 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         model_output = await self._aexecute_model(**kwargs)
 
         async for event in model_output:
-            chunk = event.transcript.text.delta
-            if chunk:
-                stream_response.add(chunk)
-                if not stream_response.first_chunk_event.is_set():
-                    stream_response.first_chunk_event.set()
-            elif event.transcript.text.done:
+            if event.type == "transcript.text.delta":
+                chunk = event.delta
+                if chunk:
+                    stream_response.add(chunk)
+                    if not stream_response.first_chunk_event.is_set():
+                        stream_response.first_chunk_event.set()
+            elif event.type == "transcript.text.done":
                 stream_response.add(None)
 
         return stream_response

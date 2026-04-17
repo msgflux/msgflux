@@ -10,7 +10,14 @@ from msgflux.exceptions import TaskError
 from msgflux.logger import logger
 from msgflux.telemetry import Spans
 
+
+def _resolve_async_call(f: Callable) -> Callable:
+    """Returns f.acall if available (Module interface), otherwise f itself."""
+    return f.acall if hasattr(f, "acall") else f
+
+
 __all__ = [
+    "abcast_gather",
     "amap_gather",
     "ascatter_gather",
     "aspawn",
@@ -197,7 +204,7 @@ def scatter_gather(
 
 @Spans.instrument()
 def bcast_gather(
-    to_send: List[Callable], *args, timeout: Optional[float] = None, **kwargs
+    to_send: List[Callable], *args: Any, timeout: Optional[float] = None, **kwargs: Any
 ) -> Tuple[Any, ...]:
     """Broadcasts arguments to multiple callables and gathers the responses.
 
@@ -254,7 +261,7 @@ def bcast_gather(
 
 @Spans.instrument()
 def wait_for(
-    to_send: Callable, *args, timeout: Optional[float] = None, **kwargs
+    to_send: Callable, *args: Any, timeout: Optional[float] = None, **kwargs: Any
 ) -> Any:
     """Wait for a callable execution.
 
@@ -325,7 +332,7 @@ def wait_for_event(event: Any) -> None:
 
 
 @Spans.instrument()
-def spawn(to_send: Callable, *args, **kwargs) -> None:
+def spawn(to_send: Callable, *args: Any, **kwargs: Any) -> None:
     """Dispatches a task without waiting for a result.
     Uses the AsyncExecutorPool. The task is not tracked and no return is provided.
 
@@ -407,17 +414,17 @@ async def aspawn(to_send: Callable, *args, **kwargs) -> None:
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")
 
+    call = _resolve_async_call(to_send)
+
     async def run_task():
         """Wrapper to run the task and log errors."""
         try:
-            if hasattr(to_send, "acall"):
-                await to_send.acall(*args, **kwargs)
-            elif asyncio.iscoroutinefunction(to_send):
-                await to_send(*args, **kwargs)
+            if asyncio.iscoroutinefunction(call):
+                await call(*args, **kwargs)
             else:
                 # Fall back to running sync function in executor
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, lambda: to_send(*args, **kwargs))
+                await loop.run_in_executor(None, lambda: call(*args, **kwargs))
         except Exception as e:
             logger.error(f"Fire-and-forget task error: {e!s}", exc_info=True)
 
@@ -505,11 +512,12 @@ async def amap_gather(
                 "`kwargs_list` must be a list with the same length as `args_list`"
             )
 
+    call = _resolve_async_call(to_send)
     tasks = []
     for i in range(len(args_list)):
         args = args_list[i]
         kwargs = kwargs_list[i] if kwargs_list else {}
-        tasks.append(to_send(*args, **kwargs))
+        tasks.append(call(*args, **kwargs))
 
     responses = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -572,8 +580,58 @@ async def ascatter_gather(
     for i, f in enumerate(to_send):
         args = args_list[i] if args_list and i < len(args_list) else ()
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
-        tasks.append(f(*args, **kwargs))
+        tasks.append(_resolve_async_call(f)(*args, **kwargs))
 
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results = []
+    for i, response in enumerate(responses):
+        if isinstance(response, Exception):
+            logger.error(str(response))
+            results.append(TaskError(exception=response, index=i))
+        else:
+            results.append(response)
+
+    return tuple(results)
+
+
+@Spans.instrument()
+async def abcast_gather(
+    to_send: List[Callable], *args: Any, **kwargs: Any
+) -> Tuple[Any, ...]:
+    """Async version of bcast_gather. Broadcasts the same arguments to multiple
+    async callables and gathers the responses concurrently.
+
+    Args:
+        to_send:
+            List of callable objects (e.g. async functions or `Module` instances
+            with acall).
+        *args:
+            Positional arguments broadcast to every callable.
+        **kwargs:
+            Named arguments broadcast to every callable.
+
+    Returns:
+        Tuple containing the responses for each callable. If an error occurs for a
+        specific callable, its corresponding response in the tuple will be a
+        `TaskError`.
+
+    Raises:
+        TypeError:
+            If `to_send` is not a list of callables.
+
+    Examples:
+        async def square(x): return x * x
+        async def cube(x): return x * x * x
+
+        # Example 1:
+        results = await F.abcast_gather([square, cube], 3)
+        print(results)  # (9, 27)
+    """
+    if not isinstance(to_send, list) or not all(callable(f) for f in to_send):
+        raise TypeError("`to_send` must be a non-empty list of callable objects")
+
+    tasks = [_resolve_async_call(f)(*args, **kwargs) for f in to_send]
     responses = await asyncio.gather(*tasks, return_exceptions=True)
 
     results = []

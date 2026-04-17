@@ -10,6 +10,8 @@ def tool_config(
     return_direct: Optional[bool] = False,
     call_as_response: Optional[bool] = False,
     spawn: Optional[bool] = False,
+    disable_input: Optional[bool] = False,
+    inject_message: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
     inject_vars: Optional[Union[bool, List[str]]] = False,
     handoff: Optional[bool] = False,
@@ -39,12 +41,19 @@ def tool_config(
         spawn:
             If True, the tool will be dispatched without waiting for a result.
             The model receives a confirmation that the task was started.
+        disable_input:
+            If True, removes public input parameters from the tool schema. The model
+            will call the tool with no explicit arguments, and any arguments supplied
+            by the model are ignored at runtime. This does not inject any runtime
+            context by itself.
+        inject_message:
+            If True, the tool receives the original `message` passed to the Agent
+            at runtime. This injected parameter does not become part of the tool
+            schema exposed to the model.
         inject_messages:
-            If true, the tool automatically sets `inject_messages` and
-            `return_direct` to `True`. Additionally, the tool will be
-            renamed to `transfer_to_<name>`.
-            Any input parameters for this tool will be removed. The tool will **only**
-            receive `messages` as a parameter.
+            If True, the tool receives the current conversation history as
+            `messages` at runtime. This injected parameter does not become part of
+            the tool schema exposed to the model.
         inject_vars:
             Indicates if the tool should receive vars. If True, the tool receives all
             vars as a named argument `vars`. If a list of vars is passed, only those
@@ -99,6 +108,7 @@ def tool_config(
 
     def decorator(f):
         _return_direct = return_direct  # Local copy
+        _inject_message = inject_message  # Local copy
         _inject_messages = inject_messages  # Local copy
 
         if call_as_response is True and _return_direct is False:
@@ -125,6 +135,8 @@ def tool_config(
                     "spawn": spawn,
                     "call_as_response": call_as_response,
                     "handoff": handoff,
+                    "disable_input": disable_input,
+                    "inject_message": _inject_message,
                     "inject_messages": _inject_messages,
                     "inject_vars": inject_vars,
                     "return_direct": _return_direct,

@@ -928,9 +928,65 @@ Use cases:
         print(user_vars)  # {"favorite_color": "blue"}
         ```
 
+#### disable_input
+
+With `disable_input=True`, the tool exposes no public input parameters to the
+model. The tool is called as `tool_name()`, and any arguments supplied by the
+model are ignored at runtime.
+
+This is useful for:
+
+- Specialist subagents that should be triggered without a task payload
+- Tools that work only with injected context such as `message`, `messages`, or `vars`
+- Internal routing tools where the coordinator should only decide whether to call
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    @mf.tool_config(disable_input=True, inject_messages=True)
+    class Specialist(nn.Agent):
+        """Specialist that works only from conversation context."""
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        system_message = "You are a specialist. Use the conversation history."
+
+    class Coordinator(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        tools = [Specialist]
+    ```
+
+#### inject_message
+
+With `inject_message=True`, the tool receives the original `message` passed to the
+agent. This is useful when the tool needs access to the full envelope object,
+including `Message` fields that should not be part of the public tool schema.
+
+Use cases:
+
+- Agent-as-a-tool with declarative `Message` envelopes
+- Tools that need `response_mode` side effects on the original message
+- Access to `vars`, metadata, or other fields outside the public task schema
+
+???+ example
+
+    ```python
+    @mf.tool_config(inject_message=True)
+    def inspect_original_message(message, **kwargs) -> str:
+        """Inspect the original message envelope."""
+        if isinstance(message, mf.Message):
+            return str(message.get("meta.trace_id"))
+        return "No structured message available."
+    ```
+
 #### inject_messages
 
-With `inject_messages=True`, the tool receives the agent's internal state (conversation history) as `task_messages` in kwargs. This is particularly useful for **agent-as-a-tool** patterns where you want to pass the full conversation context to a specialist agent.
+With `inject_messages=True`, the tool receives the agent's internal state
+(conversation history) as `messages` in kwargs. This is particularly useful for
+**agent-as-a-tool** patterns where you want to pass the full conversation context
+to a specialist agent.
 
 Use cases:
 
@@ -941,7 +997,7 @@ Use cases:
 
 ???+ example
 
-    === "Agent-as-a-Tool (Primary Use)"
+    === "Agent-as-Tool (Primary Use)"
 
         When an agent is used as a tool, `inject_messages` passes the conversation history so the specialist has full context:
 
@@ -955,7 +1011,7 @@ Use cases:
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
         # With inject_messages, the specialist receives
-        # the coordinator's conversation as task_messages
+        # the coordinator's conversation as messages
         @mf.tool_config(inject_messages=True)
         class Specialist(nn.Agent):
             """Expert that needs conversation context."""
@@ -972,7 +1028,7 @@ Use cases:
         coordinator = Coordinator()
 
         # When coordinator calls specialist, the full conversation
-        # is passed via task_messages parameter
+        # is passed via messages parameter
         response = coordinator("Help me with a complex problem")
         ```
 
@@ -990,7 +1046,7 @@ Use cases:
         @mf.tool_config(inject_messages=True)
         def check_safety(**kwargs) -> dict:
             """Check if the conversation is safe to continue."""
-            messages = kwargs.get("task_messages", [])
+            messages = kwargs.get("messages", [])
             last_message = messages[-1]["content"] if messages else ""
 
             # Simple keyword-based safety check
@@ -1027,7 +1083,7 @@ Use cases:
         @mf.tool_config(inject_messages=True)
         def analyze_shared_images(**kwargs) -> str:
             """Analyze all images shared in the conversation."""
-            messages = kwargs.get("task_messages", [])
+            messages = kwargs.get("messages", [])
 
             images = []
             for msg in messages:
@@ -1049,9 +1105,9 @@ When `handoff=True`, the tool is configured for seamless agent-to-agent handoff:
 
 - Sets `return_direct=True` and `inject_messages=True`
 - Changes tool name to `transfer_to_{original_name}`
-- Removes input parameters (conversation history is passed instead)
+- Removes input parameters (equivalent to `disable_input=True`)
 
-Unlike Agent-as-a-Tool, the Specialist's response bypasses the Coordinator entirely and goes directly to the user. The Coordinator only decides *who* handles the request.
+Unlike Agent-as-Tool, the Specialist's response bypasses the Coordinator entirely and goes directly to the user. The Coordinator only decides *who* handles the request.
 
 ```
               Input
@@ -1267,7 +1323,7 @@ By default, all tools have automatic retry enabled using environment variables (
             return do_search(query)
         ```
 
-### Agent-as-a-Tool
+### Agent-as-Tool
 
 Agents can be used as tools for other agents, enabling hierarchical task delegation, also known as **SubAgents**. Using AutoParams makes this pattern especially clean: the class name becomes the tool name, and the docstring becomes the tool description.
 
@@ -1307,7 +1363,7 @@ The Coordinator calls the Specialist as any other tool. The result returns to th
                 Output
 ```
 
-???+ note "Agent-as-a-Tool Examples"
+???+ note "Agent-as-Tool Examples"
 
     === "Health Team"
 

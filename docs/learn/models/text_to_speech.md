@@ -144,6 +144,7 @@ Generate and play audio in real-time:
 
         ```python
         import msgflux as mf
+        import asyncio
 
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
@@ -152,40 +153,48 @@ Generate and play audio in real-time:
             stream=True
         )
 
-        # Process chunks as they arrive
-        for chunk in response.consume():
-            if chunk is None:  # End of stream
-                break
-            # chunk is bytes - play or save incrementally
-            process_audio_chunk(chunk)
+        # consume() returns an async generator
+        async def handle():
+            async for chunk in response.consume():
+                if chunk is None:  # End of stream
+                    break
+                # chunk is bytes - play or save incrementally
+                process_audio_chunk(chunk)
+
+        asyncio.run(handle())
         ```
 
     === "To File"
 
         ```python
         import msgflux as mf
+        import asyncio
 
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
-        response = model(
-            "This will be streamed to a file.",
-            stream=True,
-            response_format="mp3"
-        )
+        async def save():
+            response = model(
+                "This will be streamed to a file.",
+                stream=True,
+                response_format="mp3"
+            )
 
-        with open("output.mp3", "wb") as f:
-            for chunk in response.consume():
-                if chunk is None:
-                    break
-                f.write(chunk)
+            with open("output.mp3", "wb") as f:
+                async for chunk in response.consume():
+                    if chunk is None:
+                        break
+                    f.write(chunk)
 
-        print("Audio saved to output.mp3")
+            print("Audio saved to output.mp3")
+
+        asyncio.run(save())
         ```
 
     === "Together AI"
 
         ```python
         import msgflux as mf
+        import asyncio
 
         model = mf.Model.text_to_speech(
             "together/canopylabs/orpheus-3b-0.1-ft",
@@ -193,49 +202,55 @@ Generate and play audio in real-time:
             response_format="mp3"
         )
 
-        response = model(
-            "Today is a wonderful day to build something people love!",
-            stream=True
-        )
+        async def save():
+            response = model(
+                "Today is a wonderful day to build something people love!",
+                stream=True
+            )
 
-        with open("output.mp3", "wb") as f:
-            for chunk in response.consume():
-                if chunk is None:
-                    break
-                f.write(chunk)
+            with open("output.mp3", "wb") as f:
+                async for chunk in response.consume():
+                    if chunk is None:
+                        break
+                    f.write(chunk)
+
+        asyncio.run(save())
         ```
 
     === "Playback"
 
         ```python
         import msgflux as mf
+        import asyncio
         import pyaudio  # pip install pyaudio
 
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
-        # Setup audio playback
-        p = pyaudio.PyAudio()
-        stream = p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=24000,  # 24kHz for TTS
-            output=True
-        )
+        async def play():
+            p = pyaudio.PyAudio()
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=24000,  # 24kHz for TTS
+                output=True
+            )
 
-        response = model(
-            "This will be played in real-time.",
-            stream=True,
-            response_format="pcm"
-        )
+            response = model(
+                "This will be played in real-time.",
+                stream=True,
+                response_format="pcm"
+            )
 
-        for chunk in response.consume():
-            if chunk is None:
-                break
-            stream.write(chunk)
+            async for chunk in response.consume():
+                if chunk is None:
+                    break
+                stream.write(chunk)
 
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+
+        asyncio.run(play())
         ```
 
 ## 6. **Async Support**
@@ -253,7 +268,7 @@ Generate audio asynchronously:
         model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
 
         async def main():
-            response = await model.acall("Hello, how are you today?", voice="nova")
+            response = await model.acall("Hello, how are you today?")
             audio_path = response.consume()
             print(audio_path)
 
@@ -366,106 +381,7 @@ Generate multiple audio files:
         print(f"Sample width: {audio.sample_width} bytes")
         ```
 
-## 9. **Common Patterns**
-
-???+ example
-
-    === "Multi-Voice Narration"
-
-        ```python
-        import msgflux as mf
-        from pydub import AudioSegment
-
-        # Create models with different voices
-        narrator = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="fable")
-        character1 = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="nova")
-        character2 = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="onyx")
-
-        # Generate dialogue
-        narration = narrator("The story begins").consume()
-        line1 = character1("Hello there!").consume()
-        line2 = character2("Hi, how are you?").consume()
-
-        # Combine audio
-        combined = AudioSegment.from_file(narration)
-        combined += AudioSegment.from_file(line1)
-        combined += AudioSegment.from_file(line2)
-
-        combined.export("dialogue.mp3", format="mp3")
-        ```
-
-    === "Audiobook"
-
-        ```python
-        import msgflux as mf
-        from pydub import AudioSegment
-
-        model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="fable")
-
-        chapters = [
-            "Chapter 1: Once upon a time...",
-            "Chapter 2: The adventure begins...",
-            "Chapter 3: A challenge appears..."
-        ]
-
-        audio_segments = []
-        for i, chapter_text in enumerate(chapters):
-            print(f"Generating chapter {i+1}...")
-            response = model(chapter_text, response_format="mp3")
-            audio_segments.append(AudioSegment.from_mp3(response.consume()))
-
-        # Combine with silence between chapters
-        silence = AudioSegment.silent(duration=2000)  # 2 seconds
-        combined = audio_segments[0]
-        for segment in audio_segments[1:]:
-            combined += silence + segment
-
-        combined.export("audiobook.mp3", format="mp3")
-        print("Audiobook created!")
-        ```
-
-    === "Language Learning"
-
-        ```python
-        import msgflux as mf
-
-        model_slow = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="nova", speed=0.7)
-        model_normal = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="nova", speed=1.0)
-
-        phrase = "The quick brown fox jumps over the lazy dog"
-
-        # Slow version for learning
-        slow_audio = model_slow(phrase, response_format="mp3").consume()
-
-        # Normal speed for practice
-        normal_audio = model_normal(phrase, response_format="mp3").consume()
-
-        print(f"Slow: {slow_audio}")
-        print(f"Normal: {normal_audio}")
-        ```
-
-    === "Podcast"
-
-        ```python
-        import msgflux as mf
-        from pydub import AudioSegment
-
-        # Create hosts with different voices
-        host1 = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="echo")
-        host2 = mf.Model.text_to_speech("openai/gpt-4o-mini-tts", voice="shimmer")
-
-        intro = host1("Welcome to our podcast!").consume()
-        response1 = host2("Thanks for having me!").consume()
-        discussion = host1("Let's talk about AI...").consume()
-
-        podcast = AudioSegment.from_file(intro)
-        podcast += AudioSegment.from_file(response1)
-        podcast += AudioSegment.from_file(discussion)
-
-        podcast.export("podcast.mp3", format="mp3")
-        ```
-
-## 10. **Error Handling**
+## 9. **Error Handling**
 
 ???+ example
 

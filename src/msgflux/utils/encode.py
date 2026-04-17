@@ -14,9 +14,12 @@ except ImportError:
     httpx = None
 
 
+_HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+
 def encode_base64_from_url(url: str) -> str:
     try:
-        with requests.get(url, timeout=300) as response:
+        with requests.get(url, headers=_HEADERS, timeout=300) as response:
             response.raise_for_status()
             return base64.b64encode(response.content).decode("utf-8")
     except (requests.RequestException, UnicodeDecodeError):
@@ -49,7 +52,7 @@ async def aencode_base64_from_url(url: str) -> str:
 
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=_HEADERS)
             response.raise_for_status()
             return base64.b64encode(response.content).decode("utf-8")
     except (httpx.HTTPError, UnicodeDecodeError):
@@ -69,8 +72,10 @@ async def aencode_local_file_in_base64(path: str) -> str:
         return base64.b64encode(content).decode("utf-8")
 
 
-async def aencode_data_to_base64(path: str) -> str:
+async def aencode_data_to_base64(path: Union[str, bytes]) -> str:
     """Async version of encode_data_to_base64."""
+    if isinstance(path, bytes):
+        return base64.b64encode(path).decode("utf-8")
     if "http" in path:
         return await aencode_base64_from_url(path)
     elif os.path.exists(path) and not os.path.isdir(path):

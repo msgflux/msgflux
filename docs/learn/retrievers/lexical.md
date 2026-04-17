@@ -1,0 +1,231 @@
+# Lexical Retrievers
+
+## ✦₊⁺ Overview
+
+BM25 (Best Matching 25) is a classic lexical ranking algorithm that scores documents by term frequency and inverse document frequency. msgFlux ships three providers with the same interface — choose based on your performance and dependency needs.
+
+| Provider | Class | Dependency | Best For |
+|----------|-------|------------|----------|
+| `bm25` | `BM25LexicalRetriever` | none (built-in) | Zero-dependency setups |
+| `bm25s` | `BM25SLexicalRetriever` | `bm25s` | High-throughput / large corpora |
+| `rank_bm25` | `RankBM25LexicalRetriever` | `rank-bm25` | Drop-in familiar API |
+
+All three share the same `add()` / `__call__()` / `acall()` interface.
+
+---
+
+## 1. **Quick Start**
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.lexical("bm25")
+
+    retriever.add([
+        "Python is a high-level programming language.",
+        "Machine learning is a subset of artificial intelligence.",
+        "The Eiffel Tower is located in Paris, France.",
+        "Neural networks are inspired by the human brain.",
+    ])
+
+    response = retriever("What is machine learning?", top_k=2, return_score=True)
+
+    for result in response.data[0].results:
+        print(f"[{result.score:.3f}] {result.data}")
+    # [4.21] Machine learning is a subset of artificial intelligence.
+    # [1.83] Neural networks are inspired by the human brain.
+    ```
+
+---
+
+## 2. **Providers**
+
+### `bm25` — Built-in (no dependencies)
+
+Pure Python implementation. No external packages required.
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25", k1=1.5, b=0.75)
+```
+
+### `bm25s` — High-performance (scipy sparse matrices)
+
+Uses the [`bm25s`](https://github.com/xhluca/bm25s) library. Significantly faster on large corpora. Supports multiple BM25 variants and stopword filtering.
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25s",
+    k1=1.5,
+    b=0.75,
+    method="lucene",   # "lucene" | "robertson" | "atire" | "bm25l" | "bm25+"
+    stopwords="en",    # language code or list of stopwords
+)
+```
+
+Install: `pip install bm25s`
+
+### `rank_bm25` — rank-bm25 library
+
+Uses [`rank-bm25`](https://github.com/dorianbrown/rank_bm25), a popular BM25 library. Familiar to users already using it.
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("rank_bm25", k1=1.5, b=0.75)
+```
+
+Install: `pip install rank-bm25`
+
+---
+
+## 3. **Parameters**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `k1` | `1.5` | Term frequency saturation — higher values reward repeated terms more |
+| `b` | `0.75` | Document length normalization — `0` disables it, `1` fully normalizes |
+| `method` | `"lucene"` | BM25 variant (`bm25s` only) |
+| `stopwords` | `None` | Language code or word list to filter (`bm25s` only) |
+
+---
+
+## 4. **Adding Documents**
+
+Call `.add()` with a list of strings before searching. Documents are indexed incrementally — you can call `.add()` multiple times:
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25")
+
+# First batch
+retriever.add([
+    "Python is a general-purpose programming language.",
+    "JavaScript runs in the browser.",
+])
+
+# Add more later
+retriever.add([
+    "Rust provides memory safety without a garbage collector.",
+    "Go is designed for simplicity and performance.",
+])
+
+response = retriever("compiled systems language")
+```
+
+---
+
+## 5. **Search Parameters**
+
+```python
+response = retriever(
+    queries,           # str or List[str]
+    top_k=5,           # max results per query (default: 5)
+    threshold=0.0,     # min BM25 score to include a result (default: 0.0)
+    return_score=False # include score in results (default: False)
+)
+```
+
+???+ example "Threshold filtering"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.lexical("bm25")
+    retriever.add([
+        "Deep learning uses neural networks with many layers.",
+        "The weather today is sunny and warm.",
+        "Transformers revolutionized natural language processing.",
+    ])
+
+    # Only return documents with score >= 1.0
+    response = retriever("neural network", threshold=1.0, return_score=True)
+
+    for result in response.data[0].results:
+        print(f"[{result.score:.2f}] {result.data}")
+    # [3.87] Deep learning uses neural networks with many layers.
+    # [1.12] Transformers revolutionized natural language processing.
+    # (weather doc excluded — score below threshold)
+    ```
+
+---
+
+## 6. **Batch Queries**
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25")
+retriever.add([
+    "Python is great for data science.",
+    "Java is widely used in enterprise applications.",
+    "Rust prevents memory bugs at compile time.",
+])
+
+queries = ["data analysis language", "safe systems programming"]
+response = retriever(queries, top_k=1, return_score=True)
+
+for i, query in enumerate(queries):
+    result = response.data[i].results[0]
+    print(f"{query!r} → [{result.score:.2f}] {result.data}")
+```
+
+---
+
+## 7. **Score Statistics**
+
+Inspect how scores are distributed across your corpus for a given query:
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25")
+retriever.add([
+    "Machine learning automates pattern recognition.",
+    "Deep learning is a subset of machine learning.",
+    "The Eiffel Tower stands 330 metres tall.",
+])
+
+stats = retriever.get_score_statistics("machine learning")
+print(stats)
+# {
+#   "min_score": 0.0,
+#   "max_score": 5.43,
+#   "mean_score": 2.21,
+#   "median_score": 2.14,
+#   "std_score": 2.18
+# }
+```
+
+Useful for choosing a `threshold` value — e.g. use `mean_score` to filter out below-average results.
+
+---
+
+## 8. **Async Support**
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25")
+retriever.add([
+    "Async Python enables non-blocking I/O.",
+    "Asyncio is the standard async library.",
+    "Threading uses OS threads for concurrency.",
+])
+
+response = await retriever.acall(
+    ["non-blocking concurrency", "event loop"],
+    top_k=2,
+    return_score=True,
+)
+
+for i, query in enumerate(["non-blocking concurrency", "event loop"]):
+    print(f"\n{query}")
+    for result in response.data[i].results:
+        print(f"  [{result.score:.2f}] {result.data}")
+```

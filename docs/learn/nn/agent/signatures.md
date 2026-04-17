@@ -7,7 +7,7 @@ This [DSPy-inspired](https://dspy.ai/learn/programming/signatures/) feature auto
 - **System prompt** with task description (from docstring)
 - **Task template** with input placeholders
 - **Generation schema** for structured output
-- **Annotations** for agent-as-a-tool integration
+- **Annotations** for agent-as-tool integration
 
 ### Why Use Signatures?
 
@@ -231,8 +231,8 @@ Signatures support various field types for different use cases:
 | `int`, `float` | Numbers | `count: int`, `score: float` |
 | `bool` | Boolean | `is_valid: bool` |
 | `Literal[...]` | Constrained choices | `sentiment: Literal["pos", "neg"]` |
+| `dict[str, T]` | Dictionaries | `metadata: dict[str, float]` |
 | `List[T]` | Lists | `tags: List[str]` |
-<!--  | `dict` | Dictionaries | `metadata: dict` | -->
 | `Image` | Image input | `photo: Image` |
 | `Audio` | Audio input | `recording: Audio` |
 | `Video` | Video input | `clip: Video` |
@@ -283,7 +283,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
             confidence: float = mf.OutputField(desc="Confidence score 0-1")
 
         class Classifier(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = ImageClassifier
 
         agent = Classifier()
@@ -291,7 +291,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
         # Task template automatically includes image placeholder
         print(agent.task_template)
 
-        response = agent(task_multimodal_inputs={
+        response = agent(task_multimodal={
             "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
         })
         print(response.label)        # "Nature boardwalk"
@@ -317,7 +317,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
         # Task template automatically includes image placeholder
         print(agent.task_template)
 
-        response = agent(task_multimodal_inputs={
+        response = agent(task_multimodal={
             "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/800px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
         })
         print(response.label)        # "Nature boardwalk"
@@ -343,7 +343,7 @@ When using signatures, you can pass inputs in multiple ways:
         # mf.set_envs(OPENAI_API_KEY="...")
 
         class Translator(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = "english -> portuguese"
 
         agent = Translator()
@@ -362,15 +362,16 @@ When using signatures, you can pass inputs in multiple ways:
         # mf.set_envs(OPENAI_API_KEY="...")
 
         class Translator(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            signature = "english -> portuguese"
 
         agent = Translator()
         response = agent({"english": "hello world"})
         ```
 
-    === "With Context"
+    === "With Task Context"
 
-        Combine with `context_inputs`:
+        Combine with `task_context`:
 
         ```python
         # pip install msgflux[openai]
@@ -386,14 +387,14 @@ When using signatures, you can pass inputs in multiple ways:
             summary: str = mf.OutputField()
 
         class Summarizer(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1")
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = Summarize
 
         agent = Summarizer()
         response = agent(
             text="Long article...",
             style="casual",
-            context_inputs="Focus on the key takeaways"
+            task_context="Focus on the key takeaways"
         )
         ```
 
@@ -547,11 +548,11 @@ When an agent has a signature, its annotations are automatically configured base
 
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-    # Without signature: default annotation is "message: str"
+    # Without signature: default annotation is "task: str"
     class BasicAgent(nn.Agent):
         model = model
 
-    print(BasicAgent().annotations)  # {"message": str}
+    print(BasicAgent().annotations)  # {"task": str}
 
     # With signature: annotations match the input fields
     class AnalyzeSentiment(mf.Signature):

@@ -9,7 +9,7 @@ hide:
 
 <div class="hero-split">
 <div class="hero-left">
-<img src="./assets/msgflux.png" alt="msgFlux" width="260" />
+<img src="./assets/msgflux.png" alt="msgFlux" width="400" />
 </div>
 <div class="hero-right">
 <p class="tagline"><em>Dynamic</em> AI Systems</p>
@@ -17,262 +17,514 @@ hide:
 <input checked="checked" id="__tabbed_0_1" name="__tabbed_0" type="radio" />
 <input id="__tabbed_0_2" name="__tabbed_0" type="radio" />
 <div class="tabbed-labels">
-<label for="__tabbed_0_1">pip</label>
-<label for="__tabbed_0_2">uv</label>
+<label for="__tabbed_0_1">uv</label>
+<label for="__tabbed_0_2">pip</label>
 </div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><code>pip install msgflux</code></pre></div>
-</div>
-<div class="tabbed-block">
 <div class="highlight"><pre><code>uv add msgflux</code></pre></div>
 </div>
+<div class="tabbed-block">
+<div class="highlight"><pre><code>pip install msgflux</code></pre></div>
 </div>
 </div>
 </div>
 </div>
+</div>
 
-Traditional software relies on predefined rules — but the real world is unpredictable. AI systems need to be **dynamic**: flexible enough to adapt, reason, and react to situations you never explicitly coded for. Language models make this possible.
+msgFlux is an open-source framework for building dynamic AI systems with **composable modules**. It treats prompts, signatures, tools, and message flow as explicit program structure instead of ad-hoc glue. Architecture, data flow, and prompting remain separate layers, so systems can evolve by changing contracts, modules, or routes without forcing everything to change together.
 
-msgFlux gives you a **PyTorch-like API** to build these systems. Compose agents, tools, and workflows into **programs** — where each module has a clear responsibility and the system as a whole can handle whatever comes its way.
+## **AI Systems *not* ML Systems**
 
-Unlike frameworks that force you into a single paradigm, msgFlux supports **both declarative and prompting** approaches. Write structured modules that know where to read and write, compose them with `Inline` for dynamic workflows, or craft your own prompts. The *flux* is in the name: workflows that flow and adapt.
+**ML systems** are systems *for* AI - they train, evaluate, and deploy models. **AI systems** are systems *with* AI - software where pretrained models operate as components inside a broader application. In that setting, the model is not the whole product; it is one building block among many. You are not optimizing weights - you are designing behavior, interfaces, and flow around a model. This is the space msgFlux occupies.
 
-*tl;dr* Think of msgFlux as **PyTorch for AI systems** — modular, composable, and built for the real world. Get started on [GitHub](https://github.com/msgflux/msgflux) and [PyPI](https://pypi.org/project/msgflux/).
+## **Declarative and Imperative**
 
+One of the core ideas in msgFlux is that **interaction style is a module-level decision**. A module should be able to behave like a regular callable or like a message-bound operator, depending on the role it plays in the system. msgFlux therefore supports two complementary modes, and both have native access to **vars**: runtime variables rendered into Jinja2 templates and optionally injected into tools.
 
-!!! info "Getting Started: Install msgFlux and set up your model"
+- **Imperative**: the module receives inputs and vars explicitly and returns outputs directly.
 
-    ```bash
-    pip install msgflux[openai]
+- **Declarative**: the module declares where it reads data from a shared message object.
+
+=== "Imperative"
+
+    The agent receives input and vars directly — like calling any Python function:
+
+    ```python linenums="1"
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+    class SupportAgent(nn.Agent):
+        model = model
+        system_message = "You are a helpful support agent."
+        instructions = """
+        You are assisting {{ user_name }}.
+        {% if is_vip %} Prioritize this customer.{% endif %}
+        """
+
+    agent = SupportAgent()
+
+    vars = {"user_name": "Alice", "is_vip": True}  # (1)!
+
+    result = agent("My dashboard is not loading after the last update.", vars=vars)
+    print(result)  # (2)!
     ```
 
-    === "OpenAI"
+    1. `vars` flow into Jinja2 templates at runtime — `{{ user_name }}` renders into the instructions and `{% if is_vip %}` conditionally adds a priority note.
+    2. Output is **returned explicitly** — the caller receives the result immediately.
 
-        Authenticate by setting the `OPENAI_API_KEY` env variable or using `set_envs`.
+=== "Declarative"
 
-        ```python linenums="1"
-        import msgflux as mf
+    The agent reads input from `msg.issue`, pulls vars from `msg.variables`, and writes to `msg.solution`:
 
-        mf.set_envs(OPENAI_API_KEY="...")
+    ```python linenums="1" hl_lines="13 14"
+    import msgflux as mf
+    import msgflux.nn as nn
 
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-        ```
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-    === "Groq"
+    class SupportAgent(nn.Agent):
+        model = model
+        system_message = "You are a helpful support agent."
+        instructions = """
+        You are assisting {{ user_name }}.
+        {% if is_vip %} Prioritize this customer.{% endif %}
+        """
+        message_fields = {"task": "issue", "vars": "variables"}  # (1)!
+        response_mode  = "solution"  # (2)!
 
-        Authenticate by setting the `GROQ_API_KEY` env variable.
+    agent = SupportAgent()
 
-        ```python linenums="1"
-        import msgflux as mf
+    variables = {"user_name": "Alice", "is_vip": True}  # (3)!
 
-        mf.set_envs(GROQ_API_KEY="...")
+    msg = mf.Message()
+    msg.issue     = "My dashboard is not loading after the last update."
+    msg.variables = variables
+    agent(msg)
 
-        model = mf.Model.chat_completion("groq/llama-3.3-70b-versatile")
-        ```
+    print(msg.solution)  # (4)!
+    ```
 
-    === "Ollama"
+    1. **Reads input** from `msg.issue` and **reads vars** from `msg.variables` — the agent knows where to find its data.
+    2. **Writes to** `msg.solution` — the result is placed back on the shared message.
+    3. Vars are extracted from the message and rendered into Jinja2 templates — `{{ user_name }}` and `{% if is_vip %}` resolve automatically.
+    4. After execution, the result is available on the message — no return value needed.
 
-        Install [Ollama](https://ollama.ai) and pull your model first:
+In the imperative model, a module behaves like a regular Python callable. Inputs and vars are passed directly, execution is explicit, and outputs are immediately returned. This is ideal when the caller owns control flow and the composition should stay obvious at the call site - for example in scripts, local pipelines, or tightly scoped orchestration code.
 
-        ```bash
-        ollama pull llama3.2
-        ```
+In the declarative model, a module is configured with knowledge about the structure of the message it operates on. Instead of receiving arguments, it knows *which fields to read* and *which fields to populate*. This is especially useful once multiple agents, tools, or modalities are operating over shared state, because composition becomes a matter of declaring contracts instead of hand-wiring every edge in the flow.
 
-        ```python linenums="1"
-        import msgflux as mf
+## **Prompting and Programming**
 
-        model = mf.Model.chat_completion("ollama/llama3.2")
-        ```
+On top of this interaction model, msgFlux deliberately distinguishes between **programming** and **prompting**, treating them as complementary but separate responsibilities. This view comes primarily from a PyTorch-style way of building systems: modules, composition, explicit interfaces, and controlled data flow. msgFlux also adopts **signatures** as a useful abstraction for LM programming, because typed contracts are a strong way to describe what a component should consume and produce.
 
-    === "Other providers"
+- **Prompting** is where you define behavior *expressively*. Instead of embedding all behavior into code, you describe intent, instructions, roles, and constraints directly in natural language. These prompts are written explicitly and intentionally, but remain scoped by the signatures and modules that contain them.
 
-        msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
+- **Programming** is where you define the system structurally. This includes defining modules, agents, routing, and especially **[signatures](https://dspy.ai/learn/programming/signatures/)**: typed, explicit contracts that describe inputs and outputs. In msgFlux, signatures are one tool within a larger module system. They formalize the behavior of a component and make it possible to reason about, validate, and optimize it at the code level.
 
-        ```python linenums="1"
-        import msgflux as mf
+=== "Programming"
 
-        # Together AI
-        model = mf.Model.chat_completion("together/meta-llama/Llama-3.3-70B-Instruct-Turbo")
+    Define behavior through a **signature** — a typed contract that specifies inputs and outputs. msgFlux generates the prompt and parses the structured result:
 
-        # Cerebras
-        model = mf.Model.chat_completion("cerebras/llama-3.3-70b")
+    ```python linenums="1"
+    import msgflux as mf
+    import msgflux.nn as nn
+    from typing import Literal
 
-        # OpenRouter
-        model = mf.Model.chat_completion("openrouter/anthropic/claude-sonnet-4")
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-        # SambaNova
-        model = mf.Model.chat_completion("sambanova/Meta-Llama-3.1-8B-Instruct")
+    class ClassifySentiment(mf.Signature):
+        """Classify the sentiment of a sentence."""  # (1)!
 
-        # vLLM (self-hosted)
-        model = mf.Model.chat_completion("vllm/meta-llama/Llama-3.1-8B-Instruct")
-        ```
+        sentence: str = mf.InputField(desc="Text to analyze")
+        sentiment: Literal["positive", "negative", "neutral"] = mf.OutputField()
+        confidence: float = mf.OutputField(desc="Score between 0 and 1")
+
+    class Classifier(nn.Agent):
+        model = model
+        signature = ClassifySentiment
+
+    classifier = Classifier()
+    result = classifier(sentence="I loved the movie, but the ending was disappointing.")
+    # {'sentiment': 'neutral', 'confidence': 0.75}
+    ```
+
+    1. The docstring of a `Signature` becomes the agent's **instructions** — it tells the agent *what to do*.
+
+=== "Prompting"
+
+    Define behavior through **natural language** — system message, instructions, and expected output. You control exactly what the model sees:
+
+    ```python linenums="1"
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+    class Classifier(nn.Agent):
+        """Expert sentiment analyst."""
+
+        model = model
+        system_message = "You are a sentiment analysis expert."
+        instructions = (
+            "Analyze the sentiment of the given text. "
+            "Consider nuance — a review can be mostly positive with negative aspects."
+        )
+        expected_output = "A JSON with 'sentiment' (positive/negative/neutral) and 'confidence' (0-1)."
+
+    classifier = Classifier()
+    result = classifier("I loved the movie, but the ending was disappointing.")
+    ```
+
+In this model, prompts are not loose strings passed around arbitrarily. They are written artifacts that live inside well-defined modules, constrained by signatures, and executed within a programmed architecture.
+
+Declarative signatures can also make systems more resilient to model updates, because the contract stays stable even when the underlying model changes. The center of gravity shifts from micromanaging *how* a prompt is phrased to specifying *what* the component must produce.
+
+By combining imperative and declarative modules with a clear separation between programming (signatures, structure, and flow) and prompting (written intent), msgFlux brings software architecture discipline to LM-based development. The result is a system that scales from simple experiments to complex AI applications while remaining explicit, composable, and maintainable.
+
+## Modules
+
+{!init_chat_completion_model.md!}
 
 
 ---
 
-## 1) **Three ways** to define AI behavior.
+### Agent
 
-msgFlux supports three styles for defining what an agent does. You can mix and match them freely.
+Agents in msgFlux are flexible — prompt them directly, use **signatures** for typed I/O, bind to a shared **message**, inject **tools** and **vars**, or nest one agent inside another as a tool. Mix and match as needed.
 
-**Declarative** — Use `signature` to define inputs and outputs. msgFlux handles the prompt:
+!!! info "Build Agents"
 
-```python
-class Extractor(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    signature = "text -> summary: str, topics: list[str]"
-```
+    === "Context"
 
-**Prompting** — Write your own system message and instructions for full control:
-
-```python
-class Writer(nn.Agent):
-    """Expert technical writer."""
-
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = "You are an expert technical writer."
-    instructions = "Write a clear, concise summary of the given topic."
-    expected_output = "A 2-3 paragraph summary in markdown format."
-```
-
-**Message-driven** — Bind inputs and outputs to **Message fields** via `message_fields` and `response_mode`. This is the preferred approach inside pipelines, where modules share a single `Message` and each one reads from and writes to named fields:
-
-```python
-class SentimentAnalyzer(nn.Agent):
-    """Analyzes the sentiment of a given text."""
-
-    model         = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    signature     = "text -> sentiment: str, confidence: float, reasoning: str"
-    message_fields = {"task_inputs": "review"}  # reads from msg.review
-    response_mode  = "sentiment"                # writes result to msg.sentiment
-
-analyzer = SentimentAnalyzer()
-
-msg = mf.Message()
-msg.review = "I loved the movie, but the ending was disappointing."
-analyzer(msg)
-
-print(msg.sentiment)            # dotdict — access fields like a dict or with dot notation
-print(msg.sentiment.confidence) # 0.82
-print(msg.sentiment["reasoning"])
-```
-
-The agent never exposes its internal field names to the caller — the caller only works with `msg.review` and `msg.sentiment`. This makes modules easy to compose and reorder.
-
-
-!!! info "Build agents for any task"
-
-    Try the examples below after configuring your model above. Each tab sets up an agent for a different task. When subclassing `nn.Agent`, the class name becomes the agent's `name` and the docstring becomes its `description`.
-
-    === "Q&A"
+        Pass additional task context alongside the task — the agent grounds its answer on the provided information:
 
         ```python linenums="1"
-        agent = nn.Agent("Assistant", model)
-        agent("What is the capital of France?")
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class Support(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            instructions = "Help the customer based on their account information."
+            config = {"verbose": True, "include_date": True}
+
+        agent = Support()
+
+        account_info = """
+        Name: Alice Johnson
+        Plan: Premium
+        Last payment: 2026-03-10
+        Storage used: 45GB / 100GB
+        """
+
+        agent("Can I upgrade my storage?", task_context=account_info)
+        ```
+
+    === "Multimodal"
+
+        Pass PDFs directly to the agent — from a URL or a local file. The agent reads and reasons over the document content:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class AnalyzerAgent(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1")
+            config = {"verbose": True}
+
+        agent = AnalyzerAgent()
+
+        # From URL
+        response = agent(
+            "Summarize the key contributions of this paper.",
+            task_multimodal={"file": "https://arxiv.org/pdf/2106.09685.pdf"}
+        )
+
+        # From local file
+        response = agent(
+            "Summarize the key contributions of this paper.",
+            task_multimodal={"file": "./lora.pdf"}
+        )
         ```
 
         **Possible Output:**
         ```text
-        'The capital of France is Paris.'
+        The paper proposes LoRA (Low-Rank Adaptation), an efficient fine-tuning method
+        that injects trainable low-rank matrices into frozen pre-trained weights.
+        It reduces trainable parameters by up to 10,000x with no inference latency overhead.
         ```
 
-    === "Tools"
+    === "Signature"
+
+        Use `signature` to define inputs and outputs — msgFlux generates the prompt and parses structured output:
 
         ```python linenums="1"
-        def get_weather(city: str) -> str:
-            """Get current weather for a city."""
-            return httpx.get(f"https://wttr.in/{city}?format=3").text
+        import msgflux as mf
+        import msgflux.nn as nn
 
-        class WeatherAssistant(nn.Agent):
-            """Checks real-time weather using external APIs."""
-
+        class Extractor(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            tools = [get_weather]
+            signature = "text -> summary, topics: list[str], sentiment"
+            config = {"verbose": True}
 
-        assistant = WeatherAssistant()
-        assistant("What's the weather like in Tokyo?")
-        ```
-
-    === "Structured Output"
-
-        ```python linenums="1"
-        class SentimentAnalyzer(nn.Agent):
-            """Analyzes the sentiment of a given text."""
-
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            signature = "text -> sentiment: str, confidence: float, reasoning: str"
-
-        analyzer = SentimentAnalyzer()
-        result = analyzer("I loved the movie, but the ending was disappointing.")
+        extractor = Extractor()
+        result = extractor(text="The new iPhone has an amazing camera but the battery life is disappointing.")
         ```
 
         **Possible Output:**
         ```text
-        {'sentiment': 'mixed', 'confidence': 0.82, 'reasoning': 'Positive overall but negative about the ending.'}
+        {'summary': '...', 'topics': ['iPhone', 'camera', 'battery'], 'sentiment': 'mixed'}
         ```
 
-    === "Extraction"
-
-        ```python linenums="1"
-        class PIXExtractor(nn.Agent):
-            """Extracts PIX transfer data from user messages."""
-
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            signature = "text -> amount: float, key_type: Literal['email', 'phone', 'cpf'], key_id: str"
-
-        extractor = PIXExtractor()
-        result = extractor("Send $50 to john@example.com")
-        ```
-
-        **Possible Output:**
-        ```text
-        {'amount': 50.0, 'key_type': 'email', 'key_id': 'john@example.com'}
-        ```
-
-    === "Chain of Thought"
-
-        ```python linenums="1"
-        from msgflux.generation.reasoning import ChainOfThought
-
-        class MathSolver(nn.Agent):
-            """Solves math problems with step-by-step reasoning."""
-
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            generation_schema = ChainOfThought
-
-        solver = MathSolver()
-        result = solver("Two dice are tossed. What is the probability that the sum equals two?")
-        ```
-
-        **Possible Output:**
-        ```text
-        {'reasoning': 'Each die has 6 faces → 36 outcomes. Only (1,1) sums to 2 → P = 1/36.', 'final_answer': '1/36 ≈ 0.0278'}
-        ```
 
     === "ReAct"
 
+        Agents that reason step-by-step and use tools to find answers. `WebFetch` is a built-in tool that fetches web pages as Markdown:
+
         ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
         from msgflux.generation.reasoning import ReAct
+        from msgflux.tools.builtin import WebFetch
 
         class ResearchAgent(nn.Agent):
-            """Reasons step-by-step and uses tools to find answers."""
-
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             generation_schema = ReAct
-            tools = [search_web, calculator]
+            tools = [WebFetch]
+            config = {"verbose": True}
 
         agent = ResearchAgent()
-        agent("What is the mass of the Earth divided by the mass of the Moon?")
+        agent("Fetch https://en.wikipedia.org/wiki/Earth and summarize the key facts about Earth's mass and composition.")
         ```
 
         The agent iterates: **think** → **act** (call tools) → **observe** → repeat until `final_answer`.
 
+    === "Vars"
+
+        `vars` inject runtime context into the agent's Jinja2 **templates** and into tools via `inject_vars`. The model never sees injected vars directly, they flow through the system behind the scenes.
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        @mf.tool_config(inject_vars=True)
+        def get_balance(**kwargs) -> str:
+            """Look up the customer's current balance."""
+            customer_id = kwargs["vars"]["customer_id"]
+            balances = {"C-1234": "$1,250.00", "C-5678": "$340.75"}
+            return balances.get(customer_id, "Customer not found.")
+
+        class BankAgent(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            instructions = "You are helping customer {{customer_name}}."
+            tools = [get_balance]
+            config = {"verbose": True}
+
+        agent = BankAgent()
+        vars = {"customer_name": "Alice", "customer_id": "C-1234"}
+        agent("What's my balance?", vars=vars)
+        ```
+
+        `customer_name` renders into the instructions template. `customer_id` is injected into `get_balance` via `kwargs["vars"]` — invisible to the model, but available to the tool.
+
+    === "Agent-as-Tool"
+
+        An agent can serve as a tool for another agent. Pass the **class** to `tools`. Use `@tool_config` when you need extra behavior, like routing the tool result directly to the caller:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        @mf.tool_config(return_direct=True)  # (2)!
+        class SentimentClassifier(nn.Agent):
+            """Classify the sentiment of a given text."""  # (1)!
+
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            signature = "sentence: str -> sentiment: str, confidence: float"
+            config = {"verbose": True}
+
+        class Orchestrator(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            tools = [SentimentClassifier]
+            config = {"verbose": True}
+
+        orchestrator = Orchestrator()
+        orchestrator("Classify: 'This product is terrible'")
+        ```
+
+        1. When an agent is used as a tool, the docstring becomes its **description** — this is what the parent agent sees when deciding which tool to call.
+        2. `return_direct=True` means the Orchestrator returns the list of tool calls and their results directly, instead of passing them back to the model for a final response.
+
+    === "Structured Output"
+
+        Bind inputs and outputs to fields on a shared `Message` — the preferred approach inside pipelines:
+
+        ```python linenums="1"
+        import msgspec
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class Sentiment(msgspec.Struct):
+            reasoning: str
+            sentiment: str
+            confidence: float
+
+        class SentimentAnalyzer(nn.Agent):
+            model            = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            generation_schema = Sentiment
+            message_fields   = {"task": "review"}
+            response_mode    = "sentiment"
+            config           = {"verbose": True}
+
+        analyzer = SentimentAnalyzer()
+
+        msg = mf.Message()
+        msg.review = "I loved the movie, but the ending was disappointing."
+        analyzer(msg)
+
+        print(msg.sentiment)
+        print(msg.sentiment.confidence)
+        ```
+
+        The agent reads from `msg.review`, extracts structured data into a `Sentiment` schema, and writes to `msg.sentiment`. This makes modules easy to compose and reorder.
+
+    === "Vision + CoT"
+
+        Pass an image and let the agent reason step-by-step about what it sees:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.generation.reasoning import ChainOfThought
+
+        class VisionAnalyzer(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            generation_schema = ChainOfThought
+            config = {"verbose": True}
+
+        analyzer = VisionAnalyzer()
+        result = analyzer(
+            "What is happening in this image?",
+            task_multimodal={"image": "https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg"},
+        )
+        ```
+
+        **Possible Output:**
+        ```text
+        {'reasoning': 'The image shows a close-up of an ant on a light surface...', 'final_answer': 'A macro photograph of a Camponotus ant.'}
+        ```
+
 
 ---
 
-## 2) **Modules** — compose AI systems like PyTorch.
+### **Other Modules**
 
-msgFlux's module system mirrors `torch.nn`. Every component inherits from `nn.Module`, supports `forward()` / `aforward()` for sync and async, automatic submodule registration via `__setattr__`, parameter management, and built-in telemetry. Compose multiple modules to create a **program** — a self-contained AI system where each piece has a clear responsibility.
+Beyond `nn.Agent`, msgFlux provides specialized modules for different modalities:
+
+!!! info "Built-in modules"
+
+    All modules support `message_fields` and `response_mode` — configure once, then just pass the message through:
+
+    === "Transcriber"
+
+        Speech-to-text transcription:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class MeetingTranscriber(nn.Transcriber):
+            model           = mf.Model.speech_to_text("openai/whisper-1")
+            message_fields  = {"task_multimodal": {"audio": "audio_path"}}
+            response_mode   = "transcript"
+            response_format = "text"
+            config          = {"language": "en"}
+
+        transcriber = MeetingTranscriber()
+
+        msg = mf.Message()
+        msg.audio_path = "meeting.mp3"
+        transcriber(msg)
+
+        print(msg.transcript)
+        ```
+
+    === "Speaker"
+
+        Text-to-speech synthesis:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class Narrator(nn.Speaker):
+            model           = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            message_fields  = {"task": "text"}
+            response_mode   = "audio"
+            response_format = "pcm"
+            prompt          = "Speak in a calm, professional tone."
+
+        narrator = Narrator()
+
+        msg = mf.Message()
+        msg.text = "Welcome to msgFlux."
+        narrator(msg)
+
+        print(msg.audio)  # bytes
+        ```
+
+    === "Embedder"
+
+        Text embeddings for semantic search and similarity:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class TextEmbedder(nn.Embedder):
+            model          = mf.Model.text_embedding("openai/text-embedding-3-small")
+            message_fields = {"task": "texts"}
+            response_mode  = "vectors"
+
+        embedder = TextEmbedder()
+
+        msg = mf.Message()
+        msg.texts = ["How do transformers work?", "Attention is all you need."]
+        embedder(msg)
+
+        print(len(msg.vectors))  # 2
+        ```
+
+    === "MediaMaker"
+
+        Image and video generation:
+
+        ```python linenums="1"
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class ImageGenerator(nn.MediaMaker):
+            model          = mf.Model.text_to_image("openai/gpt-image-1")
+            message_fields = {"task": "prompt"}
+            response_mode  = "image"
+            config         = {"background": "transparent"}
+
+        generator = ImageGenerator()
+
+        msg = mf.Message()
+        msg.prompt = "A sunset over the ocean, watercolor style."
+        generator(msg)
+
+        print(msg.image)
+        ```
+
+---
+
+### **Compose Modules into Programs**
+
+A composition of modules is a **program** — each module handles one responsibility, and they work together naturally.
 
 
 !!! info "Compose modules into programs"
@@ -285,91 +537,114 @@ msgFlux's module system mirrors `torch.nn`. Every component inherits from `nn.Mo
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
+        class Researcher(nn.Agent):
+            model = model
+            instructions = "Research the given topic thoroughly."
+            config = {"verbose": True}
+
+        class Writer(nn.Agent):
+            model = model
+            instructions = "Write a clear summary based on the research."
+            config = {"verbose": True}
+
         class ResearchPipeline(nn.Module):
             def __init__(self):
                 super().__init__()
-                self.researcher = nn.Agent(
-                    name="researcher",
-                    model=model,
-                    instructions="Research the given topic thoroughly.",
-                )
-                self.writer = nn.Agent(
-                    name="writer",
-                    model=model,
-                    instructions="Write a clear summary based on the research.",
-                )
+                self.researcher = Researcher()
+                self.writer = Writer()
 
-            def forward(self, message):
-                message = self.researcher(message)
-                message = self.writer(message)
-                return message
+            def forward(self, topic):
+                research = self.researcher(topic)
+                summary = self.writer(research)
+                return summary
 
         pipeline = ResearchPipeline()
-
-        msg = mf.Message()
-        msg.input.researcher = "How do transformers work?"
-        pipeline(msg)
+        pipeline("How do transformers work?")
         ```
 
-    === "ModuleDict"
+    === "Router"
 
         ```python linenums="1"
         import msgflux as mf
         import msgflux.nn as nn
 
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        class Classifier(nn.Agent):
+            model = model
+            signature = "text -> intent: Literal['billing', 'technical', 'general']"
+
+        class BillingAgent(nn.Agent):
+            model = model
+            instructions = "Handle billing queries."
+
+        class TechnicalAgent(nn.Agent):
+            model = model
+            instructions = "Handle technical support."
+
+        class GeneralAgent(nn.Agent):
+            model = model
+            instructions = "Handle general queries."
+
         class Router(nn.Module):
-            def __init__(self, model):
+            def __init__(self):
                 super().__init__()
+                self.classifier = Classifier()
                 self.agents = nn.ModuleDict({
-                    "classifier": nn.Agent(
-                        name="classifier",
-                        model=model,
-                        instructions="Classify the user's intent.",
-                    ),
-                    "responder": nn.Agent(
-                        name="responder",
-                        model=model,
-                        instructions="Respond based on the classified intent.",
-                    ),
+                    "billing": BillingAgent(),
+                    "technical": TechnicalAgent(),
+                    "general": GeneralAgent(),
                 })
 
             def forward(self, message):
-                message = self.agents["classifier"](message)
-                message = self.agents["responder"](message)
-                return message
+                result = self.classifier(message)
+                return self.agents[result["intent"]](message)
+
+        router = Router()
+        router("I need to update my payment method")
         ```
 
     === "Multimodal"
 
-        Combine different modalities in a single pipeline:
+        Combine Transcriber, Agent, and Speaker in a single pipeline — audio in, audio out:
 
         ```python linenums="1"
         import msgflux as mf
         import msgflux.nn as nn
 
+        class Transcriber(nn.Transcriber):
+            model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
+            config = {"language": "en"}
+
+        class Summarizer(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            instructions = "Generate a concise meeting summary with action items."
+            config = {"verbose": True}
+
+        class Narrator(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "pcm"
+
         class MeetingAssistant(nn.Module):
-            """Transcribes audio and generates structured meeting notes."""
+            """Transcribes audio, generates meeting notes, and narrates the summary."""
 
             def __init__(self):
                 super().__init__()
-                self.transcriber = nn.Transcriber(
-                    name="transcriber",
-                    model=mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe"),
-                )
-                self.summarizer = nn.Agent(
-                    name="summarizer",
-                    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-                    instructions="Generate structured meeting notes from the transcript.",
-                )
+                self.transcriber = Transcriber()
+                self.summarizer = Summarizer()
+                self.narrator = Narrator()
 
-            def forward(self, message):
-                message = self.transcriber(message)
-                message = self.summarizer(message)
-                return message
+            def forward(self, audio_path):
+                transcript = self.transcriber(audio_path)
+                summary = self.summarizer(transcript)
+                audio = self.narrator(summary)
+                return audio
+
+        assistant = MeetingAssistant()
+        audio_summary = assistant("./meeting.mp3")
         ```
 
-
-??? "Why a PyTorch-like API?"
+??? info "Why a PyTorch-like API?"
 
     Millions of developers already know PyTorch's patterns: `nn.Module`, `forward()`, submodule registration, `state_dict()`. By adopting the same conventions, msgFlux lets you **transfer your existing mental model** to AI system design.
 
@@ -378,7 +653,7 @@ msgFlux's module system mirrors `torch.nn`. Every component inherits from `nn.Mo
 
 ---
 
-## 3) **Inline** — dynamic workflows that flow and adapt.
+## **Inline**
 
 `Inline` is a lightweight DSL for declaring entire pipelines as a single expression. Sequential steps (`->`), parallel branches (`[a, b]`), conditionals (`{cond ? a, b}`), and loops (`@{cond}: a;`) — all in one readable string. Every module reads from and writes to a shared `dotdict` message. This is the *flux* — the dynamic flow that gives the library its name.
 
@@ -442,34 +717,15 @@ msgFlux's module system mirrors `torch.nn`. Every component inherits from `nn.Mo
 
     The `Router` agent classifies the intent at runtime, and `Inline` **conditionally routes** to the right expert — the pipeline adapts to the input. No `if/else` in Python, just a declarative expression.
 
-
 ---
 
-## 4) **Beyond Agents** — a complete AI toolkit.
+## Acknowledgements
 
-<div class="grid cards">
-<div>
-<strong>Multimodal Modules</strong><br>
-<code>nn.Speaker</code>, <code>nn.Transcriber</code>, <code>nn.MediaMaker</code> — text-to-speech, speech-to-text, and image generation as composable pipeline steps.
-</div>
-<div>
-<strong>MCP Protocol</strong><br>
-Full Model Context Protocol support with Stdio and HTTP transports, authentication, tool discovery, and resource management.
-</div>
-<div>
-<strong>Telemetry</strong><br>
-OpenTelemetry-based tracing for every module, tool call, and LLM request. Zero overhead when disabled.
-</div>
-<div>
-<strong>12+ Providers</strong><br>
-OpenAI, Groq, Cerebras, Ollama, Together, OpenRouter, SambaNova, vLLM, JinaAI, and more — all through a unified API.
-</div>
-<div>
-<strong>Async + Parallel</strong><br>
-Every module supports <code>forward()</code> and <code>aforward()</code>. Use <code>F.scatter_gather</code> and <code>F.map_gather</code> for parallel execution.
-</div>
-<div>
-<strong>Production Ready</strong><br>
-Built-in response caching, retry logic with exponential backoff, fast <code>msgspec</code> serialization, and structured logging.
-</div>
-</div>
+msgFlux is built around a select set of exceptional libraries that make the whole thing possible:
+
+- **[msgspec](https://jcristharif.com/msgspec/)** — ultra-fast serialization and validation that underpins all data contracts in msgFlux
+- **[Jinja2](https://jinja.palletsprojects.com/)** — the templating engine powering prompt composition, vars injection, and pipeline expressions
+- **[Tenacity](https://tenacity.readthedocs.io/)** — reliable retry logic with exponential backoff for resilient model calls
+- **[OpenTelemetry](https://opentelemetry.io/)** — the observability standard behind msgFlux's built-in tracing and telemetry
+
+We are grateful to the authors and maintainers of these projects.

@@ -199,8 +199,6 @@ class Signature(metaclass=_SignatureMeta):
         outputs = [f"{key}: {dtype}" for key, dtype in cls._get_outputs().items()]
         return ", ".join(inputs) + " -> " + ", ".join(outputs)
 
-    # TODO: tem bugs no parser quando usa optional
-
     @classmethod
     def get_inputs_info(cls) -> List[FieldInfo]:
         """Returns a list of objects containing the input field name,
@@ -358,7 +356,7 @@ def generate_annotations_from_signature(
     """Generate annotations dict from signature inputs.
 
     Excludes multimodal types (Image, Audio, Video, File) as they are
-    handled separately in task_multimodal_inputs.
+    handled separately in task_multimodal.
 
     Args:
         inputs_info: List of input field information

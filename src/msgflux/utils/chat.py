@@ -16,7 +16,7 @@ from typing import (
 import msgspec
 
 from msgflux.logger import logger
-from msgflux.utils.inspect import get_mime_type
+from msgflux.utils.inspect import get_fn_param_defaults, get_mime_type
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -61,6 +61,19 @@ class ChatBlock(metaclass=ChatBlockMeta):
         return {"role": "assistant", "content": content}
 
     @classmethod
+    def assist_reasoning(cls, content: str, reasoning: str) -> Dict[str, str]:
+        """Creates an assistant message with reasoning embedded in <think> tags.
+
+        Args:
+            content: The main response content.
+            reasoning: The reasoning/thinking content to embed.
+        """
+        return {
+            "role": "assistant",
+            "content": f"<think>{reasoning}</think>\n\n{content}",
+        }
+
+    @classmethod
     def system(cls, content: str) -> Dict[str, str]:
         return {"role": "system", "content": content}
 
@@ -73,8 +86,21 @@ class ChatBlock(metaclass=ChatBlockMeta):
         }
 
     @classmethod
-    def assist_tool_calls(cls, tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return {"role": "assistant", "tool_calls": tool_calls}
+    def assist_tool_calls(
+        cls,
+        tool_calls: List[Dict[str, Any]],
+        reasoning: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Creates an assistant message with tool calls.
+
+        Args:
+            tool_calls: List of tool call objects.
+            reasoning: Optional reasoning to embed in content with <think> tags.
+        """
+        msg: Dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+        if reasoning is not None:
+            msg["content"] = f"<think>{reasoning}</think>"
+        return msg
 
     @classmethod
     def tool(cls, tool_call_id: str, content: str) -> Dict[str, Any]:
@@ -181,73 +207,146 @@ class ChatML:
         self.history = []
 
 
-def response_format_from_msgspec_struct(  # noqa: C901
+def response_format_from_msgspec_struct(
     struct_class: Type[msgspec.Struct],
 ) -> Dict[str, Any]:
     """Converts a msgspec.Struct to OpenAI's response_format format."""
+    inlined_schema = inline_msgspec_json_schema(msgspec.json.schema(struct_class))
+    inlined_schema.pop("title", None)
+    return response_format_from_json_schema(
+        inlined_schema, struct_class.__name__.lower()
+    )
 
-    def _dereference_schema(schema_node: Any, definitions: Dict[str, Any]) -> Any:
-        """Helper function to replace references '$ref'."""
-        if isinstance(schema_node, dict):
-            if "$ref" in schema_node:
-                ref_name = schema_node["$ref"].split("/")[-1]
-                return _dereference_schema(definitions[ref_name], definitions)
-            else:
-                return {
-                    key: _dereference_schema(value, definitions)
-                    for key, value in schema_node.items()
-                }
-        elif isinstance(schema_node, list):
-            return [_dereference_schema(item, definitions) for item in schema_node]
-        return schema_node
 
-    def _add_additional_properties_false(schema_node: Any) -> None:
-        """Recursively traverses the schema and adds
-        'additionalProperties': False to all objects that have properties.
-        Modifies the schema_node "in-place" (directly on the object).
-        """
-        if isinstance(schema_node, dict):
-            if schema_node.get("type") == "object":
-                schema_node["additionalProperties"] = False
-            for value in schema_node.values():
-                _add_additional_properties_false(value)
-        elif isinstance(schema_node, list):
-            for item in schema_node:
-                _add_additional_properties_false(item)
+def _dereference_schema(schema_node: Any, definitions: Dict[str, Any]) -> Any:
+    """Replace all `$ref` references inside a msgspec JSON schema tree."""
+    if isinstance(schema_node, dict):
+        if "$ref" in schema_node:
+            ref_name = schema_node["$ref"].split("/")[-1]
+            return _dereference_schema(definitions[ref_name], definitions)
+        return {
+            key: _dereference_schema(value, definitions)
+            for key, value in schema_node.items()
+        }
+    if isinstance(schema_node, list):
+        return [_dereference_schema(item, definitions) for item in schema_node]
+    return schema_node
 
-    def _ensure_all_properties_are_required(schema_node: Any) -> None:
-        """It traverses the schema and, for each object, ensures that
-        all of its properties are listed under 'required'.
-        """
-        if isinstance(schema_node, dict):
-            if schema_node.get("type") == "object" and "properties" in schema_node:
-                all_property_keys = list(schema_node["properties"].keys())
-                schema_node["required"] = sorted(all_property_keys)
-            for value in schema_node.values():
-                _ensure_all_properties_are_required(value)
-        elif isinstance(schema_node, list):
-            for item in schema_node:
-                _ensure_all_properties_are_required(item)
 
-    msgspec_schema = msgspec.json.schema(struct_class)
+def _move_null_anyof_branch_to_end(schema_node: Any) -> None:
+    """Prefer non-null branches first in Optional-style `anyOf` schemas."""
+    if isinstance(schema_node, dict):
+        any_of = schema_node.get("anyOf")
+        if isinstance(any_of, list):
+            non_null = [branch for branch in any_of if branch.get("type") != "null"]
+            null_branches = [
+                branch for branch in any_of if branch.get("type") == "null"
+            ]
+            schema_node["anyOf"] = [*non_null, *null_branches]
+        for value in schema_node.values():
+            _move_null_anyof_branch_to_end(value)
+    elif isinstance(schema_node, list):
+        for item in schema_node:
+            _move_null_anyof_branch_to_end(item)
+
+
+def _add_additional_properties_false(schema_node: Any) -> None:
+    """Recursively force strict object schemas for OpenAI structured outputs."""
+    if isinstance(schema_node, dict):
+        if schema_node.get("type") == "object":
+            schema_node["additionalProperties"] = False
+        for value in schema_node.values():
+            _add_additional_properties_false(value)
+    elif isinstance(schema_node, list):
+        for item in schema_node:
+            _add_additional_properties_false(item)
+
+
+def _ensure_all_properties_are_required(schema_node: Any) -> None:
+    """Ensure every object property is listed under `required`."""
+    if isinstance(schema_node, dict):
+        if schema_node.get("type") == "object" and "properties" in schema_node:
+            all_property_keys = list(schema_node["properties"].keys())
+            schema_node["required"] = sorted(all_property_keys)
+        for value in schema_node.values():
+            _ensure_all_properties_are_required(value)
+    elif isinstance(schema_node, list):
+        for item in schema_node:
+            _ensure_all_properties_are_required(item)
+
+
+def inline_msgspec_json_schema(msgspec_schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Inline `$ref`s and normalize a msgspec-generated JSON Schema tree."""
     definitions = msgspec_schema.get("$defs", {})
     root_ref = msgspec_schema.get("$ref")
-    root_name = root_ref.split("/")[-1]
-    root_definition = definitions.get(root_name)
-    inlined_schema = _dereference_schema(root_definition, definitions)
+    if root_ref:
+        root_name = root_ref.split("/")[-1]
+        root_definition = definitions.get(root_name)
+        inlined_schema = _dereference_schema(root_definition, definitions)
+    else:
+        inlined_schema = _dereference_schema(msgspec_schema, definitions)
+
+    _move_null_anyof_branch_to_end(inlined_schema)
     _add_additional_properties_false(inlined_schema)
     _ensure_all_properties_are_required(inlined_schema)
+    return inlined_schema
 
-    inlined_schema.pop("title", None)
+
+def schema_fragment_from_msgspec_type(type_hint: Any) -> Dict[str, Any]:
+    """Build a strict JSON Schema fragment for a single msgspec-supported type."""
+    wrapper_struct = type(
+        "_SchemaFieldWrapper",
+        (msgspec.Struct,),
+        {"__annotations__": {"value": type_hint}},
+    )
+    inlined_schema = inline_msgspec_json_schema(msgspec.json.schema(wrapper_struct))
+    field_schema = copy.deepcopy(inlined_schema["properties"]["value"])
+    field_schema.pop("title", None)
+    return field_schema
+
+
+def response_format_from_json_schema(
+    schema: Dict[str, Any], name: str
+) -> Dict[str, Any]:
+    """Wrap a JSON Schema object in OpenAI's response_format envelope."""
     response_format = {
         "type": "json_schema",
         "json_schema": {
-            "name": struct_class.__name__.lower(),
-            "schema": inlined_schema,
+            "name": name,
+            "schema": schema,
             "strict": True,
         },
     }
     return response_format
+
+
+def _schema_allows_null(schema: Dict[str, Any]) -> bool:
+    """Return whether a JSON Schema fragment already accepts `null`."""
+    if schema.get("type") == "null":
+        return True
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        return any(branch.get("type") == "null" for branch in any_of)
+    return False
+
+
+def _make_schema_nullable(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Extend a JSON Schema fragment to accept `null`."""
+    if _schema_allows_null(schema):
+        return schema
+    if "anyOf" in schema:
+        return {"anyOf": [*schema["anyOf"], {"type": "null"}]}
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _get_tool_signature_defaults(tool: Any) -> Dict[str, Any]:
+    """Inspect the callable behind a tool-like object and collect defaults."""
+    callable_target = getattr(tool, "impl", None)
+    if callable_target is None:
+        callable_target = getattr(tool, "forward", None)
+    if callable_target is None or not callable(callable_target):
+        return {}
+    return get_fn_param_defaults(callable_target)
 
 
 def hint_to_schema(type_hint) -> dict:  # noqa: C901
@@ -264,15 +363,51 @@ def hint_to_schema(type_hint) -> dict:  # noqa: C901
         if type_hint is bool:
             return {"type": "boolean"}
         if type_hint is Any:
-            raise TypeError("Unsupported type in Tool: Any")
+            raise TypeError(
+                "Unsupported bare `Any` in Tool parameter. "
+                "Use a concrete type or `dict[K, V]` with explicit types."
+            )
         if type_hint is dict or type_hint is Dict:
-            raise TypeError("Unsupported type in Tool: Dict")
+            raise TypeError(
+                "Unsupported bare `dict` in Tool parameter. "
+                "Use `dict[K, V]` with explicit key and value types."
+            )
 
     # List / list[T]
     if origin in (list, List):
         args = get_args(type_hint)
         items_schema = hint_to_schema(args[0]) if args else {}
         return {"type": "array", "items": items_schema}
+
+    # dict[K, V] — lowered to {entries: [{key: K, value: V}]} for OpenAI strict compat
+    if origin in (dict, Dict):
+        args = get_args(type_hint)
+        if len(args) != 2:
+            raise TypeError(
+                "Unsupported bare `dict` in Tool parameter. "
+                "Use `dict[K, V]` with explicit key and value types."
+            )
+        key_type, val_type = args
+        key_schema = hint_to_schema(key_type)
+        # Any as value type means "no schema constraint" — may not be strict-compatible
+        val_schema = {} if val_type is Any else hint_to_schema(val_type)
+        entry_schema = {
+            "type": "object",
+            "properties": {
+                "key": key_schema,
+                "value": val_schema,
+            },
+            "required": ["key", "value"],
+            "additionalProperties": False,
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "entries": {"type": "array", "items": entry_schema},
+            },
+            "required": ["entries"],
+            "additionalProperties": False,
+        }
 
     # Literal
     if origin is Literal:
@@ -416,6 +551,7 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
     clean_description = clean_docstring(description)
     param_descriptions = parse_docstring_args(description)
     annotations = cls.get_module_annotations()
+    param_defaults = _get_tool_signature_defaults(cls)
 
     properties = {}
     required = []
@@ -430,8 +566,6 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
         if param in param_descriptions:
             prop_schema["description"] = param_descriptions[param]
 
-        # Decide whether it is required:
-        # It is only NOT required when the Union contains None (i.e., Optional)
         origin = get_origin(type_hint)
         is_optional = False
         if origin is Union:
@@ -439,8 +573,12 @@ def generate_json_schema(cls: type) -> Dict[str, Any]:
             if any(a is type(None) for a in args):
                 is_optional = True
 
-        if not is_optional:
-            required.append(param)
+        if is_optional or param in param_defaults:
+            prop_schema = _make_schema_nullable(prop_schema)
+
+        # OpenAI strict tool schemas require every property to be listed under
+        # `required`. Optionality is represented via `null`, not omission.
+        required.append(param)
 
         properties[param] = prop_schema
 

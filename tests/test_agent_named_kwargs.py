@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from msgflux.core.message import Message
 from msgflux.nn.modules.agent import Agent
 
 
@@ -55,9 +56,9 @@ def test_named_kwargs_without_task_template_raises_error():
         annotations={"name": str, "age": int, "return": str},
     )
 
-    # Should raise ValueError when using named kwargs without task template
+    # Named kwargs now normalize to a dict task, which requires a task template
     with pytest.raises(
-        ValueError, match="Named task arguments require a 'task' template"
+        ValueError, match="Dict task requires a 'task' template to be configured"
     ):
         agent(name="João", age=27)
 
@@ -86,7 +87,7 @@ def test_named_kwargs_with_message_raises_error():
     )
 
 
-def test_reserved_kwargs_not_treated_as_task_inputs():
+def test_reserved_kwargs_not_treated_as_task():
     """Test that reserved kwargs (vars, messages, etc.) are not treated as task inputs."""
     model = create_mock_model()
 
@@ -143,6 +144,39 @@ def test_mixed_reserved_and_named_kwargs():
     print("✓ Test 7 passed: Mixed reserved and named kwargs handled correctly")
 
 
+def test_message_envelope_plus_named_kwargs_works():
+    """Test that Message envelope can coexist with named task kwargs."""
+    model = create_mock_model()
+
+    agent = Agent(
+        name="greeter",
+        model=model,
+        templates={"task": "Hello {{name}}!"},
+        message_fields={"vars": "vars"},
+    )
+
+    msg = Message()
+    msg.set("vars.locale", "pt-BR")
+
+    result = agent(msg, name="João")
+
+    assert result is not None
+    print("✓ Test 8 passed: Message envelope works with named task kwargs")
+
+
+def test_message_envelope_plus_explicit_task_works():
+    """Test that Message envelope can coexist with explicit task kwarg."""
+    model = create_mock_model()
+
+    agent = Agent(name="greeter", model=model, templates={"task": "{{ greeting }}"})
+
+    msg = Message()
+    result = agent(msg, task={"greeting": "Olá"})
+
+    assert result is not None
+    print("✓ Test 9 passed: Message envelope works with explicit task kwarg")
+
+
 @pytest.mark.asyncio
 async def test_async_named_kwargs():
     """Test that named kwargs work in async mode."""
@@ -168,7 +202,7 @@ async def test_async_named_kwargs():
     result = await agent.acall(name="João")
 
     assert result is not None
-    print("✓ Test 8 passed: Named kwargs work in async mode")
+    print("✓ Test 10 passed: Named kwargs work in async mode")
 
 
 def test_inspect_model_execution_params_with_named_kwargs():
@@ -186,7 +220,7 @@ def test_inspect_model_execution_params_with_named_kwargs():
 
     assert params is not None
     assert "messages" in params
-    print("✓ Test 9 passed: inspect_model_execution_params works with named kwargs")
+    print("✓ Test 11 passed: inspect_model_execution_params works with named kwargs")
 
 
 def test_inspect_model_execution_params_message_plus_kwargs_raises_error():
@@ -206,7 +240,7 @@ def test_inspect_model_execution_params_message_plus_kwargs_raises_error():
         )
 
     print(
-        "✓ Test 10 passed: inspect_model_execution_params rejects message + task kwargs"
+        "✓ Test 12 passed: inspect_model_execution_params rejects message + task kwargs"
     )
 
 
@@ -222,7 +256,7 @@ def test_inspect_model_execution_params_with_message_positional():
     assert params is not None
     assert "messages" in params
     print(
-        "✓ Test 11 passed: inspect_model_execution_params works with positional message"
+        "✓ Test 13 passed: inspect_model_execution_params works with positional message"
     )
 
 
@@ -233,10 +267,12 @@ if __name__ == "__main__":
     test_named_kwargs_with_task_template()
     test_named_kwargs_without_task_template_raises_error()
     test_named_kwargs_with_message_raises_error()
-    test_reserved_kwargs_not_treated_as_task_inputs()
+    test_reserved_kwargs_not_treated_as_task()
     test_backward_compatibility_with_dict()
     test_backward_compatibility_with_string()
     test_mixed_reserved_and_named_kwargs()
+    test_message_envelope_plus_named_kwargs_works()
+    test_message_envelope_plus_explicit_task_works()
     test_inspect_model_execution_params_with_named_kwargs()
     test_inspect_model_execution_params_message_plus_kwargs_raises_error()
     test_inspect_model_execution_params_with_message_positional()

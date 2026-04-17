@@ -1,9 +1,8 @@
 """Tests for msgflux.nn.modules.predictor module."""
 
-from unittest.mock import AsyncMock, Mock
-
 import pytest
 
+from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.models.base import BaseModel
 from msgflux.models.response import ModelResponse
@@ -13,11 +12,11 @@ from msgflux.nn.modules.predictor import Predictor
 class MockModel(BaseModel):
     """Mock model for testing Predictor."""
 
-    model_type = "test_predictor"
+    model_type = "text_classification"
     provider = "mock"
 
     def __init__(self):
-        self.model_id = "test-model"
+        self.model_id = "mock-classifier"
         self._api_key = None
         self.model = None
         self.processor = None
@@ -26,77 +25,130 @@ class MockModel(BaseModel):
     def _initialize(self):
         pass
 
-    def __call__(self, data, **kwargs):
+    def __call__(self, *, data, **kwargs):
         response = ModelResponse()
-        response.set_response_type("audio_generation")
-        response.add({"audio": f"generated from {data}"})
+        response.set_response_type("text_classification")
+        response.add({"label": "positive", "score": 0.95})
         return response
 
-    async def acall(self, data, **kwargs):
+    async def acall(self, *, data, **kwargs):
         response = ModelResponse()
-        response.set_response_type("audio_generation")
-        response.add({"audio": f"async generated from {data}"})
+        response.set_response_type("text_classification")
+        response.add({"label": "positive", "score": 0.95})
         return response
 
 
-class TestPredictor:
-    """Test suite for Predictor class."""
+class TestPredictorInit:
+    """Test Predictor initialization."""
 
-    def test_predictor_initialization(self):
-        """Test predictor initialization."""
-        model = MockModel()
-        predictor = Predictor(
-            name="test_predictor",
-            model=model,
-            message_fields={"task_inputs": "content"},
-            response_mode="outputs.prediction",
-        )
-
-        assert predictor.name == "test_predictor"
-        assert predictor.model == model
-        assert predictor.task_inputs == "content"
-        assert predictor.response_mode == "outputs.prediction"
-
-    def test_predictor_with_execution_kwargs(self):
-        """Test predictor with execution kwargs."""
-        model = MockModel()
-        predictor = Predictor(
-            name="predictor",
-            model=model,
-            config={"temperature": 0.7, "max_tokens": 100},
-        )
-
-        assert predictor.config["temperature"] == 0.7
-        assert predictor.config["max_tokens"] == 100
-
-    def test_set_model_invalid_type(self):
-        """Test that setting invalid model type raises TypeError."""
-        with pytest.raises(TypeError):
-            Predictor(name="test", model="not a model")
-
-    def test_prepare_task_with_message(self):
-        """Test _prepare_task with Message input."""
-        model = MockModel()
-        predictor = Predictor(
-            name="test", model=model, message_fields={"task_inputs": "content"}
-        )
-
-        message = Message(content="test input")
-        inputs = predictor._prepare_task(message)
-
-        assert inputs.data == "test input"
-
-    def test_prepare_task_with_plain_data(self):
-        """Test _prepare_task with plain data."""
+    def test_basic_init(self):
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
-        inputs = predictor._prepare_task("plain data")
+        assert predictor.model == model
+        assert predictor.config == {}
+        assert predictor.task is None
+
+    def test_init_with_message_fields(self):
+        model = MockModel()
+        predictor = Predictor(
+            name="test",
+            model=model,
+            message_fields={"task": "content"},
+        )
+
+        assert predictor.task == "content"
+
+    def test_init_with_config(self):
+        model = MockModel()
+        predictor = Predictor(
+            name="test",
+            model=model,
+            config={"temperature": 0.7, "top_k": 50},
+        )
+
+        assert predictor.config["temperature"] == 0.7
+        assert predictor.config["top_k"] == 50
+
+    def test_init_with_response_mode(self):
+        model = MockModel()
+        predictor = Predictor(
+            name="test",
+            model=model,
+            response_mode="prediction",
+        )
+
+        assert predictor.response_mode == "prediction"
+
+    def test_init_with_templates(self):
+        model = MockModel()
+        predictor = Predictor(
+            name="test",
+            model=model,
+            templates={"response": "Label: {{ label }}"},
+        )
+
+        assert predictor.templates["response"] == "Label: {{ label }}"
+
+    def test_init_with_name(self):
+        model = MockModel()
+        predictor = Predictor(name="my_predictor", model=model)
+
+        assert predictor.name == "my_predictor"
+        assert predictor.get_module_name() == "my_predictor"
+
+    def test_invalid_model_raises_type_error(self):
+        with pytest.raises(TypeError):
+            Predictor(name="test", model="not a model")
+
+    def test_invalid_message_fields_key_raises_value_error(self):
+        model = MockModel()
+        with pytest.raises(ValueError, match="Invalid keys"):
+            Predictor(
+                name="test",
+                model=model,
+                message_fields={"invalid_key": "value"},
+            )
+
+    def test_invalid_config_type_raises_type_error(self):
+        model = MockModel()
+        with pytest.raises(TypeError):
+            Predictor(name="test", model=model, config="not a dict")
+
+
+class TestPredictorPrepareTask:
+    """Test _prepare_inputs method."""
+
+    def test_with_plain_data(self):
+        model = MockModel()
+        predictor = Predictor(name="test", model=model)
+
+        inputs = predictor._prepare_inputs("plain data")
 
         assert inputs.data == "plain data"
 
-    def test_prepare_task_with_model_preference(self):
-        """Test _prepare_task with model preference."""
+    def test_with_message(self):
+        model = MockModel()
+        predictor = Predictor(
+            name="test",
+            model=model,
+            message_fields={"task": "content"},
+        )
+
+        message = Message(content="test input")
+        inputs = predictor._prepare_inputs(message)
+
+        assert inputs.data == "test input"
+
+    def test_with_list_data(self):
+        model = MockModel()
+        predictor = Predictor(name="test", model=model)
+
+        inputs = predictor._prepare_inputs([1.0, 2.0, 3.0])
+
+        assert inputs.data == [1.0, 2.0, 3.0]
+
+    def test_with_model_preference_from_message(self):
         model = MockModel()
         predictor = Predictor(
             name="test",
@@ -107,12 +159,15 @@ class TestPredictor:
         message = Message(content="test")
         message.context["preferred_model"] = "gpt-4"
 
-        inputs = predictor._prepare_task(message)
+        inputs = predictor._prepare_inputs(message)
 
         assert inputs.model_preference == "gpt-4"
 
+
+class TestPredictorModelExecution:
+    """Test model execution methods."""
+
     def test_prepare_model_execution(self):
-        """Test _prepare_model_execution."""
         model = MockModel()
         predictor = Predictor(name="test", model=model, config={"temperature": 0.5})
 
@@ -121,89 +176,104 @@ class TestPredictor:
         assert params.data == "test data"
         assert params.temperature == 0.5
 
-    def test_prepare_model_execution_with_preference(self):
-        """Test _prepare_model_execution with model preference."""
+    def test_prepare_model_execution_empty_config(self):
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
-        params = predictor._prepare_model_execution(
-            "test data", model_preference="gpt-4"
-        )
+        params = predictor._prepare_model_execution("test data")
 
         assert params.data == "test data"
-        assert params.model_preference == "gpt-4"
 
     def test_execute_model(self):
-        """Test _execute_model."""
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
         response = predictor._execute_model("test input")
 
         assert isinstance(response, ModelResponse)
-        assert response.response_type == "audio_generation"
+        assert response.response_type == "text_classification"
 
     @pytest.mark.asyncio
     async def test_aexecute_model(self):
-        """Test async _aexecute_model."""
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
         response = await predictor._aexecute_model("test input")
 
         assert isinstance(response, ModelResponse)
-        assert response.response_type == "audio_generation"
+        assert response.response_type == "text_classification"
 
-    def test_forward_with_message(self):
-        """Test forward with Message mutated in-place."""
+
+class TestPredictorForward:
+    """Test forward and aforward methods."""
+
+    def test_forward_plain_data(self):
+        model = MockModel()
+        predictor = Predictor(name="test", model=model)
+
+        result = predictor("some text")
+
+        assert result["label"] == "positive"
+        assert result["score"] == 0.95
+
+    def test_forward_with_response_mode(self):
         model = MockModel()
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
-            response_mode="outputs.result",
+            message_fields={"task": "content"},
+            response_mode="prediction",
         )
 
         message = Message(content="test content")
         result = predictor(message)
 
         assert result is None
-        assert "result" in message.outputs
+        assert message.prediction.label == "positive"
 
-    def test_forward_with_plain_data(self):
-        """Test forward with plain data and default response_mode (None)."""
-        model = MockModel()
-        predictor = Predictor(name="test", model=model, response_mode=None)
-
-        result = predictor("plain input")
-
-        # With response_mode=None, should return the processed response directly
-        assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_aforward_with_message(self):
-        """Test async forward with Message mutated in-place."""
+    def test_forward_with_templates(self):
         model = MockModel()
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
-            response_mode="outputs.result",
+            templates={"response": "{{ label }} ({{ score }})"},
+        )
+
+        result = predictor("test")
+
+        assert result == "positive (0.95)"
+
+    @pytest.mark.asyncio
+    async def test_aforward_plain_data(self):
+        model = MockModel()
+        predictor = Predictor(name="test", model=model)
+
+        result = await predictor.acall("some text")
+
+        assert result["label"] == "positive"
+
+    @pytest.mark.asyncio
+    async def test_aforward_with_response_mode(self):
+        model = MockModel()
+        predictor = Predictor(
+            name="test",
+            model=model,
+            message_fields={"task": "content"},
+            response_mode="prediction",
         )
 
         message = Message(content="async test")
         result = await predictor.acall(message)
 
         assert result is None
-        assert "result" in message.outputs
+        assert message.prediction.label == "positive"
 
     def test_inspect_model_execution_params(self):
-        """Test inspect_model_execution_params for debugging."""
         model = MockModel()
         predictor = Predictor(
             name="test",
             model=model,
-            message_fields={"task_inputs": "content"},
+            message_fields={"task": "content"},
             config={"temperature": 0.7},
         )
 
@@ -213,28 +283,39 @@ class TestPredictor:
         assert params.data == "test"
         assert params.temperature == 0.7
 
-    def test_process_model_response_unsupported_type(self):
-        """Test _process_model_response with unsupported response type."""
+
+class TestPredictorProcessResponse:
+    """Test response processing."""
+
+    def test_process_model_response(self):
         model = MockModel()
         predictor = Predictor(name="test", model=model)
 
-        invalid_response = Mock(spec=ModelResponse)
-        invalid_response.response_type = "unsupported_type"
+        response = ModelResponse()
+        response.set_response_type("text_classification")
+        response.add({"label": "negative"})
 
-        with pytest.raises(ValueError, match="Unsupported model response type"):
-            predictor._process_model_response(invalid_response, "message")
+        result = predictor._process_model_response(response, "message")
 
-    def test_response_template(self):
-        """Test predictor with response template."""
+        assert result["label"] == "negative"
+
+    def test_process_response_writes_to_message(self):
         model = MockModel()
-        predictor = Predictor(name="test", model=model, response_template="Result: {}")
+        predictor = Predictor(
+            name="test",
+            model=model,
+            message_fields={"task": "text"},
+            response_mode="result",
+        )
 
-        assert predictor.response_template == "Result: {}"
+        response = ModelResponse()
+        response.set_response_type("text_classification")
+        response.add({"label": "spam"})
 
-    def test_name_setting(self):
-        """Test that name is properly set."""
-        model = MockModel()
-        predictor = Predictor(name="my_custom_predictor", model=model)
+        message = Message()
+        message.text = "buy now"
 
-        assert predictor.name == "my_custom_predictor"
-        assert predictor.get_module_name() == "my_custom_predictor"
+        raw = predictor._extract_raw_response(response)
+        predictor._prepare_response(raw, message)
+
+        assert message.result.label == "spam"

@@ -20,7 +20,7 @@ Rerankers score each (query, document) pair directly, producing a relevance scor
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
+    model = mf.Model.text_reranker("jinaai/jina-reranker-v3")
 
     documents = [
         "Python is a general-purpose programming language.",
@@ -36,10 +36,10 @@ Rerankers score each (query, document) pair directly, producing a relevance scor
 
     for r in results:
         print(f"[{r['relevance_score']:.3f}] {documents[r['index']]}")
-    # [0.921] Machine learning is a subset of artificial intelligence.
-    # [0.874] Neural networks are inspired by the human brain.
-    # [0.134] Python is a general-purpose programming language.
-    # [0.021] The Eiffel Tower is located in Paris, France.
+    # [ 0.452] Machine learning is a subset of artificial intelligence.
+    # [-0.059] Neural networks are inspired by the human brain.
+    # [-0.086] Python is a general-purpose programming language.
+    # [-0.184] The Eiffel Tower is located in Paris, France.
     ```
 
 ## 2. **Supported Providers**
@@ -48,11 +48,23 @@ Rerankers score each (query, document) pair directly, producing a relevance scor
 
 ???+ example
 
-    ```python
-    import msgflux as mf
+    === "jina-reranker-v3 (latest)"
 
-    model = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
-    ```
+        ```python
+        import msgflux as mf
+
+        # Latest model — raw logit scores, can be negative
+        model = mf.Model.text_reranker("jinaai/jina-reranker-v3")
+        ```
+
+    === "jina-reranker-v2 (multilingual)"
+
+        ```python
+        import msgflux as mf
+
+        # Normalized probability scores in [0, 1]
+        model = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
+        ```
 
 ### vLLM (self-hosted)
 
@@ -101,22 +113,24 @@ Rerankers score each (query, document) pair directly, producing a relevance scor
 `consume()` returns a list of results sorted by `relevance_score` descending, each containing:
 
 - `index` — original position in the `documents` list
-- `relevance_score` — float between 0 and 1
+- `relevance_score` — relevance score (higher = more relevant). Range depends on the model:
+    - **v3**: raw logit score, can be negative — compare relative values, not absolute
+    - **v2**: normalized probability in `[0, 1]`
 
 ???+ example
 
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
+    model = mf.Model.text_reranker("jinaai/jina-reranker-v3")
 
     docs = ["Doc A", "Doc B", "Doc C"]
     results = model(query="my query", documents=docs).consume()
 
     # Pick only the top result
     best = results[0]
-    print(docs[best["index"]])    # most relevant document text
-    print(best["relevance_score"])  # 0.93
+    print(docs[best["index"]])      # most relevant document text
+    print(best["relevance_score"])  # e.g. 0.45 (highest among the batch)
     ```
 
 ## 4. **RAG Integration**
@@ -128,7 +142,7 @@ A typical pattern: retrieve candidates with BM25 or vector search, then rerank b
     ```python
     import msgflux as mf
 
-    reranker = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
+    reranker = mf.Model.text_reranker("jinaai/jina-reranker-v3")
     chat     = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
     def rag(query: str, candidate_docs: list[str], top_k: int = 3) -> str:
@@ -161,7 +175,7 @@ A typical pattern: retrieve candidates with BM25 or vector search, then rerank b
     import msgflux as mf
     import msgflux.nn.functional as F
 
-    model = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
+    model = mf.Model.text_reranker("jinaai/jina-reranker-v3")
 
     queries = ["What is AI?", "How does photosynthesis work?"]
     docs    = ["Doc A", "Doc B", "Doc C"]
@@ -186,7 +200,7 @@ A typical pattern: retrieve candidates with BM25 or vector search, then rerank b
     import msgflux as mf
 
     model = mf.Model.text_reranker(
-        "jinaai/jina-reranker-v2-base-multilingual",
+        "jinaai/jina-reranker-v3",
         enable_cache=True,
         cache_size=256
     )
@@ -207,7 +221,7 @@ A typical pattern: retrieve candidates with BM25 or vector search, then rerank b
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_reranker("jinaai/jina-reranker-v2-base-multilingual")
+    model = mf.Model.text_reranker("jinaai/jina-reranker-v3")
 
     try:
         results = model(

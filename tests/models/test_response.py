@@ -69,6 +69,24 @@ class TestModelStreamResponse:
             consumed_chunks.append(chunk)
 
         assert consumed_chunks == chunks
+        assert response.data == "Hello world!"
+
+    @pytest.mark.asyncio
+    async def test_model_stream_response_accumulates_bytes_data(self):
+        """Binary streaming should keep the full bytes payload in response.data."""
+        response = ModelStreamResponse()
+        chunks = [b"\x00\x01", b"\x02", b"\x03\x04"]
+
+        for chunk in chunks:
+            response.add(chunk)
+        response.add(None)
+
+        consumed_chunks = []
+        async for chunk in response.consume():
+            consumed_chunks.append(chunk)
+
+        assert consumed_chunks == chunks
+        assert response.data == b"\x00\x01\x02\x03\x04"
 
     @pytest.mark.asyncio
     async def test_model_stream_response_empty_stream(self):
@@ -81,3 +99,45 @@ class TestModelStreamResponse:
             consumed_chunks.append(chunk)
 
         assert consumed_chunks == []
+
+    @pytest.mark.asyncio
+    async def test_model_stream_response_raises_stored_error_on_consume(self):
+        """Stored stream errors should be raised to the consumer."""
+        response = ModelStreamResponse()
+        response.set_error(RuntimeError("stream failed"))
+        response.add(None)
+
+        with pytest.raises(RuntimeError, match="stream failed"):
+            async for _ in response.consume():
+                pass
+
+    def test_model_stream_response_rejects_non_text_or_bytes_chunks(self):
+        """Streaming content should fail fast on unsupported chunk types."""
+        response = ModelStreamResponse()
+
+        with pytest.raises(
+            TypeError,
+            match="only supports `str` or `bytes` chunks",
+        ):
+            response.add({"bad": "chunk"})
+
+        assert isinstance(response.error, TypeError)
+
+    @pytest.mark.asyncio
+    async def test_model_stream_response_rejects_mixed_chunk_types(self):
+        """Streaming content should fail fast if chunk types change mid-stream."""
+        response = ModelStreamResponse()
+        response.add("hello")
+
+        with pytest.raises(
+            TypeError,
+            match="received mixed chunk types",
+        ):
+            response.add(b" world")
+
+        with pytest.raises(
+            TypeError,
+            match="received mixed chunk types",
+        ):
+            async for _ in response.consume():
+                pass

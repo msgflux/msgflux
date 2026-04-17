@@ -1,63 +1,68 @@
 # nn.Speaker
 
+## ✦₊⁺ Overview
+
 The `nn.Speaker` module converts text into natural-sounding speech using text-to-speech models.
 
-All code examples use the recommended import pattern:
+---
+
+## 1. **Quick Start**
+
+!!! info "Initialization styles"
+
+    === "Declarative (recommended)"
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class NaturalVoiceSpeaker(nn.Speaker):
+            """Natural-sounding speaker for user-facing applications."""
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "pcm"
+            config = {"voice": "nova", "speed": 1.0}
+
+        speaker = NaturalVoiceSpeaker()
+        audio_path = speaker("Hello, welcome to msgFlux!")
+        ```
+
+    === "Direct"
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        speaker = nn.Speaker(
+            model=mf.Model.text_to_speech("openai/gpt-4o-mini-tts"),
+            response_format="mp3",
+            config={"voice": "nova"},
+        )
+
+        audio_path = speaker("Hello world")
+        ```
+
+## String shorthand
+
+When you do not need to configure extra model parameters, you can pass a
+`"provider/model-id"` string directly as the `model` argument. msgFlux will
+call `Model.text_to_speech` internally.
 
 ```python
-import msgflux as mf
 import msgflux.nn as nn
+
+speaker = nn.Speaker("openai/gpt-4o-mini-tts")
+audio_path = speaker("Hello world")
 ```
 
-## Quick Start
-
-### AutoParams Initialization (Recommended)
-
-Define reusable voice personas.
+The shorthand also works when reassigning `speaker.model` after construction:
 
 ```python
-import msgflux as mf
-import msgflux.nn as nn
-
-class NaturalVoiceSpeaker(nn.Speaker):
-    """Natural-sounding speaker for user-facing applications."""
-    response_mode = "plain_response"
-    response_format = "mp3"
-
-# Create TTS model
-tts_model = mf.Model.text_to_speech("openai/tts-1")
-
-# Create speaker
-speaker = NaturalVoiceSpeaker(
-    model=tts_model,
-    config={"voice": "alloy", "speed": 1.0}
-)
-
-# Generate speech
-audio = speaker("Hello, welcome to msgFlux!")
-
-# Save audio
-with open("welcome.mp3", "wb") as f:
-    f.write(audio)
-```
-
-### Traditional Initialization
-
-```python
-model = mf.Model.text_to_speech("openai/tts-1")
-
-speaker = nn.Speaker(
-    model=model,
-    response_format="mp3",
-    config={"voice": "alloy"}
-)
-
-audio = speaker("Hello world")
+speaker.model = "openai/gpt-4o-mini-tts"
 ```
 
 ---
 
-## Audio Formats
+## 2. **Audio Formats**
 
 Choose the right format for your use case.
 
@@ -68,156 +73,235 @@ Choose the right format for your use case.
 | `"flac"` | Lossless compressed | Archival, high-end audio |
 | `"wav"` | Uncompressed | Editing, post-processing |
 | `"aac"` | Standard compressed | Mobile apps |
-
-```python
-class StreamingSpeaker(nn.Speaker):
-    """Low-latency speaker for chunks."""
-    response_format = "opus"
-
-streamer = StreamingSpeaker(model=tts_model)
-```
+| `"pcm"` | Raw audio bytes | Real-time playback processing |
 
 ---
 
-## Configuration
+## 3. **Configuration**
 
-### Voice & Speed
+!!! info "Controlling voice and behavior"
 
-Control characteristics via `config`.
+    === "Voice & Speed"
 
-```python
-class NarratorSpeaker(nn.Speaker):
-    """Clear, neutral voice for audiobooks."""
-    response_format = "mp3"
+        ```python
+        class NarratorSpeaker(nn.Speaker):
+            """Clear, neutral voice for audiobooks."""
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "aac"
+            config = {
+                "voice": "echo",  # Provider-specific voice ID
+                "speed": 0.9      # 1.0 is normal speed
+            }
 
-narrator = NarratorSpeaker(
-    model=tts_model,
-    config={
-        "voice": "echo",  # Provider-specific voice ID
-        "speed": 0.9      # 1.0 is normal speed
-    }
-)
-```
+        narrator = NarratorSpeaker()
+        narrator("Hello world")
+        ```
 
-### Guardrails
+    === "Prompt Guidance"
 
-Validate or sanitize input text before generation to save costs and ensure safety.
+        `gpt-4o-mini-tts` has native steerability — instruct not just *what* to say but *how* to say it:
 
-```python
-def sanitize_input(text: str) -> str:
-    """Remove sensitive info or restrict length."""
-    if len(text) > 4096:
-        raise ValueError("Text too long")
-    return text
+        ```python
+        class StorytellerSpeaker(nn.Speaker):
+            """Expressive speaker."""
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            prompt = "Speak with dramatic pauses and emotional variation."
 
-speaker = nn.Speaker(
-    model=tts_model,
-    guardrails={
-        "input": sanitize_input
-    }
-)
+        storyteller = StorytellerSpeaker()
 
-# Will raise ValueError if too long
-audio = speaker(long_text)
-```
+        # Override prompt at call time
+        audio = storyteller(
+            "Welcome to the show!",
+            prompt="Speak as a radio host, upbeat and friendly"
+        )
+        ```
 
-### Prompt Guidance
+    === "Hierarchies"
 
-Some models accept a system prompt or style guidance.
+        Share configuration across related speakers via inheritance:
 
-```python
-class StorytellerSpeaker(nn.Speaker):
-    """Expressive speaker."""
-    prompt = "Speak with dramatic pauses and emotional variation."
+        ```python
+        class AnnouncementSpeaker(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "mp3"
+            config = {"voice": "onyx"}
 
-storyteller = StorytellerSpeaker(model=tts_model)
-```
+        class EmergencySpeaker(AnnouncementSpeaker):
+            config = {"voice": "onyx", "speed": 1.1}
 
----
-
-## Streaming
-
-For real-time applications, consume the audio stream generator.
-
-```python
-class StreamingSpeaker(nn.Speaker):
-    response_format = "opus"
-
-speaker = StreamingSpeaker(
-    model=tts_model,
-    config={"stream": True}
-)
-
-# Get async generator
-stream = speaker("This audio will be streamed chunk by chunk.")
-
-async for chunk in stream:
-    # Send to client immediately
-    await websocket.send(chunk)
-```
+        class CasualSpeaker(AnnouncementSpeaker):
+            config = {"voice": "nova", "speed": 1.0}
+        ```
 
 ---
 
-## Integration with Agents
+## 4. **Guardrails**
 
-Speakers typically sit at the end of a voice pipeline (Agent -> Speaker).
+Use `Guard` hooks to validate input text before generation.
 
-```python
-class VoiceAssistant(nn.Agent):
-    """Voice-enabled assistant."""
-    model = mf.Model.chat_completion("openai/gpt-4")
+!!! info "Guard patterns"
 
-class ResponseSpeaker(nn.Speaker):
-    """Converts agent responses to speech."""
-    model = mf.Model.text_to_speech("openai/tts-1")
-    response_format = "mp3"
+    === "Short-circuit (with message)"
 
-# simple pipeline
-assistant = VoiceAssistant()
-speaker = ResponseSpeaker()
+        When `message` is provided, the guard returns it directly — the model is never called:
 
-text = assistant("What's the weather?")
-audio = speaker(text)
-```
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.nn.hooks import Guard
+
+        def length_validator(data):
+            return {"safe": len(str(data)) <= 4096}
+
+        class SafeSpeaker(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            hooks = [
+                Guard(
+                    validator=length_validator,
+                    on="pre",
+                    message="Input too long, generation blocked.",
+                )
+            ]
+
+        speaker = SafeSpeaker()
+        result = speaker(very_long_text)  # → "Input too long, generation blocked."
+        ```
+
+    === "Raises exception"
+
+        Without `message`, a `UnsafeUserInputError` is raised instead:
+
+        ```python
+        from msgflux.exceptions import UnsafeUserInputError
+
+        class StrictSpeaker(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            hooks = [Guard(validator=length_validator, on="pre")]
+
+        speaker = StrictSpeaker()
+
+        try:
+            speaker(very_long_text)
+        except UnsafeUserInputError:
+            print("Input too long, generation blocked.")
+        ```
 
 ---
 
-## Message Field Mapping
+## 5. **Streaming**
 
-Automatically extract text from structured messages.
+Enable streaming via `config={"stream": True}`. The result is a `ModelStreamResponse` — consume it with `async for` via `.consume()`.
 
-```python
-class NotificationSpeaker(nn.Speaker):
-    """Reads notifications."""
-    response_mode = "message"
-    message_fields = {"task_inputs": "notification.text"}
+!!! info "Streaming patterns"
 
-speaker = NotificationSpeaker(model=tts_model)
+    === "Save to file"
 
-msg = mf.Message()
-msg.set("notification.text", "You have a new meeting.")
+        ```python
+        import asyncio
+        import msgflux as mf
+        import msgflux.nn as nn
 
-result_msg = speaker(msg)
-audio = result_msg.get("speaker.audio")
-```
+        class StreamingSpeaker(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "opus"
+            config = {"stream": True}
+
+        speaker = StreamingSpeaker()
+
+        async def save_to_file():
+            stream = speaker("This will be streamed to a file.")
+            with open("output.opus", "wb") as f:
+                async for chunk in stream.consume():
+                    if chunk is None:
+                        break
+                    f.write(chunk)
+
+        asyncio.run(save_to_file())
+        ```
+
+    === "Real-time playback"
+
+        Real-time playback with `pyaudio` (use `pcm` format):
+
+        ```python
+        # pip install pyaudio
+        import asyncio
+        import pyaudio
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class RealtimeSpeaker(nn.Speaker):
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "pcm"
+            config = {"stream": True}
+
+        async def play_realtime():
+            speaker = RealtimeSpeaker()
+            stream = speaker("Streaming audio in real time.")
+
+            pa = pyaudio.PyAudio()
+            audio_out = pa.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
+
+            async for chunk in stream.consume():
+                if chunk is None:
+                    break
+                audio_out.write(chunk)
+
+            audio_out.close()
+            pa.terminate()
+
+        asyncio.run(play_realtime())
+        ```
 
 ---
 
-## Creating Speaker Hierarchies
+## 6. **Integration with Agents**
 
-Share configuration across related speakers.
+Speakers typically sit at the end of a voice pipeline (Agent → Speaker).
 
-```python
-# Base speaker for announcements
-class AnnouncementSpeaker(nn.Speaker):
-    response_format = "mp3"
-    config = {"voice": "onyx"}
+!!! info "Agent → Speaker pipeline"
 
-# Urgent announcements
-class EmergencySpeaker(AnnouncementSpeaker):
-    config = {"voice": "onyx", "speed": 1.1}
+    === "Simple pipeline"
 
-# Casual announcements
-class CasualSpeaker(AnnouncementSpeaker):
-    config = {"voice": "nova", "speed": 1.0}
-```
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class VoiceAssistant(nn.Agent):
+            """Voice-enabled assistant."""
+            model = mf.Model.chat_completion("openai/gpt-4o-mini")
+
+        class ResponseSpeaker(nn.Speaker):
+            """Converts agent responses to speech."""
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_format = "mp3"
+
+        assistant = VoiceAssistant()
+        speaker = ResponseSpeaker()
+
+        audio_path = speaker(assistant("What's the weather?"))
+        ```
+
+    === "With Message"
+
+        Bind to fields on a shared `Message` for pipeline composition:
+
+        ```python
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        class NotificationSpeaker(nn.Speaker):
+            """Reads notifications."""
+            model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+            response_mode = "audio"
+            message_fields = {"task": "notification.text"}
+            response_format = "mp3"
+
+        speaker = NotificationSpeaker()
+
+        msg = mf.dotdict()
+        msg.notification = mf.dotdict(text="You have a new meeting.")
+
+        speaker(msg)  # mutates msg in place, returns None
+        audio_path = msg.audio
+        ```

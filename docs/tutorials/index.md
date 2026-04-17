@@ -1,322 +1,214 @@
-# Examples
-
-A collection of creative examples demonstrating msgFlux capabilities.
-
+---
+hide:
+  - toc
 ---
 
-## 🎙️ Podcast Generator
+# Tutorials
 
-An automated pipeline that converts a topic into a two-host podcast episode, complete with script writing, voice synthesis, and audio mixing.
+Learn good AI system design through real problems. Each tutorial turns an industry challenge into production-ready code — showing how msgFlux modules compose, how Signatures enforce typed contracts, and how pipelines stay testable from the first line.
 
-**Concepts**: `nn.Sequential`, `nn.Speaker`, `msg_bcast_gather`, `AutoParams`
+<div class="tutorial-section" markdown>
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
-from msgflux import Message
+## :material-credit-card: Payments & Commerce
 
-# Models
-chat_model = mf.Model.chat_completion("openai/gpt-4")
-tts_model = mf.Model.text_to_speech("openai/tts-1")
+<div class="grid cards" markdown>
 
-class ScriptWriter(nn.Agent):
-    """Writes a dynamic dialogue between two hosts."""
-    model = chat_model
-    system_message = "You are a professional podcast scriptwriter."
-    instructions = """
-    Write a 2-minute dialogue between two hosts: 
-    - Alex (Enthusiastic, main host)
-    - Jamie (Skeptical but curious, co-host)
-    
-    Topic: {{topic}}
-    
-    Output the script as a list of turns.
-    """
-    signature = "topic -> script: list[dict[str, str]]"
-    message_fields = {"task_inputs": "topic"}
-    response_mode = "script"
+-   [**PIX Assistant**](./pix-assistant.md) <span class="tag tag-orange">Advanced</span>
 
-class AudioProducer(nn.Module):
-    """Synthesizes audio for each turn in parallel."""
-    def __init__(self):
-        super().__init__()
-        # Define speakers
-        self.alex = nn.Speaker(
-            model=tts_model, 
-            config={"voice": "alloy", "speed": 1.0}
-        )
-        self.jamie = nn.Speaker(
-            model=tts_model, 
-            config={"voice": "onyx", "speed": 1.05}
-        )
+    ---
 
-    def forward(self, msg):
-        script = msg.script
-        
-        def process_turn(turn):
-            speaker_name = turn['speaker'].lower()
-            text = turn['text']
-            
-            # Select voice
-            speaker = self.alex if 'alex' in speaker_name else self.jamie
-            
-            # Generate audio in parallel
-            return speaker(text)
+    Multimodal PIX payment assistant: accepts text, voice notes, and images (bills, menus, tickets with embedded keys), resolves contacts via fuzzy lookup, and routes to a payment tool with guardrails.
 
-        # Generate all lines concurrently
-        msg.audio_segments = F.map_gather(process_turn, [(turn,) for turn in script])
-        return msg
+    `Signature` · `Multimodal` · `Retriever` · `Guardrails`
 
-class AudioMixer(nn.Module):
-    """Combines audio segments (mock implementation)."""
-    def forward(self, msg):
-        # In a real app, use pydub to concatenate audio bytes
-        msg.final_podcast = b"".join(msg.audio_segments)
-        return msg
+-   [**Food Delivery Assistant**](./food-delivery-assistant.md) <span class="tag tag-purple">Intermediate</span>
 
-# Podcast Pipeline
-podcast_gen = nn.Sequential(
-    ScriptWriter(),
-    AudioProducer(),
-    AudioMixer()
-)
+    ---
 
-# Run
-msg = Message(topic="The Future of Space Travel")
-podcast_gen(msg)
+    iFood-style conversational assistant: enriches a raw dish catalog with parallel agents, builds fuzzy indexes, handles vague requests and dietary restrictions across turns, and places the order after confirmation.
 
-# Save
-with open("podcast.mp3", "wb") as f:
-    f.write(msg.final_podcast)
-```
+    `Generation Schema` · `Multimodal` · `Retriever` · `Guardrails`
 
----
+-   [**Restaurant Supply Assistant**](./restaurant-supply-assistant.md) <span class="tag tag-orange">Advanced</span>
 
-## 🎨 AI Art Director
+    ---
 
-A chain of agents that refine prompts, generate images, and critique them iteratively.
+    Multimodal purchasing assistant for restaurant kitchens: accepts text, audio, or shelf photos, extracts items via a structured schema, and matches them to a supplier catalog via fuzzy search.
 
-**Concepts**: `ModuleDict`, `inline` DSL, `Conditional Logic`
+    `Signature` · `Multimodal` · `Retriever` · `Guardrails`
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
+</div>
+</div>
 
-class ArtDirector(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.models = nn.ModuleDict({
-            # Ideation
-            "conceptualizer": nn.Agent(
-                model=mf.Model.chat_completion("openai/gpt-4"),
-                instructions="Turn this abstract concept into 3 visual prompt ideas.",
-                response_mode="concepts"
-            ),
-            # Production
-            "artist": nn.MediaMaker(
-                model=mf.Model.text_to_image("openai/dall-e-3"),
-                message_fields={"task_inputs": "selected_concept"},
-                response_mode="artwork"
-            ),
-            # Quality Control
-            "critic": nn.Agent(
-                model=mf.Model.chat_completion("openai/gpt-4-vision-preview"),
-                instructions="Rate this image 1-10 on composition and relevance.",
-                signature="image -> score: int, critique: str",
-                message_fields={"task_multimodal_inputs": {"image": "artwork"}},
-                response_mode="review"
-            )
-        })
-        
-        # Define the workflow DSL
-        self.register_buffer("workflow", """
-        conceptualizer 
-        -> select_best 
-        -> artist 
-        -> critic 
-        -> {score < 7 ? retry : finalize}
-        """)
+<div class="tutorial-section" markdown>
 
-    def select_best(self, msg):
-        # Simple logic to pick the first concept
-        msg.selected_concept = msg.concepts[0]
-        return msg
+## :material-handshake: Sales
 
-    def finalize(self, msg):
-        msg.status = "approved"
-        return msg
-        
-    def retry(self, msg):
-        msg.status = "rejected"
-        # Update concept based on critique for next loop
-        msg.selected_concept = f"{msg.selected_concept}. Improve: {msg.review['critique']}"
-        # Recurse (simplified)
-        return self.models["artist"](msg)
+<div class="grid cards" markdown>
 
-    def forward(self, msg):
-        # Add local methods to the execution scope
-        scope = dict(self.models)
-        scope.update({
-            "select_best": self.select_best,
-            "finalize": self.finalize,
-            "retry": self.retry
-        })
-        
-        return F.inline(self.workflow, scope, msg)
-```
+-   [**Lead Scoring**](./lead-scoring.md) <span class="tag tag-purple">Intermediate</span>
 
----
+    ---
 
-## 🏠 Intelligent Home Hub
+    Score inbound leads across four dimensions simultaneously — demographic fit, engagement, budget, and timing — with parallel agents and a typed Signature per dimension.
 
-A routing system that directs user commands to specialized IoT agents.
+    `Signature` · `parallel`
 
-**Concepts**: `ModuleDict`, `Routing`, `Intent Classification`
+-   [**Deal Briefing Generator**](./deal-briefing-generator.md) <span class="tag tag-purple">Intermediate</span>
 
-```python
-class IntentRouter(nn.Agent):
-    """Classifies user intent to route to the correct subsystem."""
-    model = mf.Model.chat_completion("openai/gpt-4-turbo")
-    signature = "command -> system: Literal['lighting', 'hvac', 'security', 'media']"
-    
-class HomeHub(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.router = IntentRouter()
-        
-        # Subsystems
-        self.systems = nn.ModuleDict({
-            "lighting": nn.Agent(instructions="Convert command to Zigbee JSON for lights."),
-            "hvac": nn.Agent(instructions="Convert command to thermostat adjustments."),
-            "security": nn.Agent(instructions="Handle locks and cameras."),
-            "media": nn.Agent(instructions="Control TV and speakers.")
-        })
+    ---
 
-    def forward(self, msg):
-        # 1. Determine intent
-        intent = self.router(msg.command)
-        msg.system = intent['system']
-        
-        # 2. Route dynamically
-        if msg.system in self.systems:
-            # Execute specific agent
-            self.systems[msg.system](msg)
-        else:
-            msg.error = "Unknown system"
-            
-        return msg
+    Turns a sales call recording into a structured pre-meeting briefing: transcribes the audio, extracts pain points, objections, and the agreed next step with few-shot examples, drafts the briefing, and narrates it via TTS.
 
-hub = HomeHub()
-result = hub(mf.Message(command="Dim the lights and set temperature to 72"))
-# Routes to 'lighting' -> (handling logic needed for multiple intents)
-```
+    `Signature` · `Few-shot` · `Multimodal`
 
----
+-   [**Visit Report Assistant**](./visit-report.md) <span class="tag tag-orange">Advanced</span>
 
-## 🚀 Startup Idea Validator
+    ---
 
-A comprehensive analysis pipeline running parallel market research.
+    Generate structured field visit reports from salesperson voice notes and photos. Retrieves client history and formats observations into CRM-ready output.
 
-**Concepts**: `bcast_gather`, `Parallel Execution`, `Aggregation`
+    `Multimodal` · `Retriever`
 
-```python
-import msgflux as mf
-import msgflux.nn as nn
-import msgflux.nn.functional as F
+</div>
+</div>
 
-class Validator(nn.Module):
-    def __init__(self):
-        super().__init__()
-        model = mf.Model.chat_completion("openai/gpt-4")
-        
-        # Parallel Analysts
-        self.analysts = [
-            nn.Agent(model, instructions="Analyze market size and growth CAGR.", name="market"),
-            nn.Agent(model, instructions="Identify 3 key competitors and their weaknesses.", name="competitors"),
-            nn.Agent(model, instructions="List technical feasibility risks.", name="tech"),
-            nn.Agent(model, instructions="Suggest monetization strategies.", name="finance")
-        ]
-        
-        self.synthesizer = nn.Agent(
-            model, 
-            instructions="Synthesize all reports into a Go/No-Go recommendation.",
-            message_fields={"context_inputs": "reports"}
-        )
+<div class="tutorial-section" markdown>
 
-    def forward(self, msg):
-        idea = msg.idea
-        
-        # Run all analysts in parallel
-        # Each returns a distinct report string
-        reports = F.bcast_gather(self.analysts, idea)
-        
-        # Store results
-        msg.reports = {
-            "market": reports[0],
-            "competitors": reports[1],
-            "tech": reports[2],
-            "finance": reports[3]
-        }
-        
-        # Synthesize final decision
-        self.synthesizer(msg)
-        return msg
+## :material-headset: Customer Service
 
-validator = Validator()
-res = validator(mf.Message(idea="Uber for dog walking"))
-print(res.content) # Final recommendation
-```
+<div class="grid cards" markdown>
 
----
+-   [**Support Ticket Router**](./support-ticket-router.md) <span class="tag tag-teal">Beginner</span>
 
-## 📚 Personalized Learning Assistant
+    ---
 
-Adapts content difficulty based on user feedback loop.
+    Classify incoming support tickets by category and urgency with a typed Signature and route each to the right team — no agent loop needed.
 
-**Concepts**: `State Management`, `Conditionals`, `Adaptive Logic`
+    `Signature` · `Inline`
 
-```python
-class Tutor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = mf.Model.chat_completion("openai/gpt-4")
-        
-        # State tracking (would exist in DB in prod)
-        self.register_buffer("level", 1) 
-        
-    def generate_lesson(self, topic):
-        return nn.Agent(
-            self.model,
-            instructions=f"Explain {{topic}} at difficulty level {self.level}/5."
-        )(topic)
-        
-    def check_understanding(self, response):
-        return nn.Agent(
-            self.model,
-            signature="response -> score: int"
-        )(response)
+-   [**Email Auto Responder**](./email-auto-responder.md) <span class="tag tag-purple">Intermediate</span>
 
-    def forward(self, msg):
-        # 1. Teach
-        msg.lesson = self.generate_lesson(msg.topic)
-        
-        # 2. Wait for user input (simulated here)
-        msg.user_response = input(f"Lesson: {msg.lesson}\nWhat did you understand? ")
-        
-        # 3. Assess
-        assessment = self.check_understanding(msg.user_response)
-        
-        # 4. Adapt State
-        if assessment['score'] > 8:
-            self.level = min(5, self.level + 1)
-            msg.feedback = "Great! Moving to next level."
-        elif assessment['score'] < 4:
-            self.level = max(1, self.level - 1)
-            msg.feedback = "Let's review the basics."
-        else:
-            msg.feedback = "Good, let's practice more."
-            
-        return msg
-```
+    ---
+
+    Classify incoming emails by intent and urgency, then draft context-aware replies. Handles escalation routing and triage with typed outputs.
+
+    `Signature`
+
+-   [**Call Transcript Analysis**](./call-transcript-analysis.md) <span class="tag tag-purple">Intermediate</span>
+
+    ---
+
+    Analyze call recordings or transcripts for sentiment across three phases, resolution quality, and predicted CSAT — with a full reasoning trace for QA audits.
+
+    `Signature` · `Reasoning` · `Multimodal`
+
+-   [**Streaming Support Triage**](./streaming-support-triage.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Stream a support reply while the agent checks order status and decides whether to answer directly or escalate. A compact example of real-time output plus tool calls.
+
+    `Streaming` · `Tools` · `Signature`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-calendar-check: Meetings & Productivity
+
+<div class="grid cards" markdown>
+
+-   [**Meeting Assistant**](./meeting-assistant.md) <span class="tag tag-purple">Intermediate</span>
+
+    ---
+
+    Transcribe a meeting recording and extract structured notes: decisions, action items with owner and deadline, open questions, sentiment, and a follow-up flag — all with typed outputs from a single Signature.
+
+    `Signature` · `Multimodal`
+
+-   [**Meeting Action Items Tracker**](./meeting-action-items.md) <span class="tag tag-purple">Intermediate</span>
+
+    ---
+
+    Extract action items from meeting transcripts or audio recordings. Few-shot examples teach the model the difference between a committed task and a vague intention, a named assignee and an implicit one.
+
+    `Signature` · `Few-shot` · `Multimodal`
+
+-   [**YouTube Video Cut Detector**](./youtube-cut-detector.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Find the best clips in a long video by analyzing its transcript for key moments, topic shifts, and audience hooks.
+
+    `Inline`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-palette: Marketing & Creative
+
+<div class="grid cards" markdown>
+
+-   [**Product Poster Generator**](./product-poster.md)
+
+    ---
+
+    Combine a product photo with a reference style image to produce polished marketing posters via image-to-image generation.
+
+    `MediaMaker` · `Vision`
+
+-   [**Ad Focus Group Simulator**](./ad-focus-group.md) <span class="tag tag-orange">Advanced</span>
+
+    ---
+
+    Simulate a diverse group of personas that evaluate ad concepts in parallel, provide ratings, and surface strategic insights across demographic angles.
+
+    `parallel` · `ModuleList`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
+## :material-transit-connection: Routing & Classification
+
+<div class="grid cards" markdown>
+
+-   [**Intent Router**](./intent-router.md) <span class="tag tag-purple">Intermediate</span>
+
+    ---
+
+    Stop tool sprawl: route user queries to specialized handlers using typed Signatures and observable intent-based orchestration instead of a single overloaded agent.
+
+    `Signature` · `Reasoning`
+
+-   [**Query Router with Signatures**](./signature-router.md) <span class="tag tag-purple">Intermediate</span>
+
+    ---
+
+    Dispatch queries across multiple backends — SQL, vector DB, knowledge base — using a typed routing layer with one Signature per specialist.
+
+    `Signature`
+
+-   [**Advisor Specialist Tool**](./advisor-specialist-tool.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Build a root assistant that delegates product and policy questions to an Advisor specialist agent. A compact example of agent-as-tool, ChainOfThought, and response templating.
+
+    `Tools` · `ChainOfThought` · `Templates`
+
+-   [**Plan Tool with Root Context**](./plan-tool-with-root-context.md) <span class="tag tag-green">Beginner</span>
+
+    ---
+
+    Delegate planning to a specialist tool that receives both the root task and the full conversation history. A compact example of `inject_messages=True`.
+
+    `Tools` · `ChainOfThought` · `Templates`
+
+</div>
+</div>

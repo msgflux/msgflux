@@ -61,6 +61,53 @@ class BaseLexical:
         return dotdict({"response_type": "lexical_search", "data": results})
 
 
+class BaseFuzzy:
+    def __call__(
+        self,
+        queries: Union[str, List[str]],
+        *,
+        top_k: Optional[int] = None,
+        threshold: Optional[float] = None,
+        return_score: Optional[bool] = None,
+    ) -> dotdict:
+        """Retrieve the most similar documents for one or multiple queries
+        using fuzzy string matching.
+
+        Args:
+            queries:
+                A single query string or a list of query strings to search for.
+            top_k:
+                The maximum number of documents to return for each query.
+                Defaults to 5.
+            threshold:
+                Minimum similarity score (0-100) a document must have to be
+                included in the results. Defaults to 0.0.
+            return_score:
+                If True, includes the similarity score in the returned results.
+                Defaults to False.
+
+        Returns:
+            dotdict:
+                A response object containing the search results for each query.
+                Each result includes the document text, and optionally the
+                similarity score if `return_score` is True.
+
+        Raises:
+            ValueError:
+                If `queries` is empty or contains invalid types.
+        """
+        if isinstance(queries, str):
+            queries = [queries]
+        if top_k is None:
+            top_k = 5
+        if threshold is None:
+            threshold = 0.0
+        if return_score is None:
+            return_score = False
+        results = self._search(queries, top_k, threshold, return_score=return_score)
+        return dotdict({"response_type": "fuzzy_search", "data": results})
+
+
 class BaseWebSearch:
     def __call__(
         self, queries: Union[str, List[str]], top_k: Optional[int] = None

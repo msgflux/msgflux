@@ -2,7 +2,7 @@ site_name: msgFlux
 site_url: https://msgflux.com/
 site_author: Vilson Rodrigues
 site_description: >-
-  An engine for build dynamic AI systems.
+  A framework for build dynamic AI systems.
 copyright: |
     &copy; 2026 <a href="https://github.com/msgflux"  target="_blank" rel="noopener">msgFlux</a>
 
@@ -12,8 +12,8 @@ repo_name: msgflux/msgflux
 theme:
   name: material
   language: en
-  logo: assets/logo-msgFlux-S.png
-  favicon: assets/favicon.png
+  logo: assets/logo.png
+  favicon: assets/logo.png
   icon:
     repo: fontawesome/brands/github
   features:
@@ -81,6 +81,8 @@ plugins:
             separate_signature: true
 
 markdown_extensions:
+  - markdown_include.include:
+      base_path: docs/_includes
   - attr_list
   - md_in_html
   - tables
@@ -121,7 +123,6 @@ nav:
   - Home: 
     - index.md
   - Learn:
-    - QuickStart: quickstart.md
     - ✧ Models:
       - learn/models/model.md
       - learn/models/model_gateway.md
@@ -133,15 +134,12 @@ nav:
       - learn/models/text_to_image.md
       - learn/models/image_text_to_image.md
       - learn/models/text_classifier.md
-      - learn/models/image_embedder.md
       - learn/models/text_reranker.md
-    #- ⛁ DataBases:
-    #  - core/database.md
-    #  - Vector: databases/vector.md
-    - ⟳ Retriever:
+    - ⟳ Retrievers:
       - learn/retrievers/retriever.md
-      - learn/retrievers/bm25.md
-      - learn/retrievers/wikipedia.md
+      - learn/retrievers/lexical.md
+      - learn/retrievers/fuzzy.md
+      - learn/retrievers/web.md
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
@@ -159,9 +157,9 @@ nav:
       - Agent:
         - learn/nn/agent/index.md
         - learn/nn/agent/quickstart.md
-        - learn/nn/agent/autoparams.md
         - learn/nn/agent/async.md
         - learn/nn/agent/streaming.md
+        - learn/nn/agent/reasoning.md
         - learn/nn/agent/debug.md
         - learn/nn/agent/system-prompt.md
         - learn/nn/agent/generation-schemas.md
@@ -172,20 +170,13 @@ nav:
         - learn/nn/agent/hooks.md
         - learn/nn/agent/model-gateway.md
         - learn/nn/agent/prefilling.md
-      - Functional:
-        - learn/nn/functional.md
-      - Transcriber:
-        - learn/nn/transcriber.md        
-      - Retriever:
-        - learn/nn/retriever.md
-      - Speaker:
-        - learn/nn/speaker.md
-      - MediaMaker:
-        - learn/nn/mediamaker.md
-      #- Predictor:
-      #  - learn/nn/predictor.md
+      - Functional: learn/nn/functional.md
+      - Transcriber: learn/nn/transcriber.md
+      - Searcher: learn/nn/searcher.md
+      - Speaker: learn/nn/speaker.md
+      - MediaMaker: learn/nn/mediamaker.md
+      - Predictor: learn/nn/predictor.md
     - ◎ Telemetry: learn/telemetry.md
-    #- ⇄ Dependency Management: dependency-management.md
     - API Reference:
       - Models:
           - api-reference/models/model.md
@@ -201,20 +192,32 @@ nav:
           - api-reference/nn/functional.md
           - api-reference/nn/modules/agent.md       
   - Tutorials:
-    - tutorials/tutorials.md
-    - Product Poster Generator: tutorials/product-poster.md
-    - Intent Router: tutorials/intent-router.md
-    - Visit Report Assistant: tutorials/visit-report.md
-    - Query Router with Signatures: tutorials/signature-router.md
-    - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
-    - Call Transcript Analysis: tutorials/call-transcript-analysis.md
-    - Research Scholar Agent: tutorials/research-scholar.md
-    - Email Auto Responder: tutorials/email-auto-responder.md
-    - Meeting Assistant: tutorials/meeting-assistant.md
-    - Code Generation & Debugging Agent: tutorials/code-debug-agent.md
-    - Legal Document Review: tutorials/legal-document-review.md
-    - Lead Scoring: tutorials/lead-scoring.md
-    - README Generator: tutorials/readme-generator.md
+    - tutorials/index.md
+    - Payments & Commerce:
+      - PIX Assistant: tutorials/pix-assistant.md
+      - Food Delivery Assistant: tutorials/food-delivery-assistant.md
+      - Restaurant Supply Assistant: tutorials/restaurant-supply-assistant.md
+    - Sales:
+      - Lead Scoring: tutorials/lead-scoring.md
+      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
+      - Visit Report Assistant: tutorials/visit-report.md
+    - Customer Service:
+      - Support Ticket Router: tutorials/support-ticket-router.md
+      - Email Auto Responder: tutorials/email-auto-responder.md
+      - Call Transcript Analysis: tutorials/call-transcript-analysis.md
+      - Streaming Support Triage: tutorials/streaming-support-triage.md
+    - Meetings & Productivity:
+      - Meeting Assistant: tutorials/meeting-assistant.md
+      - Meeting Action Items Tracker: tutorials/meeting-action-items.md
+      - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
+    - Marketing & Creative:
+      - Product Poster Generator: tutorials/product-poster.md
+      - Ad Focus Group Simulator: tutorials/ad-focus-group.md
+    - Routing & Classification:
+      - Intent Router: tutorials/intent-router.md
+      - Query Router with Signatures: tutorials/signature-router.md
+      - Advisor Specialist Tool: tutorials/advisor-specialist-tool.md
+      - Plan Tool with Root Context: tutorials/plan-tool-with-root-context.md
   - Dependency Management: dependency-management.md
   - Changelog: CHANGELOG.md
   - Blog:

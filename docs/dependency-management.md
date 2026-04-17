@@ -1,3 +1,9 @@
+---
+hide:
+  - navigation
+  - toc
+---
+
 # Dependency Management
 
 ## Models
@@ -6,18 +12,14 @@
 
 | Provider    | Dependency        | Auth Env             |
 |-------------|-------------------|----------------------|
+| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`   |
+| Groq        | `msgflux[openai]` | `GROQ_API_KEY`       |
 | Ollama      | `msgflux[openai]` |                      |
 | OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`     |
 | OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY` |
 | SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`  |
 | Together    | `msgflux[openai]` | `TOGETHER_API_KEY`   |
 | vLLM        | `msgflux[openai]` |                      |
-
-### Image Classifier
-
-| Provider    | Dependency       | Auth Env           |
-|-------------|------------------|--------------------|
-| JinaAI      | `msgflux[httpx]` | `JINAAI_API_KEY`   |
 
 ### Image Embedder
 
@@ -54,7 +56,6 @@
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
 | vLLM        | `msgflux[openai]` |                    |
 
 ### Text Embedder
@@ -134,6 +135,12 @@
 | BM25        | built-in      |
 | BM25s       | `bm25s`       |
 | Rank BM25   | `rank-bm25s`  |
+
+### Fuzzy
+
+| Provider    | Dependency    |
+|-------------|---------------|
+| RapidFuzz   | `rapidfuzz`   |
 
 ### Web Search
 

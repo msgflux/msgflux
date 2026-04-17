@@ -184,4 +184,3 @@ class PyPDFPdfParser(BaseParser, PdfParser):
             "images": images_dict,
             "metadata": metadata,
         }
-

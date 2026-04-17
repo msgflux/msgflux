@@ -372,7 +372,7 @@ class ModelGateway:
         )
 
     def __call__(
-        self, *, model_preference: Optional[str] = None, **kwargs
+        self, *, model_preference: Optional[str] = None, **kwargs: Any
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Executes the call on the gateway.
 
@@ -394,7 +394,7 @@ class ModelGateway:
         return self._execute_model(model_preference=model_preference, **kwargs)
 
     async def acall(
-        self, *, model_preference: Optional[str] = None, **kwargs
+        self, *, model_preference: Optional[str] = None, **kwargs: Any
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Async version of __call__. Executes the call on the gateway.
 

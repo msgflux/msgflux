@@ -72,7 +72,7 @@ class File(MediaType):
         """
         source = self.source
 
-        if is_base64(source):
+        if not self.force_encode and is_base64(source):
             return source
 
         return _cached_encode(source)
@@ -85,7 +85,7 @@ class File(MediaType):
         """
         source = self.source
 
-        if is_base64(source):
+        if not self.force_encode and is_base64(source):
             return source
 
         return await aencode_data_to_base64(source)

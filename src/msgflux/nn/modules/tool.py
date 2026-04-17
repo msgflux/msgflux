@@ -1,7 +1,9 @@
 import asyncio
 import inspect
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from functools import partial
+from importlib import import_module
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 import msgspec
@@ -24,8 +26,17 @@ from msgflux.telemetry.span import (
     set_tool_attributes,
 )
 from msgflux.utils.chat import generate_tool_json_schema
-from msgflux.utils.inspect import fn_has_parameters
+from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
+from msgflux.utils.msgspec import restore_transport_value
 from msgflux.utils.tenacity import apply_retry, default_tool_retry
+
+
+def _should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> bool:
+    if not config.get("inject_messages", False):
+        return False
+
+    agent_type = import_module("msgflux.nn.modules.agent").Agent
+    return isinstance(getattr(tool, "impl", tool), agent_type)
 
 
 @dataclass
@@ -172,13 +183,16 @@ class LocalTool(Tool):
         annotations: Dict[str, Any],
         tool_config: Dict[str, Any],
         impl: Callable,
+        transport_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.set_name(name)
         self.set_description(description)
         self.set_annotations(annotations)
         self.register_buffer("tool_config", tool_config)
+        self.register_buffer("transport_params", transport_params or {})
         self.impl = impl  # Not a buffer for now
+        self._param_defaults = get_fn_param_defaults(impl)
 
         # Apply retry
         retry_config = tool_config.get("retry")
@@ -189,14 +203,53 @@ class LocalTool(Tool):
             self.aforward, retry_config, default=default_tool_retry
         )
 
+    def _restore_transport_params(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Restore transport-lowered tool params using the original annotations."""
+        annotations = {
+            name: hint
+            for name, hint in self.get_module_annotations().items()
+            if name != "return"
+        }
+        if not annotations:
+            return kwargs
+        restored = dict(kwargs)
+        for param_name, type_hint in annotations.items():
+            if param_name not in restored:
+                continue
+            restored[param_name] = restore_transport_value(
+                restored[param_name],
+                type_hint,
+            )
+        return restored
+
+    def _strip_none_default_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Treat `null` tool arguments as omission when Python defaults exist.
+
+        This mirrors the tool schema contract used by LocalTool/function tools:
+        strict providers require every field in `required`, so optional/defaulted
+        params are represented as nullable in the schema and mapped back to
+        Python defaults here when the model emits `null`.
+        """
+        if not self._param_defaults:
+            return kwargs
+        return {
+            key: value
+            for key, value in kwargs.items()
+            if not (key in self._param_defaults and value is None)
+        }
+
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
+        kwargs = self._restore_transport_params(kwargs)
+        kwargs = self._strip_none_default_kwargs(kwargs)
         if inspect.iscoroutinefunction(self.impl):
             return F.wait_for(self.impl, **kwargs)
         return self.impl(**kwargs)
 
     @aset_tool_attributes(execution_type="local")
     async def aforward(self, *args, **kwargs):
+        kwargs = self._restore_transport_params(kwargs)
+        kwargs = self._strip_none_default_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
         elif inspect.iscoroutinefunction(self.impl):
@@ -208,7 +261,7 @@ class LocalTool(Tool):
 
 def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
     """Convert a callable in nn.Tool."""
-    tool_config = impl.__dict__.get("tool_config", dotdict())
+    tool_config = getattr(impl, "tool_config", dotdict())
 
     name_overridden = tool_config.pop("name_overridden", None)
 
@@ -288,6 +341,8 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
 
     if tool_config.get("handoff", False):
         name = "transfer_to_" + name
+
+    if tool_config.get("handoff", False) or tool_config.get("disable_input", False):
         annotations = {}  # pass only the model state
 
     if tool_config.get("spawn"):
@@ -498,9 +553,21 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
         return schemas
 
+    def get_tool_annotations(self) -> Dict[str, Dict[str, Any]]:
+        """Return local tool annotations keyed by tool name."""
+        annotations = {}
+        for tool_name, tool in self.library.items():
+            annotations[tool_name] = {
+                name: hint
+                for name, hint in tool.get_module_annotations().items()
+                if name != "return"
+            }
+        return annotations
+
     def forward(  # noqa: C901
         self,
         tool_callings: List[Tuple[str, str, Any]],
+        message: Optional[Any] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
@@ -514,6 +581,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     ('322', 'tool_name2', '')]
             messages:
                 The current messages (chat history) for the `handoff` functionality.
+            message:
+                The original message/envelope passed to the parent Agent.
             vars:
                 Extra kwargs to be used in tools.
 
@@ -522,7 +591,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 Structured object containing all tool call results.
         """
         if messages is None:
-            messages = {}
+            messages = []
 
         if vars is None:
             vars = {}
@@ -549,6 +618,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
 
+            if config.get("handoff", False) or config.get("disable_input", False):
+                call_params = {}
+            else:
+                call_params = tool_params or {}
+
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
             if inject_vars:
@@ -559,13 +633,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
                                 f"The tool `{tool_name}` requires the injected "
                                 f"parameter `{key}`, but it was not found."
                             )
-                        tool_params[key] = vars[key]
+                        call_params[key] = vars[key]
                 elif inject_vars is True:
-                    tool_params["vars"] = vars
+                    call_params["vars"] = vars
 
             if config.get("spawn", False):
                 return_directly = False
-                F.spawn(tool, **(tool_params or {}))
+                F.spawn(tool, **call_params)
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
@@ -586,23 +660,28 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add messages
-                tool_params["messages"] = messages
+            if config.get("inject_messages", False):
+                if _should_copy_injected_messages(tool, config):
+                    call_params["messages"] = deepcopy(messages)
+                else:
+                    call_params["messages"] = messages
+
+            if config.get("inject_message", False):  # Add original message/envelope
+                call_params["message"] = message
 
             if not config.get("return_direct", False):
                 return_directly = False
 
-            final_tool_params = tool_params or {}
             # Add tool_call_id for telemetry
-            final_tool_params["tool_call_id"] = tool_id
-            prepared_calls.append(partial(tool, **final_tool_params))
+            call_params["tool_call_id"] = tool_id
+            prepared_calls.append(partial(tool, **call_params))
 
             call_metadata.append(
                 dotdict(
                     id=tool_id,
                     name=tool_name,
                     config=config,
-                    params=final_tool_params,
+                    params=call_params,
                 )
             )
 
@@ -612,6 +691,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 if isinstance(meta.params, dict):
                     parameters = meta.params.to_dict()
                     parameters.pop("vars", None)
+                    parameters.pop("messages", None)
+                    parameters.pop("message", None)
                     parameters.pop("tool_call_id", None)
                 else:
                     parameters = None
@@ -630,6 +711,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
     async def aforward(  # noqa: C901
         self,
         tool_callings: List[Tuple[str, str, Any]],
+        message: Optional[Any] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
@@ -644,6 +726,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     ('322', 'tool_name2', '')]
             messages:
                 The current messages (chat history) for the `handoff` functionality.
+            message:
+                The original message/envelope passed to the parent Agent.
             vars:
                 Extra kwargs to be used in tools.
 
@@ -652,7 +736,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 Structured object containing all tool call results.
         """
         if messages is None:
-            messages = {}
+            messages = []
 
         if vars is None:
             vars = {}
@@ -679,6 +763,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
 
+            if config.get("handoff", False) or config.get("disable_input", False):
+                call_params = {}
+            else:
+                call_params = tool_params or {}
+
             # Handle inject_vars
             inject_vars = config.get("inject_vars", False)
             if inject_vars:
@@ -689,13 +778,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
                                 f"The tool `{tool_name}` requires the injected "
                                 f"parameter `{key}`, but it was not found."
                             )
-                        tool_params[key] = vars[key]
+                        call_params[key] = vars[key]
                 elif inject_vars is True:
-                    tool_params["vars"] = vars
+                    call_params["vars"] = vars
 
             if config.get("spawn", False):
                 return_directly = False
-                await F.aspawn(tool.acall, **(tool_params or {}))
+                await F.aspawn(tool, **call_params)
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
@@ -716,23 +805,28 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add messages
-                tool_params["messages"] = messages
+            if config.get("inject_messages", False):
+                if _should_copy_injected_messages(tool, config):
+                    call_params["messages"] = deepcopy(messages)
+                else:
+                    call_params["messages"] = messages
+
+            if config.get("inject_message", False):  # Add original message/envelope
+                call_params["message"] = message
 
             if not config.get("return_direct", False):
                 return_directly = False
 
-            final_tool_params = tool_params or {}
             # Add tool_call_id for telemetry
-            final_tool_params["tool_call_id"] = tool_id
-            prepared_calls.append(partial(tool.acall, **final_tool_params))
+            call_params["tool_call_id"] = tool_id
+            prepared_calls.append(partial(tool.acall, **call_params))
 
             call_metadata.append(
                 dotdict(
                     id=tool_id,
                     name=tool_name,
                     config=config,
-                    params=final_tool_params,
+                    params=call_params,
                 )
             )
 
@@ -742,6 +836,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 if isinstance(meta.params, dict):
                     parameters = meta.params.to_dict()
                     parameters.pop("vars", None)
+                    parameters.pop("messages", None)
+                    parameters.pop("message", None)
                     parameters.pop("tool_call_id", None)
                 else:
                     parameters = None

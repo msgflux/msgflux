@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Label PR based on files
         uses: actions/labeler@v6
@@ -24,7 +24,7 @@ jobs:
           configuration-path: .github/labeler.yml
 
       - name: Label PR based on size
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -71,7 +71,7 @@ jobs:
             core.info(`Added label: ${sizeLabel} (${totalChanges} changes)`);
 
       - name: Label PR based on title
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const pr = context.payload.pull_request;

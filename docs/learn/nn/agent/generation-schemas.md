@@ -147,7 +147,7 @@ Each `Action` contains:
 | Field       | Type              | Description                            |
 |-------------|-------------------|----------------------------------------|
 | `name`      | `str`             | The tool function to call              |
-| `arguments` | `List[Argument]`  | Named arguments passed to the tool     |
+| `arguments` | `dict[str, Any]`  | Named arguments passed to the tool     |
 
 !!! warning "Tools are serialized as text"
     Unlike standard tool calling, ReAct injects tool schemas into the system prompt as text descriptions rather than passing function definitions to the model's native `tools` parameter. This makes the loop more portable across models and providers, but changes how tools are represented internally.
@@ -173,6 +173,9 @@ result = agent("What is the latest Python version from python.org?")
 print(result.thought)       # "I need to fetch python.org to get the version..."
 print(result.final_answer)  # "Python 3.14.x"
 ```
+
+!!! tip "Default system_message"
+    `ReAct` ships with a built-in `system_message` that instructs the model to follow the Thought → Action → Observation loop. You can inspect it with `ReAct.system_message`. It can be overridden by setting `system_message` on the agent, though that is generally not recommended — the default prompt is carefully tuned to keep the loop stable.
 
 !!! tip "When to use"
     ReAct is the right choice when the agent needs external information to answer a question — web searches, API calls, database lookups, file reads, or any task requiring multi-turn tool interactions before an answer can be formed.

@@ -2,6 +2,7 @@
 # Automated release script for msgflux
 # Usage: ./scripts/release.sh <version>
 # Example: ./scripts/release.sh 0.12.4
+# Example: ./scripts/release.sh 0.12.4a1
 #
 # This script creates a release PR instead of pushing directly to main.
 # This ensures all releases go through proper validation and review.
@@ -29,15 +30,29 @@ fi
 
 NEW_VERSION="$1"
 
-# Validate version format (X.Y.Z)
-if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# Validate version format (X.Y.Z, optionally with prerelease suffix)
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
     echo -e "${RED}❌ Error: Invalid version format${NC}"
-    echo "Version must be in format X.Y.Z (e.g., 0.12.3)"
+    echo "Version must be in format X.Y.Z or X.Y.ZaN / X.Y.ZbN / X.Y.ZrcN (e.g., 0.12.3, 0.12.4a1)"
     exit 1
 fi
 
 echo -e "${BLUE}🚀 msgflux Release Automation${NC}"
 echo ""
+
+extract_repo_slug() {
+    local remote_url="$1"
+    echo "$remote_url" | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##'
+}
+
+BASE_REMOTE="origin"
+if git remote get-url upstream >/dev/null 2>&1; then
+    BASE_REMOTE="upstream"
+fi
+
+ORIGIN_REPO=$(extract_repo_slug "$(git remote get-url origin)")
+BASE_REPO=$(extract_repo_slug "$(git remote get-url "$BASE_REMOTE")")
+ORIGIN_OWNER="${ORIGIN_REPO%%/*}"
 
 # Ensure we're on main branch
 CURRENT_BRANCH=$(git branch --show-current)
@@ -63,9 +78,9 @@ if [ -n "$MODIFIED_FILES" ]; then
     exit 1
 fi
 
-# Pull latest changes
-echo -e "${BLUE}📥 Pulling latest changes...${NC}"
-git pull origin main
+# Pull latest changes from the canonical base repository
+echo -e "${BLUE}📥 Pulling latest changes from ${BASE_REMOTE}/main...${NC}"
+git pull --ff-only "$BASE_REMOTE" main
 
 # Get current version
 CURRENT_VERSION=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from msgflux.version import __version__; print(__version__)")
@@ -103,9 +118,27 @@ sed -i "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" src/msgflux/vers
 # Update CHANGELOG.md (move Unreleased to new version)
 echo "   → CHANGELOG.md"
 TODAY=$(date +%Y-%m-%d)
-sed -i "/## \[Unreleased\]/a \\
+if grep -q "^## \\[Unreleased\\]" CHANGELOG.md; then
+    sed -i "/## \[Unreleased\]/a \\
 \\
 ## [$NEW_VERSION] - $TODAY" CHANGELOG.md
+elif grep -q "^# Changelog" CHANGELOG.md; then
+    awk -v version="$NEW_VERSION" -v today="$TODAY" '
+        NR == 1 && $0 ~ /^# Changelog$/ {
+            print $0
+            print ""
+            print "## [" version "] - " today
+            next
+        }
+        { print }
+    ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+else
+    cat > CHANGELOG.md <<EOF
+# Changelog
+
+## [$NEW_VERSION] - $TODAY
+EOF
+fi
 
 # SECURITY CHECK: Verify only version.py and CHANGELOG.md were modified
 echo ""
@@ -165,7 +198,8 @@ git checkout -b "$BRANCH_NAME"
 # Commit changes
 echo -e "${BLUE}💾 Committing changes...${NC}"
 git add src/msgflux/version.py CHANGELOG.md
-git commit -m "RELEASE: v$NEW_VERSION
+COMMIT_MSG=$(cat <<EOF
+RELEASE: v$NEW_VERSION
 
 This release updates:
 - version.py: $CURRENT_VERSION → $NEW_VERSION
@@ -175,10 +209,9 @@ After merging this PR:
 - publish.yml workflow will trigger automatically
 - Package will be built and published to PyPI
 - GitHub release will be created with tag v$NEW_VERSION
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
+EOF
+)
+git commit -m "$COMMIT_MSG"
 
 # Push release branch
 echo -e "${BLUE}📤 Pushing release branch...${NC}"
@@ -187,9 +220,14 @@ git push -u origin "$BRANCH_NAME"
 # Create pull request
 echo ""
 echo -e "${BLUE}🔀 Creating pull request...${NC}"
-PR_URL=$(gh pr create \
-  --title "Release v$NEW_VERSION" \
-  --body "## 🚀 Release v$NEW_VERSION
+PR_TITLE="RELEASE: v$NEW_VERSION"
+PR_HEAD="$BRANCH_NAME"
+if [ "$ORIGIN_REPO" != "$BASE_REPO" ]; then
+  PR_HEAD="${ORIGIN_OWNER}:${BRANCH_NAME}"
+fi
+
+PR_BODY=$(cat <<EOF
+## 🚀 Release v$NEW_VERSION
 
 ### Changes
 - **Version**: $CURRENT_VERSION → $NEW_VERSION
@@ -210,11 +248,16 @@ PR_URL=$(gh pr create \
 ### Merge Instructions
 After CI passes, merge this PR using one of:
 - Merge bot: Comment \`@mergebot merge\`
-- GitHub UI: Use \"Squash and merge\"
+- GitHub UI: Use "Squash and merge"
+EOF
+)
 
----
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
+PR_URL=$(gh pr create \
+  --repo "$BASE_REPO" \
+  --base main \
+  --head "$PR_HEAD" \
+  --title "$PR_TITLE" \
+  --body "$PR_BODY" \
   --label "release" \
   --label "automerge")
 

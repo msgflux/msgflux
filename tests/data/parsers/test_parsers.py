@@ -54,8 +54,11 @@ def pdf_bytes():
         b" /MediaBox [0 0 612 792]"
         b" /Contents 4 0 R"
         b" /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>\nendobj\n"
-        b"4 0 obj\n<< /Length " + str(content_len).encode() + b" >>\nstream\n"
-        + content + b"\nendstream\nendobj\n"
+        b"4 0 obj\n<< /Length "
+        + str(content_len).encode()
+        + b" >>\nstream\n"
+        + content
+        + b"\nendstream\nendobj\n"
         b"xref\n0 5\n"
         b"0000000000 65535 f \n"
         b"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n9\n%%EOF\n"

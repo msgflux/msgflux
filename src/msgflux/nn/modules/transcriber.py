@@ -5,6 +5,7 @@ from typing import Any, Dict, Mapping, Optional, Union
 from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import SpeechToTextModel
@@ -20,7 +21,7 @@ class Transcriber(Module, metaclass=AutoParams):
 
     def __init__(
         self,
-        model: Union[SpeechToTextModel, ModelGateway],
+        model: Union[SpeechToTextModel, ModelGateway, str],
         *,
         message_fields: Optional[Dict[str, Any]] = None,
         response_mode: Optional[str] = None,
@@ -34,19 +35,23 @@ class Transcriber(Module, metaclass=AutoParams):
 
         Args:
         model:
-            Transcriber Model client.
+            Transcriber model client. Accepts a `SpeechToTextModel`,
+            `ModelGateway`, or a shorthand string in the form
+            ``"provider/model-id"`` (e.g. ``"openai/whisper-1"``).
+            When a string is provided, `Model.speech_to_text` is called
+            internally with no extra configuration.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task_multimodal_inputs", "model_preference"
+            Valid keys: "task_multimodal", "model_preference"
             !!! example
                 message_fields={
-                    "task_multimodal_inputs": "audio.user",
-                    # or dict-based: "task_multimodal_inputs": {"audio": "audio.user"}
+                    "task_multimodal": "audio.user",
+                    # or dict-based: "task_multimodal": {"audio": "audio.user"}
                     "model_preference": "model.preference"
                 }
 
             Field descriptions:
-            - task_multimodal_inputs: Field path for audio input (str or dict)
+            - task_multimodal: Field path for audio input (str or dict)
             - model_preference: Field path for model preference (str, only valid
               with ModelGateway)
         response_mode:
@@ -95,7 +100,7 @@ class Transcriber(Module, metaclass=AutoParams):
             self.set_name(name)
 
     def forward(
-        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
+        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message, ModelStreamResponse]:
         """Execute the transcriber with the given message.
 
@@ -106,7 +111,7 @@ class Transcriber(Module, metaclass=AutoParams):
                 - dict: Audio input as dictionary
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
-                - task_multimodal_inputs: Override multimodal inputs
+                - task_multimodal: Override multimodal inputs
                   (e.g., "audio.path" or {"audio": "audio.path"})
                 - model_preference: Override model preference
 
@@ -114,16 +119,16 @@ class Transcriber(Module, metaclass=AutoParams):
             Transcribed text (str, dict, Message, or ModelStreamResponse depending
             on configuration).
         """
-        inputs = self._prepare_task(message, **kwargs)
+        inputs = self._prepare_inputs(message, **kwargs)
         model_response = self._execute_model(**inputs)
         response = self._process_model_response(model_response, message)
         return response
 
     async def aforward(
-        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
+        self, message: Union[bytes, str, Dict[str, str], Message], **kwargs: Any
     ) -> Union[str, Dict[str, str], Message, ModelStreamResponse]:
         """Async version of forward. Execute the transcriber asynchronously."""
-        inputs = await self._aprepare_task(message, **kwargs)
+        inputs = await self._aprepare_inputs(message, **kwargs)
         model_response = await self._aexecute_model(**inputs)
         response = await self._aprocess_model_response(model_response, message)
         return response
@@ -186,10 +191,10 @@ class Transcriber(Module, metaclass=AutoParams):
                 f"Unsupported model response type `{model_response.response_type}`"
             )
 
-    def _prepare_task(
+    def _prepare_inputs(
         self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
     ) -> Dict[str, Union[bytes, str]]:
-        data = self._process_task_multimodal_inputs(message)
+        data = self._process_task_multimodal(message)
 
         model_preference = kwargs.pop("model_preference", None)
         if model_preference is None and isinstance(message, dotdict):
@@ -197,24 +202,22 @@ class Transcriber(Module, metaclass=AutoParams):
 
         return {"data": data, "model_preference": model_preference}
 
-    async def _aprepare_task(
+    async def _aprepare_inputs(
         self, message: Union[bytes, str, Dict[str, str], Message], **kwargs
     ) -> Dict[str, Union[bytes, str]]:
-        """Async version of _prepare_task.
+        """Async version of _prepare_inputs.
 
-        Executes _prepare_task in an executor to avoid blocking the event loop.
+        Executes _prepare_inputs in an executor to avoid blocking the event loop.
         """
         loop = asyncio.get_event_loop()
-        func = partial(self._prepare_task, message, **kwargs)
+        func = partial(self._prepare_inputs, message, **kwargs)
         return await loop.run_in_executor(None, func)
 
-    def _process_task_multimodal_inputs(
+    def _process_task_multimodal(
         self, message: Union[bytes, str, Dict[str, str], Message]
     ) -> bytes:
         if isinstance(message, dotdict):
-            audio_content = self._extract_message_values(
-                self.task_multimodal_inputs, message
-            )
+            audio_content = self._extract_message_values(self.task_multimodal, message)
         else:
             audio_content = message
 
@@ -224,7 +227,7 @@ class Transcriber(Module, metaclass=AutoParams):
                 audio_content = audio
             else:
                 raise ValueError(
-                    "`task_multimodal_inputs` path based-on dict requires "
+                    "`task_multimodal` path based-on dict requires "
                     f"an `audio` key given {audio_content}"
                 )
 
@@ -232,11 +235,13 @@ class Transcriber(Module, metaclass=AutoParams):
 
     def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
         """Debug model input parameters."""
-        inputs = self._prepare_task(*args, **kwargs)
+        inputs = self._prepare_inputs(*args, **kwargs)
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 
-    def _set_model(self, model: Union[SpeechToTextModel, ModelGateway]):
+    def _set_model(self, model: Union[SpeechToTextModel, ModelGateway, str]):
+        if isinstance(model, str):
+            model = Model.speech_to_text(model)
         if model.model_type == "speech_to_text":
             self.generator = Generator(model)
         else:
@@ -248,6 +253,10 @@ class Transcriber(Module, metaclass=AutoParams):
     def model(self):
         """Access underlying model."""
         return self.generator.model
+
+    @model.setter
+    def model(self, value: Union[SpeechToTextModel, ModelGateway, str]):
+        self._set_model(value)
 
     def _set_config(self, config: Optional[Dict[str, Any]] = None):
         if config is None:

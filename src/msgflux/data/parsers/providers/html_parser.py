@@ -263,4 +263,3 @@ class BeautifulSoupHtmlParser(BaseParser, HtmlParser):
             result = result.replace("\n\n\n", "\n\n")
 
         return result
-

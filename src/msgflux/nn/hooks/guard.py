@@ -7,17 +7,19 @@ from msgflux.exceptions import (
     UnsafeUserInputError,
     _GuardInterrupt,
 )
+from msgflux.models.response import ModelResponse
 from msgflux.nn.hooks.hook import Hook
 
 
 class Guard(Hook):
     """Validates input/output of a Module via the hook system.
 
-    The validator receives ``data=...`` and returns a dict with ``"safe"`` (bool).
+    The validator receives ``data`` as a positional argument and must return
+    either a dict with ``"safe"`` (bool) or a ``ModelResponse`` (auto-consumed).
 
     Args:
-        validator: Callable that receives ``data=...`` and returns
-            ``{"safe": bool}``.
+        validator: Callable that receives ``data`` and returns
+            ``{"safe": bool}`` or a ``ModelResponse``.
         on: ``"pre"`` (before forward) or ``"post"`` (after forward).
         message: Response to return when ``safe=False``. If ``None``,
             an exception is raised instead.
@@ -57,7 +59,7 @@ class Guard(Hook):
     ) -> None:
         """Sync validation — called by ``_call_impl``."""
         data = self._apply_processor(kwargs if self.on == "pre" else output)
-        result = self.validator(data=data)
+        result = self.validator(data)
         self._check_result(result, data)
 
     async def acall(
@@ -73,7 +75,7 @@ class Guard(Hook):
             result = await self._acall_validator(data)
         else:
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, lambda: self.validator(data=data))
+            result = await loop.run_in_executor(None, lambda: self.validator(data))
         self._check_result(result, data)
 
     @property
@@ -81,7 +83,9 @@ class Guard(Hook):
         """Key used to match processors in ``_set_hooks``."""
         return f"guard_{self.on}"
 
-    def _check_result(self, result: Dict[str, Any], data: Any = None) -> None:
+    def _check_result(self, result: Any, data: Any = None) -> None:
+        if isinstance(result, ModelResponse):
+            result = result.consume()
         if not result.get("safe", True):
             exc_data = data if self.include_data else None
             if self.message is not None:
@@ -95,11 +99,11 @@ class Guard(Hook):
             return self.processor(data)
         return data
 
-    async def _acall_validator(self, data: Any) -> Dict[str, Any]:
+    async def _acall_validator(self, data: Any) -> Any:
         if hasattr(self.validator, "acall"):
-            return await self.validator.acall(data=data)
+            return await self.validator.acall(data)
         elif inspect.iscoroutinefunction(self.validator):
-            return await self.validator(data=data)
+            return await self.validator(data)
         else:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, lambda: self.validator(data=data))
+            return await loop.run_in_executor(None, lambda: self.validator(data))

@@ -135,6 +135,33 @@
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
 
+/* Default line highlight — green */
+.highlight .hll {
+    background-color: rgba(76, 175, 80, 0.18) !important;
+}
+
+[data-md-color-scheme="slate"] .highlight .hll {
+    background-color: rgba(76, 175, 80, 0.22) !important;
+}
+
+/* .hl-green — explicit green (same as default, for clarity) */
+.hl-green .highlight .hll {
+    background-color: rgba(76, 175, 80, 0.18) !important;
+}
+
+[data-md-color-scheme="slate"] .hl-green .highlight .hll {
+    background-color: rgba(76, 175, 80, 0.22) !important;
+}
+
+/* .hl-red — red highlight for removals / warnings */
+.hl-red .highlight .hll {
+    background-color: rgba(244, 67, 54, 0.15) !important;
+}
+
+[data-md-color-scheme="slate"] .hl-red .highlight .hll {
+    background-color: rgba(244, 67, 54, 0.20) !important;
+}
+
 /* ===========================
    NAVIGATION ENHANCEMENTS
    =========================== */
@@ -269,6 +296,133 @@
 }
 
 /* ===========================
+   COLOR TAGS
+   =========================== */
+
+.tag {
+    display: inline-block;
+    padding: 0.15em 0.55em;
+    border-radius: 2rem;
+    font-size: 0.78em;
+    font-weight: 600;
+    font-family: var(--md-code-font-family);
+    line-height: 1.6;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    margin-left: 0.5em;
+}
+
+/* card bottom tags (backtick code in last paragraph) */
+.grid.cards > * p:last-child code {
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--md-default-fg-color--light);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 2rem;
+    padding: 0.15em 0.55em;
+    font-size: 0.78em;
+    font-weight: 600;
+}
+[data-md-color-scheme="slate"] .grid.cards > * p:last-child code {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--md-default-fg-color--light);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* orange */
+.tag-orange {
+    background: rgba(255, 152, 0, 0.14);
+    color: #BF6000;
+    border: 1px solid rgba(255, 152, 0, 0.35);
+}
+[data-md-color-scheme="slate"] .tag-orange {
+    background: rgba(255, 183, 77, 0.18);
+    color: #FFB74D;
+    border-color: rgba(255, 183, 77, 0.35);
+}
+
+/* blue */
+.tag-blue {
+    background: rgba(33, 150, 243, 0.12);
+    color: #1565C0;
+    border: 1px solid rgba(33, 150, 243, 0.3);
+}
+[data-md-color-scheme="slate"] .tag-blue {
+    background: rgba(100, 181, 246, 0.18);
+    color: #90CAF9;
+    border-color: rgba(100, 181, 246, 0.35);
+}
+
+/* green */
+.tag-green {
+    background: rgba(76, 175, 80, 0.12);
+    color: #2E7D32;
+    border: 1px solid rgba(76, 175, 80, 0.3);
+}
+[data-md-color-scheme="slate"] .tag-green {
+    background: rgba(129, 199, 132, 0.18);
+    color: #A5D6A7;
+    border-color: rgba(129, 199, 132, 0.35);
+}
+
+/* teal */
+.tag-teal {
+    background: rgba(0, 150, 136, 0.12);
+    color: #00695C;
+    border: 1px solid rgba(0, 150, 136, 0.3);
+}
+[data-md-color-scheme="slate"] .tag-teal {
+    background: rgba(77, 182, 172, 0.18);
+    color: #80CBC4;
+    border-color: rgba(77, 182, 172, 0.35);
+}
+
+/* purple */
+.tag-purple {
+    background: rgba(156, 39, 176, 0.11);
+    color: #6A1B9A;
+    border: 1px solid rgba(156, 39, 176, 0.28);
+}
+[data-md-color-scheme="slate"] .tag-purple {
+    background: rgba(206, 147, 216, 0.18);
+    color: #CE93D8;
+    border-color: rgba(206, 147, 216, 0.35);
+}
+
+/* gray */
+.tag-gray {
+    background: rgba(120, 120, 120, 0.11);
+    color: #555555;
+    border: 1px solid rgba(120, 120, 120, 0.28);
+}
+[data-md-color-scheme="slate"] .tag-gray {
+    background: rgba(180, 180, 180, 0.15);
+    color: #BDBDBD;
+    border-color: rgba(180, 180, 180, 0.3);
+}
+
+/* ===========================
+   TUTORIAL CATEGORY SECTIONS
+   =========================== */
+
+.tutorial-section {
+    border: 1px solid var(--md-default-fg-color--lightest);
+    border-radius: 0.75rem;
+    padding: 1.5rem 1.5rem 0.5rem;
+    margin: 1.5rem 0;
+    transition: border-color 0.3s ease;
+}
+
+.tutorial-section:hover {
+    border-color: var(--md-accent-fg-color);
+}
+
+.tutorial-section h2 {
+    border-bottom: none;
+    margin-top: 0;
+    padding-bottom: 0;
+}
+
+/* ===========================
    COPY PAGE BUTTON
    =========================== */
 
@@ -327,7 +481,7 @@
 }
 
 .md-typeset .hero-left img {
-    max-width: 260px;
+    max-width: 400px;
     height: auto;
     display: block;
 }
@@ -349,6 +503,7 @@
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    padding-right: 0.1em;
 }
 
 [data-md-color-scheme="slate"] .md-typeset .hero-right .tagline em {
@@ -385,6 +540,10 @@
         justify-content: center;
     }
 
+    .md-typeset .hero-left img {
+        max-width: 320px;
+    }
+
     .md-typeset .hero-right .tagline {
         font-size: 2rem;
     }
@@ -397,6 +556,10 @@
 
     .hero h1 {
         font-size: 2rem !important;
+    }
+
+    .md-typeset .hero-left img {
+        max-width: 220px;
     }
 
     .md-typeset .hero-right .tagline {

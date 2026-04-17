@@ -296,9 +296,7 @@ class TestWebFetchFallback:
     @pytest.mark.asyncio
     async def test_async_fallback_failure_raises_runtime_error(self, mocker):
         mock_client = mocker.AsyncMock()
-        mock_client.get = mocker.AsyncMock(
-            side_effect=httpx.HTTPError("all down")
-        )
+        mock_client.get = mocker.AsyncMock(side_effect=httpx.HTTPError("all down"))
         mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = mocker.AsyncMock(return_value=None)
         mocker.patch(

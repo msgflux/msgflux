@@ -304,6 +304,33 @@ def test_parallel_with_multiple_modules(modules):
     assert result["feat_c"] == "result_c"
 
 
+def test_sync_parallel_uses_call_not_acall():
+    """Parallel sync execution should keep the sync module contract."""
+
+    class DualModeModule:
+        def __init__(self, name: str):
+            self.name = name
+
+        def __call__(self, msg: dotdict) -> None:
+            msg[f"{self.name}_mode"] = "sync"
+
+        async def acall(self, msg: dotdict) -> None:
+            msg[f"{self.name}_mode"] = "async"
+
+    pipeline = Inline(
+        "[left, right]",
+        {
+            "left": DualModeModule("left"),
+            "right": DualModeModule("right"),
+        },
+    )
+
+    result = pipeline(dotdict())
+
+    assert result["left_mode"] == "sync"
+    assert result["right_mode"] == "sync"
+
+
 @pytest.mark.asyncio
 async def test_async_conditional_with_and_operator(async_modules):
     """Test async conditional with AND operator."""

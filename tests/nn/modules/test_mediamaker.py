@@ -107,7 +107,7 @@ class TestMediaMaker:
         """Test MediaMaker raises ValueError for None prompt."""
         mock_model = MockMediaModel()
         mediamaker = MediaMaker(
-            model=mock_model, message_fields={"task_inputs": "nonexistent"}
+            model=mock_model, message_fields={"task": "nonexistent"}
         )
         msg = Message()
 
@@ -166,3 +166,46 @@ class TestMediaMaker:
         mediamaker = MediaMaker(model=mock_model, response_format="base64")
 
         assert mediamaker.response_format == "base64"
+
+    def test_mediamaker_guard_short_circuit_returns_message(self):
+        """Guard with message= short-circuits forward and returns the message."""
+        from msgflux.nn.hooks import Guard
+
+        mock_model = MockMediaModel()
+        guard = Guard(
+            validator=lambda data: {"safe": False},
+            on="pre",
+            message="Prompt blocked.",
+        )
+        mediamaker = MediaMaker(model=mock_model, hooks=[guard])
+
+        result = mediamaker("unsafe prompt")
+        assert result == "Prompt blocked."
+
+    def test_mediamaker_guard_raises_without_message(self):
+        """Guard without message= raises UnsafeUserInputError."""
+        from msgflux.nn.hooks import Guard
+        from msgflux.exceptions import UnsafeUserInputError
+
+        mock_model = MockMediaModel()
+        guard = Guard(validator=lambda data: {"safe": False}, on="pre")
+        mediamaker = MediaMaker(model=mock_model, hooks=[guard])
+
+        with pytest.raises(UnsafeUserInputError):
+            mediamaker("unsafe prompt")
+
+    @pytest.mark.asyncio
+    async def test_mediamaker_guard_short_circuit_aforward(self):
+        """Guard short-circuit also works in aforward."""
+        from msgflux.nn.hooks import Guard
+
+        mock_model = MockMediaModel()
+        guard = Guard(
+            validator=lambda data: {"safe": False},
+            on="pre",
+            message="Blocked async.",
+        )
+        mediamaker = MediaMaker(model=mock_model, hooks=[guard])
+
+        result = await mediamaker.aforward("unsafe prompt")
+        assert result == "Blocked async."

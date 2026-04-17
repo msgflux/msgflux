@@ -41,7 +41,3 @@ class Expert(nn.Module):
 expert = Expert()
 expert("I need help with my tv.")
 ```
-
-## 2. **ModuleList vs Sequential**
-
-A `ModuleList` is exactly what it sounds like -- a list for storing `Module`s. You control how and when each module is called. On the other hand, the layers in a [Sequential](sequential.md) are connected in a cascading way, where the output of one module is automatically passed as input to the next.

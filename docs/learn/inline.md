@@ -273,13 +273,6 @@ Branches are separated by `,`. Each branch with `?` is a condition–module
 pair. The last item without `?` is the default — it runs when no condition
 matches. If no default is provided and nothing matches, no module runs.
 
-Use `_` as an explicit wildcard when you want to make the default visually
-clear:
-
-```
-{cond1 ? module_a, _ ? module_b}
-```
-
 ???+ example "If / else"
 
     ```python

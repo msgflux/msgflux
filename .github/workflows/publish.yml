@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -93,7 +93,7 @@ jobs:
           echo "✅ Created and pushed tag: $VERSION"
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
@@ -108,7 +108,7 @@ jobs:
 
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
           path: dist/
@@ -125,7 +125,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Get version
         id: version
@@ -133,8 +133,18 @@ jobs:
           VERSION=$(grep -oP '__version__ = "\K[^"]+' src/msgflux/version.py)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" =~ (a|b|rc)[0-9]+$ ]]; then
+            echo "value=true" >> $GITHUB_OUTPUT
+          else
+            echo "value=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Release v${{ steps.version.outputs.version }}
@@ -155,4 +165,4 @@ jobs:
             uv add msgflux==${{ steps.version.outputs.version }}
             ```
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.prerelease.outputs.value }}

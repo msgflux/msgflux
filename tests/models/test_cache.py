@@ -3,6 +3,7 @@
 import pytest
 
 from msgflux.models.cache import ResponseCache, generate_cache_key
+from msgflux.tools import ToolDefinitions
 
 
 class TestCacheKeyGeneration:
@@ -42,11 +43,15 @@ class TestCacheKeyGeneration:
         """Test cache key with nested dict values."""
         key1 = generate_cache_key(
             messages=[{"role": "user", "content": "Hello"}],
-            tool_schemas=[{"name": "get_weather", "parameters": {"type": "object"}}],
+            tool_definitions=ToolDefinitions(
+                schemas=[{"name": "get_weather", "parameters": {"type": "object"}}]
+            ),
         )
         key2 = generate_cache_key(
             messages=[{"role": "user", "content": "Hello"}],
-            tool_schemas=[{"name": "get_weather", "parameters": {"type": "object"}}],
+            tool_definitions=ToolDefinitions(
+                schemas=[{"name": "get_weather", "parameters": {"type": "object"}}]
+            ),
         )
         assert key1 == key2
 

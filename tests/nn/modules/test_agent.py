@@ -5,7 +5,7 @@ from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
-from msgflux.models.response import ModelResponse
+from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses, ToolCall
 from msgflux.core.examples import Example
 
@@ -24,11 +24,55 @@ class TestAgentReservedKwargs:
     def test_reserved_kwargs_set(self):
         """Test that _RESERVED_KWARGS is a set with expected values."""
         assert isinstance(_RESERVED_KWARGS, set)
+        assert "task" in _RESERVED_KWARGS
         assert "vars" in _RESERVED_KWARGS
         assert "messages" in _RESERVED_KWARGS
-        assert "task_multimodal_inputs" in _RESERVED_KWARGS
-        assert "context_inputs" in _RESERVED_KWARGS
+        assert "task_multimodal" in _RESERVED_KWARGS
+        assert "task_context" in _RESERVED_KWARGS
         assert "model_preference" in _RESERVED_KWARGS
+
+    @pytest.mark.parametrize("name", sorted(_RESERVED_KWARGS))
+    def test_signature_rejects_reserved_input_names(self, name):
+        """Signature inputs must not clash with reserved kwargs."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        sig = f"{name}: str -> answer: str"
+        with pytest.raises(ValueError, match="conflict with reserved"):
+            Agent(name="agent", model=mock_model, signature=sig)
+
+    @pytest.mark.parametrize("name", sorted(_RESERVED_KWARGS - {"task"}))
+    def test_annotations_reject_reserved_input_names(self, name):
+        """Custom annotations must not use reserved kwargs as input names."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        annotations = {name: str, "return": str}
+        with pytest.raises(ValueError, match="conflict with reserved"):
+            Agent(name="agent", model=mock_model, annotations=annotations)
+
+    def test_default_annotations_are_accepted(self):
+        """The default {"task": str, "return": str} annotations must be valid."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(name="agent", model=mock_model)
+        assert agent.annotations == {"task": str, "return": str}
+
+    def test_non_reserved_annotations_are_accepted(self):
+        """Custom annotations with non-reserved names must work."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent", model=mock_model, annotations={"query": str, "return": str}
+        )
+        assert "query" in agent.annotations
+
+    def test_non_reserved_signature_is_accepted(self):
+        """Signature with non-reserved input names must work."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent", model=mock_model, signature="query: str -> answer: str"
+        )
+        assert agent.annotations is not None
 
 
 class TestAgentInitialization:
@@ -119,7 +163,7 @@ class TestAgentInitialization:
         mock_model.model_type = "chat_completion"
 
         agent = Agent(
-            name="agent", model=mock_model, message_fields={"task_inputs": "input.user"}
+            name="agent", model=mock_model, message_fields={"task": "input.user"}
         )
 
         # message_fields is unpacked, not stored as single attribute
@@ -326,6 +370,29 @@ class TestAgentForward:
 
         assert result is not None
 
+    @pytest.mark.asyncio
+    async def test_agent_aforward_raises_explicit_stream_error(self):
+        """Async stream failures should surface as explicit agent errors."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            signature="query -> response",
+            config={"stream": True},
+        )
+
+        stream_response = ModelStreamResponse(mode="async")
+        stream_response.set_error(TypeError("backend blew up"))
+        agent.generator.acall = AsyncMock(return_value=stream_response)
+
+        with pytest.raises(
+            RuntimeError,
+            match="Model stream failed before producing a response: backend blew up",
+        ):
+            await agent.aforward(query="Test input")
+
 
 class TestAgentInspect:
     """Test Agent inspection methods."""
@@ -415,8 +482,8 @@ class TestAgentSetters:
 class TestAgentProcessing:
     """Test Agent processing methods."""
 
-    def test_prepare_task(self):
-        """Test _prepare_task method."""
+    def test_prepare_inputs(self):
+        """Test _prepare_inputs method."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
         agent = Agent(
@@ -426,7 +493,7 @@ class TestAgentProcessing:
             signature="input -> output",
         )
 
-        result = agent._prepare_task(input="Test input")
+        result = agent._prepare_inputs(input="Test input")
 
         assert isinstance(result, dict)
 
@@ -794,21 +861,21 @@ class TestAgentExecutionPaths:
             name="agent",
             model=mock_model,
             signature="query -> response",
-            message_fields={"task_inputs": "query"},
+            message_fields={"task": "query"},
         )
 
         agent.generator.forward = Mock(return_value=mock_response)
 
         # Create Message object
         msg = Message()
-        msg.query = "Test question"
+        msg.query = {"query": "Test question"}
 
         result = agent(msg)
 
         assert result is not None
 
-    def test_agent_with_context_inputs(self):
-        """Test Agent with context_inputs."""
+    def test_agent_with_context(self):
+        """Test Agent with context."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
         mock_response = ModelResponse()
@@ -822,9 +889,28 @@ class TestAgentExecutionPaths:
 
         agent.generator.forward = Mock(return_value=mock_response)
 
-        result = agent(query="Test", context_inputs="Some context")
+        result = agent(query="Test", task_context="Some context")
 
         assert result is not None
+
+    def test_agent_signature_context_is_not_reserved(self):
+        """Test that signature fields named context work as normal task inputs."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            signature="query, context -> response",
+        )
+
+        params = agent.inspect_model_execution_params(
+            query="What is AI?", context="ML context"
+        )
+
+        content = str(params["messages"])
+        assert "What is AI?" in content
+        assert "ML context" in content
 
 
 class TestAgentSystemPrompt:
@@ -878,14 +964,14 @@ class TestAgentSystemPrompt:
 class TestAgentMessagePreparation:
     """Test Agent message preparation."""
 
-    def test_agent_prepare_task_with_vars(self):
-        """Test _prepare_task with vars parameter."""
+    def test_agent_prepare_inputs_with_vars(self):
+        """Test _prepare_inputs with vars parameter."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
         agent = Agent(name="agent", model=mock_model, signature="query -> response")
 
-        result = agent._prepare_task(query="Test {{var}}", vars={"var": "value"})
+        result = agent._prepare_inputs(query="Test {{var}}", vars={"var": "value"})
 
         assert isinstance(result, dict)
 
@@ -897,11 +983,11 @@ class TestAgentMessagePreparation:
         agent = Agent(
             name="agent",
             model=mock_model,
-            templates={"context": "Context: {{context}}"},
+            templates={"task_context": "Context: {{context}}"},
         )
 
         # Context preparation should use custom template
-        assert agent.templates["context"] == "Context: {{context}}"
+        assert agent.templates["task_context"] == "Context: {{context}}"
 
 
 class TestAgentProperties:
@@ -936,6 +1022,88 @@ class TestAgentProperties:
         assert agent.prefilling == "Start here"
 
 
+class TestAgentJinjaTaskTemplateValidation:
+    """Test that a string task passed to an agent with a Jinja2-only task_template raises ValueError."""
+
+    def test_jinja_variable_template_with_str_task_raises(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "<ticket>{{ ticket }}</ticket>"},
+        )
+        with pytest.raises(ValueError, match="Jinja2 variables"):
+            agent._render_task("", vars={}, task="classify this ticket")
+
+    def test_jinja_block_template_with_str_task_raises(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "{% if ticket %}{{ ticket }}{% endif %}"},
+        )
+        with pytest.raises(ValueError, match="Jinja2 variables"):
+            agent._render_task("", vars={}, task="classify this ticket")
+
+    def test_error_message_includes_agent_name(self, mock_chat_model):
+        agent = Agent(
+            name="my-router",
+            model=mock_chat_model,
+            templates={"task": "{{ ticket }}"},
+        )
+        with pytest.raises(ValueError, match="my-router"):
+            agent._render_task("", vars={}, task="some text")
+
+    def test_mixed_jinja_and_format_placeholder_does_not_raise(self, mock_chat_model):
+        """Template with both Jinja2 vars and {} placeholder is valid with a string task."""
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "{% if ctx %}Context: {{ ctx }}\n{% endif %}Task: {}"},
+        )
+        # Should not raise — {} receives the string task after Jinja2 renders vars
+        agent._render_task("", vars={"ctx": "billing"}, task="help me")
+
+    def test_pure_format_placeholder_does_not_raise(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "Task: {}"},
+        )
+        agent._render_task("", vars={}, task="help me")
+
+    def test_jinja_template_with_dict_task_does_not_raise(self, mock_chat_model):
+        """Dict task always follows the Jinja2 rendering path — no error."""
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "<ticket>{{ ticket }}</ticket>"},
+        )
+        agent._render_task("", vars={}, task={"ticket": "I was charged twice"})
+
+    def test_no_template_with_str_task_does_not_raise(self, mock_chat_model):
+        """No task_template — string task is used as-is."""
+        agent = Agent(name="agent", model=mock_chat_model)
+        agent._render_task("", vars={}, task="help me")
+
+    @pytest.mark.asyncio
+    async def test_jinja_template_with_str_task_raises_async(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "<ticket>{{ ticket }}</ticket>"},
+        )
+        with pytest.raises(ValueError, match="Jinja2 variables"):
+            await agent._arender_task("", vars={}, task="classify this ticket")
+
+    @pytest.mark.asyncio
+    async def test_mixed_template_does_not_raise_async(self, mock_chat_model):
+        agent = Agent(
+            name="agent",
+            model=mock_chat_model,
+            templates={"task": "{% if ctx %}{{ ctx }}\n{% endif %}Task: {}"},
+        )
+        agent._render_task("", vars={}, task="help me")
+
+
 class TestAgentSystemExtraMessage:
     """Test Agent system_extra_message."""
 
@@ -953,3 +1121,158 @@ class TestAgentSystemExtraMessage:
 
         assert hasattr(agent, "system_extra_message")
         assert agent.system_extra_message == "Extra info"
+
+
+class TestAgentMessagesAccumulator:
+    """Test messages parameter accumulator semantics.
+
+    - messages not passed (default) → ephemeral, no external side effect
+    - messages=[]                   → opt-in accumulator, mutated in-place
+    - messages=[...]                → extends existing history
+    """
+
+    @pytest.fixture
+    def agent(self):
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        return Agent(name="agent", model=mock_model)
+
+    # --- _prepare_inputs: pure accumulation logic ---
+
+    def test_no_messages_arg_is_ephemeral(self, agent):
+        """Not passing messages returns an internal list; no external object modified."""
+        result = agent._prepare_inputs("Hello")
+        # Internal list is created — has the user message
+        assert result["messages"] is not None
+        assert any(m.get("role") == "user" for m in result["messages"])
+
+    def test_empty_list_accumulates_user_input(self, agent):
+        """messages=[] is mutated in-place with the user input."""
+        history = []
+        agent._prepare_inputs("Hello", messages=history)
+        assert len(history) == 1
+        assert history[0]["role"] == "user"
+
+    def test_nonempty_list_extends_with_user_input(self, agent):
+        """messages=[...] is extended with the new user input."""
+        existing = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+        ]
+        history = list(existing)
+        agent._prepare_inputs("Follow-up question", messages=history)
+        assert len(history) == 3
+        assert history[2]["role"] == "user"
+
+    def test_empty_list_is_same_object(self, agent):
+        """The list passed as messages=[] is the same object after the call."""
+        history = []
+        agent._prepare_inputs("Hello", messages=history)
+        assert len(history) == 1
+        assert history[0]["role"] == "user"
+        assert history[0]["content"] == "<task>Hello</task>"
+
+    def test_none_messages_does_not_mutate_any_external_list(self, agent):
+        """Passing messages=None explicitly behaves as ephemeral (no crash, no side effect)."""
+        # Should not raise and returns a valid messages list internally
+        result = agent._prepare_inputs("Hello", messages=None)
+        assert result["messages"] is not None
+
+    # --- full forward: user input and tool calls accumulate ---
+
+    def test_forward_accumulates_user_input(self, agent):
+        """forward() with messages=[] accumulates the user input into the list."""
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        history = []
+        agent("Hello", messages=history)
+
+        assert len(history) >= 1
+        assert history[0]["role"] == "user"
+
+    def test_forward_no_messages_arg_has_no_side_effect(self, agent):
+        """forward() without messages= leaves no external object modified."""
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        # No messages argument — purely ephemeral
+        result = agent("Hello")
+        assert isinstance(result, str)
+
+    def test_forward_two_turns_accumulate_correctly(self, agent):
+        """Two forward() calls with the same list accumulate both user inputs."""
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        history = []
+        agent("Turn one", messages=history)
+        len_after_turn1 = len(history)
+
+        agent("Turn two", messages=history)
+        len_after_turn2 = len(history)
+
+        assert len_after_turn2 > len_after_turn1
+
+    def test_forward_does_not_add_assistant_reply(self, agent):
+        """The final assistant response is never appended to messages automatically."""
+        mock_response = ModelResponse()
+        mock_response.data = "I am the assistant"
+        mock_response.response_type = "text_generation"
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        history = []
+        response = agent("Hello", messages=history)
+
+        roles = [m.get("role") for m in history]
+        assert "assistant" not in roles
+        assert response == "I am the assistant"
+
+
+class TestAgentModelStringShorthand:
+    """Test Agent initialization with string shorthand for model."""
+
+    def test_string_model_calls_chat_completion(self):
+        """Passing 'provider/model-id' must call Model.chat_completion."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        with patch(
+            "msgflux.nn.modules.agent.Model.chat_completion", return_value=mock_model
+        ) as mock_factory:
+            agent = Agent(name="agent", model="openai/gpt-4.1-mini")
+
+        mock_factory.assert_called_once_with("openai/gpt-4.1-mini")
+        assert agent.generator.model is mock_model
+
+    def test_string_model_setter_calls_chat_completion(self):
+        """Assigning a string to agent.model must call Model.chat_completion."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(name="agent", model=mock_model)
+
+        new_mock = Mock()
+        new_mock.model_type = "chat_completion"
+
+        with patch(
+            "msgflux.nn.modules.agent.Model.chat_completion", return_value=new_mock
+        ) as mock_factory:
+            agent.model = "groq/llama-3.1-8b-instant"
+
+        mock_factory.assert_called_once_with("groq/llama-3.1-8b-instant")
+        assert agent.generator.model is new_mock
+
+    def test_invalid_model_type_raises(self):
+        """Non-string, non-chat_completion model must still raise TypeError."""
+        bad_model = Mock()
+        bad_model.model_type = "embedding"
+
+        with pytest.raises(TypeError, match="`model` must be a `chat_completion`"):
+            Agent(name="agent", model=bad_model)

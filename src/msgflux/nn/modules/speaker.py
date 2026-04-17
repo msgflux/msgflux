@@ -3,6 +3,8 @@ from typing import Any, Dict, Literal, Mapping, Optional, Union
 from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.exceptions import _GuardInterrupt
+from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import TextToSpeechModel
@@ -15,7 +17,7 @@ class Speaker(Module, metaclass=AutoParams):
 
     def __init__(
         self,
-        model: Union[TextToSpeechModel, ModelGateway],
+        model: Union[TextToSpeechModel, ModelGateway, str],
         *,
         hooks: Optional[list] = None,
         message_fields: Optional[Dict[str, Any]] = None,
@@ -31,17 +33,21 @@ class Speaker(Module, metaclass=AutoParams):
 
         Args:
         model:
-            Text-to-Speech Model client.
+            Text-to-Speech model client. Accepts a `TextToSpeechModel`,
+            `ModelGateway`, or a shorthand string in the form
+            ``"provider/model-id"`` (e.g. ``"openai/gpt-4o-mini-tts"``).
+            When a string is provided, `Model.text_to_speech` is called
+            internally with no extra configuration.
         hooks:
             List of Hook instances to register on the model.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
-            Valid keys: "task_inputs" (other fields not supported for Speaker).
+            Valid keys: "task" (other fields not supported for Speaker).
             !!! example
-                message_fields={"task_inputs": "input.user"}
+                message_fields={"task": "input.user"}
 
             Field description:
-            - task_inputs: Field path for task input (str)
+            - task: Field path for task input (str)
         response_mode:
             Controls how the response is returned.
             * ``None`` (default): Returns the response directly.
@@ -74,7 +80,7 @@ class Speaker(Module, metaclass=AutoParams):
             self.set_name(name)
 
     def forward(
-        self, message: Union[str, Message], **kwargs
+        self, message: Union[str, Message], **kwargs: Any
     ) -> Union[bytes, ModelStreamResponse]:
         """Execute the speaker with the given message.
 
@@ -83,7 +89,7 @@ class Speaker(Module, metaclass=AutoParams):
                 - str: Direct text input to convert to speech
                 - Message: Message object with fields mapped via message_fields
             **kwargs: Runtime overrides for message_fields. Can include:
-                - task_inputs: Override field path or direct value
+                - task: Override field path or direct value
 
         Returns:
             Audio bytes or ModelStreamResponse if stream=True
@@ -97,19 +103,25 @@ class Speaker(Module, metaclass=AutoParams):
             speaker(msg)
 
             # Runtime override
-            speaker(msg, task_inputs="custom.path")
+            speaker(msg, task="custom.path")
         """
-        inputs = self._prepare_task(message, **kwargs)
-        model_response = self._execute_model(**inputs)
+        inputs = self._prepare_inputs(message, **kwargs)
+        try:
+            model_response = self._execute_model(**inputs)
+        except _GuardInterrupt as e:
+            return e.response
         response = self._process_model_response(model_response, message)
         return response
 
     async def aforward(
-        self, message: Union[str, Message], **kwargs
+        self, message: Union[str, Message], **kwargs: Any
     ) -> Union[bytes, ModelStreamResponse]:
         """Async version of forward. Execute the speaker asynchronously."""
-        inputs = self._prepare_task(message, **kwargs)
-        model_response = await self._aexecute_model(**inputs)
+        inputs = self._prepare_inputs(message, **kwargs)
+        try:
+            model_response = await self._aexecute_model(**inputs)
+        except _GuardInterrupt as e:
+            return e.response
         response = self._process_model_response(model_response, message)
         return response
 
@@ -154,11 +166,11 @@ class Speaker(Module, metaclass=AutoParams):
                 f"Unsupported model response type `{model_response.response_type}`"
             )
 
-    def _prepare_task(self, message: Union[str, Message], **kwargs) -> Dict[str, str]:
+    def _prepare_inputs(self, message: Union[str, Message], **kwargs) -> Dict[str, str]:
         if isinstance(message, dotdict):
-            data = self._extract_message_values(self.task_inputs, message)
+            data = self._extract_message_values(self.task, message)
             if data is None:
-                raise ValueError(f"No text found in paths: `{self.task_inputs}`")
+                raise ValueError(f"No text found in paths: `{self.task}`")
         elif isinstance(message, str):
             data = message
         else:
@@ -172,11 +184,13 @@ class Speaker(Module, metaclass=AutoParams):
 
     def inspect_model_execution_params(self, *args, **kwargs) -> Mapping[str, Any]:
         """Debug model input parameters."""
-        inputs = self._prepare_task(*args, **kwargs)
+        inputs = self._prepare_inputs(*args, **kwargs)
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 
-    def _set_model(self, model: Union[TextToSpeechModel, ModelGateway]):
+    def _set_model(self, model: Union[TextToSpeechModel, ModelGateway, str]):
+        if isinstance(model, str):
+            model = Model.text_to_speech(model)
         if model.model_type == "text_to_speech":
             self.generator = Generator(model)
         else:
@@ -188,6 +202,10 @@ class Speaker(Module, metaclass=AutoParams):
     def model(self):
         """Access underlying model."""
         return self.generator.model
+
+    @model.setter
+    def model(self, value: Union[TextToSpeechModel, ModelGateway, str]):
+        self._set_model(value)
 
     def _set_response_format(self, response_format: str):
         supported_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
