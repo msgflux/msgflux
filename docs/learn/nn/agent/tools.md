@@ -572,6 +572,173 @@ Control how the model selects tools.
         response = router("How do I handle errors in Rust?")
         ```
 
+!!! note "Interaction with `tool_filter`"
+
+    `tool_choice` is resolved after runtime filtering.
+
+    - If `tool_filter` removes a specific tool configured in `tool_choice`, the Agent falls back to `"auto"` for that request
+    - If `tool_filter` removes all tools, tool usage is disabled for that request
+
+### Runtime Tool Filtering
+
+Use `tool_filter` when you need to change which tools are exposed on a **per-request** basis, without rebuilding the agent.
+
+**Rules:**
+
+- `tool_filter` must contain exactly one key: `"allow"` or `"block"`
+- The value can be a single tool name or a list of tool names
+- `{"block": "*"}` disables all tools for that request
+- Runtime `tool_filter=...` overrides the value loaded from `message_fields`
+
+???+ example
+
+    === "Allow Only Specific Tools"
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        def web_search(query: str) -> str:
+            """Search the web."""
+            return f"Search results for: {query}"
+
+        def calculator(expression: str) -> str:
+            """Evaluate a math expression."""
+            return f"Computed: {expression}"
+
+        def browser(url: str) -> str:
+            """Open a web page."""
+            return f"Fetched: {url}"
+
+        class Assistant(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            tools = [web_search, calculator, browser]
+            config = {"verbose": True}
+
+        agent = Assistant()
+
+        response = agent(
+            "Search for the latest Python release and calculate 2 + 2",
+            tool_filter={"allow": ["web_search", "calculator"]},
+        )
+        ```
+
+    === "Block Specific Tools"
+
+        ```python
+        response = agent(
+            "Answer this without opening pages",
+            tool_filter={"block": "browser"},
+        )
+        ```
+
+    === "Disable All Tools Temporarily"
+
+        ```python
+        response = agent(
+            "Answer only from model knowledge",
+            tool_filter={"block": "*"},
+        )
+        ```
+
+### Tool Filter from Message
+
+You can also load `tool_filter` from the input `Message` using `message_fields`.
+
+This is useful when another module or router decides which tools should be available before the Agent runs.
+
+???+ example
+
+    ```python
+    # pip install msgflux[openai]
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    # mf.set_envs(OPENAI_API_KEY="...")
+
+    def web_search(query: str) -> str:
+        """Search the web."""
+        return f"Search results for: {query}"
+
+    def calculator(expression: str) -> str:
+        """Evaluate a math expression."""
+        return f"Computed: {expression}"
+
+    class ControlledAgent(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        tools = [web_search, calculator]
+        message_fields = {
+            "task": "content",
+            "tool_filter": "control.tool_filter",
+        }
+
+    agent = ControlledAgent()
+
+    msg = mf.Message(content="What is 25 * 17?")
+    msg.set("control.tool_filter", {"allow": "calculator"})
+
+    response = agent(msg)
+    ```
+
+!!! tip
+
+    Runtime kwargs still take precedence:
+
+    ```python
+    response = agent(
+        msg,
+        tool_filter={"block": "*"},  # overrides msg.control.tool_filter
+    )
+    ```
+
+### Limiting Tool Loops
+
+Use `config["max_tool_turns"]` to cap how many **completed tool rounds** an Agent can execute in a single request.
+
+When the limit is reached:
+
+- The next attempted tool round is not executed
+- The Agent makes one more model call with tools disabled
+- The model gets a final chance to produce a plain answer
+
+This is useful to avoid runaway tool loops while still allowing a graceful final response.
+
+???+ example
+
+    ```python
+    # pip install msgflux[openai] wikipedia
+    import msgflux as mf
+    import msgflux.nn as nn
+
+    # mf.set_envs(OPENAI_API_KEY="...")
+
+    wikipedia = mf.Retriever.web_search("wikipedia")
+
+    class Researcher(nn.Agent):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        system_message = "Use tools when needed, but finish with a concise answer."
+        tools = [wikipedia]
+        config = {
+            "tool_choice": "auto",
+            "max_tool_turns": 2,
+            "verbose": True,
+        }
+
+    agent = Researcher()
+
+    response = agent("Compare Python and Ruby and keep the answer short")
+    ```
+
+!!! note
+
+    `max_tool_turns` is different from `tool_choice="none"`:
+
+    - `tool_choice="none"` disables tools from the start
+    - `max_tool_turns` allows some tool usage first, then forces a final no-tools round if the loop keeps going
+
 ### Async Tools
 
 When your agent runs asynchronously with `acall()`, prefer writing async tools as well. This ensures non-blocking execution and better performance when tools perform I/O operations.
