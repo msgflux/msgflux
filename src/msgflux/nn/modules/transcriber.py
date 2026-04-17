@@ -5,6 +5,7 @@ from typing import Any, Dict, Mapping, Optional, Union
 from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import SpeechToTextModel
@@ -20,7 +21,7 @@ class Transcriber(Module, metaclass=AutoParams):
 
     def __init__(
         self,
-        model: Union[SpeechToTextModel, ModelGateway],
+        model: Union[SpeechToTextModel, ModelGateway, str],
         *,
         message_fields: Optional[Dict[str, Any]] = None,
         response_mode: Optional[str] = None,
@@ -34,7 +35,11 @@ class Transcriber(Module, metaclass=AutoParams):
 
         Args:
         model:
-            Transcriber Model client.
+            Transcriber model client. Accepts a `SpeechToTextModel`,
+            `ModelGateway`, or a shorthand string in the form
+            ``"provider/model-id"`` (e.g. ``"openai/whisper-1"``).
+            When a string is provided, `Model.speech_to_text` is called
+            internally with no extra configuration.
         message_fields:
             Dictionary mapping Message field names to their paths in the Message object.
             Valid keys: "task_multimodal", "model_preference"
@@ -234,7 +239,9 @@ class Transcriber(Module, metaclass=AutoParams):
         model_execution_params = self._prepare_model_execution(**inputs)
         return model_execution_params
 
-    def _set_model(self, model: Union[SpeechToTextModel, ModelGateway]):
+    def _set_model(self, model: Union[SpeechToTextModel, ModelGateway, str]):
+        if isinstance(model, str):
+            model = Model.speech_to_text(model)
         if model.model_type == "speech_to_text":
             self.generator = Generator(model)
         else:
@@ -246,6 +253,10 @@ class Transcriber(Module, metaclass=AutoParams):
     def model(self):
         """Access underlying model."""
         return self.generator.model
+
+    @model.setter
+    def model(self, value: Union[SpeechToTextModel, ModelGateway, str]):
+        self._set_model(value)
 
     def _set_config(self, config: Optional[Dict[str, Any]] = None):
         if config is None:

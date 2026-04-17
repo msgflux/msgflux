@@ -1,7 +1,7 @@
 """Tests for msgflux.nn.modules.speaker module."""
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from msgflux.nn.modules.speaker import Speaker
 from msgflux.models.base import BaseModel
@@ -48,6 +48,19 @@ class TestSpeaker:
         assert speaker.model is mock_model
         assert speaker.response_format == "opus"
 
+    def test_speaker_string_model_calls_text_to_speech(self):
+        """Passing a string model must call Model.text_to_speech."""
+        mock_model = MockTTSModel()
+
+        with patch(
+            "msgflux.nn.modules.speaker.Model.text_to_speech",
+            return_value=mock_model,
+        ) as mock_factory:
+            speaker = Speaker(model="openai/gpt-4o-mini-tts")
+
+        mock_factory.assert_called_once_with("openai/gpt-4o-mini-tts")
+        assert speaker.model is mock_model
+
     def test_speaker_initialization_with_config(self):
         """Test Speaker initialization with configuration."""
         mock_model = MockTTSModel()
@@ -63,6 +76,22 @@ class TestSpeaker:
 
         with pytest.raises(TypeError, match="need be a `text_to_speech` model"):
             Speaker(model=mock_model)
+
+    def test_speaker_string_model_setter_calls_text_to_speech(self):
+        """Assigning a string to speaker.model must call Model.text_to_speech."""
+        mock_model = MockTTSModel()
+        speaker = Speaker(model=mock_model)
+
+        new_mock = MockTTSModel()
+
+        with patch(
+            "msgflux.nn.modules.speaker.Model.text_to_speech",
+            return_value=new_mock,
+        ) as mock_factory:
+            speaker.model = "openai/gpt-4o-mini-tts"
+
+        mock_factory.assert_called_once_with("openai/gpt-4o-mini-tts")
+        assert speaker.model is new_mock
 
     def test_speaker_with_response_format(self):
         """Test Speaker with custom response_format."""

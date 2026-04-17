@@ -1155,7 +1155,10 @@ class TestAgentMessagesAccumulator:
 
     def test_nonempty_list_extends_with_user_input(self, agent):
         """messages=[...] is extended with the new user input."""
-        existing = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}]
+        existing = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+        ]
         history = list(existing)
         agent._prepare_inputs("Follow-up question", messages=history)
         assert len(history) == 3
@@ -1165,8 +1168,9 @@ class TestAgentMessagesAccumulator:
         """The list passed as messages=[] is the same object after the call."""
         history = []
         agent._prepare_inputs("Hello", messages=history)
-        assert id(history) == id(history)  # tautology — check via len instead
         assert len(history) == 1
+        assert history[0]["role"] == "user"
+        assert history[0]["content"] == "<task>Hello</task>"
 
     def test_none_messages_does_not_mutate_any_external_list(self, agent):
         """Passing messages=None explicitly behaves as ephemeral (no crash, no side effect)."""
@@ -1229,3 +1233,46 @@ class TestAgentMessagesAccumulator:
         roles = [m.get("role") for m in history]
         assert "assistant" not in roles
         assert response == "I am the assistant"
+
+
+class TestAgentModelStringShorthand:
+    """Test Agent initialization with string shorthand for model."""
+
+    def test_string_model_calls_chat_completion(self):
+        """Passing 'provider/model-id' must call Model.chat_completion."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        with patch(
+            "msgflux.nn.modules.agent.Model.chat_completion", return_value=mock_model
+        ) as mock_factory:
+            agent = Agent(name="agent", model="openai/gpt-4.1-mini")
+
+        mock_factory.assert_called_once_with("openai/gpt-4.1-mini")
+        assert agent.generator.model is mock_model
+
+    def test_string_model_setter_calls_chat_completion(self):
+        """Assigning a string to agent.model must call Model.chat_completion."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(name="agent", model=mock_model)
+
+        new_mock = Mock()
+        new_mock.model_type = "chat_completion"
+
+        with patch(
+            "msgflux.nn.modules.agent.Model.chat_completion", return_value=new_mock
+        ) as mock_factory:
+            agent.model = "groq/llama-3.1-8b-instant"
+
+        mock_factory.assert_called_once_with("groq/llama-3.1-8b-instant")
+        assert agent.generator.model is new_mock
+
+    def test_invalid_model_type_raises(self):
+        """Non-string, non-chat_completion model must still raise TypeError."""
+        bad_model = Mock()
+        bad_model.model_type = "embedding"
+
+        with pytest.raises(TypeError, match="`model` must be a `chat_completion`"):
+            Agent(name="agent", model=bad_model)

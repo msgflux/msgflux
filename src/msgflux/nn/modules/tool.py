@@ -1,8 +1,9 @@
 import asyncio
 import inspect
-from dataclasses import asdict, dataclass, field
 from copy import deepcopy
+from dataclasses import asdict, dataclass, field
 from functools import partial
+from importlib import import_module
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 
 import msgspec
@@ -28,6 +29,14 @@ from msgflux.utils.chat import generate_tool_json_schema
 from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
 from msgflux.utils.msgspec import restore_transport_value
 from msgflux.utils.tenacity import apply_retry, default_tool_retry
+
+
+def _should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> bool:
+    if not config.get("inject_messages", False):
+        return False
+
+    agent_type = import_module("msgflux.nn.modules.agent").Agent
+    return isinstance(getattr(tool, "impl", tool), agent_type)
 
 
 @dataclass
@@ -651,8 +660,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add isolated copy of messages
-                call_params["messages"] = deepcopy(messages)
+            if config.get("inject_messages", False):
+                if _should_copy_injected_messages(tool, config):
+                    call_params["messages"] = deepcopy(messages)
+                else:
+                    call_params["messages"] = messages
 
             if config.get("inject_message", False):  # Add original message/envelope
                 call_params["message"] = message
@@ -793,8 +805,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 return_directly = True
                 continue
 
-            if config.get("inject_messages", False):  # Add isolated copy of messages
-                call_params["messages"] = deepcopy(messages)
+            if config.get("inject_messages", False):
+                if _should_copy_injected_messages(tool, config):
+                    call_params["messages"] = deepcopy(messages)
+                else:
+                    call_params["messages"] = messages
 
             if config.get("inject_message", False):  # Add original message/envelope
                 call_params["message"] = message
