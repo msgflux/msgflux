@@ -70,6 +70,7 @@ Chat completion models are stateless - they don't maintain conversation history 
         verbose=False,                 # Print raw output before transformation
         # --- Search ---
         web_search_options={},         # Web search config (OpenAI / OpenRouter only)
+        prompt_cache_retention="24h",  # OpenAI only: "in_memory" or "24h"
         # --- Infrastructure ---
         base_url="https://api.openai.com/v1",  # Override provider API endpoint
         context_length=128000,         # Override maximum context window
@@ -822,6 +823,31 @@ Search responses include inline citations. The raw URLs are also available in `r
         print(annotation["url_citation"]["url"])
     # https://www.liquidweb.com/blog/latest-python-version/
     # ...
+    ```
+
+## OpenAI Prompt Caching
+
+`prompt_cache_retention` is an OpenAI-only initialization parameter. msgFlux forwards it only for `openai/...` chat completion models. OpenAI-compatible providers that inherit from `OpenAIChatCompletion` do not use it.
+
+Use it when you want OpenAI to keep cached prefixes in memory or retain them for longer:
+
+| Value | Behaviour |
+|---|---|
+| `"in_memory"` | Default. Keeps the cache in volatile memory for short-lived reuse. |
+| `"24h"` | Extended retention. Keeps cached prefixes available for longer. |
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion(
+        "openai/gpt-5.1",
+        prompt_cache_retention="24h",
+    )
+
+    response = model("Summarize the attached policy.")
+    print(response.consume())
     ```
 
 ## 12. **Reasoning Models**
