@@ -554,9 +554,10 @@ class TestOpenAIChatCompletion:
 
         assert response.metadata.usage["total_tokens"] == 5
         assert response.metadata.logprobs["content"][0]["token"] == "Hello"
-        assert response.metadata.logprobs["content"][0]["top_logprobs"][0][
-            "token"
-        ] == "Hello"
+        assert (
+            response.metadata.logprobs["content"][0]["top_logprobs"][0]["token"]
+            == "Hello"
+        )
         assert response.metadata.finish_reason == "stop"
 
     def test_prefilling_is_not_compatible_with_generation_schema(
