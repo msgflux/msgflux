@@ -127,7 +127,7 @@ class _BaseOpenAI(BaseModel):
 class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     """OpenAI Chat Completion."""
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         model_id: str,
         *,
