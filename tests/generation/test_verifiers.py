@@ -8,10 +8,13 @@ from msgflux.generation.verifiers import (
     GROUNDED_ANSWER_VERIFICATION_CRITERIA,
     LLMAsVerifier,
     PATCH_SELECTION_CRITERIA,
+    ScoreScale,
     SYNTHETIC_DATA_FILTERING_CRITERIA,
     TOOL_TRACE_VERIFICATION_CRITERIA,
     TRAJECTORY_ANALYSIS_CRITERIA,
     VerificationCriterion,
+    VerificationPromptInput,
+    default_prompt_builder,
 )
 from msgflux.models.base import BaseModel
 from msgflux.models.gateway import ModelGateway
@@ -136,6 +139,35 @@ def _make_weird_tagged_response():
     return response
 
 
+def _make_malformed_score_response():
+    response = ModelResponse()
+    response.add("Looks correct\n<20A</score>")
+    response.set_metadata(
+        dotdict(
+            {
+                "logprobs": {
+                    "content": [
+                        {"token": "Analysis", "logprob": -0.2, "top_logprobs": []},
+                        {"token": "<", "logprob": -0.1, "top_logprobs": []},
+                        {"token": "20", "logprob": -0.5, "top_logprobs": []},
+                        {
+                            "token": "A",
+                            "logprob": -0.01,
+                            "top_logprobs": [
+                                {"token": "A", "logprob": -0.01},
+                                {"token": "B", "logprob": -2.0},
+                            ],
+                        },
+                        {"token": "</score>", "logprob": -0.1, "top_logprobs": []},
+                    ]
+                }
+            }
+        )
+    )
+    response.set_response_type("text_generation")
+    return response
+
+
 class MockChatModel(BaseModel, ChatCompletionModel):
     def __init__(self, responses, model_id="mock-model", provider="mock"):
         self.model_id = model_id
@@ -206,6 +238,20 @@ class DynamicPairwiseModel(BaseModel, ChatCompletionModel):
 
 
 class TestLLMAsVerifier:
+    def test_default_prompt_builder_uses_single_score_token_examples(self):
+        prompt = default_prompt_builder(
+            VerificationPromptInput(
+                task="What is 2 + 2?",
+                criterion=CRITERION,
+                candidates={"answer": "The answer is 4."},
+                score_scale=ScoreScale.letter(),
+            )
+        )
+
+        assert "<score>A</score>" in prompt
+        assert "Do not output the scale name" in prompt
+        assert "Use a single token from A to T." in prompt
+
     def test_trajectory_analysis_preset_sets_default_note(self):
         verifier = LLMAsVerifier.trajectory_analysis(
             model=MockChatModel([]),
@@ -274,6 +320,36 @@ class TestLLMAsVerifier:
         assert model.calls[0]["logprobs"] is True
         assert model.calls[0]["top_logprobs"] == 20
 
+    def test_verbose_mode_exposes_prompt_and_raw_outputs(self):
+        model = MockChatModel(
+            [
+                _make_response(
+                    "Looks correct\n<score>A</score>",
+                    token="A",
+                    alternatives=[{"token": "A", "logprob": -0.01}],
+                )
+            ]
+        )
+        verifier = LLMAsVerifier(
+            model=model,
+            criteria=[CRITERION],
+            verbose=True,
+        )
+
+        result = verifier(
+            task="What is 2 + 2?",
+            candidates={"answer": "The answer is 4."},
+        )
+
+        attempt = result.criteria_results[0].attempts[0]
+        assert attempt.prompt_text == model.calls[0]["messages"]
+        assert result.metadata["verbose"] is True
+        assert result.metadata["raw_outputs"][0]["prompt"] == model.calls[0]["messages"]
+        assert (
+            result.metadata["raw_outputs"][0]["response_text"]
+            == "Looks correct\n<score>A</score>"
+        )
+
     def test_single_candidate_falls_back_to_text_without_logprobs(self):
         model = MockChatModel(
             [
@@ -339,6 +415,24 @@ class TestLLMAsVerifier:
 
     def test_single_candidate_matches_realistic_tag_tokenization(self):
         model = MockChatModel([_make_weird_tagged_response()])
+        verifier = LLMAsVerifier(
+            model=model,
+            criteria=[CRITERION],
+            strict_logprobs=True,
+        )
+
+        result = verifier(
+            task="What is 2 + 2?",
+            candidates={"answer": "The answer is 4."},
+        )
+
+        assert result.verdict == "pass"
+        assert result.criteria_results[0].attempts[0].evidence["answer"].method == (
+            "logprobs"
+        )
+
+    def test_single_candidate_handles_malformed_score_tag_with_logprobs(self):
+        model = MockChatModel([_make_malformed_score_response()])
         verifier = LLMAsVerifier(
             model=model,
             criteria=[CRITERION],
@@ -450,6 +544,26 @@ class TestLLMAsVerifier:
         assert result.ranking[0] == "best"
         assert len(result.matches) == 3
         assert result.wins["best"] == 2.0
+
+    def test_select_best_verbose_mode_aggregates_match_outputs(self):
+        verifier = LLMAsVerifier(
+            model=DynamicPairwiseModel(),
+            criteria=[CRITERION],
+            verbose=True,
+        )
+
+        result = verifier.select_best(
+            task="Pick the strongest final answer.",
+            candidates={
+                "best": "best",
+                "okay": "okay",
+                "bad": "bad",
+            },
+        )
+
+        assert result.metadata["verbose"] is True
+        assert len(result.metadata["raw_outputs"]) == 3
+        assert result.metadata["raw_outputs"][0]["outputs"]
 
     def test_call_rejects_more_than_two_candidates(self):
         verifier = LLMAsVerifier(

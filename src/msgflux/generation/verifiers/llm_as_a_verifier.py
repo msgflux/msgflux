@@ -62,6 +62,10 @@ class ScoreScale:
         values = tuple(self.token_values.values())
         return min(values), max(values)
 
+    @property
+    def ordered_tokens(self) -> tuple[str, ...]:
+        return tuple(self.token_values.keys())
+
     def normalize_token(self, token: str) -> Optional[str]:
         cleaned = token.strip().upper()
         if cleaned in self.token_values:
@@ -82,6 +86,21 @@ class ScoreScale:
             normalized = self.normalize_token(part.strip(_TOKEN_STRIP_CHARS))
             if normalized is not None:
                 return normalized
+
+        for part in re.split(r"[^A-Z0-9_]+", cleaned.upper()):
+            if not part:
+                continue
+            normalized = self._extract_attached_token(part)
+            if normalized is not None:
+                return normalized
+        return None
+
+    def _extract_attached_token(self, token: str) -> Optional[str]:
+        for candidate in sorted(self.token_values, key=len, reverse=True):
+            if token.endswith(candidate) and token[: -len(candidate)].isdigit():
+                return candidate
+            if token.startswith(candidate) and token[len(candidate) :].isdigit():
+                return candidate
         return None
 
     def to_normalized_score(self, token_probabilities: Mapping[str, float]) -> float:
@@ -126,6 +145,7 @@ class ScoreEvidence:
 class VerificationAttempt:
     criterion_id: str
     repetition: int
+    prompt_text: Optional[str]
     response_text: str
     scores: dict[str, float]
     evidence: dict[str, ScoreEvidence]
@@ -180,6 +200,9 @@ class TournamentResult:
 
 def default_prompt_builder(prompt_input: VerificationPromptInput) -> str:
     candidate_items = list(prompt_input.candidates.items())
+    score_tokens = prompt_input.score_scale.ordered_tokens
+    best_token = score_tokens[0]
+    worst_token = score_tokens[-1]
     sections = [
         "You are an expert verifier. Evaluate the candidate strictly on the "
         "requested criterion.",
@@ -200,8 +223,13 @@ def default_prompt_builder(prompt_input: VerificationPromptInput) -> str:
         sections.append(f"Candidate:\n{_render_prompt_value(candidate)}")
         sections.append(
             f"Rating scale:\n{prompt_input.score_scale.description}\n\n"
-            "Provide a short analysis and then output the final score exactly as:\n"
-            f"<score>{prompt_input.score_scale.score_format}</score>"
+            "Provide a short analysis and then end with exactly one score token "
+            "inside the tag.\n"
+            f"Use a single token from {best_token} to {worst_token}. "
+            f"{best_token} is best and {worst_token} is worst.\n"
+            "Do not output the scale name, numbers attached to the token, "
+            "or extra text inside the tag.\n"
+            f"Example final line:\n<score>{best_token}</score>"
         )
     else:
         (label_a, candidate_a), (label_b, candidate_b) = candidate_items
@@ -213,9 +241,15 @@ def default_prompt_builder(prompt_input: VerificationPromptInput) -> str:
         )
         sections.append(
             f"Rating scale:\n{prompt_input.score_scale.description}\n\n"
-            "Provide a short analysis and then output the final scores exactly as:\n"
-            f"<score_A>{prompt_input.score_scale.score_format}</score_A>\n"
-            f"<score_B>{prompt_input.score_scale.score_format}</score_B>"
+            "Provide a short analysis and then end with exactly one score token "
+            "inside each tag.\n"
+            f"Use a single token from {best_token} to {worst_token}. "
+            f"{best_token} is best and {worst_token} is worst.\n"
+            "Do not output the scale name, numbers attached to the token, "
+            "or extra text inside the tag.\n"
+            "Example final lines:\n"
+            f"<score_A>{best_token}</score_A>\n"
+            f"<score_B>{worst_token}</score_B>"
         )
     return "\n\n".join(section.strip() for section in sections if section)
 
@@ -459,6 +493,7 @@ class LLMAsVerifier:
         model_request_kwargs: Optional[Mapping[str, Any]] = None,
         strict_logprobs: bool = False,
         pass_threshold: float = 0.5,
+        verbose: bool = False,
     ):
         self.model = self._resolve_model(model)
         self.criteria = self._normalize_criteria(criteria)
@@ -471,6 +506,7 @@ class LLMAsVerifier:
         self.model_request_kwargs = dict(model_request_kwargs or {})
         self.strict_logprobs = strict_logprobs
         self.pass_threshold = pass_threshold
+        self.verbose = verbose
 
         if self.n_verifications < 1:
             raise ValueError("`n_verifications` must be at least 1")
@@ -601,13 +637,17 @@ class LLMAsVerifier:
                     ground_truth_note=ground_truth_note,
                     extra_instructions=extra_instructions,
                 )
-                response = self.model(**self._build_request_kwargs(prompt_input))
+                request_kwargs = self._build_request_kwargs(prompt_input)
+                response = self.model(**request_kwargs)
                 attempts.append(
                     self._build_attempt(
                         response=response,
                         repetition=repetition,
                         criterion=criterion,
                         labels=labels,
+                        prompt_text=self._coerce_response_text(
+                            request_kwargs["messages"]
+                        ),
                     )
                 )
             criterion_results.append(self._aggregate_criterion(criterion, attempts))
@@ -642,15 +682,17 @@ class LLMAsVerifier:
                     ground_truth_note=ground_truth_note,
                     extra_instructions=extra_instructions,
                 )
-                response = await self.model.acall(
-                    **self._build_request_kwargs(prompt_input)
-                )
+                request_kwargs = self._build_request_kwargs(prompt_input)
+                response = await self.model.acall(**request_kwargs)
                 attempts.append(
                     self._build_attempt(
                         response=response,
                         repetition=repetition,
                         criterion=criterion,
                         labels=labels,
+                        prompt_text=self._coerce_response_text(
+                            request_kwargs["messages"]
+                        ),
                     )
                 )
             criterion_results.append(self._aggregate_criterion(criterion, attempts))
@@ -724,13 +766,11 @@ class LLMAsVerifier:
             wins=wins,
             average_scores=average_scores,
             matches=matches,
-            metadata={
-                "n_candidates": len(labels),
-                "n_matches": len(matches),
-                "criteria_ids": [criterion.id for criterion in active_criteria],
-                "n_verifications": self.n_verifications,
-                **self._model_metadata(),
-            },
+            metadata=self._build_tournament_metadata(
+                matches=matches,
+                criteria=active_criteria,
+                n_candidates=len(labels),
+            ),
         )
 
     async def aselect_best(
@@ -800,13 +840,11 @@ class LLMAsVerifier:
             wins=wins,
             average_scores=average_scores,
             matches=matches,
-            metadata={
-                "n_candidates": len(labels),
-                "n_matches": len(matches),
-                "criteria_ids": [criterion.id for criterion in active_criteria],
-                "n_verifications": self.n_verifications,
-                **self._model_metadata(),
-            },
+            metadata=self._build_tournament_metadata(
+                matches=matches,
+                criteria=active_criteria,
+                n_candidates=len(labels),
+            ),
         )
 
     def _build_request_kwargs(
@@ -845,6 +883,7 @@ class LLMAsVerifier:
         repetition: int,
         criterion: VerificationCriterion,
         labels: Sequence[str],
+        prompt_text: Optional[str],
     ) -> VerificationAttempt:
         metadata = dotdict(getattr(response, "metadata", None) or {})
         response_text = self._coerce_response_text(response.consume())
@@ -860,6 +899,7 @@ class LLMAsVerifier:
         return VerificationAttempt(
             criterion_id=criterion.id,
             repetition=repetition,
+            prompt_text=prompt_text,
             response_text=response_text,
             scores={label: item.score for label, item in evidence.items()},
             evidence=evidence,
@@ -928,6 +968,11 @@ class LLMAsVerifier:
         tag_name = tag.strip("<>")
         pattern = rf"<{re.escape(tag_name)}>\s*(.+?)\s*</{re.escape(tag_name)}>"
         match = re.search(pattern, response_text, re.IGNORECASE | re.DOTALL)
+        if not match:
+            malformed_pattern = rf"<\s*(.+?)\s*</{re.escape(tag_name)}>"
+            match = re.search(
+                malformed_pattern, response_text, re.IGNORECASE | re.DOTALL
+            )
         raw_token = match.group(1).strip() if match else None
         normalized = self.score_scale.extract_token(raw_token or "")
         return raw_token, normalized
@@ -1038,6 +1083,32 @@ class LLMAsVerifier:
             attempts=list(attempts),
         )
 
+    def _build_tournament_metadata(
+        self,
+        *,
+        matches: Sequence[TournamentMatch],
+        criteria: Sequence[VerificationCriterion],
+        n_candidates: int,
+    ) -> dict[str, Any]:
+        metadata = {
+            "n_candidates": n_candidates,
+            "n_matches": len(matches),
+            "criteria_ids": [criterion.id for criterion in criteria],
+            "n_verifications": self.n_verifications,
+            "verbose": self.verbose,
+            **self._model_metadata(),
+        }
+        if self.verbose:
+            metadata["raw_outputs"] = [
+                {
+                    "candidate_a_label": match.candidate_a_label,
+                    "candidate_b_label": match.candidate_b_label,
+                    "outputs": match.result.metadata.get("raw_outputs", []),
+                }
+                for match in matches
+            ]
+        return metadata
+
     def _build_result(
         self,
         criterion_results: Sequence[CriterionVerification],
@@ -1074,25 +1145,59 @@ class LLMAsVerifier:
             else:
                 verdict = "uncertain"
 
+        metadata = {
+            "criteria_ids": [result.criterion.id for result in criterion_results],
+            "criteria_weights": {
+                result.criterion.id: result.criterion.weight
+                for result in criterion_results
+            },
+            "mode": "single" if len(labels) == 1 else "pairwise",
+            "n_criteria": len(criterion_results),
+            "n_verifications": self.n_verifications,
+            "score_format": self.score_scale.score_format,
+            "top_logprobs": self.top_logprobs,
+            "verbose": self.verbose,
+            **self._model_metadata(),
+        }
+        if self.verbose:
+            metadata["raw_outputs"] = self._build_verbose_outputs(criterion_results)
+
         return VerifierResult(
             scores=overall_scores,
             criteria_results=list(criterion_results),
             verdict=verdict,
             winner=winner,
-            metadata={
-                "criteria_ids": [result.criterion.id for result in criterion_results],
-                "criteria_weights": {
-                    result.criterion.id: result.criterion.weight
-                    for result in criterion_results
-                },
-                "mode": "single" if len(labels) == 1 else "pairwise",
-                "n_criteria": len(criterion_results),
-                "n_verifications": self.n_verifications,
-                "score_format": self.score_scale.score_format,
-                "top_logprobs": self.top_logprobs,
-                **self._model_metadata(),
-            },
+            metadata=metadata,
         )
+
+    def _build_verbose_outputs(
+        self,
+        criterion_results: Sequence[CriterionVerification],
+    ) -> list[dict[str, Any]]:
+        raw_outputs = []
+        for result in criterion_results:
+            for attempt in result.attempts:
+                raw_outputs.append(
+                    {
+                        "criterion_id": result.criterion.id,
+                        "criterion_name": result.criterion.name,
+                        "repetition": attempt.repetition,
+                        "prompt": attempt.prompt_text,
+                        "response_text": attempt.response_text,
+                        "scores": dict(attempt.scores),
+                        "evidence": {
+                            label: {
+                                "method": evidence.method,
+                                "raw_token": evidence.raw_token,
+                                "token_probabilities": dict(
+                                    evidence.token_probabilities
+                                ),
+                            }
+                            for label, evidence in attempt.evidence.items()
+                        },
+                    }
+                )
+        return raw_outputs
 
     @classmethod
     def _from_preset(

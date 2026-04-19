@@ -206,6 +206,35 @@ model call. If the provider returns token logprobs, the verifier uses them to
 compute the score distribution. If not, it falls back to parsing the emitted
 score from text. Set `strict_logprobs=True` to require logprob-based extraction.
 
+## Verbose Debugging
+
+Set `verbose=True` when you want the verifier to return the final prompt and raw
+model output for each attempt.
+
+```python
+verifier = LLMAsVerifier(
+    model="openai/gpt-4.1-mini",
+    criteria=[criterion],
+    verbose=True,
+)
+
+result = verifier(
+    task="What is 2 + 2?",
+    candidates={"answer": "The answer is 4."},
+)
+
+print(result.metadata["raw_outputs"][0]["prompt"])
+print(result.metadata["raw_outputs"][0]["response_text"])
+```
+
+The same data also remains available in `criteria_results[*].attempts[*]`:
+
+```python
+attempt = result.criteria_results[0].attempts[0]
+print(attempt.prompt_text)
+print(attempt.response_text)
+```
+
 ## Pairwise Comparison
 
 ```python
