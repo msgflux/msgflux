@@ -1,0 +1,945 @@
+import json
+import math
+import re
+from dataclasses import asdict, dataclass, field, is_dataclass
+from itertools import combinations
+from statistics import fmean
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
+
+from msgflux.core.dotdict import dotdict
+from msgflux.models.gateway import ModelGateway
+from msgflux.models.model import Model
+from msgflux.models.types import ChatCompletionModel
+
+ModelLike = Union[str, ChatCompletionModel, ModelGateway]
+
+_TAG_PATTERN = re.compile(r"</?[^>]+>")
+_TOKEN_STRIP_CHARS = " \t\r\n.,:;!?()[]{}\"'`"  # noqa: S105
+
+
+@dataclass(frozen=True)
+class VerificationCriterion:
+    id: str
+    name: str
+    description: str
+    weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.weight <= 0:
+            raise ValueError("`weight` must be greater than 0")
+
+
+@dataclass(frozen=True)
+class ScoreScale:
+    description: str
+    score_format: str
+    token_values: Mapping[str, float]
+
+    @classmethod
+    def letter(cls, granularity: int = 20) -> "ScoreScale":
+        if granularity < 2 or granularity > 26:
+            raise ValueError("`granularity` must be between 2 and 26")
+        final_token = chr(64 + granularity)
+        token_values = {
+            chr(65 + index): float(granularity - index) for index in range(granularity)
+        }
+        description = (
+            f"Rate on a {granularity}-point scale using letters A through "
+            f"{final_token}. A is best and {final_token} is worst."
+        )
+        return cls(
+            description=description,
+            score_format=f"LETTER_A_TO_{final_token}",
+            token_values=token_values,
+        )
+
+    @property
+    def suggested_top_logprobs(self) -> int:
+        return len(self.token_values)
+
+    @property
+    def bounds(self) -> tuple[float, float]:
+        values = tuple(self.token_values.values())
+        return min(values), max(values)
+
+    def normalize_token(self, token: str) -> Optional[str]:
+        cleaned = token.strip().upper()
+        if cleaned in self.token_values:
+            return cleaned
+        return None
+
+    def extract_token(self, token: str) -> Optional[str]:
+        normalized = self.normalize_token(token)
+        if normalized is not None:
+            return normalized
+
+        cleaned = _TAG_PATTERN.sub(" ", token).strip(_TOKEN_STRIP_CHARS)
+        normalized = self.normalize_token(cleaned)
+        if normalized is not None:
+            return normalized
+
+        for part in cleaned.split():
+            normalized = self.normalize_token(part.strip(_TOKEN_STRIP_CHARS))
+            if normalized is not None:
+                return normalized
+        return None
+
+    def to_normalized_score(self, token_probabilities: Mapping[str, float]) -> float:
+        if not token_probabilities:
+            return 0.5
+        min_value, max_value = self.bounds
+        total_probability = sum(token_probabilities.values())
+        if total_probability <= 0:
+            return 0.5
+        expected = (
+            sum(
+                self.token_values[token] * probability
+                for token, probability in token_probabilities.items()
+            )
+            / total_probability
+        )
+        if max_value == min_value:
+            return 0.5
+        return (expected - min_value) / (max_value - min_value)
+
+
+@dataclass(frozen=True)
+class VerificationPromptInput:
+    task: Any
+    criterion: VerificationCriterion
+    candidates: Mapping[str, Any]
+    score_scale: ScoreScale
+    ground_truth_note: Optional[str] = None
+    extra_instructions: Optional[str] = None
+    context: Optional[Mapping[str, Any]] = None
+
+
+@dataclass
+class ScoreEvidence:
+    score: float
+    method: str
+    raw_token: Optional[str] = None
+    token_probabilities: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class VerificationAttempt:
+    criterion_id: str
+    repetition: int
+    response_text: str
+    scores: dict[str, float]
+    evidence: dict[str, ScoreEvidence]
+    metadata: dict[str, Any]
+
+
+@dataclass
+class CriterionVerification:
+    criterion: VerificationCriterion
+    scores: dict[str, float]
+    attempts: list[VerificationAttempt]
+
+
+@dataclass
+class VerifierResult:
+    scores: dict[str, float]
+    criteria_results: list[CriterionVerification]
+    verdict: str
+    winner: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def score(self) -> float:
+        if len(self.scores) != 1:
+            raise ValueError("`score` is only available for single-candidate results")
+        return next(iter(self.scores.values()))
+
+
+@dataclass
+class TournamentMatch:
+    candidate_a_label: str
+    candidate_b_label: str
+    result: VerifierResult
+
+
+@dataclass
+class TournamentResult:
+    winner: str
+    wins: dict[str, float]
+    average_scores: dict[str, float]
+    matches: list[TournamentMatch]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ranking(self) -> list[str]:
+        return sorted(
+            self.wins,
+            key=lambda label: (self.wins[label], self.average_scores[label], label),
+            reverse=True,
+        )
+
+
+def default_prompt_builder(prompt_input: VerificationPromptInput) -> str:
+    candidate_items = list(prompt_input.candidates.items())
+    sections = [
+        "You are an expert verifier. Evaluate the candidate strictly on the "
+        "requested criterion.",
+    ]
+    if prompt_input.ground_truth_note:
+        sections.append(prompt_input.ground_truth_note)
+    if prompt_input.extra_instructions:
+        sections.append(prompt_input.extra_instructions)
+    sections.append(f"Task:\n{_render_prompt_value(prompt_input.task)}")
+    if prompt_input.context:
+        sections.append(f"Context:\n{_format_context(prompt_input.context)}")
+    sections.append(
+        f"Criterion — {prompt_input.criterion.name}:\n"
+        f"{prompt_input.criterion.description}"
+    )
+    if len(candidate_items) == 1:
+        _, candidate = candidate_items[0]
+        sections.append(f"Candidate:\n{_render_prompt_value(candidate)}")
+        sections.append(
+            f"Rating scale:\n{prompt_input.score_scale.description}\n\n"
+            "Provide a short analysis and then output the final score exactly as:\n"
+            f"<score>{prompt_input.score_scale.score_format}</score>"
+        )
+    else:
+        (label_a, candidate_a), (label_b, candidate_b) = candidate_items
+        sections.append(
+            f"Candidate A ({label_a}):\n{_render_prompt_value(candidate_a)}"
+        )
+        sections.append(
+            f"Candidate B ({label_b}):\n{_render_prompt_value(candidate_b)}"
+        )
+        sections.append(
+            f"Rating scale:\n{prompt_input.score_scale.description}\n\n"
+            "Provide a short analysis and then output the final scores exactly as:\n"
+            f"<score_A>{prompt_input.score_scale.score_format}</score_A>\n"
+            f"<score_B>{prompt_input.score_scale.score_format}</score_B>"
+        )
+    return "\n\n".join(section.strip() for section in sections if section)
+
+
+TRAJECTORY_ANALYSIS_GROUND_TRUTH_NOTE = (
+    "Prioritize observed evidence in the trajectory. Do not trust self-reported "
+    "claims of success when commands, outputs, or final verification steps "
+    "contradict them."
+)
+
+TRAJECTORY_ANALYSIS_CRITERIA = (
+    VerificationCriterion(
+        id="task_completion",
+        name="Task Completion Evidence",
+        description=(
+            "Decide whether the trajectory shows convincing evidence that the task "
+            "was actually completed, not merely attempted."
+        ),
+    ),
+    VerificationCriterion(
+        id="verification_quality",
+        name="Verification Quality",
+        description=(
+            "Judge whether the agent ran meaningful verification steps, observed "
+            "expected outcomes, and avoided untested final changes."
+        ),
+    ),
+    VerificationCriterion(
+        id="error_signals",
+        name="Error Signal Detection",
+        description=(
+            "Look for unresolved errors, failed commands, broken tests, or "
+            "contradictory outputs that indicate the final state is not reliable."
+        ),
+    ),
+)
+
+
+class LLMAsVerifier:
+    def __init__(
+        self,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion],
+        prompt_builder: Optional[Callable[[VerificationPromptInput], str]] = None,
+        score_scale: Optional[ScoreScale] = None,
+        n_verifications: int = 1,
+        top_logprobs: Optional[int] = None,
+        ground_truth_note: Optional[str] = None,
+        extra_instructions: Optional[str] = None,
+        model_request_kwargs: Optional[Mapping[str, Any]] = None,
+        strict_logprobs: bool = False,
+        pass_threshold: float = 0.5,
+    ):
+        self.model = self._resolve_model(model)
+        self.criteria = self._normalize_criteria(criteria)
+        self.prompt_builder = prompt_builder or default_prompt_builder
+        self.score_scale = score_scale or ScoreScale.letter()
+        self.n_verifications = n_verifications
+        self.top_logprobs = top_logprobs or self.score_scale.suggested_top_logprobs
+        self.ground_truth_note = ground_truth_note
+        self.extra_instructions = extra_instructions
+        self.model_request_kwargs = dict(model_request_kwargs or {})
+        self.strict_logprobs = strict_logprobs
+        self.pass_threshold = pass_threshold
+
+        if self.n_verifications < 1:
+            raise ValueError("`n_verifications` must be at least 1")
+        if self.top_logprobs < 1:
+            raise ValueError("`top_logprobs` must be at least 1")
+        if not 0 <= self.pass_threshold <= 1:
+            raise ValueError("`pass_threshold` must be between 0 and 1")
+
+        self._validate_model_request_kwargs()
+
+    @classmethod
+    def trajectory_analysis(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = TRAJECTORY_ANALYSIS_CRITERIA,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        kwargs.setdefault("ground_truth_note", TRAJECTORY_ANALYSIS_GROUND_TRUTH_NOTE)
+        return cls(model=model, criteria=criteria, **kwargs)
+
+    def __call__(
+        self,
+        *,
+        task: Any,
+        candidates: Union[Sequence[Any], Mapping[str, Any]],
+        criteria: Optional[Sequence[VerificationCriterion]] = None,
+        context: Optional[Mapping[str, Any]] = None,
+        ground_truth_note: Optional[str] = None,
+        extra_instructions: Optional[str] = None,
+    ) -> VerifierResult:
+        active_criteria = self._get_active_criteria(criteria)
+        candidates_map = self._normalize_candidates(
+            candidates, min_count=1, max_count=2
+        )
+        labels = tuple(candidates_map.keys())
+        criterion_results = []
+
+        for criterion in active_criteria:
+            attempts = []
+            for repetition in range(self.n_verifications):
+                prompt_input = self._build_prompt_input(
+                    task=task,
+                    criterion=criterion,
+                    candidates=candidates_map,
+                    context=context,
+                    ground_truth_note=ground_truth_note,
+                    extra_instructions=extra_instructions,
+                )
+                response = self.model(**self._build_request_kwargs(prompt_input))
+                attempts.append(
+                    self._build_attempt(
+                        response=response,
+                        repetition=repetition,
+                        criterion=criterion,
+                        labels=labels,
+                    )
+                )
+            criterion_results.append(self._aggregate_criterion(criterion, attempts))
+
+        return self._build_result(criterion_results, labels)
+
+    async def acall(
+        self,
+        *,
+        task: Any,
+        candidates: Union[Sequence[Any], Mapping[str, Any]],
+        criteria: Optional[Sequence[VerificationCriterion]] = None,
+        context: Optional[Mapping[str, Any]] = None,
+        ground_truth_note: Optional[str] = None,
+        extra_instructions: Optional[str] = None,
+    ) -> VerifierResult:
+        active_criteria = self._get_active_criteria(criteria)
+        candidates_map = self._normalize_candidates(
+            candidates, min_count=1, max_count=2
+        )
+        labels = tuple(candidates_map.keys())
+        criterion_results = []
+
+        for criterion in active_criteria:
+            attempts = []
+            for repetition in range(self.n_verifications):
+                prompt_input = self._build_prompt_input(
+                    task=task,
+                    criterion=criterion,
+                    candidates=candidates_map,
+                    context=context,
+                    ground_truth_note=ground_truth_note,
+                    extra_instructions=extra_instructions,
+                )
+                response = await self.model.acall(
+                    **self._build_request_kwargs(prompt_input)
+                )
+                attempts.append(
+                    self._build_attempt(
+                        response=response,
+                        repetition=repetition,
+                        criterion=criterion,
+                        labels=labels,
+                    )
+                )
+            criterion_results.append(self._aggregate_criterion(criterion, attempts))
+
+        return self._build_result(criterion_results, labels)
+
+    def select_best(
+        self,
+        *,
+        task: Any,
+        candidates: Union[Sequence[Any], Mapping[str, Any]],
+        criteria: Optional[Sequence[VerificationCriterion]] = None,
+        context: Optional[Mapping[str, Any]] = None,
+        ground_truth_note: Optional[str] = None,
+        extra_instructions: Optional[str] = None,
+    ) -> TournamentResult:
+        candidates_map = self._normalize_candidates(candidates, min_count=2)
+        labels = list(candidates_map.keys())
+        values = list(candidates_map.values())
+        active_criteria = self._get_active_criteria(criteria)
+        wins = dict.fromkeys(labels, 0.0)
+        score_history = {label: [] for label in labels}
+        matches = []
+
+        for index_a, index_b in combinations(range(len(labels)), 2):
+            label_a = labels[index_a]
+            label_b = labels[index_b]
+            result = self(
+                task=task,
+                candidates={
+                    label_a: values[index_a],
+                    label_b: values[index_b],
+                },
+                criteria=active_criteria,
+                context=context,
+                ground_truth_note=ground_truth_note,
+                extra_instructions=extra_instructions,
+            )
+
+            score_a = result.scores[label_a]
+            score_b = result.scores[label_b]
+            score_history[label_a].append(score_a)
+            score_history[label_b].append(score_b)
+
+            if score_a > score_b:
+                wins[label_a] += 1.0
+            elif score_b > score_a:
+                wins[label_b] += 1.0
+            else:
+                wins[label_a] += 0.5
+                wins[label_b] += 0.5
+
+            matches.append(
+                TournamentMatch(
+                    candidate_a_label=label_a,
+                    candidate_b_label=label_b,
+                    result=result,
+                )
+            )
+
+        average_scores = {
+            label: (fmean(history) if history else 0.5)
+            for label, history in score_history.items()
+        }
+        winner = max(
+            labels,
+            key=lambda label: (wins[label], average_scores[label], label),
+        )
+        return TournamentResult(
+            winner=winner,
+            wins=wins,
+            average_scores=average_scores,
+            matches=matches,
+            metadata={
+                "n_candidates": len(labels),
+                "n_matches": len(matches),
+                "criteria_ids": [criterion.id for criterion in active_criteria],
+                "n_verifications": self.n_verifications,
+                **self._model_metadata(),
+            },
+        )
+
+    async def aselect_best(
+        self,
+        *,
+        task: Any,
+        candidates: Union[Sequence[Any], Mapping[str, Any]],
+        criteria: Optional[Sequence[VerificationCriterion]] = None,
+        context: Optional[Mapping[str, Any]] = None,
+        ground_truth_note: Optional[str] = None,
+        extra_instructions: Optional[str] = None,
+    ) -> TournamentResult:
+        candidates_map = self._normalize_candidates(candidates, min_count=2)
+        labels = list(candidates_map.keys())
+        values = list(candidates_map.values())
+        active_criteria = self._get_active_criteria(criteria)
+        wins = dict.fromkeys(labels, 0.0)
+        score_history = {label: [] for label in labels}
+        matches = []
+
+        for index_a, index_b in combinations(range(len(labels)), 2):
+            label_a = labels[index_a]
+            label_b = labels[index_b]
+            result = await self.acall(
+                task=task,
+                candidates={
+                    label_a: values[index_a],
+                    label_b: values[index_b],
+                },
+                criteria=active_criteria,
+                context=context,
+                ground_truth_note=ground_truth_note,
+                extra_instructions=extra_instructions,
+            )
+
+            score_a = result.scores[label_a]
+            score_b = result.scores[label_b]
+            score_history[label_a].append(score_a)
+            score_history[label_b].append(score_b)
+
+            if score_a > score_b:
+                wins[label_a] += 1.0
+            elif score_b > score_a:
+                wins[label_b] += 1.0
+            else:
+                wins[label_a] += 0.5
+                wins[label_b] += 0.5
+
+            matches.append(
+                TournamentMatch(
+                    candidate_a_label=label_a,
+                    candidate_b_label=label_b,
+                    result=result,
+                )
+            )
+
+        average_scores = {
+            label: (fmean(history) if history else 0.5)
+            for label, history in score_history.items()
+        }
+        winner = max(
+            labels,
+            key=lambda label: (wins[label], average_scores[label], label),
+        )
+        return TournamentResult(
+            winner=winner,
+            wins=wins,
+            average_scores=average_scores,
+            matches=matches,
+            metadata={
+                "n_candidates": len(labels),
+                "n_matches": len(matches),
+                "criteria_ids": [criterion.id for criterion in active_criteria],
+                "n_verifications": self.n_verifications,
+                **self._model_metadata(),
+            },
+        )
+
+    def _build_request_kwargs(
+        self, prompt_input: VerificationPromptInput
+    ) -> dict[str, Any]:
+        kwargs = dict(self.model_request_kwargs)
+        kwargs["messages"] = self.prompt_builder(prompt_input)
+        kwargs["logprobs"] = True
+        kwargs["top_logprobs"] = self.top_logprobs
+        return kwargs
+
+    def _build_prompt_input(
+        self,
+        *,
+        task: Any,
+        criterion: VerificationCriterion,
+        candidates: Mapping[str, Any],
+        context: Optional[Mapping[str, Any]],
+        ground_truth_note: Optional[str],
+        extra_instructions: Optional[str],
+    ) -> VerificationPromptInput:
+        return VerificationPromptInput(
+            task=task,
+            criterion=criterion,
+            candidates=candidates,
+            score_scale=self.score_scale,
+            ground_truth_note=ground_truth_note or self.ground_truth_note,
+            extra_instructions=extra_instructions or self.extra_instructions,
+            context=context,
+        )
+
+    def _build_attempt(
+        self,
+        *,
+        response: Any,
+        repetition: int,
+        criterion: VerificationCriterion,
+        labels: Sequence[str],
+    ) -> VerificationAttempt:
+        metadata = dotdict(getattr(response, "metadata", None) or {})
+        response_text = self._coerce_response_text(response.consume())
+        tags = self._score_tags(labels)
+        evidence = {
+            label: self._extract_score_evidence(
+                response_text=response_text,
+                metadata=metadata,
+                tag=tag,
+            )
+            for label, tag in zip(labels, tags)
+        }
+        return VerificationAttempt(
+            criterion_id=criterion.id,
+            repetition=repetition,
+            response_text=response_text,
+            scores={label: item.score for label, item in evidence.items()},
+            evidence=evidence,
+            metadata=metadata.to_dict()
+            if isinstance(metadata, dotdict)
+            else dict(metadata),
+        )
+
+    def _extract_score_evidence(
+        self,
+        *,
+        response_text: str,
+        metadata: Mapping[str, Any],
+        tag: str,
+    ) -> ScoreEvidence:
+        raw_text_token, normalized_text_token = self._extract_text_token(
+            response_text, tag
+        )
+        logprobs = metadata.get("logprobs")
+        if logprobs is not None:
+            evidence = self._extract_from_logprobs(
+                logprobs,
+                tag,
+                expected_token=normalized_text_token,
+            )
+            if evidence is not None:
+                return evidence
+        if self.strict_logprobs:
+            raise ValueError(
+                f"Unable to extract logprobs for tag `{tag}` from verifier response"
+            )
+        return self._build_text_evidence(raw_text_token, normalized_text_token)
+
+    def _extract_from_logprobs(
+        self,
+        logprobs: Mapping[str, Any],
+        tag: str,
+        expected_token: Optional[str] = None,
+    ) -> Optional[ScoreEvidence]:
+        entries = logprobs.get("content")
+        if not isinstance(entries, list):
+            return None
+        target_entry = self._find_score_entry(entries, tag)
+        if target_entry is None and expected_token is not None:
+            target_entry = self._find_score_entry_by_token(
+                entries,
+                expected_token,
+                rank=self._score_rank(tag),
+            )
+        if target_entry is None:
+            return None
+        token_probabilities = self._collect_token_probabilities(target_entry)
+        if not token_probabilities:
+            return None
+        raw_token = target_entry.get("token")
+        return ScoreEvidence(
+            score=self.score_scale.to_normalized_score(token_probabilities),
+            method="logprobs",
+            raw_token=raw_token,
+            token_probabilities=token_probabilities,
+        )
+
+    def _extract_text_token(
+        self, response_text: str, tag: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        tag_name = tag.strip("<>")
+        pattern = rf"<{re.escape(tag_name)}>\s*(.+?)\s*</{re.escape(tag_name)}>"
+        match = re.search(pattern, response_text, re.IGNORECASE | re.DOTALL)
+        raw_token = match.group(1).strip() if match else None
+        normalized = self.score_scale.extract_token(raw_token or "")
+        return raw_token, normalized
+
+    def _build_text_evidence(
+        self,
+        raw_token: Optional[str],
+        normalized: Optional[str],
+    ) -> ScoreEvidence:
+        if normalized is None:
+            return ScoreEvidence(score=0.5, method="default", raw_token=raw_token)
+        token_probabilities = {normalized: 1.0}
+        return ScoreEvidence(
+            score=self.score_scale.to_normalized_score(token_probabilities),
+            method="text",
+            raw_token=raw_token,
+            token_probabilities=token_probabilities,
+        )
+
+    def _find_score_entry(
+        self, entries: Sequence[Mapping[str, Any]], tag: str
+    ) -> Optional[Mapping[str, Any]]:
+        text_so_far = ""
+        tag_found = False
+
+        for entry in entries:
+            token = str(entry.get("token", ""))
+            next_text = text_so_far + token
+
+            if not tag_found and tag not in next_text:
+                text_so_far = next_text
+                continue
+
+            tag_found = True
+            if self._collect_token_probabilities(entry):
+                return entry
+            text_so_far = next_text
+
+        return None
+
+    def _find_score_entry_by_token(
+        self,
+        entries: Sequence[Mapping[str, Any]],
+        expected_token: str,
+        *,
+        rank: int,
+    ) -> Optional[Mapping[str, Any]]:
+        closing_matches = []
+        fallback_matches = []
+
+        for index, entry in enumerate(entries):
+            probabilities = self._collect_token_probabilities(entry)
+            if expected_token not in probabilities:
+                continue
+
+            fallback_matches.append(entry)
+            next_token = ""
+            if index + 1 < len(entries):
+                next_token = str(entries[index + 1].get("token", ""))
+            if "</" in next_token:
+                closing_matches.append(entry)
+
+        ranked_matches = closing_matches or fallback_matches
+        if not ranked_matches:
+            return None
+        if rank <= len(ranked_matches):
+            return ranked_matches[rank - 1]
+        return ranked_matches[-1]
+
+    def _collect_token_probabilities(
+        self, entry: Mapping[str, Any]
+    ) -> dict[str, float]:
+        token_probabilities = {}
+        for candidate in self._iter_score_candidates(entry):
+            normalized = self.score_scale.extract_token(str(candidate.get("token", "")))
+            if normalized is None:
+                continue
+            probability = math.exp(candidate.get("logprob", float("-inf")))
+            token_probabilities[normalized] = max(
+                token_probabilities.get(normalized, 0.0),
+                probability,
+            )
+        return token_probabilities
+
+    @staticmethod
+    def _iter_score_candidates(entry: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        top_logprobs = entry.get("top_logprobs")
+        candidates = list(top_logprobs) if isinstance(top_logprobs, list) else []
+        chosen_token = entry.get("token")
+        chosen_logprob = entry.get("logprob")
+        if chosen_token is not None and chosen_logprob is not None:
+            candidates.append({"token": chosen_token, "logprob": chosen_logprob})
+        return candidates
+
+    def _aggregate_criterion(
+        self,
+        criterion: VerificationCriterion,
+        attempts: Sequence[VerificationAttempt],
+    ) -> CriterionVerification:
+        labels = attempts[0].scores.keys()
+        scores = {
+            label: fmean(attempt.scores[label] for attempt in attempts)
+            for label in labels
+        }
+        return CriterionVerification(
+            criterion=criterion,
+            scores=scores,
+            attempts=list(attempts),
+        )
+
+    def _build_result(
+        self,
+        criterion_results: Sequence[CriterionVerification],
+        labels: Sequence[str],
+    ) -> VerifierResult:
+        total_weight = sum(result.criterion.weight for result in criterion_results)
+        overall_scores = {
+            label: sum(
+                result.scores[label] * result.criterion.weight
+                for result in criterion_results
+            )
+            / total_weight
+            for label in labels
+        }
+
+        winner = None
+        if len(labels) == 2:
+            score_a = overall_scores[labels[0]]
+            score_b = overall_scores[labels[1]]
+            if score_a > score_b:
+                winner = labels[0]
+                verdict = winner
+            elif score_b > score_a:
+                winner = labels[1]
+                verdict = winner
+            else:
+                verdict = "tie"
+        else:
+            score = overall_scores[labels[0]]
+            if score > self.pass_threshold:
+                verdict = "pass"
+            elif score < self.pass_threshold:
+                verdict = "fail"
+            else:
+                verdict = "uncertain"
+
+        return VerifierResult(
+            scores=overall_scores,
+            criteria_results=list(criterion_results),
+            verdict=verdict,
+            winner=winner,
+            metadata={
+                "criteria_ids": [result.criterion.id for result in criterion_results],
+                "criteria_weights": {
+                    result.criterion.id: result.criterion.weight
+                    for result in criterion_results
+                },
+                "mode": "single" if len(labels) == 1 else "pairwise",
+                "n_criteria": len(criterion_results),
+                "n_verifications": self.n_verifications,
+                "score_format": self.score_scale.score_format,
+                "top_logprobs": self.top_logprobs,
+                **self._model_metadata(),
+            },
+        )
+
+    @staticmethod
+    def _resolve_model(model: ModelLike) -> Union[ChatCompletionModel, ModelGateway]:
+        if isinstance(model, str):
+            model = Model.chat_completion(model)
+        model_type = getattr(model, "model_type", None)
+        if model_type != "chat_completion":
+            raise TypeError(
+                "`model` must be a `chat_completion` model, a `ModelGateway`, "
+                f"or a provider/model-id string. Given `{type(model)}`"
+            )
+        return model
+
+    @staticmethod
+    def _coerce_response_text(payload: Any) -> str:
+        if isinstance(payload, str):
+            return payload
+        if isinstance(payload, (dict, list)):
+            return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        return str(payload)
+
+    @staticmethod
+    def _score_tags(labels: Sequence[str]) -> tuple[str, ...]:
+        if len(labels) == 1:
+            return ("<score>",)
+        if len(labels) == 2:
+            return ("<score_A>", "<score_B>")
+        raise ValueError("Score tags support only one or two candidates")
+
+    @staticmethod
+    def _score_rank(tag: str) -> int:
+        if tag == "<score_B>":
+            return 2
+        return 1
+
+    @staticmethod
+    def _normalize_criteria(
+        criteria: Sequence[VerificationCriterion],
+    ) -> list[VerificationCriterion]:
+        normalized = list(criteria)
+        if not normalized:
+            raise ValueError("`criteria` must contain at least one criterion")
+        return normalized
+
+    def _get_active_criteria(
+        self, criteria: Optional[Sequence[VerificationCriterion]]
+    ) -> list[VerificationCriterion]:
+        if criteria is None:
+            return list(self.criteria)
+        return self._normalize_criteria(criteria)
+
+    def _normalize_candidates(
+        self,
+        candidates: Union[Sequence[Any], Mapping[str, Any]],
+        *,
+        min_count: int,
+        max_count: Optional[int] = None,
+    ) -> dict[str, Any]:
+        if isinstance(candidates, Mapping):
+            normalized = dict(candidates)
+        else:
+            values = list(candidates)
+            normalized = {
+                f"candidate_{index + 1}": value for index, value in enumerate(values)
+            }
+
+        if len(normalized) < min_count:
+            raise ValueError(f"`candidates` must contain at least {min_count} item(s)")
+        if max_count is not None and len(normalized) > max_count:
+            raise ValueError(
+                f"`candidates` supports at most {max_count} item(s) in this method"
+            )
+        return normalized
+
+    def _validate_model_request_kwargs(self) -> None:
+        forbidden_keys = {
+            "generation_schema",
+            "logprobs",
+            "messages",
+            "stream",
+            "tool_definitions",
+            "top_logprobs",
+            "typed_parser",
+        }
+        overlapping = forbidden_keys.intersection(self.model_request_kwargs)
+        if overlapping:
+            blocked = ", ".join(sorted(overlapping))
+            raise ValueError(
+                "`model_request_kwargs` cannot override verifier-managed keys: "
+                f"{blocked}"
+            )
+
+    def _model_metadata(self) -> dict[str, Any]:
+        if isinstance(self.model, ModelGateway):
+            return {
+                "model_provider": "gateway",
+                "model_id": None,
+            }
+        return {
+            "model_provider": getattr(self.model, "provider", None),
+            "model_id": getattr(self.model, "model_id", None),
+        }
+
+
+def _render_prompt_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if is_dataclass(value):
+        value = asdict(value)
+    if isinstance(value, Mapping):
+        return json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True)
+    if isinstance(value, (list, tuple)):
+        return json.dumps(value, ensure_ascii=True, indent=2)
+    return str(value)
+
+
+def _format_context(context: Mapping[str, Any]) -> str:
+    rendered = []
+    for key, value in context.items():
+        rendered.append(f"{key}:\n{_render_prompt_value(value)}")
+    return "\n\n".join(rendered)

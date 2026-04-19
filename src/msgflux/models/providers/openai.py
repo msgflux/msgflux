@@ -127,7 +127,7 @@ class _BaseOpenAI(BaseModel):
 class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     """OpenAI Chat Completion."""
 
-    def __init__(  # noqa: C901
+    def __init__(
         self,
         model_id: str,
         *,
@@ -140,8 +140,6 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         stop: Optional[Union[str, List[str]]] = None,
-        logprobs: Optional[bool] = None,
-        top_logprobs: Optional[int] = None,
         parallel_tool_calls: Optional[bool] = True,
         modalities: Optional[List[str]] = None,
         audio: Optional[Dict[str, str]] = None,
@@ -190,12 +188,6 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling, where the model considers the results of the tokens
             with top_p probability mass. So 0.1 means only the tokens
             comprising the top 10% probability mass are considered.
-        logprobs:
-            Token log probability output. When enabled, the response
-            metadata includes the token-level logprob payload.
-        top_logprobs:
-            Number of alternative tokens to return per generated token.
-            Use with `logprobs=True`.
         parallel_tool_calls:
             If True, enable parallel tool calls.
         modalities:
@@ -239,10 +231,6 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["top_p"] = top_p
         if stop:
             sampling_run_params["stop"] = stop
-        if self.provider == "openai" and logprobs is not None:
-            sampling_run_params["logprobs"] = logprobs
-        if self.provider == "openai" and top_logprobs is not None:
-            sampling_run_params["top_logprobs"] = top_logprobs
         if verbosity:
             sampling_run_params["verbosity"] = verbosity
         if modalities:
@@ -387,7 +375,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
     def _execute_model(self, **kwargs):
         prefilling = kwargs.get("prefilling")
-        params = {**kwargs, **self.sampling_run_params}
+        params = {**self.sampling_run_params, **kwargs}
         params.pop("prefilling", None)
         if prefilling:
             params["messages"] = [
@@ -401,7 +389,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
     async def _aexecute_model(self, **kwargs):
         prefilling = kwargs.get("prefilling")
-        params = {**kwargs, **self.sampling_run_params}
+        params = {**self.sampling_run_params, **kwargs}
         params.pop("prefilling", None)
         if prefilling:
             params["messages"] = [
@@ -828,6 +816,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         system_prompt: Optional[str],
         prefilling: Optional[str],
         tool_definitions: Optional[ToolDefinitions],
+        *,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
     ) -> Dict[str, Any]:
         if isinstance(messages, str):
             messages = [ChatBlock.user(messages)]
@@ -850,6 +841,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             "model": self.model_id,
         }
 
+        if logprobs is not None:
+            generation_params["logprobs"] = logprobs
+        if top_logprobs is not None:
+            generation_params["top_logprobs"] = top_logprobs
+
         if tool_definitions and tool_definitions.schemas:
             generation_params["tools"] = tool_definitions.schemas
             generation_params["tool_choice"] = tool_choice
@@ -861,6 +857,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def _validate_chat_completion_options(
         *,
         prefilling: Optional[str],
+        logprobs: Optional[bool],
+        top_logprobs: Optional[int],
         generation_schema: Optional[msgspec.Struct],
         typed_parser: Optional[str],
         stream: Optional[bool],
@@ -870,6 +868,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 "`prefilling` is not compatible with `generation_schema` in "
                 "OpenAI chat completions."
             )
+        if top_logprobs is not None and logprobs is not True:
+            raise ValueError("`top_logprobs` requires `logprobs=True`")
         if stream is True and typed_parser is not None:
             raise ValueError("`typed_parser` is not `stream=True` compatible")
 
@@ -879,6 +879,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         *,
         system_prompt: Optional[str] = None,
         prefilling: Optional[str] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
@@ -893,6 +895,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             prefilling:
                 Forces an initial message from the model. From that message
                 it will continue its response from there.
+            logprobs:
+                Token log probability output for this request.
+            top_logprobs:
+                Number of alternative tokens to return per generated token
+                for this request.
             stream:
                 Whether generation should be in streaming mode.
             generation_schema:
@@ -913,6 +920,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         self._validate_chat_completion_options(
             prefilling=prefilling,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
             generation_schema=generation_schema,
             typed_parser=typed_parser,
             stream=stream,
@@ -923,6 +932,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             system_prompt,
             prefilling,
             None if is_flow_control else tool_definitions,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions
@@ -959,6 +970,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         *,
         system_prompt: Optional[str] = None,
         prefilling: Optional[str] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
@@ -973,6 +986,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             prefilling:
                 Forces an initial message from the model. From that message
                 it will continue its response from there.
+            logprobs:
+                Token log probability output for this request.
+            top_logprobs:
+                Number of alternative tokens to return per generated token
+                for this request.
             stream:
                 Whether generation should be in streaming mode.
             generation_schema:
@@ -993,6 +1011,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         self._validate_chat_completion_options(
             prefilling=prefilling,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
             generation_schema=generation_schema,
             typed_parser=typed_parser,
             stream=stream,
@@ -1003,6 +1023,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             system_prompt,
             prefilling,
             None if is_flow_control else tool_definitions,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions

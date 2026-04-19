@@ -121,20 +121,66 @@ class TestOpenAIChatCompletion:
         assert model.enable_thinking is True
         assert model.return_reasoning is True
 
-    def test_chat_completion_with_logprobs_params(self, mock_openai_client):
-        """Test OpenAIChatCompletion with logprobs parameters."""
+    def test_chat_completion_call_forwards_logprobs_params(self, mock_openai_client):
+        """Test runtime logprobs parameters are forwarded on sync calls."""
         pytest.importorskip("openai")
 
         from msgflux.models.providers.openai import OpenAIChatCompletion
 
-        model = OpenAIChatCompletion(
-            model_id="gpt-4",
-            logprobs=True,
-            top_logprobs=2,
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
         )
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        model("Hello", logprobs=True, top_logprobs=2)
 
-        assert model.sampling_run_params["logprobs"] is True
-        assert model.sampling_run_params["top_logprobs"] == 2
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["logprobs"] is True
+        assert call_kwargs["top_logprobs"] == 2
+
+    @pytest.mark.asyncio
+    async def test_acall_forwards_logprobs_params(self, mock_openai_client):
+        """Test runtime logprobs parameters are forwarded on async calls."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content="done",
+                            tool_calls=None,
+                            audio=None,
+                            annotations=None,
+                        ),
+                    )
+                ],
+            )
+        )
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        await model.acall("Hello", logprobs=True, top_logprobs=2)
+
+        call_kwargs = (
+            mock_async_client.return_value.chat.completions.create.await_args.kwargs
+        )
+        assert call_kwargs["logprobs"] is True
+        assert call_kwargs["top_logprobs"] == 2
 
     def test_chat_completion_adapt_params(self, mock_openai_client):
         """Test parameter adaptation for OpenAI."""
@@ -150,6 +196,19 @@ class TestOpenAIChatCompletion:
 
         assert "max_completion_tokens" in adapted
         assert "max_tokens" not in adapted
+
+    def test_chat_completion_rejects_top_logprobs_without_logprobs(
+        self, mock_openai_client
+    ):
+        """Test top_logprobs requires logprobs=True at call time."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        with pytest.raises(ValueError, match="`top_logprobs` requires"):
+            model("Hello", top_logprobs=2)
 
     @pytest.mark.asyncio
     async def test_acall_stream_strips_tool_definitions_before_async_client(

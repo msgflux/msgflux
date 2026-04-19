@@ -143,6 +143,7 @@ nav:
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
+    - ✓ Verifiers: learn/verifiers.md
     - ⟢ Modules:
       - Module:
         - learn/nn/module/index.md
