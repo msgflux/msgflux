@@ -81,6 +81,95 @@ Prefer a cheaper validator when the task already has a deterministic check.
 - regex-based extraction checks
 - simple business rules
 
+## Built-In Presets
+
+`LLMAsVerifier` ships with preset constructors for common evaluation tasks. Each
+preset returns a regular `LLMAsVerifier`, so you can still override `criteria`,
+`ground_truth_note`, `extra_instructions`, `n_verifications`, and the model
+request kwargs.
+
+```python
+from msgflux.generation.verifiers import LLMAsVerifier
+
+trajectory = LLMAsVerifier.trajectory_analysis(
+    model="openai/gpt-4.1-mini",
+)
+
+reranker = LLMAsVerifier.answer_reranking(
+    model="openai/gpt-4.1-mini",
+)
+
+grounded = LLMAsVerifier.grounded_answer_verification(
+    model="openai/gpt-4.1-mini",
+)
+
+patches = LLMAsVerifier.patch_selection(
+    model="openai/gpt-4.1-mini",
+)
+
+tools = LLMAsVerifier.tool_trace_verification(
+    model="openai/gpt-4.1-mini",
+)
+
+filtering = LLMAsVerifier.synthetic_data_filtering(
+    model="openai/gpt-4.1-mini",
+)
+```
+
+### `trajectory_analysis`
+
+Use for agent runs and reasoning trajectories.
+
+- checks whether the task was actually completed
+- checks whether verification was meaningful
+- checks unresolved error signals
+
+### `answer_reranking`
+
+Use for comparing multiple final drafts of the same task.
+
+- correctness
+- instruction following
+- completeness
+- clarity
+
+### `grounded_answer_verification`
+
+Use for RAG and other context-grounded tasks.
+
+- grounding in context
+- unsupported claims
+- answer completeness
+
+### `patch_selection`
+
+Use for comparing candidate patches or code changes.
+
+- requirement coverage
+- correctness risk
+- regression risk
+- minimality
+
+### `tool_trace_verification`
+
+Use for tool-using agents when you want to compare the final answer against the
+trace and tool outputs.
+
+- tool grounding
+- unresolved errors
+- final answer quality
+- action efficiency
+
+### `synthetic_data_filtering`
+
+Use for generated examples before adding them to datasets, evals, or
+distillation corpora.
+
+- consistency
+- label quality
+- ambiguity
+- usefulness
+
 ## Single Candidate
 
 ```python

@@ -253,6 +253,196 @@ TRAJECTORY_ANALYSIS_CRITERIA = (
     ),
 )
 
+ANSWER_RERANKING_EXTRA_INSTRUCTIONS = (
+    "Prefer candidates that directly satisfy the task, avoid unsupported claims, "
+    "and do not reward verbosity unless it improves usefulness."
+)
+
+ANSWER_RERANKING_CRITERIA = (
+    VerificationCriterion(
+        id="correctness",
+        name="Correctness",
+        description="Judge whether the candidate is factually and logically correct.",
+    ),
+    VerificationCriterion(
+        id="instruction_following",
+        name="Instruction Following",
+        description=(
+            "Check whether the candidate follows the task requirements and output "
+            "constraints."
+        ),
+    ),
+    VerificationCriterion(
+        id="completeness",
+        name="Completeness",
+        description=(
+            "Assess whether the candidate covers the essential parts of the task "
+            "without important omissions."
+        ),
+    ),
+    VerificationCriterion(
+        id="clarity",
+        name="Clarity",
+        description=(
+            "Assess whether the candidate is clear, concise, and easy to act on."
+        ),
+    ),
+)
+
+GROUNDED_ANSWER_VERIFICATION_GROUND_TRUTH_NOTE = (
+    "Treat the provided context as the source of truth. Penalize unsupported "
+    "claims, contradictions, or details that cannot be grounded in the context."
+)
+
+GROUNDED_ANSWER_VERIFICATION_CRITERIA = (
+    VerificationCriterion(
+        id="grounding",
+        name="Grounding",
+        description=(
+            "Check whether the candidate is supported by the provided context."
+        ),
+    ),
+    VerificationCriterion(
+        id="unsupported_claims",
+        name="Unsupported Claims",
+        description=(
+            "Look for claims, numbers, or specifics that are not justified by the "
+            "provided context."
+        ),
+    ),
+    VerificationCriterion(
+        id="answer_completeness",
+        name="Answer Completeness",
+        description=(
+            "Assess whether the candidate answers the task fully using only the "
+            "grounded information available."
+        ),
+    ),
+)
+
+PATCH_SELECTION_GROUND_TRUTH_NOTE = (
+    "Prefer patches that satisfy the task with the smallest justified change "
+    "surface. Penalize speculative edits, missing coverage, and obvious "
+    "regression risk."
+)
+
+PATCH_SELECTION_CRITERIA = (
+    VerificationCriterion(
+        id="requirement_coverage",
+        name="Requirement Coverage",
+        description=(
+            "Judge whether the patch appears to address the stated task or bug "
+            "without leaving core requirements unmet."
+        ),
+    ),
+    VerificationCriterion(
+        id="correctness_risk",
+        name="Correctness Risk",
+        description=(
+            "Look for signs that the patch may be logically wrong, incomplete, or "
+            "likely to fail in expected scenarios."
+        ),
+    ),
+    VerificationCriterion(
+        id="regression_risk",
+        name="Regression Risk",
+        description=(
+            "Estimate whether the patch is likely to break adjacent behavior or "
+            "introduce unnecessary side effects."
+        ),
+    ),
+    VerificationCriterion(
+        id="minimality",
+        name="Minimality",
+        description=(
+            "Prefer focused patches that solve the problem without unrelated or "
+            "overly broad changes."
+        ),
+    ),
+)
+
+TOOL_TRACE_VERIFICATION_GROUND_TRUTH_NOTE = (
+    "Prioritize observed tool outputs and trace evidence over confident "
+    "self-reports. Penalize final answers that ignore failed actions or "
+    "contradict tool results."
+)
+
+TOOL_TRACE_VERIFICATION_CRITERIA = (
+    VerificationCriterion(
+        id="tool_grounding",
+        name="Tool Grounding",
+        description=(
+            "Check whether the final candidate is consistent with the tool outputs "
+            "and execution trace."
+        ),
+    ),
+    VerificationCriterion(
+        id="unresolved_errors",
+        name="Unresolved Errors",
+        description=(
+            "Look for failed actions, warnings, or contradictions that were not "
+            "properly resolved before the final answer."
+        ),
+    ),
+    VerificationCriterion(
+        id="final_answer_quality",
+        name="Final Answer Quality",
+        description=(
+            "Judge whether the final candidate answers the task adequately given "
+            "the evidence gathered."
+        ),
+    ),
+    VerificationCriterion(
+        id="action_efficiency",
+        name="Action Efficiency",
+        description=(
+            "Prefer trajectories that use tools purposefully and avoid needless "
+            "steps or repetitive actions."
+        ),
+    ),
+)
+
+SYNTHETIC_DATA_FILTERING_GROUND_TRUTH_NOTE = (
+    "Prefer examples that are internally consistent, unambiguous, and useful for "
+    "training or evaluation. Penalize noisy, contradictory, or weakly labeled "
+    "examples."
+)
+
+SYNTHETIC_DATA_FILTERING_CRITERIA = (
+    VerificationCriterion(
+        id="consistency",
+        name="Consistency",
+        description=(
+            "Check whether the example is internally consistent and free from "
+            "contradictory statements or labels."
+        ),
+    ),
+    VerificationCriterion(
+        id="label_quality",
+        name="Label Quality",
+        description=(
+            "Assess whether the label, target, or expected output is well-formed "
+            "and appropriate for the example."
+        ),
+    ),
+    VerificationCriterion(
+        id="ambiguity",
+        name="Ambiguity",
+        description=(
+            "Penalize examples where the task, label, or expected answer is too "
+            "ambiguous to be a reliable training signal."
+        ),
+    ),
+    VerificationCriterion(
+        id="usefulness",
+        name="Usefulness",
+        description=(
+            "Judge whether the example is informative and worth keeping in a "
+            "dataset or evaluation set."
+        ),
+    ),
+)
+
 
 class LLMAsVerifier:
     def __init__(
@@ -299,8 +489,89 @@ class LLMAsVerifier:
         criteria: Sequence[VerificationCriterion] = TRAJECTORY_ANALYSIS_CRITERIA,
         **kwargs: Any,
     ) -> "LLMAsVerifier":
-        kwargs.setdefault("ground_truth_note", TRAJECTORY_ANALYSIS_GROUND_TRUTH_NOTE)
-        return cls(model=model, criteria=criteria, **kwargs)
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=TRAJECTORY_ANALYSIS_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
+
+    @classmethod
+    def answer_reranking(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = ANSWER_RERANKING_CRITERIA,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_extra_instructions=ANSWER_RERANKING_EXTRA_INSTRUCTIONS,
+            **kwargs,
+        )
+
+    @classmethod
+    def grounded_answer_verification(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = (
+            GROUNDED_ANSWER_VERIFICATION_CRITERIA
+        ),
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=GROUNDED_ANSWER_VERIFICATION_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
+
+    @classmethod
+    def patch_selection(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = PATCH_SELECTION_CRITERIA,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=PATCH_SELECTION_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
+
+    @classmethod
+    def tool_trace_verification(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = TOOL_TRACE_VERIFICATION_CRITERIA,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=TOOL_TRACE_VERIFICATION_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
+
+    @classmethod
+    def synthetic_data_filtering(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = (SYNTHETIC_DATA_FILTERING_CRITERIA),
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=SYNTHETIC_DATA_FILTERING_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
 
     def __call__(
         self,
@@ -822,6 +1093,22 @@ class LLMAsVerifier:
                 **self._model_metadata(),
             },
         )
+
+    @classmethod
+    def _from_preset(
+        cls,
+        *,
+        model: ModelLike,
+        criteria: Sequence[VerificationCriterion],
+        default_ground_truth_note: Optional[str] = None,
+        default_extra_instructions: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        if default_ground_truth_note is not None:
+            kwargs.setdefault("ground_truth_note", default_ground_truth_note)
+        if default_extra_instructions is not None:
+            kwargs.setdefault("extra_instructions", default_extra_instructions)
+        return cls(model=model, criteria=criteria, **kwargs)
 
     @staticmethod
     def _resolve_model(model: ModelLike) -> Union[ChatCompletionModel, ModelGateway]:

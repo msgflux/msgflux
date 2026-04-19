@@ -3,7 +3,16 @@ from unittest.mock import patch
 import pytest
 
 from msgflux.core.dotdict import dotdict
-from msgflux.generation.verifiers import LLMAsVerifier, VerificationCriterion
+from msgflux.generation.verifiers import (
+    ANSWER_RERANKING_CRITERIA,
+    GROUNDED_ANSWER_VERIFICATION_CRITERIA,
+    LLMAsVerifier,
+    PATCH_SELECTION_CRITERIA,
+    SYNTHETIC_DATA_FILTERING_CRITERIA,
+    TOOL_TRACE_VERIFICATION_CRITERIA,
+    TRAJECTORY_ANALYSIS_CRITERIA,
+    VerificationCriterion,
+)
 from msgflux.models.base import BaseModel
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse
@@ -197,6 +206,44 @@ class DynamicPairwiseModel(BaseModel, ChatCompletionModel):
 
 
 class TestLLMAsVerifier:
+    def test_trajectory_analysis_preset_sets_default_note(self):
+        verifier = LLMAsVerifier.trajectory_analysis(
+            model=MockChatModel([]),
+        )
+
+        assert verifier.ground_truth_note is not None
+        assert [criterion.id for criterion in verifier.criteria] == [
+            criterion.id for criterion in TRAJECTORY_ANALYSIS_CRITERIA
+        ]
+
+    def test_preset_respects_explicit_overrides(self):
+        verifier = LLMAsVerifier.patch_selection(
+            model=MockChatModel([]),
+            ground_truth_note="Use only the patch diff as evidence.",
+        )
+
+        assert verifier.ground_truth_note == "Use only the patch diff as evidence."
+
+    @pytest.mark.parametrize(
+        ("factory_name", "expected_criteria"),
+        [
+            ("answer_reranking", ANSWER_RERANKING_CRITERIA),
+            (
+                "grounded_answer_verification",
+                GROUNDED_ANSWER_VERIFICATION_CRITERIA,
+            ),
+            ("patch_selection", PATCH_SELECTION_CRITERIA),
+            ("tool_trace_verification", TOOL_TRACE_VERIFICATION_CRITERIA),
+            ("synthetic_data_filtering", SYNTHETIC_DATA_FILTERING_CRITERIA),
+        ],
+    )
+    def test_presets_expose_expected_criteria(self, factory_name, expected_criteria):
+        verifier = getattr(LLMAsVerifier, factory_name)(model=MockChatModel([]))
+
+        assert [criterion.id for criterion in verifier.criteria] == [
+            criterion.id for criterion in expected_criteria
+        ]
+
     def test_single_candidate_uses_logprobs(self):
         model = MockChatModel(
             [
