@@ -12,13 +12,13 @@
         <meta name="author" content="Vilson Rodrigues">
       
       
-        <link rel="canonical" href="https://msgflux.com/learn/dotdict/">
+        <link rel="canonical" href="https://msgflux.com/learn/verifiers/">
       
       
-        <link rel="prev" href="../parsers/">
+        <link rel="prev" href="../inline/">
       
       
-        <link rel="next" href="../inline/">
+        <link rel="next" href="../nn/module/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>◈ dotdict - msgFlux</title>
+        <title>✓ Verifiers - msgFlux</title>
       
     
     
@@ -88,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#dotdict" class="md-skip">
+        <a href="#verifiers" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ◈ dotdict
+              ✓ Verifiers
             
           </span>
         </div>
@@ -1183,37 +1183,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    ◈ dotdict
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../dotdict/" class="md-nav__link">
         
   
   
@@ -1229,320 +1202,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ✦₊⁺ Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-creating-a-dotdict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Creating a dotdict
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="1. Creating a dotdict">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#from-a-dict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        From a dict
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#from-keyword-arguments" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        From keyword arguments
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#combined" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Combined
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#empty" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Empty
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-reading-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Reading Values
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Reading Values">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#dot-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dot access
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bracket-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bracket access
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#nested-path-with-get" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Nested path with get()
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-writing-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Writing Values
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Writing Values">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#dot-assignment" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dot assignment
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bracket-assignment" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bracket assignment
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#nested-path-with-set" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Nested path with set()
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-nested-paths" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Nested Paths
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Nested Paths">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#list-index-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        List index access
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-auto-wrapping" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Auto-wrapping
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-update" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. update()
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-serialization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Serialization
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="7. Serialization">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#to_dict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        to_dict()
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#to_json" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        to_json()
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-immutability" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Immutability
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#9-hidden-keys" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Hidden Keys
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#10-extending-dotdict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Extending dotdict
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1580,10 +1239,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../verifiers/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ✓ Verifiers
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1599,6 +1285,385 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#llm-as-a-verifier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM-as-a-Verifier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single Candidate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pairwise-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pairwise Comparison
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#round-robin-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Round-Robin Selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How It Works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#n_verifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_verifications
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#granularity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        granularity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logprobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logprobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-gets-returned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Gets Returned
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verbose-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verbose Debugging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-prompting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Prompting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-In Presets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-In Presets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trajectory_analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        trajectory_analysis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#answer_reranking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        answer_reranking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grounded_answer_verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        grounded_answer_verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#patch_selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        patch_selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool_trace_verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tool_trace_verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#synthetic_data_filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        synthetic_data_filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#terminal_bench" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        terminal_bench
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#swe_bench_verified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        swe_bench_verified
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trajectory-formatting-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trajectory Formatting Helpers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best Use Cases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Use Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trajectory-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trajectory Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#candidate-reranking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate Reranking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#patch-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patch Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-using-agent-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool-Using Agent Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#synthetic-data-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synthetic Data Filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optimizer-feedback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optimizer Feedback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-not-to-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When Not to Use
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5056,10 +5121,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
+  <a href="#llm-as-a-verifier" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ✦₊⁺ Overview
+        LLM-as-a-Verifier
       
     </span>
   </a>
@@ -5067,22 +5132,66 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-creating-a-dotdict" class="md-nav__link">
+  <a href="#single-candidate" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Creating a dotdict
+        Single Candidate
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1. Creating a dotdict">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pairwise-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pairwise Comparison
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#round-robin-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Round-Robin Selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How It Works">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#from-a-dict" class="md-nav__link">
+  <a href="#criteria" class="md-nav__link">
     <span class="md-ellipsis">
       
-        From a dict
+        criteria
       
     </span>
   </a>
@@ -5090,10 +5199,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#from-keyword-arguments" class="md-nav__link">
+  <a href="#n_verifications" class="md-nav__link">
     <span class="md-ellipsis">
       
-        From keyword arguments
+        n_verifications
       
     </span>
   </a>
@@ -5101,10 +5210,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#combined" class="md-nav__link">
+  <a href="#granularity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Combined
+        granularity
       
     </span>
   </a>
@@ -5112,10 +5221,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#empty" class="md-nav__link">
+  <a href="#logprobs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Empty
+        logprobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-gets-returned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Gets Returned
       
     </span>
   </a>
@@ -5128,22 +5248,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-reading-values" class="md-nav__link">
+  <a href="#verbose-debugging" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Reading Values
+        Verbose Debugging
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Reading Values">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-prompting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Prompting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-In Presets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-In Presets">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#dot-access" class="md-nav__link">
+  <a href="#trajectory_analysis" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dot access
+        trajectory_analysis
       
     </span>
   </a>
@@ -5151,10 +5293,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#bracket-access" class="md-nav__link">
+  <a href="#answer_reranking" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bracket access
+        answer_reranking
       
     </span>
   </a>
@@ -5162,10 +5304,65 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#nested-path-with-get" class="md-nav__link">
+  <a href="#grounded_answer_verification" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Nested path with get()
+        grounded_answer_verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#patch_selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        patch_selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool_trace_verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tool_trace_verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#synthetic_data_filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        synthetic_data_filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#terminal_bench" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        terminal_bench
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#swe_bench_verified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        swe_bench_verified
       
     </span>
   </a>
@@ -5178,22 +5375,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-writing-values" class="md-nav__link">
+  <a href="#trajectory-formatting-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Writing Values
+        Trajectory Formatting Helpers
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="3. Writing Values">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best Use Cases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Use Cases">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#dot-assignment" class="md-nav__link">
+  <a href="#trajectory-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dot assignment
+        Trajectory Selection
       
     </span>
   </a>
@@ -5201,10 +5409,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#bracket-assignment" class="md-nav__link">
+  <a href="#candidate-reranking" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bracket assignment
+        Candidate Reranking
       
     </span>
   </a>
@@ -5212,10 +5420,43 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#nested-path-with-set" class="md-nav__link">
+  <a href="#patch-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Nested path with set()
+        Patch Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-using-agent-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool-Using Agent Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#synthetic-data-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synthetic Data Filtering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optimizer-feedback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optimizer Feedback
       
     </span>
   </a>
@@ -5228,121 +5469,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-nested-paths" class="md-nav__link">
+  <a href="#when-not-to-use" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Nested Paths
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Nested Paths">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#list-index-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        List index access
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-auto-wrapping" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Auto-wrapping
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-update" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. update()
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-serialization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Serialization
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="7. Serialization">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#to_dict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        to_dict()
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#to_json" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        to_json()
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-immutability" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Immutability
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#9-hidden-keys" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Hidden Keys
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#10-extending-dotdict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Extending dotdict
+        When Not to Use
       
     </span>
   </a>
@@ -5375,7 +5505,7 @@
   
 
 
-<h1 id="dotdict">dotdict</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<h1 id="verifiers">Verifiers</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <style>
 .copy-markdown-button {
     background: transparent;
@@ -5395,409 +5525,589 @@
 .copy-markdown-button:active { transform: translateY(1px); }
 #copy-icon { transition: opacity 0.1s ease; }
 </style>
-<div class="copy-markdown-container" data-markdown="# dotdict
+<div class="copy-markdown-container" data-markdown="# Verifiers
 
-## ✦₊⁺ Overview
+## LLM-as-a-Verifier
 
-`dotdict` is a dictionary with **dot notation access** and **nested path support**. It extends Python&#x27;s built-in `dict`, so anything that works with a regular dict works here too.
+`LLMAsVerifier` is a logprob-aware verification pattern adapted from
+[LLM-as-a-Verifier](https://llm-as-a-verifier.notion.site/).
+
+Think of it as a teacher grading answers.
 
-It is the foundation of [`Message`](nn/message.md) and can be used standalone wherever flexible, deeply-nested data structures are needed.
+You give it:
+
+- a `task`
+- one or more `candidates`
+- a list of `criteria`
+
+The verifier then scores each candidate, compares them when needed, and returns
+either a verdict, a winner, or a tournament ranking.
+
+## Single Candidate
+
+```python
+# pip install msgflux[openai]
+import msgflux as mf
+from msgflux.generation.verifiers import LLMAsVerifier, VerificationCriterion
+
+# mf.load_dotenv()
+
+criterion = VerificationCriterion(
+    id=&quot;correctness&quot;,
+    name=&quot;Correctness&quot;,
+    description=&quot;Assess whether the candidate fully answers the task.&quot;,
+)
+
+verifier = LLMAsVerifier(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+    criteria=[criterion],
+    n_verifications=2,
+)
+
+result = verifier(
+    task=&quot;What is 2 + 2?&quot;,
+    candidates={&quot;answer&quot;: &quot;The answer is 4.&quot;},
+)
+
+print(result.verdict)  # pass
+print(result.score)    # normalized score in [0, 1]
+print(result.scores)   # {&quot;answer&quot;: ...}
+```
 
-???+ example
+!!! info
+    `LLMAsVerifier` requests `logprobs=True` and `top_logprobs` automatically
+    on the model call. If the provider returns token logprobs, the verifier
+    uses them to compute the score distribution. If not, it falls back to
+    parsing the emitted score from text. Set `strict_logprobs=True` to require
+    logprob-based extraction.
+
+## Pairwise Comparison
+
+```python
+result = verifier(
+    task=&quot;Pick the better final answer.&quot;,
+    candidates={
+        &quot;paris_answer&quot;: &quot;The capital of France is Paris.&quot;,
+        &quot;lyon_answer&quot;: &quot;The capital of France is Lyon.&quot;,
+    },
+)
 
-    ```python
-    import msgflux as mf
+print(result.verdict)  # &quot;paris_answer&quot;, &quot;lyon_answer&quot;, or &quot;tie&quot;
+print(result.winner)   # winner label or None
+print(result.scores)   # {&quot;paris_answer&quot;: ..., &quot;lyon_answer&quot;: ...}
+```
 
-    d = mf.dotdict({&quot;user&quot;: {&quot;name&quot;: &quot;Maria&quot;, &quot;age&quot;: 30}})
+Pairwise mode is the natural building block for trajectory comparison and
+candidate selection.
 
-    print(d.user.name)   # &quot;Maria&quot;
-    print(d.user.age)    # 30
-    ```
+## Round-Robin Selection
 
----
+For tasks with multiple candidates, use `select_best`:
 
-## 1. **Creating a dotdict**
+```python
+tournament = verifier.select_best(
+    task=&quot;Pick the best final answer.&quot;,
+    candidates={
+        &quot;draft_1&quot;: &quot;Answer one&quot;,
+        &quot;draft_2&quot;: &quot;Answer two&quot;,
+        &quot;draft_3&quot;: &quot;Answer three&quot;,
+    },
+)
 
-### From a dict
+print(tournament.winner)
+print(tournament.ranking)
+print(tournament.wins)
+```
 
-???+ example
+This runs pairwise comparisons across all candidates and selects the winner by
+round-robin wins, using average verifier score as a tiebreaker.
 
-    ```python
-    import msgflux as mf
+## API Shape
 
-    d = mf.dotdict({&quot;key&quot;: &quot;value&quot;, &quot;nested&quot;: {&quot;x&quot;: 1}})
-    ```
+Use `__call__` or `acall` when you want to verify `1` or `2` candidates:
 
-### From keyword arguments
+```python
+single = verifier(
+    task=&quot;What is 2 + 2?&quot;,
+    candidates={&quot;answer&quot;: &quot;The answer is 4.&quot;},
+)
 
-???+ example
+pairwise = verifier(
+    task=&quot;Pick the better final answer.&quot;,
+    candidates={
+        &quot;draft_1&quot;: &quot;The answer is 4.&quot;,
+        &quot;draft_2&quot;: &quot;The answer is 5.&quot;,
+    },
+)
+```
 
-    ```python
-    import msgflux as mf
+Use `select_best` or `aselect_best` when you have more than `2` candidates:
 
-    d = mf.dotdict(name=&quot;Alice&quot;, score=100)
-    ```
+```python
+tournament = verifier.select_best(
+    task=&quot;Pick the best final answer.&quot;,
+    candidates={
+        &quot;draft_1&quot;: &quot;The answer is 4.&quot;,
+        &quot;draft_2&quot;: &quot;It is probably 4.&quot;,
+        &quot;draft_3&quot;: &quot;The answer is 5.&quot;,
+    },
+)
+```
 
-### Combined
+## How It Works
 
-???+ example
+The verifier does not ask the model for a vague overall judgment. It breaks the
+evaluation into smaller pieces and then aggregates them.
 
-    ```python
-    import msgflux as mf
+### `criteria`
 
-    d = mf.dotdict({&quot;role&quot;: &quot;admin&quot;}, name=&quot;Alice&quot;, score=100)
-    ```
+`criteria` are the grading rules.
 
-### Empty
+Examples:
 
-???+ example
+- `correctness`
+- `completeness`
+- `grounding`
+- `error_signals`
 
-    ```python
-    import msgflux as mf
+Instead of asking only &quot;is this good?&quot;, the verifier asks smaller questions
+such as:
 
-    d = mf.dotdict()
-    d.name = &quot;Bob&quot;
-    ```
+- is it correct?
+- is it complete?
+- is it grounded in the evidence?
+- are there unresolved errors?
 
----
+That makes the final result easier to control and easier to reuse across
+different tasks.
 
-## 2. **Reading Values**
+### `n_verifications`
 
-### Dot access
+`n_verifications` controls how many times each criterion is evaluated.
 
-???+ example
+If you have:
 
-    ```python
-    import msgflux as mf
+- `3` criteria
+- `n_verifications=2`
 
-    d = mf.dotdict({&quot;user&quot;: {&quot;name&quot;: &quot;Clark&quot;}})
+the verifier runs `6` evaluations in total, then averages the repeated attempts
+for each criterion.
 
-    print(d.user.name)  # &quot;Clark&quot;
-    ```
+Use this to reduce noise:
 
-### Bracket access
+- `n_verifications=1` is the simplest setting
+- larger values usually give a more stable signal
 
-???+ example
+### `granularity`
 
-    ```python
-    import msgflux as mf
+`granularity` controls how many levels exist in the score scale.
 
-    d = mf.dotdict({&quot;user&quot;: {&quot;name&quot;: &quot;Clark&quot;}})
+```python
+from msgflux.generation.verifiers import LLMAsVerifier, ScoreScale
 
-    print(d[&quot;user&quot;][&quot;name&quot;])  # &quot;Clark&quot;
-    ```
+verifier = LLMAsVerifier.answer_reranking(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+    score_scale=ScoreScale.letter(granularity=20),
+)
+```
 
-### Nested path with `get()`
+With `granularity=20`, the scale is `A..T`:
 
-Use `get(path, default=None)` to traverse nested keys via a dot-separated string:
+- `A` is best
+- `T` is worst
 
-???+ example
+The model does not return a floating-point score such as `0.83`. It returns a
+discrete score token from the configured scale:
 
-    ```python
-    import msgflux as mf
+```text
+&lt;score&gt;A&lt;/score&gt;
+```
 
-    d = mf.dotdict({&quot;user&quot;: {&quot;profile&quot;: {&quot;city&quot;: &quot;Gotham&quot;}}})
+In pairwise mode it returns one score token per candidate:
 
-    print(d.get(&quot;user.profile.city&quot;))        # &quot;Gotham&quot;
-    print(d.get(&quot;user.profile.zip&quot;, &quot;N/A&quot;))  # &quot;N/A&quot; (key doesn&#x27;t exist)
-    ```
+```text
+&lt;score_A&gt;B&lt;/score_A&gt;
+&lt;score_B&gt;H&lt;/score_B&gt;
+```
 
-`get()` never raises — it returns `default` when any key in the path is missing.
+Supported range:
 
----
+- `2..26`
 
-## 3. **Writing Values**
+The runtime keeps the scale letter-based because letter tokens are more stable
+for `logprobs` extraction than numeric labels such as `1..20`.
 
-### Dot assignment
+### `logprobs`
 
-???+ example
+This is the part that makes the technique more useful than just reading the
+final score token.
 
-    ```python
-    import msgflux as mf
+The verifier asks the model for:
 
-    d = mf.dotdict()
-    d.name = &quot;Diana&quot;
-    d.score = 99
-    ```
+- `logprobs=True`
+- `top_logprobs=&lt;scale size or override&gt;`
 
-### Bracket assignment
+So it can see not only the chosen score token, but also nearby alternatives.
 
-???+ example
+For example, even if the model emits:
 
-    ```python
-    import msgflux as mf
+```text
+&lt;score&gt;A&lt;/score&gt;
+```
 
-    d = mf.dotdict()
-    d[&quot;name&quot;] = &quot;Diana&quot;
-    ```
+the underlying distribution might be closer to:
 
-### Nested path with `set()`
+- `A`: `0.70`
+- `B`: `0.20`
+- `C`: `0.10`
 
-Use `set(path, value)` to write deeply nested values. Intermediate keys are created automatically:
+The verifier uses that distribution to compute the final normalized score in
+`[0, 1]`, instead of trusting only the chosen token.
 
-???+ example
+### What Gets Returned
 
-    ```python
-    import msgflux as mf
+With one candidate, the verifier returns:
 
-    d = mf.dotdict()
+- `pass`
+- `fail`
+- `uncertain`
 
-    d.set(&quot;user.profile.city&quot;, &quot;Metropolis&quot;)
-    d.set(&quot;user.profile.age&quot;, 28)
+With two candidates, it returns:
 
-    print(d.user.profile.city)  # &quot;Metropolis&quot;
-    print(d.user.profile.age)   # 28
-    ```
+- the winning label
+- or `tie`
 
----
+With more than two candidates, `select_best(...)` runs pairwise comparisons and
+returns:
 
-## 4. **Nested Paths**
+- `winner`
+- `ranking`
+- `wins`
+- `average_scores`
 
-Both `get()` and `set()` accept dot-separated strings to traverse any depth:
+## Verbose Debugging
 
-???+ example
+Set `verbose=True` when you want the verifier to return the final prompt and raw
+model output for each attempt.
 
-    ```python
-    import msgflux as mf
+```python
+verifier = LLMAsVerifier(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+    criteria=[criterion],
+    verbose=True,
+)
 
-    d = mf.dotdict()
+result = verifier(
+    task=&quot;What is 2 + 2?&quot;,
+    candidates={&quot;answer&quot;: &quot;The answer is 4.&quot;},
+)
 
-    d.set(&quot;a.b.c.d&quot;, &quot;deep value&quot;)
-    print(d.get(&quot;a.b.c.d&quot;))  # &quot;deep value&quot;
-    ```
+print(result.metadata[&quot;raw_outputs&quot;][0][&quot;prompt&quot;])
+print(result.metadata[&quot;raw_outputs&quot;][0][&quot;response_text&quot;])
+```
 
-### List index access
+The same data also remains available in `criteria_results[*].attempts[*]`:
 
-Use integer segments in the path to index into lists:
+```python
+attempt = result.criteria_results[0].attempts[0]
+print(attempt.prompt_text)
+print(attempt.response_text)
+```
 
-???+ example
+## Custom Prompting
 
-    ```python
-    import msgflux as mf
+You can replace the default prompt with `prompt_builder`. The builder receives a
+`VerificationPromptInput` containing the task, candidates, criterion,
+score scale, context, and optional verifier instructions.
 
-    d = mf.dotdict()
-    d.set(&quot;items&quot;, [{&quot;name&quot;: &quot;Alpha&quot;}, {&quot;name&quot;: &quot;Beta&quot;}])
+```python
+from msgflux.generation.verifiers import (
+    LLMAsVerifier,
+    VerificationCriterion,
+    VerificationPromptInput,
+)
 
-    print(d.get(&quot;items.0.name&quot;))  # &quot;Alpha&quot;
-    print(d.get(&quot;items.1.name&quot;))  # &quot;Beta&quot;
-    ```
 
-`set()` also supports writing into existing list positions:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict()
-    d.set(&quot;items&quot;, [{&quot;name&quot;: &quot;Alpha&quot;}, {&quot;name&quot;: &quot;Beta&quot;}])
-
-    d.set(&quot;items.0.name&quot;, &quot;Updated&quot;)
-    print(d.get(&quot;items.0.name&quot;))  # &quot;Updated&quot;
-    ```
-
----
-
-## 5. **Auto-wrapping**
-
-Any `dict` assigned to a `dotdict` — whether at creation, via `set()`, or via attribute assignment — is automatically converted to a `dotdict`, so dot access always works:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict()
-    d.config = {&quot;debug&quot;: True, &quot;timeout&quot;: 30}
-
-    print(d.config.debug)    # True
-    print(d.config.timeout)  # 30
-    ```
-
-Lists of dicts are also wrapped recursively:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict()
-    d.users = [{&quot;name&quot;: &quot;A&quot;}, {&quot;name&quot;: &quot;B&quot;}]
-
-    print(d.users[0].name)  # &quot;A&quot;
-    ```
-
----
-
-## 6. **`update()`**
-
-`update()` extends `dict.update` with two extras:
-
-**1. Dotted keys are written as nested paths:**
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict()
-    d.update({&quot;user.name&quot;: &quot;Bruce&quot;, &quot;user.age&quot;: 35})
-
-    print(d.user.name)  # &quot;Bruce&quot;
-    ```
-
-**2. Dict values are merged recursively when the key already holds a `dotdict`:**
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict({&quot;config&quot;: {&quot;debug&quot;: False, &quot;timeout&quot;: 30}})
-    d.update({&quot;config&quot;: {&quot;debug&quot;: True}})
-
-    print(d.config.debug)    # True   (updated)
-    print(d.config.timeout)  # 30     (preserved)
-    ```
-
-Standard positional argument and keyword argument forms are both supported:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict()
-    d.update({&quot;key&quot;: &quot;value&quot;})
-    d.update(key=&quot;other&quot;)
-    ```
-
----
-
-## 7. **Serialization**
-
-### `to_dict()`
-
-Converts the `dotdict` (and all nested `dotdict` values) back to a plain Python `dict`:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict({&quot;user&quot;: {&quot;name&quot;: &quot;Lois&quot;}})
-
-    plain = d.to_dict()
-    print(type(plain))           # &lt;class &#x27;dict&#x27;&gt;
-    print(type(plain[&quot;user&quot;]))   # &lt;class &#x27;dict&#x27;&gt;
-    ```
-
-### `to_json()`
-
-Returns a JSON-encoded `bytes` object, powered by `msgspec`:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict({&quot;score&quot;: 42})
-
-    print(d.to_json())  # b&#x27;{&quot;score&quot;:42}&#x27;
-    ```
-
----
-
-## 8. **Immutability**
-
-Pass `frozen=True` to create a read-only `dotdict`. Any attempt to write raises `AttributeError`:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict({&quot;key&quot;: &quot;value&quot;}, frozen=True)
-
-    d.key = &quot;new&quot;        # raises AttributeError: Cannot modify frozen dotdict
-    d[&quot;key&quot;] = &quot;new&quot;     # raises AttributeError
-    d.set(&quot;key&quot;, &quot;new&quot;)  # raises AttributeError
-    del d.key            # raises AttributeError
-    ```
-
-Nested dicts inherit the `frozen` flag automatically:
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict({&quot;user&quot;: {&quot;name&quot;: &quot;Bruce&quot;}}, frozen=True)
-
-    d.user.name = &quot;Clark&quot;  # raises AttributeError
-    ```
-
----
-
-## 9. **Hidden Keys**
-
-`hidden_keys` marks keys as invisible to enumeration and discovery. They won&#x27;t appear in iteration, serialization, or string representations — but can always be accessed directly if you know they exist.
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    d = mf.dotdict(
-        {&quot;api_key&quot;: &quot;sk-secret&quot;, &quot;username&quot;: &quot;john&quot;},
-        hidden_keys=[&quot;api_key&quot;]
+def build_prompt(data: VerificationPromptInput) -&gt; str:
+    label, candidate = next(iter(data.candidates.items()))
+    return (
+        &quot;Evaluate the answer.\n\n&quot;
+        f&quot;Task:\n{data.task}\n\n&quot;
+        f&quot;Criterion:\n{data.criterion.description}\n\n&quot;
+        f&quot;Candidate ({label}):\n{candidate}\n\n&quot;
+        f&quot;&lt;score&gt;{data.score_scale.score_format}&lt;/score&gt;&quot;
     )
 
-    # Enumeration — api_key is invisible
-    print(&quot;api_key&quot; in d)      # False
-    print(list(d.keys()))      # [&quot;username&quot;]
-    print(list(d.values()))    # [&quot;john&quot;]
-    print(list(d.items()))     # [(&quot;username&quot;, &quot;john&quot;)]
-    for k in d:
-        print(k)               # &quot;username&quot;
-    print(d.to_dict())         # {&quot;username&quot;: &quot;john&quot;}
-    print(d.to_json())         # b&#x27;{&quot;username&quot;:&quot;john&quot;}&#x27;
-    print(d)                   # {&#x27;username&#x27;: &#x27;john&#x27;}
 
-    # Direct access — api_key is reachable
-    print(d.api_key)              # &quot;sk-secret&quot;
-    print(d[&quot;api_key&quot;])           # &quot;sk-secret&quot;
-    print(d.get(&quot;api_key&quot;))       # &quot;sk-secret&quot;
-    print(d.get(&quot;api_key&quot;, &quot;x&quot;))  # &quot;sk-secret&quot;
-    ```
+verifier = LLMAsVerifier(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+    criteria=[
+        VerificationCriterion(
+            id=&quot;faithfulness&quot;,
+            name=&quot;Faithfulness&quot;,
+            description=&quot;Check whether the answer is grounded in the context.&quot;,
+        )
+    ],
+    prompt_builder=build_prompt,
+)
+```
 
----
+## Built-In Presets
 
-## 10. **Extending dotdict**
+Use a preset when you want a good default set of criteria without defining it
+by hand.
 
-`dotdict` is designed to be subclassed. You can add default fields, metadata, or custom behavior by overriding `__init__`:
+Each preset still returns a normal `LLMAsVerifier`, so you can override
+`criteria`, `ground_truth_note`, `extra_instructions`, `n_verifications`, and
+the model request kwargs.
 
-???+ example
+```python
+from msgflux.generation.verifiers import LLMAsVerifier
 
-    ```python
-    import msgflux as mf
+trajectory = LLMAsVerifier.trajectory_analysis(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
 
+reranker = LLMAsVerifier.answer_reranking(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
 
-    class Config(mf.dotdict):
-        def __init__(self, env=&quot;production&quot;, **kwargs):
-            super().__init__(**kwargs)
-            self.env = env
-            self.debug = env != &quot;production&quot;
+grounded = LLMAsVerifier.grounded_answer_verification(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
 
+patches = LLMAsVerifier.patch_selection(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
 
-    cfg = Config(env=&quot;development&quot;, timeout=30)
+tools = LLMAsVerifier.tool_trace_verification(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
 
-    print(cfg.env)      # &quot;development&quot;
-    print(cfg.debug)    # True
-    print(cfg.timeout)  # 30
-    ```
+filtering = LLMAsVerifier.synthetic_data_filtering(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
 
-[`Message`](nn/message.md) follows this exact pattern — it extends `dotdict` with default AI workflow fields (`content`, `images`, `context`, etc.) and metadata (`user_id`, `chat_id`, `execution_id`).
+terminal = LLMAsVerifier.terminal_bench(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
+
+swe = LLMAsVerifier.swe_bench_verified(
+    model=&quot;openai/gpt-4.1-mini&quot;,
+)
+```
+
+### `trajectory_analysis`
+
+Use this for agent runs and reasoning trajectories.
+
+- checks whether the task was actually completed
+- checks whether verification was meaningful
+- checks unresolved error signals
+
+### `answer_reranking`
+
+Use this when you have multiple final drafts of the same task.
+
+- correctness
+- instruction following
+- completeness
+- clarity
+
+### `grounded_answer_verification`
+
+Use this for RAG and other context-grounded tasks.
+
+- grounding in context
+- unsupported claims
+- answer completeness
+
+### `patch_selection`
+
+Use this for comparing candidate patches or code changes.
+
+- requirement coverage
+- correctness risk
+- regression risk
+- minimality
+
+### `tool_trace_verification`
+
+Use this for tool-using agents when you want to compare the final answer
+against the trace and tool outputs.
+
+- tool grounding
+- unresolved errors
+- final answer quality
+- action efficiency
+
+### `synthetic_data_filtering`
+
+Use this for generated examples before adding them to datasets, evals, or
+distillation corpora.
+
+- consistency
+- label quality
+- ambiguity
+- usefulness
+
+### `terminal_bench`
+
+Use this for terminal-task trajectory selection in the style of Terminal-Bench.
+
+- specification adherence
+- output match
+- unresolved error signals
+- terminal output treated as primary ground truth
+
+### `swe_bench_verified`
+
+Use this for patch and trajectory evaluation in the style of SWE-bench
+Verified.
+
+- root-cause analysis
+- code review quality
+- empirical verification from executed commands
+- narration treated as weaker evidence than the actual patch and outputs
+
+## Trajectory Formatting Helpers
+
+For benchmark-style presets, pass the full trajectory as the candidate
+evidence, not only the final answer. Two helpers are available:
+
+- `format_terminal_trajectory(...)`
+- `format_swe_bench_trajectory(...)`
+
+Keep the task or issue description in `task`. Use the helpers to build each
+candidate string from commands, outputs, patch text, and final answer.
+
+```python
+from msgflux.generation.verifiers import (
+    LLMAsVerifier,
+    format_terminal_trajectory,
+)
+
+candidate = format_terminal_trajectory(
+    summary=&quot;Installed the binary and verified the version output.&quot;,
+    metadata={&quot;expected_output&quot;: &quot;tool 1.2.0&quot;},
+    steps=[
+        {
+            &quot;command&quot;: &quot;cp ./tool /usr/local/bin/tool&quot;,
+            &quot;exit_code&quot;: 0,
+        },
+        {
+            &quot;command&quot;: &quot;tool --version&quot;,
+            &quot;output&quot;: &quot;tool 1.2.0&quot;,
+            &quot;exit_code&quot;: 0,
+        },
+    ],
+    final_answer=&quot;Installation complete.&quot;,
+)
+
+verifier = LLMAsVerifier.terminal_bench(model=&quot;openai/gpt-4.1-mini&quot;)
+result = verifier(
+    task=&quot;Install the binary to /usr/local/bin/tool and verify `tool --version`.&quot;,
+    candidates={&quot;run_a&quot;: candidate},
+)
+```
+
+```python
+from msgflux.generation.verifiers import (
+    LLMAsVerifier,
+    format_swe_bench_trajectory,
+)
+
+candidate = format_swe_bench_trajectory(
+    summary=&quot;Reproduced the bug, patched the parser, and reran the focused test.&quot;,
+    steps=[
+        {
+            &quot;command&quot;: &quot;pytest tests/test_parser.py -q&quot;,
+            &quot;output&quot;: &quot;1 failed, 4 passed&quot;,
+            &quot;exit_code&quot;: 1,
+        },
+        {
+            &quot;command&quot;: &quot;pytest tests/test_parser.py -q&quot;,
+            &quot;output&quot;: &quot;5 passed&quot;,
+            &quot;exit_code&quot;: 0,
+        },
+    ],
+    patch=patch_text,
+    final_answer=&quot;Patched parser and verified the focused test.&quot;,
+)
+
+verifier = LLMAsVerifier.swe_bench_verified(model=&quot;openai/gpt-4.1-mini&quot;)
+result = verifier(
+    task=&quot;Fix the parser bug described in the issue.&quot;,
+    candidates={&quot;candidate_patch&quot;: candidate},
+)
+```
+
+## Best Use Cases
+
+This technique is most useful when you need to compare, rank, or filter
+candidates and the task does not already have a deterministic validator.
+
+### Trajectory Selection
+
+This is the most natural fit.
+
+- compare alternative reasoning trajectories
+- compare multiple agent runs for the same task
+- select the strongest final trajectory before returning it
+
+### Candidate Reranking
+
+Use it to rerank multiple drafts of the same task.
+
+- final answers
+- summaries
+- plans
+- retrieval-grounded responses
+
+### Patch Selection
+
+It works well for code generation when you want to compare multiple candidate
+patches before running deeper validation.
+
+- choose the patch that best satisfies the task
+- prefer the patch that looks more correct or complete
+- filter obviously weak candidates before tests or deeper validation
+
+### Tool-Using Agent Verification
+
+Use it to check whether a final answer is consistent with tool results and the
+execution trace.
+
+- verify completion quality
+- verify grounding in tool outputs
+- detect unresolved errors hidden by a confident final answer
+
+### Synthetic Data Filtering
+
+Use it to filter generated examples before storing them in datasets, evals, or
+distillation corpora.
+
+- reject inconsistent examples
+- reject weak labels
+- keep only high-confidence candidates
+
+### Optimizer Feedback
+
+Use it as a reusable feedback signal for future optimizer integrations.
+
+- provide a reusable reward signal
+- score prompt variants
+- compare sampled candidates during search or optimization
+
+## When Not to Use
+
+Prefer deterministic validation when the task already has a deterministic check.
+
+- exact-match tasks
+- schema validation
+- unit tests
+- regex-based extraction checks
+- simple business rules
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -5866,328 +6176,500 @@ Nested dicts inherit the `frozen` flag automatically:
     window.copyMarkdownToClipboard = copyMarkdownToClipboard;
 }());
 </script>
-<h2 id="overview">✦₊⁺ Overview</h2>
-<p><code>dotdict</code> is a dictionary with <strong>dot notation access</strong> and <strong>nested path support</strong>. It extends Python's built-in <code>dict</code>, so anything that works with a regular dict works here too.</p>
-<p>It is the foundation of <a href="../nn/message/"><code>Message</code></a> and can be used standalone wherever flexible, deeply-nested data structures are needed.</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Maria&quot;</span><span class="p">,</span> <span class="s2">&quot;age&quot;</span><span class="p">:</span> <span class="mi">30</span><span class="p">}})</span>
+<h2 id="llm-as-a-verifier">LLM-as-a-Verifier</h2>
+<p><code>LLMAsVerifier</code> is a logprob-aware verification pattern adapted from
+<a href="https://llm-as-a-verifier.notion.site/">LLM-as-a-Verifier</a>.</p>
+<p>Think of it as a teacher grading answers.</p>
+<p>You give it:</p>
+<ul>
+<li>a <code>task</code></li>
+<li>one or more <code>candidates</code></li>
+<li>a list of <code>criteria</code></li>
+</ul>
+<p>The verifier then scores each candidate, compares them when needed, and returns
+either a verdict, a winner, or a tournament ranking.</p>
+<h2 id="single-candidate">Single Candidate</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.verifiers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLMAsVerifier</span><span class="p">,</span> <span class="n">VerificationCriterion</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>   <span class="c1"># &quot;Maria&quot;</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">age</span><span class="p">)</span>    <span class="c1"># 30</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># mf.load_dotenv()</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">criterion</span> <span class="o">=</span> <span class="n">VerificationCriterion</span><span class="p">(</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;correctness&quot;</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Correctness&quot;</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Assess whether the candidate fully answers the task.&quot;</span><span class="p">,</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">)</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">verifier</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="p">(</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">criteria</span><span class="o">=</span><span class="p">[</span><span class="n">criterion</span><span class="p">],</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">n_verifications</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="p">)</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="n">result</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;What is 2 + 2?&quot;</span><span class="p">,</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 4.&quot;</span><span class="p">},</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="p">)</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">verdict</span><span class="p">)</span>  <span class="c1"># pass</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">score</span><span class="p">)</span>    <span class="c1"># normalized score in [0, 1]</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">scores</span><span class="p">)</span>   <span class="c1"># {&quot;answer&quot;: ...}</span>
 </span></code></pre></div>
-</details>
-<hr />
-<h2 id="1-creating-a-dotdict">1. <strong>Creating a dotdict</strong></h2>
-<h3 id="from-a-dict">From a dict</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">,</span> <span class="s2">&quot;nested&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}})</span>
+<div class="admonition info">
+<p class="admonition-title">Info</p>
+<p><code>LLMAsVerifier</code> requests <code>logprobs=True</code> and <code>top_logprobs</code> automatically
+on the model call. If the provider returns token logprobs, the verifier
+uses them to compute the score distribution. If not, it falls back to
+parsing the emitted score from text. Set <code>strict_logprobs=True</code> to require
+logprob-based extraction.</p>
+</div>
+<h2 id="pairwise-comparison">Pairwise Comparison</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Pick the better final answer.&quot;</span><span class="p">,</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        <span class="s2">&quot;paris_answer&quot;</span><span class="p">:</span> <span class="s2">&quot;The capital of France is Paris.&quot;</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="s2">&quot;lyon_answer&quot;</span><span class="p">:</span> <span class="s2">&quot;The capital of France is Lyon.&quot;</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="p">},</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">)</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">verdict</span><span class="p">)</span>  <span class="c1"># &quot;paris_answer&quot;, &quot;lyon_answer&quot;, or &quot;tie&quot;</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">winner</span><span class="p">)</span>   <span class="c1"># winner label or None</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">scores</span><span class="p">)</span>   <span class="c1"># {&quot;paris_answer&quot;: ..., &quot;lyon_answer&quot;: ...}</span>
 </span></code></pre></div>
-</details>
-<h3 id="from-keyword-arguments">From keyword arguments</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">score</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+<p>Pairwise mode is the natural building block for trajectory comparison and
+candidate selection.</p>
+<h2 id="round-robin-selection">Round-Robin Selection</h2>
+<p>For tasks with multiple candidates, use <code>select_best</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">tournament</span> <span class="o">=</span> <span class="n">verifier</span><span class="o">.</span><span class="n">select_best</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Pick the best final answer.&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="s2">&quot;draft_1&quot;</span><span class="p">:</span> <span class="s2">&quot;Answer one&quot;</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="s2">&quot;draft_2&quot;</span><span class="p">:</span> <span class="s2">&quot;Answer two&quot;</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        <span class="s2">&quot;draft_3&quot;</span><span class="p">:</span> <span class="s2">&quot;Answer three&quot;</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="p">},</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">)</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="nb">print</span><span class="p">(</span><span class="n">tournament</span><span class="o">.</span><span class="n">winner</span><span class="p">)</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">tournament</span><span class="o">.</span><span class="n">ranking</span><span class="p">)</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">tournament</span><span class="o">.</span><span class="n">wins</span><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<h3 id="combined">Combined</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;admin&quot;</span><span class="p">},</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">score</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+<p>This runs pairwise comparisons across all candidates and selects the winner by
+round-robin wins, using average verifier score as a tiebreaker.</p>
+<h2 id="api-shape">API Shape</h2>
+<p>Use <code>__call__</code> or <code>acall</code> when you want to verify <code>1</code> or <code>2</code> candidates:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">single</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;What is 2 + 2?&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 4.&quot;</span><span class="p">},</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">pairwise</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Pick the better final answer.&quot;</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>        <span class="s2">&quot;draft_1&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 4.&quot;</span><span class="p">,</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>        <span class="s2">&quot;draft_2&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 5.&quot;</span><span class="p">,</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="p">},</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<h3 id="empty">Empty</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">d</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;Bob&quot;</span>
+<p>Use <code>select_best</code> or <code>aselect_best</code> when you have more than <code>2</code> candidates:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">tournament</span> <span class="o">=</span> <span class="n">verifier</span><span class="o">.</span><span class="n">select_best</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Pick the best final answer.&quot;</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>        <span class="s2">&quot;draft_1&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 4.&quot;</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="s2">&quot;draft_2&quot;</span><span class="p">:</span> <span class="s2">&quot;It is probably 4.&quot;</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="s2">&quot;draft_3&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 5.&quot;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="p">},</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<hr />
-<h2 id="2-reading-values">2. <strong>Reading Values</strong></h2>
-<h3 id="dot-access">Dot access</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+<h2 id="how-it-works">How It Works</h2>
+<p>The verifier does not ask the model for a vague overall judgment. It breaks the
+evaluation into smaller pieces and then aggregates them.</p>
+<h3 id="criteria"><code>criteria</code></h3>
+<p><code>criteria</code> are the grading rules.</p>
+<p>Examples:</p>
+<ul>
+<li><code>correctness</code></li>
+<li><code>completeness</code></li>
+<li><code>grounding</code></li>
+<li><code>error_signals</code></li>
+</ul>
+<p>Instead of asking only "is this good?", the verifier asks smaller questions
+such as:</p>
+<ul>
+<li>is it correct?</li>
+<li>is it complete?</li>
+<li>is it grounded in the evidence?</li>
+<li>are there unresolved errors?</li>
+</ul>
+<p>That makes the final result easier to control and easier to reuse across
+different tasks.</p>
+<h3 id="n_verifications"><code>n_verifications</code></h3>
+<p><code>n_verifications</code> controls how many times each criterion is evaluated.</p>
+<p>If you have:</p>
+<ul>
+<li><code>3</code> criteria</li>
+<li><code>n_verifications=2</code></li>
+</ul>
+<p>the verifier runs <code>6</code> evaluations in total, then averages the repeated attempts
+for each criterion.</p>
+<p>Use this to reduce noise:</p>
+<ul>
+<li><code>n_verifications=1</code> is the simplest setting</li>
+<li>larger values usually give a more stable signal</li>
+</ul>
+<h3 id="granularity"><code>granularity</code></h3>
+<p><code>granularity</code> controls how many levels exist in the score scale.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.verifiers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLMAsVerifier</span><span class="p">,</span> <span class="n">ScoreScale</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Clark&quot;</span><span class="p">}})</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># &quot;Clark&quot;</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">verifier</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">answer_reranking</span><span class="p">(</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">score_scale</span><span class="o">=</span><span class="n">ScoreScale</span><span class="o">.</span><span class="n">letter</span><span class="p">(</span><span class="n">granularity</span><span class="o">=</span><span class="mi">20</span><span class="p">),</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<h3 id="bracket-access">Bracket access</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Clark&quot;</span><span class="p">}})</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">])</span>  <span class="c1"># &quot;Clark&quot;</span>
+<p>With <code>granularity=20</code>, the scale is <code>A..T</code>:</p>
+<ul>
+<li><code>A</code> is best</li>
+<li><code>T</code> is worst</li>
+</ul>
+<p>The model does not return a floating-point score such as <code>0.83</code>. It returns a
+discrete score token from the configured scale:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>&lt;score&gt;A&lt;/score&gt;
 </span></code></pre></div>
-</details>
-<h3 id="nested-path-with-get">Nested path with <code>get()</code></h3>
-<p>Use <code>get(path, default=None)</code> to traverse nested keys via a dot-separated string:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;profile&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;city&quot;</span><span class="p">:</span> <span class="s2">&quot;Gotham&quot;</span><span class="p">}}})</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user.profile.city&quot;</span><span class="p">))</span>        <span class="c1"># &quot;Gotham&quot;</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user.profile.zip&quot;</span><span class="p">,</span> <span class="s2">&quot;N/A&quot;</span><span class="p">))</span>  <span class="c1"># &quot;N/A&quot; (key doesn&#39;t exist)</span>
+<p>In pairwise mode it returns one score token per candidate:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>&lt;score_A&gt;B&lt;/score_A&gt;
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>&lt;score_B&gt;H&lt;/score_B&gt;
 </span></code></pre></div>
-</details>
-<p><code>get()</code> never raises — it returns <code>default</code> when any key in the path is missing.</p>
-<hr />
-<h2 id="3-writing-values">3. <strong>Writing Values</strong></h2>
-<h3 id="dot-assignment">Dot assignment</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">d</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;Diana&quot;</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">d</span><span class="o">.</span><span class="n">score</span> <span class="o">=</span> <span class="mi">99</span>
+<p>Supported range:</p>
+<ul>
+<li><code>2..26</code></li>
+</ul>
+<p>The runtime keeps the scale letter-based because letter tokens are more stable
+for <code>logprobs</code> extraction than numeric labels such as <code>1..20</code>.</p>
+<h3 id="logprobs"><code>logprobs</code></h3>
+<p>This is the part that makes the technique more useful than just reading the
+final score token.</p>
+<p>The verifier asks the model for:</p>
+<ul>
+<li><code>logprobs=True</code></li>
+<li><code>top_logprobs=&lt;scale size or override&gt;</code></li>
+</ul>
+<p>So it can see not only the chosen score token, but also nearby alternatives.</p>
+<p>For example, even if the model emits:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>&lt;score&gt;A&lt;/score&gt;
 </span></code></pre></div>
-</details>
-<h3 id="bracket-assignment">Bracket assignment</h3>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">d</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;Diana&quot;</span>
+<p>the underlying distribution might be closer to:</p>
+<ul>
+<li><code>A</code>: <code>0.70</code></li>
+<li><code>B</code>: <code>0.20</code></li>
+<li><code>C</code>: <code>0.10</code></li>
+</ul>
+<p>The verifier uses that distribution to compute the final normalized score in
+<code>[0, 1]</code>, instead of trusting only the chosen token.</p>
+<h3 id="what-gets-returned">What Gets Returned</h3>
+<p>With one candidate, the verifier returns:</p>
+<ul>
+<li><code>pass</code></li>
+<li><code>fail</code></li>
+<li><code>uncertain</code></li>
+</ul>
+<p>With two candidates, it returns:</p>
+<ul>
+<li>the winning label</li>
+<li>or <code>tie</code></li>
+</ul>
+<p>With more than two candidates, <code>select_best(...)</code> runs pairwise comparisons and
+returns:</p>
+<ul>
+<li><code>winner</code></li>
+<li><code>ranking</code></li>
+<li><code>wins</code></li>
+<li><code>average_scores</code></li>
+</ul>
+<h2 id="verbose-debugging">Verbose Debugging</h2>
+<p>Set <code>verbose=True</code> when you want the verifier to return the final prompt and raw
+model output for each attempt.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">verifier</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="p">(</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">criteria</span><span class="o">=</span><span class="p">[</span><span class="n">criterion</span><span class="p">],</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="p">)</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;What is 2 + 2?&quot;</span><span class="p">,</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;The answer is 4.&quot;</span><span class="p">},</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="p">)</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;raw_outputs&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;prompt&quot;</span><span class="p">])</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;raw_outputs&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;response_text&quot;</span><span class="p">])</span>
 </span></code></pre></div>
-</details>
-<h3 id="nested-path-with-set">Nested path with <code>set()</code></h3>
-<p>Use <code>set(path, value)</code> to write deeply nested values. Intermediate keys are created automatically:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user.profile.city&quot;</span><span class="p">,</span> <span class="s2">&quot;Metropolis&quot;</span><span class="p">)</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user.profile.age&quot;</span><span class="p">,</span> <span class="mi">28</span><span class="p">)</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">profile</span><span class="o">.</span><span class="n">city</span><span class="p">)</span>  <span class="c1"># &quot;Metropolis&quot;</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">profile</span><span class="o">.</span><span class="n">age</span><span class="p">)</span>   <span class="c1"># 28</span>
+<p>The same data also remains available in <code>criteria_results[*].attempts[*]</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">attempt</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">criteria_results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">attempts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">attempt</span><span class="o">.</span><span class="n">prompt_text</span><span class="p">)</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nb">print</span><span class="p">(</span><span class="n">attempt</span><span class="o">.</span><span class="n">response_text</span><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<hr />
-<h2 id="4-nested-paths">4. <strong>Nested Paths</strong></h2>
-<p>Both <code>get()</code> and <code>set()</code> accept dot-separated strings to traverse any depth:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;a.b.c.d&quot;</span><span class="p">,</span> <span class="s2">&quot;deep value&quot;</span><span class="p">)</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;a.b.c.d&quot;</span><span class="p">))</span>  <span class="c1"># &quot;deep value&quot;</span>
+<h2 id="custom-prompting">Custom Prompting</h2>
+<p>You can replace the default prompt with <code>prompt_builder</code>. The builder receives a
+<code>VerificationPromptInput</code> containing the task, candidates, criterion,
+score scale, context, and optional verifier instructions.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.verifiers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">LLMAsVerifier</span><span class="p">,</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">VerificationCriterion</span><span class="p">,</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">VerificationPromptInput</span><span class="p">,</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="p">)</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_prompt</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="n">VerificationPromptInput</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">label</span><span class="p">,</span> <span class="n">candidate</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">candidates</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="k">return</span> <span class="p">(</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>        <span class="s2">&quot;Evaluate the answer.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>        <span class="sa">f</span><span class="s2">&quot;Task:</span><span class="se">\n</span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>        <span class="sa">f</span><span class="s2">&quot;Criterion:</span><span class="se">\n</span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">criterion</span><span class="o">.</span><span class="n">description</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>        <span class="sa">f</span><span class="s2">&quot;Candidate (</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">):</span><span class="se">\n</span><span class="si">{</span><span class="n">candidate</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>        <span class="sa">f</span><span class="s2">&quot;&lt;score&gt;</span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">score_scale</span><span class="o">.</span><span class="n">score_format</span><span class="si">}</span><span class="s2">&lt;/score&gt;&quot;</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    <span class="p">)</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>
+</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>
+</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="n">verifier</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="p">(</span>
+</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>    <span class="n">criteria</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>        <span class="n">VerificationCriterion</span><span class="p">(</span>
+</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>            <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;faithfulness&quot;</span><span class="p">,</span>
+</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Faithfulness&quot;</span><span class="p">,</span>
+</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a>            <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Check whether the answer is grounded in the context.&quot;</span><span class="p">,</span>
+</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>        <span class="p">)</span>
+</span><span id="__span-11-27"><a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a>    <span class="p">],</span>
+</span><span id="__span-11-28"><a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a>    <span class="n">prompt_builder</span><span class="o">=</span><span class="n">build_prompt</span><span class="p">,</span>
+</span><span id="__span-11-29"><a id="__codelineno-11-29" name="__codelineno-11-29" href="#__codelineno-11-29"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<h3 id="list-index-access">List index access</h3>
-<p>Use integer segments in the path to index into lists:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+<h2 id="built-in-presets">Built-In Presets</h2>
+<p>Use a preset when you want a good default set of criteria without defining it
+by hand.</p>
+<p>Each preset still returns a normal <code>LLMAsVerifier</code>, so you can override
+<code>criteria</code>, <code>ground_truth_note</code>, <code>extra_instructions</code>, <code>n_verifications</code>, and
+the model request kwargs.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.verifiers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLMAsVerifier</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;items&quot;</span><span class="p">,</span> <span class="p">[{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alpha&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Beta&quot;</span><span class="p">}])</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;items.0.name&quot;</span><span class="p">))</span>  <span class="c1"># &quot;Alpha&quot;</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;items.1.name&quot;</span><span class="p">))</span>  <span class="c1"># &quot;Beta&quot;</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">trajectory</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">trajectory_analysis</span><span class="p">(</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="p">)</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="n">reranker</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">answer_reranking</span><span class="p">(</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="p">)</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">grounded</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">grounded_answer_verification</span><span class="p">(</span>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="p">)</span>
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="n">patches</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">patch_selection</span><span class="p">(</span>
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="p">)</span>
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>
+</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a><span class="n">tools</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">tool_trace_verification</span><span class="p">(</span>
+</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a><span class="p">)</span>
+</span><span id="__span-12-22"><a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>
+</span><span id="__span-12-23"><a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a><span class="n">filtering</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">synthetic_data_filtering</span><span class="p">(</span>
+</span><span id="__span-12-24"><a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-25"><a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a><span class="p">)</span>
+</span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>
+</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a><span class="n">terminal</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">terminal_bench</span><span class="p">(</span>
+</span><span id="__span-12-28"><a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a><span class="p">)</span>
+</span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>
+</span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a><span class="n">swe</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">swe_bench_verified</span><span class="p">(</span>
+</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-12-33"><a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<p><code>set()</code> also supports writing into existing list positions:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;items&quot;</span><span class="p">,</span> <span class="p">[{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alpha&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Beta&quot;</span><span class="p">}])</span>
+<h3 id="trajectory_analysis"><code>trajectory_analysis</code></h3>
+<p>Use this for agent runs and reasoning trajectories.</p>
+<ul>
+<li>checks whether the task was actually completed</li>
+<li>checks whether verification was meaningful</li>
+<li>checks unresolved error signals</li>
+</ul>
+<h3 id="answer_reranking"><code>answer_reranking</code></h3>
+<p>Use this when you have multiple final drafts of the same task.</p>
+<ul>
+<li>correctness</li>
+<li>instruction following</li>
+<li>completeness</li>
+<li>clarity</li>
+</ul>
+<h3 id="grounded_answer_verification"><code>grounded_answer_verification</code></h3>
+<p>Use this for RAG and other context-grounded tasks.</p>
+<ul>
+<li>grounding in context</li>
+<li>unsupported claims</li>
+<li>answer completeness</li>
+</ul>
+<h3 id="patch_selection"><code>patch_selection</code></h3>
+<p>Use this for comparing candidate patches or code changes.</p>
+<ul>
+<li>requirement coverage</li>
+<li>correctness risk</li>
+<li>regression risk</li>
+<li>minimality</li>
+</ul>
+<h3 id="tool_trace_verification"><code>tool_trace_verification</code></h3>
+<p>Use this for tool-using agents when you want to compare the final answer
+against the trace and tool outputs.</p>
+<ul>
+<li>tool grounding</li>
+<li>unresolved errors</li>
+<li>final answer quality</li>
+<li>action efficiency</li>
+</ul>
+<h3 id="synthetic_data_filtering"><code>synthetic_data_filtering</code></h3>
+<p>Use this for generated examples before adding them to datasets, evals, or
+distillation corpora.</p>
+<ul>
+<li>consistency</li>
+<li>label quality</li>
+<li>ambiguity</li>
+<li>usefulness</li>
+</ul>
+<h3 id="terminal_bench"><code>terminal_bench</code></h3>
+<p>Use this for terminal-task trajectory selection in the style of Terminal-Bench.</p>
+<ul>
+<li>specification adherence</li>
+<li>output match</li>
+<li>unresolved error signals</li>
+<li>terminal output treated as primary ground truth</li>
+</ul>
+<h3 id="swe_bench_verified"><code>swe_bench_verified</code></h3>
+<p>Use this for patch and trajectory evaluation in the style of SWE-bench
+Verified.</p>
+<ul>
+<li>root-cause analysis</li>
+<li>code review quality</li>
+<li>empirical verification from executed commands</li>
+<li>narration treated as weaker evidence than the actual patch and outputs</li>
+</ul>
+<h2 id="trajectory-formatting-helpers">Trajectory Formatting Helpers</h2>
+<p>For benchmark-style presets, pass the full trajectory as the candidate
+evidence, not only the final answer. Two helpers are available:</p>
+<ul>
+<li><code>format_terminal_trajectory(...)</code></li>
+<li><code>format_swe_bench_trajectory(...)</code></li>
+</ul>
+<p>Keep the task or issue description in <code>task</code>. Use the helpers to build each
+candidate string from commands, outputs, patch text, and final answer.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.verifiers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">LLMAsVerifier</span><span class="p">,</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">format_terminal_trajectory</span><span class="p">,</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="p">)</span>
 </span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;items.0.name&quot;</span><span class="p">,</span> <span class="s2">&quot;Updated&quot;</span><span class="p">)</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;items.0.name&quot;</span><span class="p">))</span>  <span class="c1"># &quot;Updated&quot;</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">candidate</span> <span class="o">=</span> <span class="n">format_terminal_trajectory</span><span class="p">(</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    <span class="n">summary</span><span class="o">=</span><span class="s2">&quot;Installed the binary and verified the version output.&quot;</span><span class="p">,</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;expected_output&quot;</span><span class="p">:</span> <span class="s2">&quot;tool 1.2.0&quot;</span><span class="p">},</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>    <span class="n">steps</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>        <span class="p">{</span>
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>            <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;cp ./tool /usr/local/bin/tool&quot;</span><span class="p">,</span>
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>            <span class="s2">&quot;exit_code&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>        <span class="p">},</span>
+</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>        <span class="p">{</span>
+</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>            <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;tool --version&quot;</span><span class="p">,</span>
+</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>            <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;tool 1.2.0&quot;</span><span class="p">,</span>
+</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>            <span class="s2">&quot;exit_code&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>        <span class="p">},</span>
+</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>    <span class="p">],</span>
+</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>    <span class="n">final_answer</span><span class="o">=</span><span class="s2">&quot;Installation complete.&quot;</span><span class="p">,</span>
+</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a><span class="p">)</span>
+</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>
+</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a><span class="n">verifier</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">terminal_bench</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="n">result</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Install the binary to /usr/local/bin/tool and verify `tool --version`.&quot;</span><span class="p">,</span>
+</span><span id="__span-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;run_a&quot;</span><span class="p">:</span> <span class="n">candidate</span><span class="p">},</span>
+</span><span id="__span-13-27"><a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<hr />
-<h2 id="5-auto-wrapping">5. <strong>Auto-wrapping</strong></h2>
-<p>Any <code>dict</code> assigned to a <code>dotdict</code> — whether at creation, via <code>set()</code>, or via attribute assignment — is automatically converted to a <code>dotdict</code>, so dot access always works:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">d</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;debug&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="mi">30</span><span class="p">}</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.generation.verifiers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">LLMAsVerifier</span><span class="p">,</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">format_swe_bench_trajectory</span><span class="p">,</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="p">)</span>
 </span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
-</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">debug</span><span class="p">)</span>    <span class="c1"># True</span>
-</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">timeout</span><span class="p">)</span>  <span class="c1"># 30</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="n">candidate</span> <span class="o">=</span> <span class="n">format_swe_bench_trajectory</span><span class="p">(</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">summary</span><span class="o">=</span><span class="s2">&quot;Reproduced the bug, patched the parser, and reran the focused test.&quot;</span><span class="p">,</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="n">steps</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>        <span class="p">{</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>            <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;pytest tests/test_parser.py -q&quot;</span><span class="p">,</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>            <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;1 failed, 4 passed&quot;</span><span class="p">,</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>            <span class="s2">&quot;exit_code&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>        <span class="p">},</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>        <span class="p">{</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>            <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;pytest tests/test_parser.py -q&quot;</span><span class="p">,</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>            <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;5 passed&quot;</span><span class="p">,</span>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>            <span class="s2">&quot;exit_code&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>        <span class="p">},</span>
+</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a>    <span class="p">],</span>
+</span><span id="__span-14-20"><a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a>    <span class="n">patch</span><span class="o">=</span><span class="n">patch_text</span><span class="p">,</span>
+</span><span id="__span-14-21"><a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a>    <span class="n">final_answer</span><span class="o">=</span><span class="s2">&quot;Patched parser and verified the focused test.&quot;</span><span class="p">,</span>
+</span><span id="__span-14-22"><a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a><span class="p">)</span>
+</span><span id="__span-14-23"><a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a>
+</span><span id="__span-14-24"><a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="n">verifier</span> <span class="o">=</span> <span class="n">LLMAsVerifier</span><span class="o">.</span><span class="n">swe_bench_verified</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-14-25"><a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="n">result</span> <span class="o">=</span> <span class="n">verifier</span><span class="p">(</span>
+</span><span id="__span-14-26"><a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a>    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Fix the parser bug described in the issue.&quot;</span><span class="p">,</span>
+</span><span id="__span-14-27"><a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a>    <span class="n">candidates</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;candidate_patch&quot;</span><span class="p">:</span> <span class="n">candidate</span><span class="p">},</span>
+</span><span id="__span-14-28"><a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="p">)</span>
 </span></code></pre></div>
-</details>
-<p>Lists of dicts are also wrapped recursively:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">d</span><span class="o">.</span><span class="n">users</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;A&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;B&quot;</span><span class="p">}]</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">users</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># &quot;A&quot;</span>
-</span></code></pre></div>
-</details>
-<hr />
-<h2 id="6-update">6. <strong><code>update()</code></strong></h2>
-<p><code>update()</code> extends <code>dict.update</code> with two extras:</p>
-<p><strong>1. Dotted keys are written as nested paths:</strong></p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">d</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;user.name&quot;</span><span class="p">:</span> <span class="s2">&quot;Bruce&quot;</span><span class="p">,</span> <span class="s2">&quot;user.age&quot;</span><span class="p">:</span> <span class="mi">35</span><span class="p">})</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># &quot;Bruce&quot;</span>
-</span></code></pre></div>
-</details>
-<p><strong>2. Dict values are merged recursively when the key already holds a <code>dotdict</code>:</strong></p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;debug&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="mi">30</span><span class="p">}})</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">d</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;config&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;debug&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}})</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">debug</span><span class="p">)</span>    <span class="c1"># True   (updated)</span>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">timeout</span><span class="p">)</span>  <span class="c1"># 30     (preserved)</span>
-</span></code></pre></div>
-</details>
-<p>Standard positional argument and keyword argument forms are both supported:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">()</span>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">d</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">})</span>
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">d</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="s2">&quot;other&quot;</span><span class="p">)</span>
-</span></code></pre></div>
-</details>
-<hr />
-<h2 id="7-serialization">7. <strong>Serialization</strong></h2>
-<h3 id="to_dict"><code>to_dict()</code></h3>
-<p>Converts the <code>dotdict</code> (and all nested <code>dotdict</code> values) back to a plain Python <code>dict</code>:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Lois&quot;</span><span class="p">}})</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">plain</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">plain</span><span class="p">))</span>           <span class="c1"># &lt;class &#39;dict&#39;&gt;</span>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">plain</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">]))</span>   <span class="c1"># &lt;class &#39;dict&#39;&gt;</span>
-</span></code></pre></div>
-</details>
-<h3 id="to_json"><code>to_json()</code></h3>
-<p>Returns a JSON-encoded <code>bytes</code> object, powered by <code>msgspec</code>:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;score&quot;</span><span class="p">:</span> <span class="mi">42</span><span class="p">})</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>  <span class="c1"># b&#39;{&quot;score&quot;:42}&#39;</span>
-</span></code></pre></div>
-</details>
-<hr />
-<h2 id="8-immutability">8. <strong>Immutability</strong></h2>
-<p>Pass <code>frozen=True</code> to create a read-only <code>dotdict</code>. Any attempt to write raises <code>AttributeError</code>:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">},</span> <span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>
-</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="n">d</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="s2">&quot;new&quot;</span>        <span class="c1"># raises AttributeError: Cannot modify frozen dotdict</span>
-</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="n">d</span><span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;new&quot;</span>     <span class="c1"># raises AttributeError</span>
-</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="n">d</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;new&quot;</span><span class="p">)</span>  <span class="c1"># raises AttributeError</span>
-</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="k">del</span> <span class="n">d</span><span class="o">.</span><span class="n">key</span>            <span class="c1"># raises AttributeError</span>
-</span></code></pre></div>
-</details>
-<p>Nested dicts inherit the <code>frozen</code> flag automatically:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Bruce&quot;</span><span class="p">}},</span> <span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>
-</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="n">d</span><span class="o">.</span><span class="n">user</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;Clark&quot;</span>  <span class="c1"># raises AttributeError</span>
-</span></code></pre></div>
-</details>
-<hr />
-<h2 id="9-hidden-keys">9. <strong>Hidden Keys</strong></h2>
-<p><code>hidden_keys</code> marks keys as invisible to enumeration and discovery. They won't appear in iteration, serialization, or string representations — but can always be accessed directly if you know they exist.</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="n">d</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">(</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>    <span class="p">{</span><span class="s2">&quot;api_key&quot;</span><span class="p">:</span> <span class="s2">&quot;sk-secret&quot;</span><span class="p">,</span> <span class="s2">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;john&quot;</span><span class="p">},</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>    <span class="n">hidden_keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;api_key&quot;</span><span class="p">]</span>
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="p">)</span>
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="c1"># Enumeration — api_key is invisible</span>
-</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;api_key&quot;</span> <span class="ow">in</span> <span class="n">d</span><span class="p">)</span>      <span class="c1"># False</span>
-</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="nb">print</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span>      <span class="c1"># [&quot;username&quot;]</span>
-</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="nb">print</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>    <span class="c1"># [&quot;john&quot;]</span>
-</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="nb">print</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span>     <span class="c1"># [(&quot;username&quot;, &quot;john&quot;)]</span>
-</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">d</span><span class="p">:</span>
-</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>               <span class="c1"># &quot;username&quot;</span>
-</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">to_dict</span><span class="p">())</span>         <span class="c1"># {&quot;username&quot;: &quot;john&quot;}</span>
-</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>         <span class="c1"># b&#39;{&quot;username&quot;:&quot;john&quot;}&#39;</span>
-</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>                   <span class="c1"># {&#39;username&#39;: &#39;john&#39;}</span>
-</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a>
-</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="c1"># Direct access — api_key is reachable</span>
-</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">api_key</span><span class="p">)</span>              <span class="c1"># &quot;sk-secret&quot;</span>
-</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;api_key&quot;</span><span class="p">])</span>           <span class="c1"># &quot;sk-secret&quot;</span>
-</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;api_key&quot;</span><span class="p">))</span>       <span class="c1"># &quot;sk-secret&quot;</span>
-</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;api_key&quot;</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">))</span>  <span class="c1"># &quot;sk-secret&quot;</span>
-</span></code></pre></div>
-</details>
-<hr />
-<h2 id="10-extending-dotdict">10. <strong>Extending dotdict</strong></h2>
-<p><code>dotdict</code> is designed to be subclassed. You can add default fields, metadata, or custom behavior by overriding <code>__init__</code>:</p>
-<details class="example" open="open">
-<summary>Example</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
-</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
-</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Config</span><span class="p">(</span><span class="n">mf</span><span class="o">.</span><span class="n">dotdict</span><span class="p">):</span>
-</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="s2">&quot;production&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">env</span> <span class="o">=</span> <span class="n">env</span>
-</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">debug</span> <span class="o">=</span> <span class="n">env</span> <span class="o">!=</span> <span class="s2">&quot;production&quot;</span>
-</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>
-</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
-</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="n">cfg</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span><span class="n">env</span><span class="o">=</span><span class="s2">&quot;development&quot;</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
-</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>
-</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="nb">print</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">env</span><span class="p">)</span>      <span class="c1"># &quot;development&quot;</span>
-</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="nb">print</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">debug</span><span class="p">)</span>    <span class="c1"># True</span>
-</span><span id="__span-24-15"><a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="nb">print</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">timeout</span><span class="p">)</span>  <span class="c1"># 30</span>
-</span></code></pre></div>
-</details>
-<p><a href="../nn/message/"><code>Message</code></a> follows this exact pattern — it extends <code>dotdict</code> with default AI workflow fields (<code>content</code>, <code>images</code>, <code>context</code>, etc.) and metadata (<code>user_id</code>, <code>chat_id</code>, <code>execution_id</code>).</p>
+<h2 id="best-use-cases">Best Use Cases</h2>
+<p>This technique is most useful when you need to compare, rank, or filter
+candidates and the task does not already have a deterministic validator.</p>
+<h3 id="trajectory-selection">Trajectory Selection</h3>
+<p>This is the most natural fit.</p>
+<ul>
+<li>compare alternative reasoning trajectories</li>
+<li>compare multiple agent runs for the same task</li>
+<li>select the strongest final trajectory before returning it</li>
+</ul>
+<h3 id="candidate-reranking">Candidate Reranking</h3>
+<p>Use it to rerank multiple drafts of the same task.</p>
+<ul>
+<li>final answers</li>
+<li>summaries</li>
+<li>plans</li>
+<li>retrieval-grounded responses</li>
+</ul>
+<h3 id="patch-selection">Patch Selection</h3>
+<p>It works well for code generation when you want to compare multiple candidate
+patches before running deeper validation.</p>
+<ul>
+<li>choose the patch that best satisfies the task</li>
+<li>prefer the patch that looks more correct or complete</li>
+<li>filter obviously weak candidates before tests or deeper validation</li>
+</ul>
+<h3 id="tool-using-agent-verification">Tool-Using Agent Verification</h3>
+<p>Use it to check whether a final answer is consistent with tool results and the
+execution trace.</p>
+<ul>
+<li>verify completion quality</li>
+<li>verify grounding in tool outputs</li>
+<li>detect unresolved errors hidden by a confident final answer</li>
+</ul>
+<h3 id="synthetic-data-filtering">Synthetic Data Filtering</h3>
+<p>Use it to filter generated examples before storing them in datasets, evals, or
+distillation corpora.</p>
+<ul>
+<li>reject inconsistent examples</li>
+<li>reject weak labels</li>
+<li>keep only high-confidence candidates</li>
+</ul>
+<h3 id="optimizer-feedback">Optimizer Feedback</h3>
+<p>Use it as a reusable feedback signal for future optimizer integrations.</p>
+<ul>
+<li>provide a reusable reward signal</li>
+<li>score prompt variants</li>
+<li>compare sampled candidates during search or optimization</li>
+</ul>
+<h2 id="when-not-to-use">When Not to Use</h2>
+<p>Prefer deterministic validation when the task already has a deterministic check.</p>
+<ul>
+<li>exact-match tasks</li>
+<li>schema validation</li>
+<li>unit tests</li>
+<li>regex-based extraction checks</li>
+<li>simple business rules</li>
+</ul>
 
 
 
@@ -6225,7 +6707,7 @@ Nested dicts inherit the `frozen` flag automatically:
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../parsers/" class="md-footer__link md-footer__link--prev" aria-label="Previous: ⎙ Parsers">
+          <a href="../inline/" class="md-footer__link md-footer__link--prev" aria-label="Previous: ⊕ Inline">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -6235,20 +6717,20 @@ Nested dicts inherit the `frozen` flag automatically:
                 Previous
               </span>
               <div class="md-ellipsis">
-                ⎙ Parsers
+                ⊕ Inline
               </div>
             </div>
           </a>
         
         
           
-          <a href="../inline/" class="md-footer__link md-footer__link--next" aria-label="Next: ⊕ Inline">
+          <a href="../nn/module/" class="md-footer__link md-footer__link--next" aria-label="Next: nn.Module">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                ⊕ Inline
+                nn.Module
               </div>
             </div>
             <div class="md-footer__button md-icon">

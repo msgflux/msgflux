@@ -12,27 +12,31 @@
         <meta name="author" content="Vilson Rodrigues">
       
       
-        <link rel="canonical" href="https://msgflux.com/api-reference/">
+        <link rel="canonical" href="https://msgflux.com/anatomy/llm-as-a-verifier/">
       
       
+        <link rel="prev" href="../react-provider-schemas/">
+      
+      
+        <link rel="next" href="../../tutorials/">
       
       
         
       
       
-      <link rel="icon" href="../assets/logo.png">
+      <link rel="icon" href="../../assets/logo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Api reference - msgFlux</title>
+        <title>LLM-as-a-Verifier - msgFlux</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,15 +55,15 @@
       
     
     
-      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&display=swap">
     
       <link rel="stylesheet" href="https://unpkg.com/mermaid@8.5.1/dist/mermaid.css">
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -83,6 +87,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#llm-as-a-verifier" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -93,9 +102,9 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="msgFlux" class="md-header__button md-logo" aria-label="msgFlux" data-md-component="logo">
+    <a href="../.." title="msgFlux" class="md-header__button md-logo" aria-label="msgFlux" data-md-component="logo">
       
-  <img src="../assets/logo.png" alt="logo">
+  <img src="../../assets/logo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -112,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Api reference
+              LLM-as-a-Verifier
             
           </span>
         </div>
@@ -232,7 +241,7 @@
     
     
       <li class="md-tabs__item">
-        <a href=".." class="md-tabs__link">
+        <a href="../.." class="md-tabs__link">
           
   
   
@@ -261,7 +270,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../learn/models/model/" class="md-tabs__link">
+        <a href="../../learn/models/model/" class="md-tabs__link">
           
   
   
@@ -282,11 +291,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../anatomy/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -308,7 +319,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../tutorials/" class="md-tabs__link">
+        <a href="../../tutorials/" class="md-tabs__link">
           
   
   
@@ -328,7 +339,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../dependency-management/" class="md-tabs__link">
+      <a href="../../dependency-management/" class="md-tabs__link">
         
   
   
@@ -347,7 +358,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../CHANGELOG/" class="md-tabs__link">
+      <a href="../../CHANGELOG/" class="md-tabs__link">
         
   
   
@@ -368,7 +379,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../blog/" class="md-tabs__link">
+        <a href="../../blog/" class="md-tabs__link">
           
   
   
@@ -404,9 +415,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="msgFlux" class="md-nav__button md-logo" aria-label="msgFlux" data-md-component="logo">
+    <a href="../.." title="msgFlux" class="md-nav__button md-logo" aria-label="msgFlux" data-md-component="logo">
       
-  <img src="../assets/logo.png" alt="logo">
+  <img src="../../assets/logo.png" alt="logo">
 
     </a>
     msgFlux
@@ -454,7 +465,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href=".." class="md-nav__link ">
+            <a href="../.." class="md-nav__link ">
               
   
   
@@ -644,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/model/" class="md-nav__link">
+      <a href="../../learn/models/model/" class="md-nav__link">
         
   
   
@@ -672,7 +683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/model_gateway/" class="md-nav__link">
+      <a href="../../learn/models/model_gateway/" class="md-nav__link">
         
   
   
@@ -700,7 +711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/chat_completion/" class="md-nav__link">
+      <a href="../../learn/models/chat_completion/" class="md-nav__link">
         
   
   
@@ -728,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/moderation/" class="md-nav__link">
+      <a href="../../learn/models/moderation/" class="md-nav__link">
         
   
   
@@ -756,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_embedder/" class="md-nav__link">
+      <a href="../../learn/models/text_embedder/" class="md-nav__link">
         
   
   
@@ -784,7 +795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_to_speech/" class="md-nav__link">
+      <a href="../../learn/models/text_to_speech/" class="md-nav__link">
         
   
   
@@ -812,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/speech_to_text/" class="md-nav__link">
+      <a href="../../learn/models/speech_to_text/" class="md-nav__link">
         
   
   
@@ -840,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_to_image/" class="md-nav__link">
+      <a href="../../learn/models/text_to_image/" class="md-nav__link">
         
   
   
@@ -868,7 +879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/image_text_to_image/" class="md-nav__link">
+      <a href="../../learn/models/image_text_to_image/" class="md-nav__link">
         
   
   
@@ -896,7 +907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_classifier/" class="md-nav__link">
+      <a href="../../learn/models/text_classifier/" class="md-nav__link">
         
   
   
@@ -924,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_reranker/" class="md-nav__link">
+      <a href="../../learn/models/text_reranker/" class="md-nav__link">
         
   
   
@@ -1020,7 +1031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/retriever/" class="md-nav__link">
+      <a href="../../learn/retrievers/retriever/" class="md-nav__link">
         
   
   
@@ -1048,7 +1059,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/lexical/" class="md-nav__link">
+      <a href="../../learn/retrievers/lexical/" class="md-nav__link">
         
   
   
@@ -1076,7 +1087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/fuzzy/" class="md-nav__link">
+      <a href="../../learn/retrievers/fuzzy/" class="md-nav__link">
         
   
   
@@ -1104,7 +1115,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/web/" class="md-nav__link">
+      <a href="../../learn/retrievers/web/" class="md-nav__link">
         
   
   
@@ -1140,7 +1151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/parsers/" class="md-nav__link">
+      <a href="../../learn/parsers/" class="md-nav__link">
         
   
   
@@ -1168,7 +1179,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/dotdict/" class="md-nav__link">
+      <a href="../../learn/dotdict/" class="md-nav__link">
         
   
   
@@ -1196,7 +1207,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/inline/" class="md-nav__link">
+      <a href="../../learn/inline/" class="md-nav__link">
         
   
   
@@ -1224,7 +1235,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/verifiers/" class="md-nav__link">
+      <a href="../../learn/verifiers/" class="md-nav__link">
         
   
   
@@ -1357,7 +1368,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../learn/nn/module/" class="md-nav__link ">
+            <a href="../../learn/nn/module/" class="md-nav__link ">
               
   
   
@@ -1401,7 +1412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/core-concepts/" class="md-nav__link">
+      <a href="../../learn/nn/module/core-concepts/" class="md-nav__link">
         
   
   
@@ -1429,7 +1440,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/forward-and-async/" class="md-nav__link">
+      <a href="../../learn/nn/module/forward-and-async/" class="md-nav__link">
         
   
   
@@ -1457,7 +1468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/composing/" class="md-nav__link">
+      <a href="../../learn/nn/module/composing/" class="md-nav__link">
         
   
   
@@ -1485,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/module-dict/" class="md-nav__link">
+      <a href="../../learn/nn/module/module-dict/" class="md-nav__link">
         
   
   
@@ -1513,7 +1524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/module-list/" class="md-nav__link">
+      <a href="../../learn/nn/module/module-list/" class="md-nav__link">
         
   
   
@@ -1541,7 +1552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/sequential/" class="md-nav__link">
+      <a href="../../learn/nn/module/sequential/" class="md-nav__link">
         
   
   
@@ -1569,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/visualization/" class="md-nav__link">
+      <a href="../../learn/nn/module/visualization/" class="md-nav__link">
         
   
   
@@ -1605,7 +1616,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/message/" class="md-nav__link">
+      <a href="../../learn/nn/message/" class="md-nav__link">
         
   
   
@@ -1682,7 +1693,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../learn/nn/agent/" class="md-nav__link ">
+            <a href="../../learn/nn/agent/" class="md-nav__link ">
               
   
   
@@ -1726,7 +1737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/quickstart/" class="md-nav__link">
+      <a href="../../learn/nn/agent/quickstart/" class="md-nav__link">
         
   
   
@@ -1754,7 +1765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/async/" class="md-nav__link">
+      <a href="../../learn/nn/agent/async/" class="md-nav__link">
         
   
   
@@ -1782,7 +1793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/streaming/" class="md-nav__link">
+      <a href="../../learn/nn/agent/streaming/" class="md-nav__link">
         
   
   
@@ -1810,7 +1821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/reasoning/" class="md-nav__link">
+      <a href="../../learn/nn/agent/reasoning/" class="md-nav__link">
         
   
   
@@ -1838,7 +1849,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/debug/" class="md-nav__link">
+      <a href="../../learn/nn/agent/debug/" class="md-nav__link">
         
   
   
@@ -1866,7 +1877,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/system-prompt/" class="md-nav__link">
+      <a href="../../learn/nn/agent/system-prompt/" class="md-nav__link">
         
   
   
@@ -1894,7 +1905,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/generation-schemas/" class="md-nav__link">
+      <a href="../../learn/nn/agent/generation-schemas/" class="md-nav__link">
         
   
   
@@ -1922,7 +1933,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/task-and-context/" class="md-nav__link">
+      <a href="../../learn/nn/agent/task-and-context/" class="md-nav__link">
         
   
   
@@ -1950,7 +1961,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/vars/" class="md-nav__link">
+      <a href="../../learn/nn/agent/vars/" class="md-nav__link">
         
   
   
@@ -1978,7 +1989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/tools/" class="md-nav__link">
+      <a href="../../learn/nn/agent/tools/" class="md-nav__link">
         
   
   
@@ -2006,7 +2017,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/signatures/" class="md-nav__link">
+      <a href="../../learn/nn/agent/signatures/" class="md-nav__link">
         
   
   
@@ -2034,7 +2045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/hooks/" class="md-nav__link">
+      <a href="../../learn/nn/agent/hooks/" class="md-nav__link">
         
   
   
@@ -2062,7 +2073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/model-gateway/" class="md-nav__link">
+      <a href="../../learn/nn/agent/model-gateway/" class="md-nav__link">
         
   
   
@@ -2090,7 +2101,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/prefilling/" class="md-nav__link">
+      <a href="../../learn/nn/agent/prefilling/" class="md-nav__link">
         
   
   
@@ -2126,7 +2137,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/functional/" class="md-nav__link">
+      <a href="../../learn/nn/functional/" class="md-nav__link">
         
   
   
@@ -2154,7 +2165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/transcriber/" class="md-nav__link">
+      <a href="../../learn/nn/transcriber/" class="md-nav__link">
         
   
   
@@ -2182,7 +2193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/searcher/" class="md-nav__link">
+      <a href="../../learn/nn/searcher/" class="md-nav__link">
         
   
   
@@ -2210,7 +2221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/speaker/" class="md-nav__link">
+      <a href="../../learn/nn/speaker/" class="md-nav__link">
         
   
   
@@ -2238,7 +2249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/mediamaker/" class="md-nav__link">
+      <a href="../../learn/nn/mediamaker/" class="md-nav__link">
         
   
   
@@ -2266,7 +2277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/predictor/" class="md-nav__link">
+      <a href="../../learn/nn/predictor/" class="md-nav__link">
         
   
   
@@ -2302,7 +2313,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/telemetry/" class="md-nav__link">
+      <a href="../../learn/telemetry/" class="md-nav__link">
         
   
   
@@ -2446,7 +2457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="models/model/" class="md-nav__link">
+      <a href="../../api-reference/models/model/" class="md-nav__link">
         
   
   
@@ -2474,7 +2485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="models/model_gateway/" class="md-nav__link">
+      <a href="../../api-reference/models/model_gateway/" class="md-nav__link">
         
   
   
@@ -2556,7 +2567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="models/types/chat_completion/" class="md-nav__link">
+      <a href="../../api-reference/models/types/chat_completion/" class="md-nav__link">
         
   
   
@@ -2656,7 +2667,7 @@
   
   
     <li class="md-nav__item">
-      <a href="databases/database/" class="md-nav__link">
+      <a href="../../api-reference/databases/database/" class="md-nav__link">
         
   
   
@@ -2740,7 +2751,7 @@
   
   
     <li class="md-nav__item">
-      <a href="databases/types/kv/" class="md-nav__link">
+      <a href="../../api-reference/databases/types/kv/" class="md-nav__link">
         
   
   
@@ -2768,7 +2779,7 @@
   
   
     <li class="md-nav__item">
-      <a href="databases/types/vector/" class="md-nav__link">
+      <a href="../../api-reference/databases/types/vector/" class="md-nav__link">
         
   
   
@@ -2868,7 +2879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="nn/functional/" class="md-nav__link">
+      <a href="../../api-reference/nn/functional/" class="md-nav__link">
         
   
   
@@ -2896,7 +2907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="nn/modules/agent/" class="md-nav__link">
+      <a href="../../api-reference/nn/modules/agent/" class="md-nav__link">
         
   
   
@@ -2944,6 +2955,8 @@
       
   
   
+    
+  
   
   
     
@@ -2979,18 +2992,21 @@
     
     
       
+        
+        
+      
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../anatomy/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -3008,13 +3024,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3034,7 +3050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/agent/" class="md-nav__link">
+      <a href="../agent/" class="md-nav__link">
         
   
   
@@ -3062,7 +3078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/signatures/" class="md-nav__link">
+      <a href="../signatures/" class="md-nav__link">
         
   
   
@@ -3090,7 +3106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/tool-library/" class="md-nav__link">
+      <a href="../tool-library/" class="md-nav__link">
         
   
   
@@ -3118,7 +3134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/openai-chat-completion/" class="md-nav__link">
+      <a href="../openai-chat-completion/" class="md-nav__link">
         
   
   
@@ -3146,7 +3162,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/chat-schema-utils/" class="md-nav__link">
+      <a href="../chat-schema-utils/" class="md-nav__link">
         
   
   
@@ -3174,7 +3190,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/msgspec-transport-lowering/" class="md-nav__link">
+      <a href="../msgspec-transport-lowering/" class="md-nav__link">
         
   
   
@@ -3202,7 +3218,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/tool-flow-control/" class="md-nav__link">
+      <a href="../tool-flow-control/" class="md-nav__link">
         
   
   
@@ -3230,7 +3246,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/logical-vs-provider-schema/" class="md-nav__link">
+      <a href="../logical-vs-provider-schema/" class="md-nav__link">
         
   
   
@@ -3258,7 +3274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/dict-lowering-and-restoration/" class="md-nav__link">
+      <a href="../dict-lowering-and-restoration/" class="md-nav__link">
         
   
   
@@ -3286,7 +3302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../anatomy/react-provider-schemas/" class="md-nav__link">
+      <a href="../react-provider-schemas/" class="md-nav__link">
         
   
   
@@ -3311,10 +3327,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../anatomy/llm-as-a-verifier/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM-as-a-Verifier
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3330,6 +3373,197 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#mental-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mental Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-output-is-a-score-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why The Output Is A Score Token
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-construction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt Construction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trajectory-formatting-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trajectory Formatting Helpers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-batching-and-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Batching And Concurrency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-select_best-is-separate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why select_best(...) Is Separate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scoring-from-logprobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoring From Logprobs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-parser-has-heuristics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why The Parser Has Heuristics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aggregation-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggregation Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Aggregation Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#attempt-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attempt Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#criterion-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Criterion Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verdict-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verdict Semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verbose-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verbose Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Presets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-design-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main Design Choices
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3382,7 +3616,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../tutorials/" class="md-nav__link ">
+            <a href="../../tutorials/" class="md-nav__link ">
               
   
   
@@ -3484,7 +3718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/pix-assistant/" class="md-nav__link">
+      <a href="../../tutorials/pix-assistant/" class="md-nav__link">
         
   
   
@@ -3512,7 +3746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/food-delivery-assistant/" class="md-nav__link">
+      <a href="../../tutorials/food-delivery-assistant/" class="md-nav__link">
         
   
   
@@ -3540,7 +3774,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/restaurant-supply-assistant/" class="md-nav__link">
+      <a href="../../tutorials/restaurant-supply-assistant/" class="md-nav__link">
         
   
   
@@ -3634,7 +3868,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/lead-scoring/" class="md-nav__link">
+      <a href="../../tutorials/lead-scoring/" class="md-nav__link">
         
   
   
@@ -3662,7 +3896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/deal-briefing-generator/" class="md-nav__link">
+      <a href="../../tutorials/deal-briefing-generator/" class="md-nav__link">
         
   
   
@@ -3690,7 +3924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/visit-report/" class="md-nav__link">
+      <a href="../../tutorials/visit-report/" class="md-nav__link">
         
   
   
@@ -3786,7 +4020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/support-ticket-router/" class="md-nav__link">
+      <a href="../../tutorials/support-ticket-router/" class="md-nav__link">
         
   
   
@@ -3814,7 +4048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/email-auto-responder/" class="md-nav__link">
+      <a href="../../tutorials/email-auto-responder/" class="md-nav__link">
         
   
   
@@ -3842,7 +4076,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/call-transcript-analysis/" class="md-nav__link">
+      <a href="../../tutorials/call-transcript-analysis/" class="md-nav__link">
         
   
   
@@ -3870,7 +4104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/streaming-support-triage/" class="md-nav__link">
+      <a href="../../tutorials/streaming-support-triage/" class="md-nav__link">
         
   
   
@@ -3964,7 +4198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/meeting-assistant/" class="md-nav__link">
+      <a href="../../tutorials/meeting-assistant/" class="md-nav__link">
         
   
   
@@ -3992,7 +4226,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/meeting-action-items/" class="md-nav__link">
+      <a href="../../tutorials/meeting-action-items/" class="md-nav__link">
         
   
   
@@ -4020,7 +4254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/youtube-cut-detector/" class="md-nav__link">
+      <a href="../../tutorials/youtube-cut-detector/" class="md-nav__link">
         
   
   
@@ -4112,7 +4346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/product-poster/" class="md-nav__link">
+      <a href="../../tutorials/product-poster/" class="md-nav__link">
         
   
   
@@ -4140,7 +4374,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/ad-focus-group/" class="md-nav__link">
+      <a href="../../tutorials/ad-focus-group/" class="md-nav__link">
         
   
   
@@ -4236,7 +4470,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/intent-router/" class="md-nav__link">
+      <a href="../../tutorials/intent-router/" class="md-nav__link">
         
   
   
@@ -4264,7 +4498,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/signature-router/" class="md-nav__link">
+      <a href="../../tutorials/signature-router/" class="md-nav__link">
         
   
   
@@ -4292,7 +4526,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/advisor-specialist-tool/" class="md-nav__link">
+      <a href="../../tutorials/advisor-specialist-tool/" class="md-nav__link">
         
   
   
@@ -4320,7 +4554,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/plan-tool-with-root-context/" class="md-nav__link">
+      <a href="../../tutorials/plan-tool-with-root-context/" class="md-nav__link">
         
   
   
@@ -4363,7 +4597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dependency-management/" class="md-nav__link">
+      <a href="../../dependency-management/" class="md-nav__link">
         
   
   
@@ -4390,7 +4624,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../CHANGELOG/" class="md-nav__link">
+      <a href="../../CHANGELOG/" class="md-nav__link">
         
   
   
@@ -4442,7 +4676,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../blog/" class="md-nav__link ">
+            <a href="../../blog/" class="md-nav__link ">
               
   
   
@@ -4542,7 +4776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../blog/archive/2026/" class="md-nav__link">
+      <a href="../../blog/archive/2026/" class="md-nav__link">
         
   
   
@@ -4634,7 +4868,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../blog/category/architecture/" class="md-nav__link">
+      <a href="../../blog/category/architecture/" class="md-nav__link">
         
   
   
@@ -4687,6 +4921,187 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#mental-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mental Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-output-is-a-score-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why The Output Is A Score Token
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prompt-construction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prompt Construction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trajectory-formatting-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trajectory Formatting Helpers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-batching-and-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Batching And Concurrency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-select_best-is-separate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why select_best(...) Is Separate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scoring-from-logprobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoring From Logprobs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-parser-has-heuristics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why The Parser Has Heuristics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aggregation-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggregation Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Aggregation Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#attempt-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attempt Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#criterion-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Criterion Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verdict-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verdict Semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verbose-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verbose Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Presets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-design-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main Design Choices
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -4712,9 +5127,661 @@
   
 
 
-  <h1>Api reference</h1>
+<h1 id="llm-as-a-verifier">LLM-as-a-Verifier</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+.copy-markdown-button {
+    background: transparent;
+    color: inherit;
+    border: 1px solid currentColor;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0;
+    opacity: 0.7;
+}
+.copy-markdown-button:hover { opacity: 1; }
+.copy-markdown-button:active { transform: translateY(1px); }
+#copy-icon { transition: opacity 0.1s ease; }
+</style>
+<div class="copy-markdown-container" data-markdown="# LLM-as-a-Verifier
 
+`src/msgflux/generation/verifiers/llm_as_a_verifier.py` is the first verifier
+module in msgFlux.
 
+At a high level, it turns a verification task into a reusable runtime with four
+main jobs:
+
+- build a verifier prompt from task, criteria, candidates, and context
+- request discrete score tokens from the model
+- estimate a stable score from `logprobs` instead of trusting only the chosen
+  token
+- aggregate repeated attempts and multiple criteria into a final verdict
+
+It is not tied to `Agent`. It is a callable verification layer that can be used
+from plain generation code, tool workflows, candidate reranking, or future
+optimizers.
+
+## Mental Model
+
+The verifier pipeline looks like this:
+
+```text
+task + candidates + criteria
+  -&gt; prompt builder
+  -&gt; request batch
+  -&gt; concurrent model calls
+  -&gt; per-attempt evidence extraction
+     -&gt; text token
+     -&gt; logprob distribution
+  -&gt; criterion aggregation
+  -&gt; final verifier result
+```
+
+The important part is that the verifier does not ask the model for an open-ended
+score. It asks for a small discrete token from a known scale, then uses the
+token distribution to estimate the final normalized score.
+
+## Why The Output Is A Score Token
+
+The verifier uses a discrete score scale such as `A..T`.
+
+That choice is deliberate:
+
+- it keeps the scoring space bounded
+- it makes the provider response easier to parse
+- it makes `logprobs` directly useful
+- it lets the runtime compute an expected score instead of a brittle hard label
+
+Letters are preferred over digits for the default scale because they behave
+more like single symbolic labels as granularity grows.
+
+That matters for `logprobs` extraction:
+
+- `A..T` is a cleaner discrete label set than `1..20`
+- multi-digit numeric scales are more likely to split across tokens
+- numeric labels are more likely to attach to punctuation or formatting noise
+- letter labels are easier to rank, normalize, and recover from imperfect tag
+  formatting
+
+So the default runtime chooses a letter-based scale not for presentation, but
+for tokenization stability and better score-distribution extraction.
+
+So the model is not asked to emit a floating-point score. It is asked to emit a
+single token inside a known tag:
+
+```text
+&lt;score&gt;A&lt;/score&gt;
+```
+
+or, in pairwise mode:
+
+```text
+&lt;score_A&gt;A&lt;/score_A&gt;
+&lt;score_B&gt;H&lt;/score_B&gt;
+```
+
+`ScoreScale.letter(granularity=20)` is the public way to ask for 20 score
+levels explicitly. That is also the default runtime scale.
+
+## Prompt Construction
+
+`default_prompt_builder(...)` assembles the verifier prompt from
+`VerificationPromptInput`.
+
+That input contains:
+
+- `task`
+- `criterion`
+- `candidates`
+- `score_scale`
+- optional `context`
+- optional verifier-level instructions
+
+The default builder always explains:
+
+- the criterion being judged
+- the valid score-token range
+- the exact tag format expected at the end
+
+This is why the verifier can support custom prompting without changing the rest
+of the execution pipeline. The builder is only responsible for prompt text; the
+runtime remains responsible for scoring and aggregation.
+
+## Trajectory Formatting Helpers
+
+Benchmark-style presets work best when the candidate contains the full execution
+evidence, not only the final answer.
+
+The public API therefore exposes:
+
+- `format_terminal_trajectory(...)`
+- `format_swe_bench_trajectory(...)`
+
+These helpers deliberately format only candidate evidence:
+
+- summaries
+- command/output steps
+- metadata such as expected output
+- final patch text for SWE-style runs
+- final answer or final narration
+
+The task or issue description stays outside the helper and should still be
+passed through the verifier&#x27;s `task` argument. That keeps the verifier API
+clean: `task` carries the evaluation target, while the formatted candidate
+string carries the evidence being judged.
+
+## Request Batching And Concurrency
+
+The verifier builds a `VerificationRequest` for each independent
+criterion/repetition pair.
+
+That means the number of model calls in a single verification is:
+
+```text
+len(criteria) * n_verifications
+```
+
+Those requests are independent, so the verifier fans them out concurrently:
+
+- `__call__` uses `F.map_gather(...)`
+- `acall` uses `F.amap_gather(...)`
+
+This matters because a verifier with multiple criteria and repeated attempts can
+otherwise accumulate latency linearly.
+
+The runtime still keeps the final result deterministic:
+
+- requests are built in criterion order, then repetition order
+- gather responses preserve input order
+- attempts are regrouped per criterion after execution
+
+So the work is concurrent, but the aggregation order remains stable.
+
+## Why `select_best(...)` Is Separate
+
+`__call__` and `acall` support only one or two candidates.
+
+That boundary is intentional:
+
+- one candidate -&gt; verification
+- two candidates -&gt; pairwise comparison
+- more than two candidates -&gt; tournament selection
+
+`select_best(...)` and `aselect_best(...)` implement the tournament layer on top
+of the base verifier. They run pairwise matches, accumulate wins, and use
+average score as a tiebreaker.
+
+The tournament layer can also fan out its pairwise matches concurrently. That
+means a multi-candidate selection now has two concurrency layers:
+
+- concurrent attempts inside each verifier call
+- concurrent pairwise matches across the tournament
+
+This keeps the core verifier simple instead of making `__call__` return
+different shapes for different candidate counts.
+
+## Scoring From Logprobs
+
+The central scoring path is:
+
+```text
+model response
+  -&gt; locate score token
+  -&gt; collect chosen token + top_logprobs alternatives
+  -&gt; convert logprobs to probabilities
+  -&gt; compute expected value on the discrete score scale
+  -&gt; normalize to [0, 1]
+```
+
+This is why `LLMAsVerifier` always requests:
+
+- `logprobs=True`
+- `top_logprobs=&lt;scale size or override&gt;`
+
+If the provider returns a good token distribution, the verifier uses that
+distribution directly.
+
+If not, and `strict_logprobs=False`, it falls back to parsing the score from the
+response text.
+
+## Why The Parser Has Heuristics
+
+Provider tokenization around XML-like tags is not always clean.
+
+The verifier therefore uses a layered extraction strategy:
+
+1. parse the text tag if possible
+2. try to find the matching score entry directly in `logprobs`
+3. fall back to finding the expected score token near the closing tag
+4. if strict mode is disabled, fall back to text-only extraction
+
+This is also why the parser tolerates malformed openings such as:
+
+```text
+&lt;20A&lt;/score&gt;
+```
+
+The runtime treats the text and token stream as evidence that must be reconciled,
+not as perfectly formatted output.
+
+## Aggregation Model
+
+There are two aggregation stages.
+
+### Attempt Aggregation
+
+Each criterion can run multiple repetitions.
+
+Those repeated attempts are averaged into a single score per criterion and
+candidate.
+
+### Criterion Aggregation
+
+Each criterion carries a weight.
+
+The final score per candidate is the weighted average of all criterion scores.
+
+That is what makes the verifier reusable across different presets: the
+execution path stays the same while the criteria set changes.
+
+## Verdict Semantics
+
+The final verdict depends on candidate count.
+
+For a single candidate:
+
+- `pass`
+- `fail`
+- `uncertain`
+
+For two candidates:
+
+- winner label
+- `tie`
+
+This is why `VerifierResult` exposes both:
+
+- `verdict`
+- optional `winner`
+
+## Verbose Mode
+
+When `verbose=True`, the verifier stores enough information to debug prompt and
+scoring behavior without rerunning the call.
+
+Per attempt, it keeps:
+
+- final prompt text
+- raw response text
+- per-candidate evidence
+- extracted token probabilities
+
+That data is exposed both in:
+
+- `criteria_results[*].attempts[*]`
+- `result.metadata[&quot;raw_outputs&quot;]`
+
+Tournament mode mirrors that same information in each match entry of
+`TournamentResult.metadata[&quot;raw_outputs&quot;]`.
+
+## Presets
+
+The preset constructors are thin wrappers around the same runtime:
+
+- `trajectory_analysis`
+- `answer_reranking`
+- `grounded_answer_verification`
+- `patch_selection`
+- `terminal_bench`
+- `swe_bench_verified`
+- `tool_trace_verification`
+- `synthetic_data_filtering`
+
+Each preset only supplies:
+
+- a default criteria set
+- optional default instructions or ground-truth notes
+
+The runtime path stays identical.
+
+This is important for maintenance because it means new verifier presets should
+usually be data/config additions, not new execution engines.
+
+## Main Design Choices
+
+The current design makes a few explicit tradeoffs:
+
+- verifier core is independent from `Agent`
+- prompt building is pluggable, scoring is centralized
+- discrete score tokens are preferred over free-form numeric scores
+- `logprobs` are first-class evidence
+- tournament selection is built on top of pairwise verification
+- verbose debugging is part of the runtime, not an external wrapper
+
+These choices make the verifier easier to reuse for reranking, trajectory
+selection, patch selection, and future optimizer integrations.
+">
+  <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
+    <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
+    <span>Copy Page</span>
+  </button>
+</div>
+<script>
+(function () {
+    let isAnimating = false;
+
+    function copyMarkdownToClipboard(btn) {
+        if (isAnimating) return;
+        const markdown = btn.closest(".copy-markdown-container").getAttribute("data-markdown");
+        const icon = btn.querySelector("#copy-icon");
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(markdown)
+                .then(() => showCopySuccess(icon))
+                .catch(() => fallback(markdown, icon));
+        } else {
+            fallback(markdown, icon);
+        }
+    }
+
+    function fallback(text, icon) {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        Object.assign(ta.style, { position: "fixed", top: "0", left: "0", opacity: "0" });
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+            document.execCommand("copy") ? showCopySuccess(icon) : showCopyError(icon);
+        } catch {
+            showCopyError(icon);
+        }
+        document.body.removeChild(ta);
+    }
+
+    function transition(icon, newClass) {
+        if (isAnimating && icon.className !== "ph ph-clipboard") {
+            clearTimeout(window._copyTimeout);
+            window._copyTimeout = setTimeout(() => resetIcon(icon), 2000);
+            return;
+        }
+        isAnimating = true;
+        icon.style.opacity = "0";
+        setTimeout(() => {
+            icon.className = newClass;
+            icon.style.opacity = "1";
+            window._copyTimeout = setTimeout(() => resetIcon(icon), 1800);
+        }, 100);
+    }
+
+    function showCopySuccess(icon) { transition(icon, "ph ph-check"); }
+    function showCopyError(icon)   { transition(icon, "ph ph-x"); }
+
+    function resetIcon(icon) {
+        icon.style.opacity = "0";
+        setTimeout(() => {
+            icon.className = "ph ph-clipboard";
+            icon.style.opacity = "1";
+            isAnimating = false;
+        }, 100);
+    }
+
+    window.copyMarkdownToClipboard = copyMarkdownToClipboard;
+}());
+</script>
+<p><code>src/msgflux/generation/verifiers/llm_as_a_verifier.py</code> is the first verifier
+module in msgFlux.</p>
+<p>At a high level, it turns a verification task into a reusable runtime with four
+main jobs:</p>
+<ul>
+<li>build a verifier prompt from task, criteria, candidates, and context</li>
+<li>request discrete score tokens from the model</li>
+<li>estimate a stable score from <code>logprobs</code> instead of trusting only the chosen
+  token</li>
+<li>aggregate repeated attempts and multiple criteria into a final verdict</li>
+</ul>
+<p>It is not tied to <code>Agent</code>. It is a callable verification layer that can be used
+from plain generation code, tool workflows, candidate reranking, or future
+optimizers.</p>
+<h2 id="mental-model">Mental Model</h2>
+<p>The verifier pipeline looks like this:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>task + candidates + criteria
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  -&gt; prompt builder
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  -&gt; request batch
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  -&gt; concurrent model calls
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  -&gt; per-attempt evidence extraction
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>     -&gt; text token
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>     -&gt; logprob distribution
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  -&gt; criterion aggregation
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  -&gt; final verifier result
+</span></code></pre></div>
+<p>The important part is that the verifier does not ask the model for an open-ended
+score. It asks for a small discrete token from a known scale, then uses the
+token distribution to estimate the final normalized score.</p>
+<h2 id="why-the-output-is-a-score-token">Why The Output Is A Score Token</h2>
+<p>The verifier uses a discrete score scale such as <code>A..T</code>.</p>
+<p>That choice is deliberate:</p>
+<ul>
+<li>it keeps the scoring space bounded</li>
+<li>it makes the provider response easier to parse</li>
+<li>it makes <code>logprobs</code> directly useful</li>
+<li>it lets the runtime compute an expected score instead of a brittle hard label</li>
+</ul>
+<p>Letters are preferred over digits for the default scale because they behave
+more like single symbolic labels as granularity grows.</p>
+<p>That matters for <code>logprobs</code> extraction:</p>
+<ul>
+<li><code>A..T</code> is a cleaner discrete label set than <code>1..20</code></li>
+<li>multi-digit numeric scales are more likely to split across tokens</li>
+<li>numeric labels are more likely to attach to punctuation or formatting noise</li>
+<li>letter labels are easier to rank, normalize, and recover from imperfect tag
+  formatting</li>
+</ul>
+<p>So the default runtime chooses a letter-based scale not for presentation, but
+for tokenization stability and better score-distribution extraction.</p>
+<p>So the model is not asked to emit a floating-point score. It is asked to emit a
+single token inside a known tag:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>&lt;score&gt;A&lt;/score&gt;
+</span></code></pre></div>
+<p>or, in pairwise mode:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>&lt;score_A&gt;A&lt;/score_A&gt;
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>&lt;score_B&gt;H&lt;/score_B&gt;
+</span></code></pre></div>
+<p><code>ScoreScale.letter(granularity=20)</code> is the public way to ask for 20 score
+levels explicitly. That is also the default runtime scale.</p>
+<h2 id="prompt-construction">Prompt Construction</h2>
+<p><code>default_prompt_builder(...)</code> assembles the verifier prompt from
+<code>VerificationPromptInput</code>.</p>
+<p>That input contains:</p>
+<ul>
+<li><code>task</code></li>
+<li><code>criterion</code></li>
+<li><code>candidates</code></li>
+<li><code>score_scale</code></li>
+<li>optional <code>context</code></li>
+<li>optional verifier-level instructions</li>
+</ul>
+<p>The default builder always explains:</p>
+<ul>
+<li>the criterion being judged</li>
+<li>the valid score-token range</li>
+<li>the exact tag format expected at the end</li>
+</ul>
+<p>This is why the verifier can support custom prompting without changing the rest
+of the execution pipeline. The builder is only responsible for prompt text; the
+runtime remains responsible for scoring and aggregation.</p>
+<h2 id="trajectory-formatting-helpers">Trajectory Formatting Helpers</h2>
+<p>Benchmark-style presets work best when the candidate contains the full execution
+evidence, not only the final answer.</p>
+<p>The public API therefore exposes:</p>
+<ul>
+<li><code>format_terminal_trajectory(...)</code></li>
+<li><code>format_swe_bench_trajectory(...)</code></li>
+</ul>
+<p>These helpers deliberately format only candidate evidence:</p>
+<ul>
+<li>summaries</li>
+<li>command/output steps</li>
+<li>metadata such as expected output</li>
+<li>final patch text for SWE-style runs</li>
+<li>final answer or final narration</li>
+</ul>
+<p>The task or issue description stays outside the helper and should still be
+passed through the verifier's <code>task</code> argument. That keeps the verifier API
+clean: <code>task</code> carries the evaluation target, while the formatted candidate
+string carries the evidence being judged.</p>
+<h2 id="request-batching-and-concurrency">Request Batching And Concurrency</h2>
+<p>The verifier builds a <code>VerificationRequest</code> for each independent
+criterion/repetition pair.</p>
+<p>That means the number of model calls in a single verification is:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>len(criteria) * n_verifications
+</span></code></pre></div>
+<p>Those requests are independent, so the verifier fans them out concurrently:</p>
+<ul>
+<li><code>__call__</code> uses <code>F.map_gather(...)</code></li>
+<li><code>acall</code> uses <code>F.amap_gather(...)</code></li>
+</ul>
+<p>This matters because a verifier with multiple criteria and repeated attempts can
+otherwise accumulate latency linearly.</p>
+<p>The runtime still keeps the final result deterministic:</p>
+<ul>
+<li>requests are built in criterion order, then repetition order</li>
+<li>gather responses preserve input order</li>
+<li>attempts are regrouped per criterion after execution</li>
+</ul>
+<p>So the work is concurrent, but the aggregation order remains stable.</p>
+<h2 id="why-select_best-is-separate">Why <code>select_best(...)</code> Is Separate</h2>
+<p><code>__call__</code> and <code>acall</code> support only one or two candidates.</p>
+<p>That boundary is intentional:</p>
+<ul>
+<li>one candidate -&gt; verification</li>
+<li>two candidates -&gt; pairwise comparison</li>
+<li>more than two candidates -&gt; tournament selection</li>
+</ul>
+<p><code>select_best(...)</code> and <code>aselect_best(...)</code> implement the tournament layer on top
+of the base verifier. They run pairwise matches, accumulate wins, and use
+average score as a tiebreaker.</p>
+<p>The tournament layer can also fan out its pairwise matches concurrently. That
+means a multi-candidate selection now has two concurrency layers:</p>
+<ul>
+<li>concurrent attempts inside each verifier call</li>
+<li>concurrent pairwise matches across the tournament</li>
+</ul>
+<p>This keeps the core verifier simple instead of making <code>__call__</code> return
+different shapes for different candidate counts.</p>
+<h2 id="scoring-from-logprobs">Scoring From Logprobs</h2>
+<p>The central scoring path is:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>model response
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  -&gt; locate score token
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  -&gt; collect chosen token + top_logprobs alternatives
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  -&gt; convert logprobs to probabilities
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  -&gt; compute expected value on the discrete score scale
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  -&gt; normalize to [0, 1]
+</span></code></pre></div>
+<p>This is why <code>LLMAsVerifier</code> always requests:</p>
+<ul>
+<li><code>logprobs=True</code></li>
+<li><code>top_logprobs=&lt;scale size or override&gt;</code></li>
+</ul>
+<p>If the provider returns a good token distribution, the verifier uses that
+distribution directly.</p>
+<p>If not, and <code>strict_logprobs=False</code>, it falls back to parsing the score from the
+response text.</p>
+<h2 id="why-the-parser-has-heuristics">Why The Parser Has Heuristics</h2>
+<p>Provider tokenization around XML-like tags is not always clean.</p>
+<p>The verifier therefore uses a layered extraction strategy:</p>
+<ol>
+<li>parse the text tag if possible</li>
+<li>try to find the matching score entry directly in <code>logprobs</code></li>
+<li>fall back to finding the expected score token near the closing tag</li>
+<li>if strict mode is disabled, fall back to text-only extraction</li>
+</ol>
+<p>This is also why the parser tolerates malformed openings such as:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>&lt;20A&lt;/score&gt;
+</span></code></pre></div>
+<p>The runtime treats the text and token stream as evidence that must be reconciled,
+not as perfectly formatted output.</p>
+<h2 id="aggregation-model">Aggregation Model</h2>
+<p>There are two aggregation stages.</p>
+<h3 id="attempt-aggregation">Attempt Aggregation</h3>
+<p>Each criterion can run multiple repetitions.</p>
+<p>Those repeated attempts are averaged into a single score per criterion and
+candidate.</p>
+<h3 id="criterion-aggregation">Criterion Aggregation</h3>
+<p>Each criterion carries a weight.</p>
+<p>The final score per candidate is the weighted average of all criterion scores.</p>
+<p>That is what makes the verifier reusable across different presets: the
+execution path stays the same while the criteria set changes.</p>
+<h2 id="verdict-semantics">Verdict Semantics</h2>
+<p>The final verdict depends on candidate count.</p>
+<p>For a single candidate:</p>
+<ul>
+<li><code>pass</code></li>
+<li><code>fail</code></li>
+<li><code>uncertain</code></li>
+</ul>
+<p>For two candidates:</p>
+<ul>
+<li>winner label</li>
+<li><code>tie</code></li>
+</ul>
+<p>This is why <code>VerifierResult</code> exposes both:</p>
+<ul>
+<li><code>verdict</code></li>
+<li>optional <code>winner</code></li>
+</ul>
+<h2 id="verbose-mode">Verbose Mode</h2>
+<p>When <code>verbose=True</code>, the verifier stores enough information to debug prompt and
+scoring behavior without rerunning the call.</p>
+<p>Per attempt, it keeps:</p>
+<ul>
+<li>final prompt text</li>
+<li>raw response text</li>
+<li>per-candidate evidence</li>
+<li>extracted token probabilities</li>
+</ul>
+<p>That data is exposed both in:</p>
+<ul>
+<li><code>criteria_results[*].attempts[*]</code></li>
+<li><code>result.metadata["raw_outputs"]</code></li>
+</ul>
+<p>Tournament mode mirrors that same information in each match entry of
+<code>TournamentResult.metadata["raw_outputs"]</code>.</p>
+<h2 id="presets">Presets</h2>
+<p>The preset constructors are thin wrappers around the same runtime:</p>
+<ul>
+<li><code>trajectory_analysis</code></li>
+<li><code>answer_reranking</code></li>
+<li><code>grounded_answer_verification</code></li>
+<li><code>patch_selection</code></li>
+<li><code>terminal_bench</code></li>
+<li><code>swe_bench_verified</code></li>
+<li><code>tool_trace_verification</code></li>
+<li><code>synthetic_data_filtering</code></li>
+</ul>
+<p>Each preset only supplies:</p>
+<ul>
+<li>a default criteria set</li>
+<li>optional default instructions or ground-truth notes</li>
+</ul>
+<p>The runtime path stays identical.</p>
+<p>This is important for maintenance because it means new verifier presets should
+usually be data/config additions, not new execution engines.</p>
+<h2 id="main-design-choices">Main Design Choices</h2>
+<p>The current design makes a few explicit tradeoffs:</p>
+<ul>
+<li>verifier core is independent from <code>Agent</code></li>
+<li>prompt building is pluggable, scoring is centralized</li>
+<li>discrete score tokens are preferred over free-form numeric scores</li>
+<li><code>logprobs</code> are first-class evidence</li>
+<li>tournament selection is built on top of pairwise verification</li>
+<li>verbose debugging is part of the runtime, not an external wrapper</li>
+</ul>
+<p>These choices make the verifier easier to reuse for reranking, trajectory
+selection, patch selection, and future optimizer integrations.</p>
 
 
 
@@ -4747,6 +5814,44 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../react-provider-schemas/" class="md-footer__link md-footer__link--prev" aria-label="Previous: ReAct Provider Schemas">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                ReAct Provider Schemas
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../tutorials/" class="md-footer__link md-footer__link--next" aria-label="Next: Tutorials">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Tutorials
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -4810,10 +5915,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.indexes", "navigation.top", "navigation.instant", "navigation.instant.progress", "navigation.footer", "navigation.tracking", "navigation.path", "header.autohide", "blog", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "announce.dismiss"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.top", "navigation.instant", "navigation.instant.progress", "navigation.footer", "navigation.tracking", "navigation.path", "header.autohide", "blog", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "announce.dismiss"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.1/dist/mermaid.min.js"></script>
       
