@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.3.0] - 2026-04-20
+
 ## [0.2.0] - 2026-04-17
 
 - Features: added `provider/model-id` string shorthand support to `Agent`, `Speaker`, and `Transcriber` (#26, #27, #28), plus runtime tool controls for `Agent` (#30).
