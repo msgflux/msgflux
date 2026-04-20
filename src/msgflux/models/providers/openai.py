@@ -127,12 +127,13 @@ class _BaseOpenAI(BaseModel):
 class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     """OpenAI Chat Completion."""
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         model_id: str,
         *,
         max_tokens: Optional[int] = None,
         reasoning_effort: Optional[str] = None,
+        prompt_cache_retention: Optional[Literal["in_memory", "24h"]] = None,
         enable_thinking: Optional[bool] = None,
         return_reasoning: Optional[bool] = True,
         reasoning_in_tool_call: Optional[bool] = True,
@@ -140,6 +141,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         stop: Optional[Union[str, List[str]]] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
         parallel_tool_calls: Optional[bool] = True,
         modalities: Optional[List[str]] = None,
         audio: Optional[Dict[str, str]] = None,
@@ -166,6 +169,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             Reducing reasoning effort can result in faster responses
             and fewer tokens used on reasoning in a response.
             Can be: "minimal", "low", "medium" or "high".
+        prompt_cache_retention:
+            OpenAI-only prompt cache retention policy.
+            Allowed values are "in_memory" and "24h".
         enable_thinking:
             If True, enable the model reasoning.
         return_reasoning:
@@ -188,6 +194,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling, where the model considers the results of the tokens
             with top_p probability mass. So 0.1 means only the tokens
             comprising the top 10% probability mass are considered.
+        logprobs:
+            Token log probability output. When enabled, the response
+            metadata includes the token-level logprob payload.
+        top_logprobs:
+            Number of alternative tokens to return per generated token.
+            Use with `logprobs=True`.
         parallel_tool_calls:
             If True, enable parallel tool calls.
         modalities:
@@ -231,6 +243,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["top_p"] = top_p
         if stop:
             sampling_run_params["stop"] = stop
+        if self.provider == "openai" and logprobs is not None:
+            sampling_run_params["logprobs"] = logprobs
+        if self.provider == "openai" and top_logprobs is not None:
+            sampling_run_params["top_logprobs"] = top_logprobs
         if verbosity:
             sampling_run_params["verbosity"] = verbosity
         if modalities:
@@ -241,6 +257,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["audio"] = audio
         if reasoning_effort:
             sampling_run_params["reasoning_effort"] = reasoning_effort
+        if self.provider == "openai" and prompt_cache_retention is not None:
+            sampling_run_params["prompt_cache_retention"] = prompt_cache_retention
         self.sampling_run_params = sampling_run_params
         self.enable_thinking = enable_thinking
         self.parallel_tool_calls = parallel_tool_calls

@@ -121,6 +121,34 @@ class TestOpenAIChatCompletion:
         assert model.enable_thinking is True
         assert model.return_reasoning is True
 
+    def test_chat_completion_with_prompt_cache_retention(self, mock_openai_client):
+        """Test OpenAIChatCompletion with OpenAI-only prompt cache retention."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            prompt_cache_retention="24h",
+        )
+
+        assert model.sampling_run_params["prompt_cache_retention"] == "24h"
+
+    def test_chat_completion_with_logprobs_params(self, mock_openai_client):
+        """Test OpenAIChatCompletion with logprobs parameters."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            logprobs=True,
+            top_logprobs=2,
+        )
+
+        assert model.sampling_run_params["logprobs"] is True
+        assert model.sampling_run_params["top_logprobs"] == 2
+
     def test_chat_completion_call_forwards_logprobs_params(self, mock_openai_client):
         """Test runtime logprobs parameters are forwarded on sync calls."""
         pytest.importorskip("openai")
