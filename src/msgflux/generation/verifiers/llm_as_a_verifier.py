@@ -39,6 +39,9 @@ class ScoreScale:
 
     @classmethod
     def letter(cls, granularity: int = 20) -> "ScoreScale":
+        # Letters keep the score space closer to one-token labels, which makes
+        # logprob extraction more stable than digit-based scales as granularity
+        # grows.
         if granularity < 2 or granularity > 26:
             raise ValueError("`granularity` must be between 2 and 26")
         final_token = chr(64 + granularity)

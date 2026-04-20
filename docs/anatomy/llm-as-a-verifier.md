@@ -47,6 +47,20 @@ That choice is deliberate:
 - it makes `logprobs` directly useful
 - it lets the runtime compute an expected score instead of a brittle hard label
 
+Letters are preferred over digits for the default scale because they behave
+more like single symbolic labels as granularity grows.
+
+That matters for `logprobs` extraction:
+
+- `A..T` is a cleaner discrete label set than `1..20`
+- multi-digit numeric scales are more likely to split across tokens
+- numeric labels are more likely to attach to punctuation or formatting noise
+- letter labels are easier to rank, normalize, and recover from imperfect tag
+  formatting
+
+So the default runtime chooses a letter-based scale not for presentation, but
+for tokenization stability and better score-distribution extraction.
+
 So the model is not asked to emit a floating-point score. It is asked to emit a
 single token inside a known tag:
 
