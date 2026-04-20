@@ -223,7 +223,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         context_length:
             The maximum context length supported by the model.
         reasoning_max_tokens:
-            Maximum number of tokens for reasoning/thinking.
+            OpenRouter-only maximum number of tokens for reasoning/thinking.
+            This maps to ``extra_body={"reasoning": {"max_tokens": ...}}``
+            and cannot be combined with ``reasoning_effort``.
         enable_cache:
             If True, enable response caching to avoid redundant API calls.
         cache_size:
@@ -257,6 +259,13 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["audio"] = audio
         if reasoning_effort:
             sampling_run_params["reasoning_effort"] = reasoning_effort
+        if self.provider == "openrouter" and reasoning_max_tokens is not None:
+            if reasoning_effort is not None:
+                raise ValueError(
+                    "`reasoning_max_tokens` cannot be used together with "
+                    "`reasoning_effort` for OpenRouter."
+                )
+            sampling_run_params["reasoning_max_tokens"] = reasoning_max_tokens
         if self.provider == "openai" and prompt_cache_retention is not None:
             sampling_run_params["prompt_cache_retention"] = prompt_cache_retention
         self.sampling_run_params = sampling_run_params
