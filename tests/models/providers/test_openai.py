@@ -134,6 +134,21 @@ class TestOpenAIChatCompletion:
 
         assert model.sampling_run_params["prompt_cache_retention"] == "24h"
 
+    def test_chat_completion_with_logprobs_params(self, mock_openai_client):
+        """Test OpenAIChatCompletion with logprobs parameters."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            logprobs=True,
+            top_logprobs=2,
+        )
+
+        assert model.sampling_run_params["logprobs"] is True
+        assert model.sampling_run_params["top_logprobs"] == 2
+
     def test_chat_completion_adapt_params(self, mock_openai_client):
         """Test parameter adaptation for OpenAI."""
         pytest.importorskip("openai")
@@ -501,6 +516,62 @@ class TestOpenAIChatCompletion:
         assert response.data == {
             "entities": [{"name": "Apple", "type": "Organization"}]
         }
+
+    def test_process_completion_model_output_includes_logprobs_metadata(
+        self, mock_openai_client
+    ):
+        """Test logprobs are surfaced in response metadata."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        model_output = SimpleNamespace(
+            usage=SimpleNamespace(
+                to_dict=lambda: {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                }
+            ),
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    logprobs=SimpleNamespace(
+                        model_dump=lambda: {
+                            "content": [
+                                {
+                                    "token": "Hello",
+                                    "logprob": -0.1,
+                                    "bytes": [72, 101, 108, 108, 111],
+                                    "top_logprobs": [
+                                        {"token": "Hello", "logprob": -0.1},
+                                        {"token": "Hi", "logprob": -1.0},
+                                    ],
+                                }
+                            ]
+                        }
+                    ),
+                    message=SimpleNamespace(
+                        content="Hello",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(model_output)
+
+        assert response.metadata.usage["total_tokens"] == 5
+        assert response.metadata.logprobs["content"][0]["token"] == "Hello"
+        assert (
+            response.metadata.logprobs["content"][0]["top_logprobs"][0]["token"]
+            == "Hello"
+        )
+        assert response.metadata.finish_reason == "stop"
 
     def test_prefilling_is_not_compatible_with_generation_schema(
         self, mock_openai_client

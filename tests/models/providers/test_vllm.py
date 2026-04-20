@@ -100,6 +100,21 @@ class TestVLLMChatCompletion:
 
         assert "prompt_cache_retention" not in model.sampling_run_params
 
+    def test_chat_completion_ignores_openai_only_logprobs(self, mock_openai_client):
+        """Test VLLMChatCompletion does not forward OpenAI-only logprobs."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.vllm import VLLMChatCompletion
+
+        model = VLLMChatCompletion(
+            model_id="llama-3",
+            logprobs=True,
+            top_logprobs=2,
+        )
+
+        assert "logprobs" not in model.sampling_run_params
+        assert "top_logprobs" not in model.sampling_run_params
+
     def test_chat_completion_base_url(self, mock_openai_client):
         """Test VLLMChatCompletion uses VLLM_BASE_URL."""
         pytest.importorskip("openai")
