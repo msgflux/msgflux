@@ -133,6 +133,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         *,
         max_tokens: Optional[int] = None,
         reasoning_effort: Optional[str] = None,
+        prompt_cache_retention: Optional[Literal["in_memory", "24h"]] = None,
         enable_thinking: Optional[bool] = None,
         return_reasoning: Optional[bool] = True,
         reasoning_in_tool_call: Optional[bool] = True,
@@ -168,6 +169,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             Reducing reasoning effort can result in faster responses
             and fewer tokens used on reasoning in a response.
             Can be: "minimal", "low", "medium" or "high".
+        prompt_cache_retention:
+            OpenAI-only prompt cache retention policy.
+            Allowed values are "in_memory" and "24h".
         enable_thinking:
             If True, enable the model reasoning.
         return_reasoning:
@@ -253,6 +257,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["audio"] = audio
         if reasoning_effort:
             sampling_run_params["reasoning_effort"] = reasoning_effort
+        if self.provider == "openai" and prompt_cache_retention is not None:
+            sampling_run_params["prompt_cache_retention"] = prompt_cache_retention
         self.sampling_run_params = sampling_run_params
         self.enable_thinking = enable_thinking
         self.parallel_tool_calls = parallel_tool_calls
