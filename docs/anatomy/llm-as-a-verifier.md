@@ -75,6 +75,9 @@ or, in pairwise mode:
 <score_B>H</score_B>
 ```
 
+`ScoreScale.letter(granularity=20)` is the public way to ask for 20 score
+levels explicitly. That is also the default runtime scale.
+
 ## Prompt Construction
 
 `default_prompt_builder(...)` assembles the verifier prompt from
@@ -98,6 +101,29 @@ The default builder always explains:
 This is why the verifier can support custom prompting without changing the rest
 of the execution pipeline. The builder is only responsible for prompt text; the
 runtime remains responsible for scoring and aggregation.
+
+## Trajectory Formatting Helpers
+
+Benchmark-style presets work best when the candidate contains the full execution
+evidence, not only the final answer.
+
+The public API therefore exposes:
+
+- `format_terminal_trajectory(...)`
+- `format_swe_bench_trajectory(...)`
+
+These helpers deliberately format only candidate evidence:
+
+- summaries
+- command/output steps
+- metadata such as expected output
+- final patch text for SWE-style runs
+- final answer or final narration
+
+The task or issue description stays outside the helper and should still be
+passed through the verifier's `task` argument. That keeps the verifier API
+clean: `task` carries the evaluation target, while the formatted candidate
+string carries the evidence being judged.
 
 ## Request Batching And Concurrency
 

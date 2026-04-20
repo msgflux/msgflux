@@ -20,6 +20,8 @@ from msgflux.generation.verifiers import (
     VerificationCriterion,
     VerificationPromptInput,
     default_prompt_builder,
+    format_swe_bench_trajectory,
+    format_terminal_trajectory,
 )
 from msgflux.models.base import BaseModel
 from msgflux.models.gateway import ModelGateway
@@ -385,6 +387,76 @@ class TestLLMAsVerifier:
         assert attempt.metadata["usage"]["total_tokens"] == 12
         assert model.calls[0]["logprobs"] is True
         assert model.calls[0]["top_logprobs"] == 20
+
+    def test_score_scale_granularity_updates_default_top_logprobs(self):
+        verifier = LLMAsVerifier(
+            model=MockChatModel([]),
+            criteria=[CRITERION],
+            score_scale=ScoreScale.letter(granularity=5),
+        )
+
+        assert verifier.top_logprobs == 5
+        assert verifier.score_scale.ordered_tokens == ("A", "B", "C", "D", "E")
+
+    def test_format_terminal_trajectory_renders_steps_and_metadata(self):
+        candidate = format_terminal_trajectory(
+            summary="Installed the binary and verified the version output.",
+            metadata={
+                "expected_output": "tool 1.2.0",
+                "workspace": "/workspace/tooling",
+            },
+            steps=[
+                {
+                    "title": "Install binary",
+                    "command": "cp ./tool /usr/local/bin/tool",
+                    "output": "",
+                    "exit_code": 0,
+                },
+                {
+                    "command": "tool --version",
+                    "output": "tool 1.2.0",
+                    "exit_code": 0,
+                },
+            ],
+            final_answer="Installation complete.",
+        )
+
+        assert candidate.startswith("Terminal Trajectory")
+        assert "Summary:" in candidate
+        assert "Metadata" in candidate
+        assert "Expected Output:" in candidate
+        assert "Step 1 — Install binary" in candidate
+        assert "Command:\ncp ./tool /usr/local/bin/tool" in candidate
+        assert "Final Answer:\nInstallation complete." in candidate
+
+    def test_format_swe_bench_trajectory_includes_patch(self):
+        candidate = format_swe_bench_trajectory(
+            summary="Reproduced the bug, patched the parser, and reran tests.",
+            steps=[
+                {
+                    "command": "pytest tests/test_parser.py -q",
+                    "output": "1 failed, 4 passed",
+                    "exit_code": 1,
+                }
+            ],
+            patch=(
+                "diff --git a/parser.py b/parser.py\n"
+                "--- a/parser.py\n"
+                "+++ b/parser.py\n"
+                "@@ -1,3 +1,4 @@\n"
+                "+return value.strip()\n"
+            ),
+            final_answer="Patched parser and verified the focused test.",
+        )
+
+        assert candidate.startswith("SWE-bench Trajectory")
+        assert "Final Patch:" in candidate
+        assert "diff --git a/parser.py b/parser.py" in candidate
+        assert "Step 1" in candidate
+
+    def test_format_trajectory_requires_some_evidence(self):
+        with pytest.raises(ValueError, match="Provide at least one"):
+            format_terminal_trajectory()
 
     def test_call_executes_attempts_concurrently(self):
         model = ConcurrentTrackingModel(

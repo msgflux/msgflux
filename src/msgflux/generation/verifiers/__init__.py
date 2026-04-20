@@ -1,3 +1,4 @@
+from .formatters import format_swe_bench_trajectory, format_terminal_trajectory
 from .llm_as_a_verifier import (
     ANSWER_RERANKING_CRITERIA,
     ANSWER_RERANKING_EXTRA_INSTRUCTIONS,
@@ -56,4 +57,6 @@ __all__ = [
     "VerificationPromptInput",
     "VerifierResult",
     "default_prompt_builder",
+    "format_swe_bench_trajectory",
+    "format_terminal_trajectory",
 ]
