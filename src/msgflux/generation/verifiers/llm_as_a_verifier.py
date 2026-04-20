@@ -6,7 +6,9 @@ from itertools import combinations
 from statistics import fmean
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
+import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
+from msgflux.exceptions import TaskError
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.types import ChatCompletionModel
@@ -157,6 +159,14 @@ class CriterionVerification:
     criterion: VerificationCriterion
     scores: dict[str, float]
     attempts: list[VerificationAttempt]
+
+
+@dataclass(frozen=True)
+class VerificationRequest:
+    criterion_index: int
+    repetition: int
+    prompt_text: str
+    request_kwargs: dict[str, Any]
 
 
 @dataclass
@@ -624,33 +634,19 @@ class LLMAsVerifier:
             candidates, min_count=1, max_count=2
         )
         labels = tuple(candidates_map.keys())
-        criterion_results = []
-
-        for criterion in active_criteria:
-            attempts = []
-            for repetition in range(self.n_verifications):
-                prompt_input = self._build_prompt_input(
-                    task=task,
-                    criterion=criterion,
-                    candidates=candidates_map,
-                    context=context,
-                    ground_truth_note=ground_truth_note,
-                    extra_instructions=extra_instructions,
-                )
-                request_kwargs = self._build_request_kwargs(prompt_input)
-                response = self.model(**request_kwargs)
-                attempts.append(
-                    self._build_attempt(
-                        response=response,
-                        repetition=repetition,
-                        criterion=criterion,
-                        labels=labels,
-                        prompt_text=self._coerce_response_text(
-                            request_kwargs["messages"]
-                        ),
-                    )
-                )
-            criterion_results.append(self._aggregate_criterion(criterion, attempts))
+        request_batch = self._build_request_batch(
+            task=task,
+            criteria=active_criteria,
+            candidates=candidates_map,
+            context=context,
+            ground_truth_note=ground_truth_note,
+            extra_instructions=extra_instructions,
+        )
+        criterion_results = self._execute_request_batch_sync(
+            criteria=active_criteria,
+            request_batch=request_batch,
+            labels=labels,
+        )
 
         return self._build_result(criterion_results, labels)
 
@@ -669,33 +665,19 @@ class LLMAsVerifier:
             candidates, min_count=1, max_count=2
         )
         labels = tuple(candidates_map.keys())
-        criterion_results = []
-
-        for criterion in active_criteria:
-            attempts = []
-            for repetition in range(self.n_verifications):
-                prompt_input = self._build_prompt_input(
-                    task=task,
-                    criterion=criterion,
-                    candidates=candidates_map,
-                    context=context,
-                    ground_truth_note=ground_truth_note,
-                    extra_instructions=extra_instructions,
-                )
-                request_kwargs = self._build_request_kwargs(prompt_input)
-                response = await self.model.acall(**request_kwargs)
-                attempts.append(
-                    self._build_attempt(
-                        response=response,
-                        repetition=repetition,
-                        criterion=criterion,
-                        labels=labels,
-                        prompt_text=self._coerce_response_text(
-                            request_kwargs["messages"]
-                        ),
-                    )
-                )
-            criterion_results.append(self._aggregate_criterion(criterion, attempts))
+        request_batch = self._build_request_batch(
+            task=task,
+            criteria=active_criteria,
+            candidates=candidates_map,
+            context=context,
+            ground_truth_note=ground_truth_note,
+            extra_instructions=extra_instructions,
+        )
+        criterion_results = await self._execute_request_batch_async(
+            criteria=active_criteria,
+            request_batch=request_batch,
+            labels=labels,
+        )
 
         return self._build_result(criterion_results, labels)
 
@@ -847,6 +829,130 @@ class LLMAsVerifier:
             ),
         )
 
+    def _build_request_batch(
+        self,
+        *,
+        task: Any,
+        criteria: Sequence[VerificationCriterion],
+        candidates: Mapping[str, Any],
+        context: Optional[Mapping[str, Any]],
+        ground_truth_note: Optional[str],
+        extra_instructions: Optional[str],
+    ) -> list[VerificationRequest]:
+        request_batch = []
+
+        # Each criterion/repetition pair is independent, so we can fan them out
+        # concurrently and regroup the attempts deterministically afterward.
+        for criterion_index, criterion in enumerate(criteria):
+            for repetition in range(self.n_verifications):
+                prompt_input = self._build_prompt_input(
+                    task=task,
+                    criterion=criterion,
+                    candidates=candidates,
+                    context=context,
+                    ground_truth_note=ground_truth_note,
+                    extra_instructions=extra_instructions,
+                )
+                request_kwargs = self._build_request_kwargs(prompt_input)
+                request_batch.append(
+                    VerificationRequest(
+                        criterion_index=criterion_index,
+                        repetition=repetition,
+                        prompt_text=self._coerce_response_text(
+                            request_kwargs["messages"]
+                        ),
+                        request_kwargs=request_kwargs,
+                    )
+                )
+
+        return request_batch
+
+    def _execute_request_batch_sync(
+        self,
+        *,
+        criteria: Sequence[VerificationCriterion],
+        request_batch: Sequence[VerificationRequest],
+        labels: Sequence[str],
+    ) -> list[CriterionVerification]:
+        if len(request_batch) == 1:
+            responses = (self._call_model_sync(request_batch[0].request_kwargs),)
+        else:
+            responses = F.map_gather(
+                self._call_model_sync,
+                args_list=[(request.request_kwargs,) for request in request_batch],
+            )
+
+        return self._build_criterion_results_from_responses(
+            criteria=criteria,
+            request_batch=request_batch,
+            responses=responses,
+            labels=labels,
+        )
+
+    async def _execute_request_batch_async(
+        self,
+        *,
+        criteria: Sequence[VerificationCriterion],
+        request_batch: Sequence[VerificationRequest],
+        labels: Sequence[str],
+    ) -> list[CriterionVerification]:
+        if len(request_batch) == 1:
+            responses = (await self._call_model_async(request_batch[0].request_kwargs),)
+        else:
+            responses = await F.amap_gather(
+                self._call_model_async,
+                args_list=[(request.request_kwargs,) for request in request_batch],
+            )
+
+        return self._build_criterion_results_from_responses(
+            criteria=criteria,
+            request_batch=request_batch,
+            responses=responses,
+            labels=labels,
+        )
+
+    def _build_criterion_results_from_responses(
+        self,
+        *,
+        criteria: Sequence[VerificationCriterion],
+        request_batch: Sequence[VerificationRequest],
+        responses: Sequence[Any],
+        labels: Sequence[str],
+    ) -> list[CriterionVerification]:
+        attempts_by_criterion = [[] for _ in criteria]
+
+        # `map_gather` and `amap_gather` preserve input order, which lets us keep
+        # repetition ordering stable even though the work ran concurrently.
+        for request, response in zip(request_batch, responses):
+            resolved_response = self._unwrap_parallel_response(response)
+            criterion = criteria[request.criterion_index]
+            attempts_by_criterion[request.criterion_index].append(
+                self._build_attempt(
+                    response=resolved_response,
+                    repetition=request.repetition,
+                    criterion=criterion,
+                    labels=labels,
+                    prompt_text=request.prompt_text,
+                )
+            )
+
+        return [
+            self._aggregate_criterion(criteria[index], attempts)
+            for index, attempts in enumerate(attempts_by_criterion)
+        ]
+
+    def _call_model_sync(self, request_kwargs: Mapping[str, Any]) -> Any:
+        return self.model(**request_kwargs)
+
+    async def _call_model_async(self, request_kwargs: Mapping[str, Any]) -> Any:
+        return await self.model.acall(**request_kwargs)
+
+    @staticmethod
+    def _unwrap_parallel_response(response: Any) -> Any:
+        if isinstance(response, TaskError):
+            raise response.exception
+        return response
+
     def _build_request_kwargs(
         self, prompt_input: VerificationPromptInput
     ) -> dict[str, Any]:
@@ -969,6 +1075,8 @@ class LLMAsVerifier:
         pattern = rf"<{re.escape(tag_name)}>\s*(.+?)\s*</{re.escape(tag_name)}>"
         match = re.search(pattern, response_text, re.IGNORECASE | re.DOTALL)
         if not match:
+            # Real provider outputs can occasionally mangle the opening tag while
+            # still preserving the score token and the closing tag.
             malformed_pattern = rf"<\s*(.+?)\s*</{re.escape(tag_name)}>"
             match = re.search(
                 malformed_pattern, response_text, re.IGNORECASE | re.DOTALL
@@ -1035,6 +1143,8 @@ class LLMAsVerifier:
             if "</" in next_token:
                 closing_matches.append(entry)
 
+        # Prefer the score token that is immediately followed by a closing tag,
+        # but keep a fallback for providers that tokenize the tag boundary oddly.
         ranked_matches = closing_matches or fallback_matches
         if not ranked_matches:
             return None
@@ -1175,6 +1285,8 @@ class LLMAsVerifier:
         criterion_results: Sequence[CriterionVerification],
     ) -> list[dict[str, Any]]:
         raw_outputs = []
+        # Keep the prompt/response pairs per attempt so verifier calibration and
+        # prompt debugging can happen without re-running the model call.
         for result in criterion_results:
             for attempt in result.attempts:
                 raw_outputs.append(

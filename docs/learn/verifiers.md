@@ -5,6 +5,9 @@
 `LLMAsVerifier` is a logprob-aware verification pattern adapted from
 [LLM-as-a-Verifier](https://llm-as-a-verifier.notion.site/).
 
+For the internal execution model and design choices, see
+[Anatomy: LLM-as-a-Verifier](../anatomy/llm-as-a-verifier.md).
+
 - it decomposes evaluation into explicit criteria
 - it can repeat the verification multiple times
 - it asks the model to emit a discrete score token

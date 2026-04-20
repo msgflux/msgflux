@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from unittest.mock import patch
 
 import pytest
@@ -26,6 +29,12 @@ CRITERION = VerificationCriterion(
     id="correctness",
     name="Correctness",
     description="Assess whether the candidate is correct.",
+)
+
+SECOND_CRITERION = VerificationCriterion(
+    id="completeness",
+    name="Completeness",
+    description="Assess whether the candidate fully answers the task.",
 )
 
 
@@ -237,6 +246,59 @@ class DynamicPairwiseModel(BaseModel, ChatCompletionModel):
         }
 
 
+class ConcurrentTrackingModel(BaseModel, ChatCompletionModel):
+    def __init__(self, responses, delay=0.05):
+        self.model_id = "concurrent-model"
+        self.provider = "mock"
+        self.responses = list(responses)
+        self.delay = delay
+        self.calls = []
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self._lock = threading.Lock()
+
+    def _initialize(self):
+        pass
+
+    def _enter_call(self, kwargs):
+        self.calls.append(kwargs)
+        with self._lock:
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+
+    def _exit_call(self):
+        with self._lock:
+            self.active_calls -= 1
+
+    def _pop_response(self):
+        if not self.responses:
+            raise RuntimeError("No more responses available")
+        return self.responses.pop(0)
+
+    def __call__(self, **kwargs):
+        self._enter_call(kwargs)
+        try:
+            time.sleep(self.delay)
+            return self._pop_response()
+        finally:
+            self._exit_call()
+
+    async def acall(self, **kwargs):
+        self._enter_call(kwargs)
+        try:
+            await asyncio.sleep(self.delay)
+            return self._pop_response()
+        finally:
+            self._exit_call()
+
+    def serialize(self):
+        return {
+            "model_id": self.model_id,
+            "provider": self.provider,
+            "model_type": self.model_type,
+        }
+
+
 class TestLLMAsVerifier:
     def test_default_prompt_builder_uses_single_score_token_examples(self):
         prompt = default_prompt_builder(
@@ -319,6 +381,32 @@ class TestLLMAsVerifier:
         assert attempt.metadata["usage"]["total_tokens"] == 12
         assert model.calls[0]["logprobs"] is True
         assert model.calls[0]["top_logprobs"] == 20
+
+    def test_call_executes_attempts_concurrently(self):
+        model = ConcurrentTrackingModel(
+            [
+                _make_response(
+                    "Looks correct\n<score>A</score>",
+                    token="A",
+                    alternatives=[{"token": "A", "logprob": -0.01}],
+                )
+                for _ in range(4)
+            ]
+        )
+        verifier = LLMAsVerifier(
+            model=model,
+            criteria=[CRITERION, SECOND_CRITERION],
+            n_verifications=2,
+        )
+
+        result = verifier(
+            task="What is 2 + 2?",
+            candidates={"answer": "The answer is 4."},
+        )
+
+        assert result.verdict == "pass"
+        assert model.max_active_calls > 1
+        assert len(model.calls) == 4
 
     def test_verbose_mode_exposes_prompt_and_raw_outputs(self):
         model = MockChatModel(
@@ -524,6 +612,33 @@ class TestLLMAsVerifier:
 
         assert result.verdict == "pass"
         assert model.calls[0]["logprobs"] is True
+
+    @pytest.mark.asyncio
+    async def test_acall_executes_attempts_concurrently(self):
+        model = ConcurrentTrackingModel(
+            [
+                _make_response(
+                    "Looks correct\n<score>A</score>",
+                    token="A",
+                    alternatives=[{"token": "A", "logprob": -0.01}],
+                )
+                for _ in range(4)
+            ]
+        )
+        verifier = LLMAsVerifier(
+            model=model,
+            criteria=[CRITERION, SECOND_CRITERION],
+            n_verifications=2,
+        )
+
+        result = await verifier.acall(
+            task="What is 2 + 2?",
+            candidates={"answer": "The answer is 4."},
+        )
+
+        assert result.verdict == "pass"
+        assert model.max_active_calls > 1
+        assert len(model.calls) == 4
 
     def test_select_best_runs_round_robin(self):
         verifier = LLMAsVerifier(
