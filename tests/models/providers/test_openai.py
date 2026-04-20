@@ -121,6 +121,95 @@ class TestOpenAIChatCompletion:
         assert model.enable_thinking is True
         assert model.return_reasoning is True
 
+    def test_chat_completion_with_prompt_cache_retention(self, mock_openai_client):
+        """Test OpenAIChatCompletion with OpenAI-only prompt cache retention."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            prompt_cache_retention="24h",
+        )
+
+        assert model.sampling_run_params["prompt_cache_retention"] == "24h"
+
+    def test_chat_completion_with_logprobs_params(self, mock_openai_client):
+        """Test OpenAIChatCompletion with logprobs parameters."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            logprobs=True,
+            top_logprobs=2,
+        )
+
+        assert model.sampling_run_params["logprobs"] is True
+        assert model.sampling_run_params["top_logprobs"] == 2
+
+    def test_chat_completion_call_forwards_logprobs_params(self, mock_openai_client):
+        """Test runtime logprobs parameters are forwarded on sync calls."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        model("Hello", logprobs=True, top_logprobs=2)
+
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["logprobs"] is True
+        assert call_kwargs["top_logprobs"] == 2
+
+    @pytest.mark.asyncio
+    async def test_acall_forwards_logprobs_params(self, mock_openai_client):
+        """Test runtime logprobs parameters are forwarded on async calls."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content="done",
+                            tool_calls=None,
+                            audio=None,
+                            annotations=None,
+                        ),
+                    )
+                ],
+            )
+        )
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        await model.acall("Hello", logprobs=True, top_logprobs=2)
+
+        call_kwargs = (
+            mock_async_client.return_value.chat.completions.create.await_args.kwargs
+        )
+        assert call_kwargs["logprobs"] is True
+        assert call_kwargs["top_logprobs"] == 2
+
     def test_chat_completion_adapt_params(self, mock_openai_client):
         """Test parameter adaptation for OpenAI."""
         pytest.importorskip("openai")
@@ -135,6 +224,19 @@ class TestOpenAIChatCompletion:
 
         assert "max_completion_tokens" in adapted
         assert "max_tokens" not in adapted
+
+    def test_chat_completion_rejects_top_logprobs_without_logprobs(
+        self, mock_openai_client
+    ):
+        """Test top_logprobs requires logprobs=True at call time."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        with pytest.raises(ValueError, match="`top_logprobs` requires"):
+            model("Hello", top_logprobs=2)
 
     @pytest.mark.asyncio
     async def test_acall_stream_strips_tool_definitions_before_async_client(
@@ -488,6 +590,62 @@ class TestOpenAIChatCompletion:
         assert response.data == {
             "entities": [{"name": "Apple", "type": "Organization"}]
         }
+
+    def test_process_completion_model_output_includes_logprobs_metadata(
+        self, mock_openai_client
+    ):
+        """Test logprobs are surfaced in response metadata."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        model_output = SimpleNamespace(
+            usage=SimpleNamespace(
+                to_dict=lambda: {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                }
+            ),
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    logprobs=SimpleNamespace(
+                        model_dump=lambda: {
+                            "content": [
+                                {
+                                    "token": "Hello",
+                                    "logprob": -0.1,
+                                    "bytes": [72, 101, 108, 108, 111],
+                                    "top_logprobs": [
+                                        {"token": "Hello", "logprob": -0.1},
+                                        {"token": "Hi", "logprob": -1.0},
+                                    ],
+                                }
+                            ]
+                        }
+                    ),
+                    message=SimpleNamespace(
+                        content="Hello",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(model_output)
+
+        assert response.metadata.usage["total_tokens"] == 5
+        assert response.metadata.logprobs["content"][0]["token"] == "Hello"
+        assert (
+            response.metadata.logprobs["content"][0]["top_logprobs"][0]["token"]
+            == "Hello"
+        )
+        assert response.metadata.finish_reason == "stop"
 
     def test_prefilling_is_not_compatible_with_generation_schema(
         self, mock_openai_client

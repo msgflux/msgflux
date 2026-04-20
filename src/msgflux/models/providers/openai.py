@@ -127,12 +127,13 @@ class _BaseOpenAI(BaseModel):
 class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     """OpenAI Chat Completion."""
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         model_id: str,
         *,
         max_tokens: Optional[int] = None,
         reasoning_effort: Optional[str] = None,
+        prompt_cache_retention: Optional[Literal["in_memory", "24h"]] = None,
         enable_thinking: Optional[bool] = None,
         return_reasoning: Optional[bool] = True,
         reasoning_in_tool_call: Optional[bool] = True,
@@ -140,6 +141,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         stop: Optional[Union[str, List[str]]] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
         parallel_tool_calls: Optional[bool] = True,
         modalities: Optional[List[str]] = None,
         audio: Optional[Dict[str, str]] = None,
@@ -166,6 +169,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             Reducing reasoning effort can result in faster responses
             and fewer tokens used on reasoning in a response.
             Can be: "minimal", "low", "medium" or "high".
+        prompt_cache_retention:
+            OpenAI-only prompt cache retention policy.
+            Allowed values are "in_memory" and "24h".
         enable_thinking:
             If True, enable the model reasoning.
         return_reasoning:
@@ -188,6 +194,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling, where the model considers the results of the tokens
             with top_p probability mass. So 0.1 means only the tokens
             comprising the top 10% probability mass are considered.
+        logprobs:
+            Token log probability output. When enabled, the response
+            metadata includes the token-level logprob payload.
+        top_logprobs:
+            Number of alternative tokens to return per generated token.
+            Use with `logprobs=True`.
         parallel_tool_calls:
             If True, enable parallel tool calls.
         modalities:
@@ -231,6 +243,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["top_p"] = top_p
         if stop:
             sampling_run_params["stop"] = stop
+        if self.provider == "openai" and logprobs is not None:
+            sampling_run_params["logprobs"] = logprobs
+        if self.provider == "openai" and top_logprobs is not None:
+            sampling_run_params["top_logprobs"] = top_logprobs
         if verbosity:
             sampling_run_params["verbosity"] = verbosity
         if modalities:
@@ -241,6 +257,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["audio"] = audio
         if reasoning_effort:
             sampling_run_params["reasoning_effort"] = reasoning_effort
+        if self.provider == "openai" and prompt_cache_retention is not None:
+            sampling_run_params["prompt_cache_retention"] = prompt_cache_retention
         self.sampling_run_params = sampling_run_params
         self.enable_thinking = enable_thinking
         self.parallel_tool_calls = parallel_tool_calls
@@ -262,15 +280,22 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
     def _build_usage_metadata(self, model_output) -> dotdict:
         metadata = dotdict()
-        usage = getattr(model_output, "usage", None)
+        usage = self._serialize_openai_value(getattr(model_output, "usage", None))
         if usage is not None:
-            if hasattr(usage, "to_dict"):
-                metadata.update({"usage": usage.to_dict()})
-            elif hasattr(usage, "model_dump"):
-                metadata.update({"usage": usage.model_dump()})
-            elif isinstance(usage, Mapping):
-                metadata.update({"usage": dict(usage)})
+            metadata.usage = usage
         return metadata
+
+    @staticmethod
+    def _serialize_openai_value(value):
+        if value is None:
+            return None
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
+        if isinstance(value, Mapping):
+            return dict(value)
+        return value
 
     def _set_stop_metadata(
         self,
@@ -300,12 +325,49 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def _extract_finish_reason(choice) -> Optional[str]:
         return getattr(choice, "finish_reason", None)
 
-    @staticmethod
-    def _extract_annotations(message) -> Optional[list]:
+    @classmethod
+    def _extract_annotations(cls, message) -> Optional[list]:
         annotations = getattr(message, "annotations", None)
         if annotations:
-            return [item.model_dump() for item in annotations]
+            return [cls._serialize_openai_value(item) for item in annotations]
         return None
+
+    @staticmethod
+    def _extract_logprobs(choice):
+        return OpenAIChatCompletion._serialize_openai_value(
+            getattr(choice, "logprobs", None)
+        )
+
+    def _build_completion_metadata(self, model_output, choice, message=None) -> dotdict:
+        metadata = self._build_usage_metadata(model_output)
+        self._set_stop_metadata(
+            metadata, finish_reason=self._extract_finish_reason(choice)
+        )
+        if message is None:
+            message = getattr(choice, "message", None)
+        annotations = self._extract_annotations(message)
+        if annotations:
+            metadata.annotations = annotations
+        logprobs = self._extract_logprobs(choice)
+        if logprobs is not None:
+            metadata.logprobs = logprobs
+        return metadata
+
+    @staticmethod
+    def _merge_logprobs_metadata(metadata: dotdict, logprobs) -> None:
+        if logprobs is None:
+            return
+        existing = metadata.get("logprobs")
+        if existing is None:
+            metadata.logprobs = logprobs
+            return
+        if isinstance(existing, Mapping) and isinstance(logprobs, Mapping):
+            existing_content = existing.get("content")
+            new_content = logprobs.get("content")
+            if isinstance(existing_content, list) and isinstance(new_content, list):
+                existing_content.extend(new_content)
+                return
+        metadata.logprobs = logprobs
 
     @staticmethod
     def _process_stream_tool_calls(delta, stream_response, aggregator):
@@ -331,7 +393,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
     def _execute_model(self, **kwargs):
         prefilling = kwargs.get("prefilling")
-        params = {**kwargs, **self.sampling_run_params}
+        params = {**self.sampling_run_params, **kwargs}
         params.pop("prefilling", None)
         if prefilling:
             params["messages"] = [
@@ -345,7 +407,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
 
     async def _aexecute_model(self, **kwargs):
         prefilling = kwargs.get("prefilling")
-        params = {**kwargs, **self.sampling_run_params}
+        params = {**self.sampling_run_params, **kwargs}
         params.pop("prefilling", None)
         if prefilling:
             params["messages"] = [
@@ -372,12 +434,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         constraints, for example lowering ``Dict[K, V]`` to an ``entries`` list.
         """
         response = ModelResponse()
-        metadata = self._build_usage_metadata(model_output)
-
         choice = model_output.choices[0]
-        self._set_stop_metadata(
-            metadata, finish_reason=self._extract_finish_reason(choice)
-        )
+        metadata = self._build_completion_metadata(model_output, choice)
 
         reasoning = self._extract_reasoning(choice.message)
 
@@ -617,6 +675,19 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     if fr is not None:
                         finish_reason = fr
 
+                    chunk_metadata = self._build_completion_metadata(
+                        chunk,
+                        choice,
+                        delta,
+                    )
+                    annotations = getattr(chunk_metadata, "annotations", None)
+                    if annotations:
+                        metadata.annotations = annotations
+                    self._merge_logprobs_metadata(
+                        metadata,
+                        getattr(chunk_metadata, "logprobs", None),
+                    )
+
                     reasoning_chunk = self._extract_reasoning(delta)
 
                     if reasoning_chunk:
@@ -646,15 +717,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         )
                         continue
 
-                    annotations = self._extract_annotations(delta)
-                    if annotations:
-                        metadata.annotations = annotations
-                        continue
-
                 elif chunk.usage:
-                    usage = chunk.usage.to_dict()
-                    metadata.update(usage)
-                    metadata.usage = usage
+                    usage = self._serialize_openai_value(chunk.usage)
+                    if usage is not None:
+                        metadata.update(usage)
+                        metadata.usage = usage
 
             if aggregator.tool_calls:
                 if reasoning_tool_call:
@@ -695,6 +762,19 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                     if fr is not None:
                         finish_reason = fr
 
+                    chunk_metadata = self._build_completion_metadata(
+                        chunk,
+                        choice,
+                        delta,
+                    )
+                    annotations = getattr(chunk_metadata, "annotations", None)
+                    if annotations:
+                        metadata.annotations = annotations
+                    self._merge_logprobs_metadata(
+                        metadata,
+                        getattr(chunk_metadata, "logprobs", None),
+                    )
+
                     reasoning_chunk = self._extract_reasoning(delta)
 
                     if reasoning_chunk:
@@ -724,15 +804,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         )
                         continue
 
-                    annotations = self._extract_annotations(delta)
-                    if annotations:
-                        metadata.annotations = annotations
-                        continue
-
                 elif chunk.usage:
-                    usage = chunk.usage.to_dict()
-                    metadata.update(usage)
-                    metadata.usage = usage
+                    usage = self._serialize_openai_value(chunk.usage)
+                    if usage is not None:
+                        metadata.update(usage)
+                        metadata.usage = usage
 
             if aggregator.tool_calls:
                 if reasoning_tool_call:
@@ -758,6 +834,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         system_prompt: Optional[str],
         prefilling: Optional[str],
         tool_definitions: Optional[ToolDefinitions],
+        *,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
     ) -> Dict[str, Any]:
         if isinstance(messages, str):
             messages = [ChatBlock.user(messages)]
@@ -780,6 +859,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             "model": self.model_id,
         }
 
+        if logprobs is not None:
+            generation_params["logprobs"] = logprobs
+        if top_logprobs is not None:
+            generation_params["top_logprobs"] = top_logprobs
+
         if tool_definitions and tool_definitions.schemas:
             generation_params["tools"] = tool_definitions.schemas
             generation_params["tool_choice"] = tool_choice
@@ -791,6 +875,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def _validate_chat_completion_options(
         *,
         prefilling: Optional[str],
+        logprobs: Optional[bool],
+        top_logprobs: Optional[int],
         generation_schema: Optional[msgspec.Struct],
         typed_parser: Optional[str],
         stream: Optional[bool],
@@ -800,6 +886,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 "`prefilling` is not compatible with `generation_schema` in "
                 "OpenAI chat completions."
             )
+        if top_logprobs is not None and logprobs is not True:
+            raise ValueError("`top_logprobs` requires `logprobs=True`")
         if stream is True and typed_parser is not None:
             raise ValueError("`typed_parser` is not `stream=True` compatible")
 
@@ -809,6 +897,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         *,
         system_prompt: Optional[str] = None,
         prefilling: Optional[str] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
@@ -823,6 +913,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             prefilling:
                 Forces an initial message from the model. From that message
                 it will continue its response from there.
+            logprobs:
+                Token log probability output for this request.
+            top_logprobs:
+                Number of alternative tokens to return per generated token
+                for this request.
             stream:
                 Whether generation should be in streaming mode.
             generation_schema:
@@ -843,6 +938,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         self._validate_chat_completion_options(
             prefilling=prefilling,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
             generation_schema=generation_schema,
             typed_parser=typed_parser,
             stream=stream,
@@ -853,6 +950,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             system_prompt,
             prefilling,
             None if is_flow_control else tool_definitions,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions
@@ -889,6 +988,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         *,
         system_prompt: Optional[str] = None,
         prefilling: Optional[str] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
         stream: Optional[bool] = False,
         generation_schema: Optional[msgspec.Struct] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
@@ -903,6 +1004,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             prefilling:
                 Forces an initial message from the model. From that message
                 it will continue its response from there.
+            logprobs:
+                Token log probability output for this request.
+            top_logprobs:
+                Number of alternative tokens to return per generated token
+                for this request.
             stream:
                 Whether generation should be in streaming mode.
             generation_schema:
@@ -923,6 +1029,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         """
         self._validate_chat_completion_options(
             prefilling=prefilling,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
             generation_schema=generation_schema,
             typed_parser=typed_parser,
             stream=stream,
@@ -933,6 +1041,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             system_prompt,
             prefilling,
             None if is_flow_control else tool_definitions,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions

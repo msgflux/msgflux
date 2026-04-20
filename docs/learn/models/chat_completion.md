@@ -65,11 +65,14 @@ Chat completion models are stateless - they don't maintain conversation history 
         modalities=["text"],           # ["text"], ["audio"] or ["text", "audio"]
         audio={"voice": "alloy", "format": "mp3"},  # Audio output config
         verbosity="medium",            # Response verbosity: "low", "medium", "high"
+        logprobs=True,                 # Include token logprobs in metadata
+        top_logprobs=2,                # Return 2 alternatives per token
         parallel_tool_calls=True,      # Allow model to call multiple tools in parallel
         validate_typed_parser_output=False,  # Validate typed parser output with schema
         verbose=False,                 # Print raw output before transformation
         # --- Search ---
         web_search_options={},         # Web search config (OpenAI / OpenRouter only)
+        prompt_cache_retention="24h",  # OpenAI only: "in_memory" or "24h"
         # --- Infrastructure ---
         base_url="https://api.openai.com/v1",  # Override provider API endpoint
         context_length=128000,         # Override maximum context window
@@ -1383,7 +1386,61 @@ if "tool_call" in model_response.response_type:
 
 The Agent reads `model_response.reasoning` to pass it downstream. If the Agent's `config["reasoning_in_response"]` is `True`, the final output is wrapped as `dotdict(answer=raw_response, reasoning=reasoning)` — this is an explicit opt-in at the Agent level, not a silent model-level behaviour.
 
-## 13. **Response Metadata**
+## 13. **Token Logprobs**
+
+`logprobs` and `top_logprobs` are forwarded for `openai/...` chat completion models. Providers that inherit from `OpenAIChatCompletion` but are not OpenAI do not receive these fields.
+
+Use `logprobs=True` to request token log probabilities. Set `top_logprobs` to the number of alternative tokens you want returned for each generated token.
+
+| Parameter | Description |
+|---|---|
+| `logprobs` | Enables token-level logprob data in the response metadata. |
+| `top_logprobs` | Number of alternative tokens returned per generated token. Use with `logprobs=True`. |
+
+The returned payload is exposed in `response.metadata.logprobs` and follows OpenAI's native shape. It includes the `content` list with token entries and nested `top_logprobs` alternatives.
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion(
+        "openai/gpt-4.1-mini",
+        logprobs=True,
+        top_logprobs=2,
+    )
+
+    response = model("Hello!")
+    print(response.metadata.logprobs["content"][0]["token"])
+    print(response.metadata.logprobs["content"][0]["top_logprobs"][0]["token"])
+    ```
+
+## 14. **OpenAI Prompt Caching**
+
+`prompt_cache_retention` is an OpenAI-only initialization parameter. msgFlux forwards it only for `openai/...` chat completion models. OpenAI-compatible providers that inherit from `OpenAIChatCompletion` do not use it.
+
+Use it when you want OpenAI to keep cached prefixes in memory or retain them for longer:
+
+| Value | Behaviour |
+|---|---|
+| `"in_memory"` | Default. Keeps the cache in volatile memory for short-lived reuse. |
+| `"24h"` | Extended retention. Keeps cached prefixes available for longer. |
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion(
+        "openai/gpt-5.1",
+        prompt_cache_retention="24h",
+    )
+
+    response = model("Summarize the attached policy.")
+    print(response.consume())
+    ```
+
+## 15. **Response Metadata**
 
 All responses include metadata with usage information:
 
@@ -1419,7 +1476,7 @@ All responses include metadata with usage information:
         print(f"Request cost: ${cost:.4f}")
     ```
 
-## 14. **Error Handling**
+## 16. **Error Handling**
 
 Handle common errors gracefully:
 
@@ -1441,7 +1498,7 @@ Handle common errors gracefully:
         print(f"API error: {e}")
     ```
 
-## 15. **Model Profiles**
+## 17. **Model Profiles**
 
 Model profiles provide metadata about capabilities, pricing, and limits from [models.dev](https://models.dev).
 
@@ -1507,11 +1564,11 @@ Every initialized model exposes a `.profile` property that returns this metadata
             print(f"Estimated cost: ${cost:.4f}")
         ```
 
-## 16. **Adding a Custom Provider**
+## 18. **Adding a Custom Provider**
 
 If the service you want to use exposes an **OpenAI-compatible API**, you can add it as a provider by subclassing `OpenAIChatCompletion`. The process has two stages depending on how compatible the endpoint is.
 
-### 16.1 **Stage 1 — URL and API key only**
+### 18.1 **Stage 1 — URL and API key only**
 
 When the target API is fully OpenAI-compatible and only requires a different base URL and authentication key, the entire subclass is a small configuration mixin plus the `@register_model` decorator.
 
@@ -1555,7 +1612,7 @@ After registering, the model is available through the standard factory. The stri
     print(response.consume())
     ```
 
-### 16.2 **Stage 2 — Adapting parameters**
+### 18.2 **Stage 2 — Adapting parameters**
 
 Some providers are mostly OpenAI-compatible but have small differences: renamed fields, required extra headers, or unsupported parameters. Override `_adapt_params` to transform the parameter dict before it reaches the API.
 
@@ -1623,7 +1680,7 @@ Common adaptations inside `_adapt_params`:
 | Provider requires extra headers | Add keys to `params["extra_headers"]` |
 | Provider accepts non-standard extensions | Add keys to `params["extra_body"]` |
 
-### 16.3 **Stage 3 — Using a different client**
+### 18.3 **Stage 3 — Using a different client**
 
 The two previous stages assume the service is reached through the `openai` Python package. If you want to use a completely different HTTP client or SDK — one that is **not** the `openai` package but still exposes a compatible interface — override `_initialize` instead.
 
