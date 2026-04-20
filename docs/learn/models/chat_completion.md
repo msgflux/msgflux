@@ -824,31 +824,6 @@ Search responses include inline citations. The raw URLs are also available in `r
     # ...
     ```
 
-## Token Logprobs
-
-Use `logprobs=True` on the model call to request token log probabilities for a
-specific response. Set `top_logprobs` to the number of alternative tokens you
-want returned for each generated token.
-
-| Parameter | Description |
-|---|---|
-| `logprobs` | Enables token-level logprob data in the response metadata for the current call. |
-| `top_logprobs` | Number of alternative tokens returned per generated token for the current call. Use with `logprobs=True`. |
-
-The returned payload is exposed in `response.metadata.logprobs` and follows OpenAI's native shape. It includes the `content` list with token entries and nested `top_logprobs` alternatives.
-
-???+ example
-
-    ```python
-    import msgflux as mf
-
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-    response = model("Hello!", logprobs=True, top_logprobs=2)
-    print(response.metadata.logprobs["content"][0]["token"])
-    print(response.metadata.logprobs["content"][0]["top_logprobs"][0]["token"])
-    ```
-
 ## 12. **Reasoning Models**
 
 Reasoning models "think before answering" — they generate an internal chain of thought before producing a final response. This improves accuracy on complex tasks such as multi-step math, code generation, and logical deduction, at the cost of additional latency and tokens.
@@ -1408,7 +1383,32 @@ if "tool_call" in model_response.response_type:
 
 The Agent reads `model_response.reasoning` to pass it downstream. If the Agent's `config["reasoning_in_response"]` is `True`, the final output is wrapped as `dotdict(answer=raw_response, reasoning=reasoning)` — this is an explicit opt-in at the Agent level, not a silent model-level behaviour.
 
-## 13. **Response Metadata**
+## 13. **Token Logprobs**
+
+Use `logprobs=True` on the model call to request token log probabilities for a
+specific response. Set `top_logprobs` to the number of alternative tokens you
+want returned for each generated token.
+
+| Parameter | Description |
+|---|---|
+| `logprobs` | Enables token-level logprob data in the response metadata for the current call. |
+| `top_logprobs` | Number of alternative tokens returned per generated token for the current call. Use with `logprobs=True`. |
+
+The returned payload is exposed in `response.metadata.logprobs` and follows OpenAI's native shape. It includes the `content` list with token entries and nested `top_logprobs` alternatives.
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+    response = model("Hello!", logprobs=True, top_logprobs=2)
+    print(response.metadata.logprobs["content"][0]["token"])
+    print(response.metadata.logprobs["content"][0]["top_logprobs"][0]["token"])
+    ```
+
+## 14. **Response Metadata**
 
 All responses include metadata with usage information:
 
@@ -1444,7 +1444,7 @@ All responses include metadata with usage information:
         print(f"Request cost: ${cost:.4f}")
     ```
 
-## 14. **Error Handling**
+## 15. **Error Handling**
 
 Handle common errors gracefully:
 
@@ -1466,7 +1466,7 @@ Handle common errors gracefully:
         print(f"API error: {e}")
     ```
 
-## 15. **Model Profiles**
+## 16. **Model Profiles**
 
 Model profiles provide metadata about capabilities, pricing, and limits from [models.dev](https://models.dev).
 
@@ -1532,7 +1532,7 @@ Every initialized model exposes a `.profile` property that returns this metadata
             print(f"Estimated cost: ${cost:.4f}")
         ```
 
-## 16. **Adding a Custom Provider**
+## 17. **Adding a Custom Provider**
 
 If the service you want to use exposes an **OpenAI-compatible API**, you can add it as a provider by subclassing `OpenAIChatCompletion`. The process has two stages depending on how compatible the endpoint is.
 
