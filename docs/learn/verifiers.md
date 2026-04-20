@@ -117,6 +117,14 @@ tools = LLMAsVerifier.tool_trace_verification(
 filtering = LLMAsVerifier.synthetic_data_filtering(
     model="openai/gpt-4.1-mini",
 )
+
+terminal = LLMAsVerifier.terminal_bench(
+    model="openai/gpt-4.1-mini",
+)
+
+swe = LLMAsVerifier.swe_bench_verified(
+    model="openai/gpt-4.1-mini",
+)
 ```
 
 ### `trajectory_analysis`
@@ -172,6 +180,24 @@ distillation corpora.
 - label quality
 - ambiguity
 - usefulness
+
+### `terminal_bench`
+
+Use for terminal-task trajectory selection in the style of Terminal-Bench.
+
+- specification adherence
+- output match
+- unresolved error signals
+- terminal output treated as primary ground truth
+
+### `swe_bench_verified`
+
+Use for patch and trajectory evaluation in the style of SWE-bench Verified.
+
+- root-cause analysis
+- code review quality
+- empirical verification from executed commands
+- narration treated as weaker evidence than the actual patch and outputs
 
 ## Single Candidate
 

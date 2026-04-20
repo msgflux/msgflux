@@ -247,6 +247,8 @@ The preset constructors are thin wrappers around the same runtime:
 - `answer_reranking`
 - `grounded_answer_verification`
 - `patch_selection`
+- `terminal_bench`
+- `swe_bench_verified`
 - `tool_trace_verification`
 - `synthetic_data_filtering`
 

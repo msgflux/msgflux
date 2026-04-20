@@ -304,6 +304,78 @@ TRAJECTORY_ANALYSIS_CRITERIA = (
     ),
 )
 
+TERMINAL_BENCH_GROUND_TRUTH_NOTE = (
+    "Focus on terminal output as ground truth. Do not trust the agent's "
+    "self-assessment or claims of success when terminal output shows errors or "
+    "contradictory evidence."
+)
+
+TERMINAL_BENCH_CRITERIA = (
+    VerificationCriterion(
+        id="specification",
+        name="Specification Adherence",
+        description=(
+            "Re-read the task and check whether the candidate satisfies the "
+            "specific requirements, constraints, paths, formats, and naming "
+            "details instead of solving a similar but different problem."
+        ),
+    ),
+    VerificationCriterion(
+        id="output_match",
+        name="Output Match",
+        description=(
+            "Compare the observed terminal output against the output the task "
+            "expects. Reward candidates whose observed output literally matches "
+            "the required behavior."
+        ),
+    ),
+    VerificationCriterion(
+        id="error_signals",
+        name="Error Signal Detection",
+        description=(
+            "Scan for unresolved error messages, failed commands, tracebacks, "
+            "non-zero exits, and other failure markers that indicate the task "
+            "was not actually completed."
+        ),
+    ),
+)
+
+SWE_BENCH_VERIFIED_GROUND_TRUTH_NOTE = (
+    "Do not trust the agent's self-assessment or narration that a patch looks "
+    "correct. Prefer evidence from the issue, the final patch, and commands the "
+    "agent actually ran."
+)
+
+SWE_BENCH_VERIFIED_CRITERIA = (
+    VerificationCriterion(
+        id="root_cause",
+        name="Root Cause Analysis",
+        description=(
+            "Check whether the candidate patch modifies the code path that "
+            "actually causes the bug instead of only treating symptoms or adding "
+            "a workaround in the wrong location."
+        ),
+    ),
+    VerificationCriterion(
+        id="code_review",
+        name="Code Quality",
+        description=(
+            "Review the final patch as a code reviewer would, looking for "
+            "syntactic validity, semantic correctness, contract preservation, "
+            "and regression risk."
+        ),
+    ),
+    VerificationCriterion(
+        id="verification",
+        name="Empirical Verification",
+        description=(
+            "Look at the commands the agent actually ran and what they printed. "
+            "Reward candidates that reproduce the failure, verify the fix, and "
+            "end in a tested final state."
+        ),
+    ),
+)
+
 ANSWER_RERANKING_EXTRA_INSTRUCTIONS = (
     "Prefer candidates that directly satisfy the task, avoid unsupported claims, "
     "and do not reward verbosity unless it improves usefulness."
@@ -546,6 +618,36 @@ class LLMAsVerifier:
             model=model,
             criteria=criteria,
             default_ground_truth_note=TRAJECTORY_ANALYSIS_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
+
+    @classmethod
+    def terminal_bench(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = TERMINAL_BENCH_CRITERIA,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=TERMINAL_BENCH_GROUND_TRUTH_NOTE,
+            **kwargs,
+        )
+
+    @classmethod
+    def swe_bench_verified(
+        cls,
+        model: ModelLike,
+        *,
+        criteria: Sequence[VerificationCriterion] = SWE_BENCH_VERIFIED_CRITERIA,
+        **kwargs: Any,
+    ) -> "LLMAsVerifier":
+        return cls._from_preset(
+            model=model,
+            criteria=criteria,
+            default_ground_truth_note=SWE_BENCH_VERIFIED_GROUND_TRUTH_NOTE,
             **kwargs,
         )
 
