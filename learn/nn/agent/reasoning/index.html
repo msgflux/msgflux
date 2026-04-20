@@ -5342,9 +5342,9 @@ Modern language models can &quot;think before answering&quot; — generating an 
 |---|---|---|
 | **What it is** | The model&#x27;s native thinking capability (e.g. `reasoning_effort=&quot;high&quot;`) | A `generation_schema` that forces structured thinking (CoT, ReAct, SelfConsistency) |
 | **Where reasoning lives** | `response.reasoning` — a first-class field on the response object | Inside `response.consume()` — as a field of the structured output (e.g. `result.reasoning`) |
-| **Configured via** | Model params: `reasoning_effort`, `return_reasoning`, `reasoning_max_tokens` | Agent param: `generation_schema=ChainOfThought` |
+| **Configured via** | Model params: `reasoning_effort`, `return_reasoning`, `reasoning_max_tokens` (OpenRouter only) | Agent param: `generation_schema=ChainOfThought` |
 | **Works with any model** | No — requires a reasoning-capable model (Groq gpt-oss, OpenAI o-series, etc.) | Yes — any model that supports structured output |
-| **Controllable budget** | Yes — `reasoning_effort` and `reasoning_max_tokens` | No — the model decides how much to write in the schema field |
+| **Controllable budget** | Yes — `reasoning_effort`; OpenRouter also supports `reasoning_max_tokens` | No — the model decides how much to write in the schema field |
 | **Can combine with tools** | Yes — `reasoning_in_tool_call=True` preserves the chain across calls | Yes — ReAct is specifically designed for tool use |
 
 !!! tip
@@ -5362,10 +5362,9 @@ Model-level reasoning is configured at model initialization through parameters f
 import msgflux as mf
 
 model = mf.Model.chat_completion(
-    &quot;groq/openai/gpt-oss-120b&quot;,
-    reasoning_effort=&quot;low&quot;,       # How much to think: &quot;minimal&quot;, &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;
+    &quot;openrouter/anthropic/claude-sonnet-4.5&quot;,
     return_reasoning=True,        # Store the trace in response.reasoning (default: True)
-    reasoning_max_tokens=1024,    # Cap the thinking budget in tokens
+    reasoning_max_tokens=1024,    # OpenRouter only: cap the thinking budget in tokens
     reasoning_in_tool_call=True,  # Preserve reasoning across tool call rounds
 )
 ```
@@ -5934,7 +5933,7 @@ This is useful for debugging the relationship between the model&#x27;s thinking 
 |---|---|---|---|
 | `reasoning_effort` | `str` | — | `&quot;minimal&quot;`, `&quot;low&quot;`, `&quot;medium&quot;`, `&quot;high&quot;` |
 | `return_reasoning` | `bool` | `True` | Store reasoning in `response.reasoning` |
-| `reasoning_max_tokens` | `int` | — | Cap reasoning token budget |
+| `reasoning_max_tokens` | `int` | — | OpenRouter-only cap on reasoning token budget |
 | `reasoning_in_tool_call` | `bool` | `False` | Embed reasoning in `&lt;think&gt;` tags across tool call rounds |
 | `enable_thinking` | `bool` | `False` | Provider-level switch (e.g. Anthropic) |
 
@@ -6050,7 +6049,7 @@ This is useful for debugging the relationship between the model&#x27;s thinking 
 </tr>
 <tr>
 <td><strong>Configured via</strong></td>
-<td>Model params: <code>reasoning_effort</code>, <code>return_reasoning</code>, <code>reasoning_max_tokens</code></td>
+<td>Model params: <code>reasoning_effort</code>, <code>return_reasoning</code>, <code>reasoning_max_tokens</code> (OpenRouter only)</td>
 <td>Agent param: <code>generation_schema=ChainOfThought</code></td>
 </tr>
 <tr>
@@ -6060,7 +6059,7 @@ This is useful for debugging the relationship between the model&#x27;s thinking 
 </tr>
 <tr>
 <td><strong>Controllable budget</strong></td>
-<td>Yes — <code>reasoning_effort</code> and <code>reasoning_max_tokens</code></td>
+<td>Yes — <code>reasoning_effort</code>; OpenRouter also supports <code>reasoning_max_tokens</code></td>
 <td>No — the model decides how much to write in the schema field</td>
 </tr>
 <tr>
@@ -6081,12 +6080,11 @@ This is useful for debugging the relationship between the model&#x27;s thinking 
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="s2">&quot;groq/openai/gpt-oss-120b&quot;</span><span class="p">,</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">reasoning_effort</span><span class="o">=</span><span class="s2">&quot;low&quot;</span><span class="p">,</span>       <span class="c1"># How much to think: &quot;minimal&quot;, &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">return_reasoning</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>        <span class="c1"># Store the trace in response.reasoning (default: True)</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">reasoning_max_tokens</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>    <span class="c1"># Cap the thinking budget in tokens</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">reasoning_in_tool_call</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Preserve reasoning across tool call rounds</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="s2">&quot;openrouter/anthropic/claude-sonnet-4.5&quot;</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">return_reasoning</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>        <span class="c1"># Store the trace in response.reasoning (default: True)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">reasoning_max_tokens</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>    <span class="c1"># OpenRouter only: cap the thinking budget in tokens</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">reasoning_in_tool_call</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Preserve reasoning across tool call rounds</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>At the Agent level, one additional config key controls how reasoning is surfaced in the Agent's output:</p>
 <table>
@@ -6663,7 +6661,7 @@ This is useful for debugging the relationship between the model&#x27;s thinking 
 <td><code>reasoning_max_tokens</code></td>
 <td><code>int</code></td>
 <td>—</td>
-<td>Cap reasoning token budget</td>
+<td>OpenRouter-only cap on reasoning token budget</td>
 </tr>
 <tr>
 <td><code>reasoning_in_tool_call</code></td>
