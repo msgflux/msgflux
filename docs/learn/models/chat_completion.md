@@ -1568,7 +1568,7 @@ Every initialized model exposes a `.profile` property that returns this metadata
 
 If the service you want to use exposes an **OpenAI-compatible API**, you can add it as a provider by subclassing `OpenAIChatCompletion`. The process has two stages depending on how compatible the endpoint is.
 
-### 16.1 **Stage 1 — URL and API key only**
+### 17.1 **Stage 1 — URL and API key only**
 
 When the target API is fully OpenAI-compatible and only requires a different base URL and authentication key, the entire subclass is a small configuration mixin plus the `@register_model` decorator.
 
@@ -1612,7 +1612,7 @@ After registering, the model is available through the standard factory. The stri
     print(response.consume())
     ```
 
-### 16.2 **Stage 2 — Adapting parameters**
+### 17.2 **Stage 2 — Adapting parameters**
 
 Some providers are mostly OpenAI-compatible but have small differences: renamed fields, required extra headers, or unsupported parameters. Override `_adapt_params` to transform the parameter dict before it reaches the API.
 
@@ -1680,7 +1680,7 @@ Common adaptations inside `_adapt_params`:
 | Provider requires extra headers | Add keys to `params["extra_headers"]` |
 | Provider accepts non-standard extensions | Add keys to `params["extra_body"]` |
 
-### 16.3 **Stage 3 — Using a different client**
+### 17.3 **Stage 3 — Using a different client**
 
 The two previous stages assume the service is reached through the `openai` Python package. If you want to use a completely different HTTP client or SDK — one that is **not** the `openai` package but still exposes a compatible interface — override `_initialize` instead.
 

@@ -41,3 +41,5 @@ Use this section when you need to answer questions like:
   `dict[K, V]` is encoded for strict structured outputs and restored at runtime.
 - [ReAct Provider Schemas](react-provider-schemas.md): how ReAct uses tool
   schemas to build a dynamic provider-facing response format.
+- [LLM-as-a-Verifier](llm-as-a-verifier.md): how verifier prompts, concurrent
+  execution, score-token parsing, and weighted aggregation fit together.
