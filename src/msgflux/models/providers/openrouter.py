@@ -42,8 +42,16 @@ class OpenRouterChatCompletion(_BaseOpenRouter, OpenAIChatCompletion):
                 params["tool_choice"] = "none"
 
         reasoning_effort = params.pop("reasoning_effort", None)
+        reasoning_max_tokens = params.pop("reasoning_max_tokens", None)
+        if reasoning_effort is not None and reasoning_max_tokens is not None:
+            raise ValueError(
+                "`reasoning_max_tokens` cannot be used together with "
+                "`reasoning_effort` for OpenRouter."
+            )
         if reasoning_effort is not None:
             extra_body["reasoning"] = {"effort": reasoning_effort}
+        if reasoning_max_tokens is not None:
+            extra_body["reasoning"] = {"max_tokens": reasoning_max_tokens}
 
         # For non-OpenAI models enable web-search plugin
         web_search_options = params.get("web_search_options", None)

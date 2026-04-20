@@ -59,7 +59,7 @@ Chat completion models are stateless - they don't maintain conversation history 
         reasoning_effort="medium",     # "minimal", "low", "medium", "high"
         enable_thinking=True,          # Enable extended model reasoning
         return_reasoning=True,         # Include reasoning content in response
-        reasoning_max_tokens=4096,     # Max tokens reserved for reasoning/thinking
+        reasoning_max_tokens=4096,     # OpenRouter only: max tokens reserved for reasoning/thinking
         reasoning_in_tool_call=True,   # Preserve reasoning context across tool calls
         # --- Output ---
         modalities=["text"],           # ["text"], ["audio"] or ["text", "audio"]
@@ -840,7 +840,7 @@ msgFlux exposes five parameters that control reasoning behaviour at model initia
 | Parameter | Description | Default |
 |---|---|---|
 | `reasoning_effort` | How much reasoning to do. One of `"minimal"`, `"low"`, `"medium"`, `"high"`. | — |
-| `reasoning_max_tokens` | Hard cap (in tokens) on the internal thinking budget. | — |
+| `reasoning_max_tokens` | OpenRouter-only hard cap (in tokens) for the internal thinking budget. Maps to `extra_body.reasoning.max_tokens` and cannot be combined with `reasoning_effort`. | — |
 | `return_reasoning` | Store the reasoning trace in `response.reasoning`. When `False`, reasoning is discarded even if the provider returns it. | `True` |
 | `enable_thinking` | Activate extended model reasoning. | `False` |
 | `reasoning_in_tool_call` | Preserve reasoning context across tool calls so the model keeps its chain of thought intact. When enabled, the `ToolCallAggregator` embeds the reasoning in `<think>` tags inside the assistant message history, allowing the model to see its previous reasoning when processing tool results. | `False` |
@@ -1010,7 +1010,7 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
 
 ### 12.6 **Controlling the Reasoning Budget**
 
-`reasoning_max_tokens` caps how many tokens the model can use for internal thinking. Use it to bound latency and cost while still enabling reasoning:
+`reasoning_max_tokens` is an OpenRouter-only parameter in msgFlux. It maps to `extra_body={"reasoning": {"max_tokens": ...}}` on the OpenRouter API and cannot be combined with `reasoning_effort`.
 
 ???+ example
 
@@ -1018,16 +1018,16 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
     import msgflux as mf
 
     model = mf.Model.chat_completion(
-        "groq/openai/gpt-oss-120b",
-        reasoning_effort="high",
-        reasoning_max_tokens=512,   # Cap the thinking budget
+        "openrouter/anthropic/claude-sonnet-4.5",
+        reasoning_max_tokens=2000,
     )
 
-    response = model("Solve: if 3x + 7 = 22, what is x?")
-    print(response.consume_reasoning())   # Kept short by the token cap
+    response = model("What's the weather like in Boston? Then recommend what to wear.")
+    print(response.consume_reasoning())
     print(response.consume())
-    # x = 5
     ```
+
+OpenRouter's own API examples pass the reasoning budget inside `extra_body={"reasoning": {"max_tokens": 2000}}`; msgFlux translates the model-level `reasoning_max_tokens` parameter to that shape for you.
 
 ### 12.7 **Streaming with Reasoning**
 
@@ -1655,11 +1655,21 @@ The built-in OpenRouter provider is a real-world example:
             if params["tool_choice"] is None:
                 params["tool_choice"] = "auto" if params["tools"] else "none"
 
-            # 3. Map reasoning_effort to the provider format
+            # 3. Map reasoning parameters to the provider format
             reasoning_effort = params.pop("reasoning_effort", None)
+            reasoning_max_tokens = params.pop("reasoning_max_tokens", None)
+            if reasoning_effort is not None and reasoning_max_tokens is not None:
+                raise ValueError(
+                    "`reasoning_max_tokens` cannot be used together with "
+                    "`reasoning_effort` for OpenRouter."
+                )
             if reasoning_effort is not None:
                 extra_body = params.get("extra_body", {})
                 extra_body["reasoning"] = {"effort": reasoning_effort}
+                params["extra_body"] = extra_body
+            if reasoning_max_tokens is not None:
+                extra_body = params.get("extra_body", {})
+                extra_body["reasoning"] = {"max_tokens": reasoning_max_tokens}
                 params["extra_body"] = extra_body
 
             # 4. Add required headers
@@ -1676,7 +1686,7 @@ Common adaptations inside `_adapt_params`:
 |---|---|
 | Provider uses `max_completion_tokens` instead of `max_tokens` | `params["max_completion_tokens"] = params.pop("max_tokens")` |
 | Provider rejects `tool_choice=None` | Set it explicitly to `"auto"` or `"none"` |
-| Provider uses a different field for reasoning | `params.pop("reasoning_effort")` and remap into `extra_body` |
+| Provider uses a different field for reasoning | `params.pop("reasoning_effort")` or `params.pop("reasoning_max_tokens")` and remap into `extra_body` |
 | Provider requires extra headers | Add keys to `params["extra_headers"]` |
 | Provider accepts non-standard extensions | Add keys to `params["extra_body"]` |
 

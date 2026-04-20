@@ -8,9 +8,9 @@ Modern language models can "think before answering" — generating an internal c
 |---|---|---|
 | **What it is** | The model's native thinking capability (e.g. `reasoning_effort="high"`) | A `generation_schema` that forces structured thinking (CoT, ReAct, SelfConsistency) |
 | **Where reasoning lives** | `response.reasoning` — a first-class field on the response object | Inside `response.consume()` — as a field of the structured output (e.g. `result.reasoning`) |
-| **Configured via** | Model params: `reasoning_effort`, `return_reasoning`, `reasoning_max_tokens` | Agent param: `generation_schema=ChainOfThought` |
+| **Configured via** | Model params: `reasoning_effort`, `return_reasoning`, `reasoning_max_tokens` (OpenRouter only) | Agent param: `generation_schema=ChainOfThought` |
 | **Works with any model** | No — requires a reasoning-capable model (Groq gpt-oss, OpenAI o-series, etc.) | Yes — any model that supports structured output |
-| **Controllable budget** | Yes — `reasoning_effort` and `reasoning_max_tokens` | No — the model decides how much to write in the schema field |
+| **Controllable budget** | Yes — `reasoning_effort`; OpenRouter also supports `reasoning_max_tokens` | No — the model decides how much to write in the schema field |
 | **Can combine with tools** | Yes — `reasoning_in_tool_call=True` preserves the chain across calls | Yes — ReAct is specifically designed for tool use |
 
 !!! tip
@@ -28,10 +28,9 @@ Model-level reasoning is configured at model initialization through parameters f
 import msgflux as mf
 
 model = mf.Model.chat_completion(
-    "groq/openai/gpt-oss-120b",
-    reasoning_effort="low",       # How much to think: "minimal", "low", "medium", "high"
+    "openrouter/anthropic/claude-sonnet-4.5",
     return_reasoning=True,        # Store the trace in response.reasoning (default: True)
-    reasoning_max_tokens=1024,    # Cap the thinking budget in tokens
+    reasoning_max_tokens=1024,    # OpenRouter only: cap the thinking budget in tokens
     reasoning_in_tool_call=True,  # Preserve reasoning across tool call rounds
 )
 ```
@@ -600,7 +599,7 @@ This is useful for debugging the relationship between the model's thinking and i
 |---|---|---|---|
 | `reasoning_effort` | `str` | — | `"minimal"`, `"low"`, `"medium"`, `"high"` |
 | `return_reasoning` | `bool` | `True` | Store reasoning in `response.reasoning` |
-| `reasoning_max_tokens` | `int` | — | Cap reasoning token budget |
+| `reasoning_max_tokens` | `int` | — | OpenRouter-only cap on reasoning token budget |
 | `reasoning_in_tool_call` | `bool` | `False` | Embed reasoning in `<think>` tags across tool call rounds |
 | `enable_thinking` | `bool` | `False` | Provider-level switch (e.g. Anthropic) |
 
