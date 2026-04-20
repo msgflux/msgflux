@@ -169,6 +169,13 @@ class VerificationRequest:
     request_kwargs: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class TournamentRequest:
+    candidate_a_label: str
+    candidate_b_label: str
+    candidates: dict[str, Any]
+
+
 @dataclass
 class VerifierResult:
     scores: dict[str, float]
@@ -693,66 +700,43 @@ class LLMAsVerifier:
     ) -> TournamentResult:
         candidates_map = self._normalize_candidates(candidates, min_count=2)
         labels = list(candidates_map.keys())
-        values = list(candidates_map.values())
         active_criteria = self._get_active_criteria(criteria)
-        wins = dict.fromkeys(labels, 0.0)
-        score_history = {label: [] for label in labels}
-        matches = []
+        match_batch = self._build_match_batch(candidates_map)
 
-        for index_a, index_b in combinations(range(len(labels)), 2):
-            label_a = labels[index_a]
-            label_b = labels[index_b]
-            result = self(
-                task=task,
-                candidates={
-                    label_a: values[index_a],
-                    label_b: values[index_b],
-                },
-                criteria=active_criteria,
-                context=context,
-                ground_truth_note=ground_truth_note,
-                extra_instructions=extra_instructions,
+        if len(match_batch) == 1:
+            matches = (
+                self._evaluate_match_sync(
+                    match_batch[0],
+                    task=task,
+                    criteria=active_criteria,
+                    context=context,
+                    ground_truth_note=ground_truth_note,
+                    extra_instructions=extra_instructions,
+                ),
+            )
+        else:
+            match_responses = F.map_gather(
+                self._evaluate_match_sync,
+                args_list=[(match_request,) for match_request in match_batch],
+                kwargs_list=[
+                    {
+                        "task": task,
+                        "criteria": active_criteria,
+                        "context": context,
+                        "ground_truth_note": ground_truth_note,
+                        "extra_instructions": extra_instructions,
+                    }
+                    for _ in match_batch
+                ],
+            )
+            matches = tuple(
+                self._unwrap_parallel_response(response) for response in match_responses
             )
 
-            score_a = result.scores[label_a]
-            score_b = result.scores[label_b]
-            score_history[label_a].append(score_a)
-            score_history[label_b].append(score_b)
-
-            if score_a > score_b:
-                wins[label_a] += 1.0
-            elif score_b > score_a:
-                wins[label_b] += 1.0
-            else:
-                wins[label_a] += 0.5
-                wins[label_b] += 0.5
-
-            matches.append(
-                TournamentMatch(
-                    candidate_a_label=label_a,
-                    candidate_b_label=label_b,
-                    result=result,
-                )
-            )
-
-        average_scores = {
-            label: (fmean(history) if history else 0.5)
-            for label, history in score_history.items()
-        }
-        winner = max(
-            labels,
-            key=lambda label: (wins[label], average_scores[label], label),
-        )
-        return TournamentResult(
-            winner=winner,
-            wins=wins,
-            average_scores=average_scores,
+        return self._build_tournament_result(
+            labels=labels,
             matches=matches,
-            metadata=self._build_tournament_metadata(
-                matches=matches,
-                criteria=active_criteria,
-                n_candidates=len(labels),
-            ),
+            criteria=active_criteria,
         )
 
     async def aselect_best(
@@ -767,66 +751,115 @@ class LLMAsVerifier:
     ) -> TournamentResult:
         candidates_map = self._normalize_candidates(candidates, min_count=2)
         labels = list(candidates_map.keys())
-        values = list(candidates_map.values())
         active_criteria = self._get_active_criteria(criteria)
-        wins = dict.fromkeys(labels, 0.0)
-        score_history = {label: [] for label in labels}
-        matches = []
+        match_batch = self._build_match_batch(candidates_map)
 
+        if len(match_batch) == 1:
+            matches = (
+                await self._evaluate_match_async(
+                    match_batch[0],
+                    task=task,
+                    criteria=active_criteria,
+                    context=context,
+                    ground_truth_note=ground_truth_note,
+                    extra_instructions=extra_instructions,
+                ),
+            )
+        else:
+            match_responses = await F.amap_gather(
+                self._evaluate_match_async,
+                args_list=[(match_request,) for match_request in match_batch],
+                kwargs_list=[
+                    {
+                        "task": task,
+                        "criteria": active_criteria,
+                        "context": context,
+                        "ground_truth_note": ground_truth_note,
+                        "extra_instructions": extra_instructions,
+                    }
+                    for _ in match_batch
+                ],
+            )
+            matches = tuple(
+                self._unwrap_parallel_response(response) for response in match_responses
+            )
+
+        return self._build_tournament_result(
+            labels=labels,
+            matches=matches,
+            criteria=active_criteria,
+        )
+
+    def _build_match_batch(
+        self, candidates: Mapping[str, Any]
+    ) -> list[TournamentRequest]:
+        labels = list(candidates.keys())
+        match_batch = []
+
+        # Pairwise tournament matches are independent, so this layer can also run
+        # concurrently on top of the per-attempt concurrency inside `__call__`.
         for index_a, index_b in combinations(range(len(labels)), 2):
             label_a = labels[index_a]
             label_b = labels[index_b]
-            result = await self.acall(
-                task=task,
-                candidates={
-                    label_a: values[index_a],
-                    label_b: values[index_b],
-                },
-                criteria=active_criteria,
-                context=context,
-                ground_truth_note=ground_truth_note,
-                extra_instructions=extra_instructions,
-            )
-
-            score_a = result.scores[label_a]
-            score_b = result.scores[label_b]
-            score_history[label_a].append(score_a)
-            score_history[label_b].append(score_b)
-
-            if score_a > score_b:
-                wins[label_a] += 1.0
-            elif score_b > score_a:
-                wins[label_b] += 1.0
-            else:
-                wins[label_a] += 0.5
-                wins[label_b] += 0.5
-
-            matches.append(
-                TournamentMatch(
+            match_batch.append(
+                TournamentRequest(
                     candidate_a_label=label_a,
                     candidate_b_label=label_b,
-                    result=result,
+                    candidates={
+                        label_a: candidates[label_a],
+                        label_b: candidates[label_b],
+                    },
                 )
             )
 
-        average_scores = {
-            label: (fmean(history) if history else 0.5)
-            for label, history in score_history.items()
-        }
-        winner = max(
-            labels,
-            key=lambda label: (wins[label], average_scores[label], label),
+        return match_batch
+
+    def _evaluate_match_sync(
+        self,
+        match_request: TournamentRequest,
+        *,
+        task: Any,
+        criteria: Sequence[VerificationCriterion],
+        context: Optional[Mapping[str, Any]],
+        ground_truth_note: Optional[str],
+        extra_instructions: Optional[str],
+    ) -> TournamentMatch:
+        result = self(
+            task=task,
+            candidates=match_request.candidates,
+            criteria=criteria,
+            context=context,
+            ground_truth_note=ground_truth_note,
+            extra_instructions=extra_instructions,
         )
-        return TournamentResult(
-            winner=winner,
-            wins=wins,
-            average_scores=average_scores,
-            matches=matches,
-            metadata=self._build_tournament_metadata(
-                matches=matches,
-                criteria=active_criteria,
-                n_candidates=len(labels),
-            ),
+        return TournamentMatch(
+            candidate_a_label=match_request.candidate_a_label,
+            candidate_b_label=match_request.candidate_b_label,
+            result=result,
+        )
+
+    async def _evaluate_match_async(
+        self,
+        match_request: TournamentRequest,
+        *,
+        task: Any,
+        criteria: Sequence[VerificationCriterion],
+        context: Optional[Mapping[str, Any]],
+        ground_truth_note: Optional[str],
+        extra_instructions: Optional[str],
+    ) -> TournamentMatch:
+        result = await self.acall(
+            task=task,
+            candidates=match_request.candidates,
+            criteria=criteria,
+            context=context,
+            ground_truth_note=ground_truth_note,
+            extra_instructions=extra_instructions,
+        )
+        return TournamentMatch(
+            candidate_a_label=match_request.candidate_a_label,
+            candidate_b_label=match_request.candidate_b_label,
+            result=result,
         )
 
     def _build_request_batch(
@@ -1218,6 +1251,52 @@ class LLMAsVerifier:
                 for match in matches
             ]
         return metadata
+
+    def _build_tournament_result(
+        self,
+        *,
+        labels: Sequence[str],
+        matches: Sequence[TournamentMatch],
+        criteria: Sequence[VerificationCriterion],
+    ) -> TournamentResult:
+        wins = dict.fromkeys(labels, 0.0)
+        score_history = {label: [] for label in labels}
+
+        for match in matches:
+            label_a = match.candidate_a_label
+            label_b = match.candidate_b_label
+            score_a = match.result.scores[label_a]
+            score_b = match.result.scores[label_b]
+            score_history[label_a].append(score_a)
+            score_history[label_b].append(score_b)
+
+            if score_a > score_b:
+                wins[label_a] += 1.0
+            elif score_b > score_a:
+                wins[label_b] += 1.0
+            else:
+                wins[label_a] += 0.5
+                wins[label_b] += 0.5
+
+        average_scores = {
+            label: (fmean(history) if history else 0.5)
+            for label, history in score_history.items()
+        }
+        winner = max(
+            labels,
+            key=lambda label: (wins[label], average_scores[label], label),
+        )
+        return TournamentResult(
+            winner=winner,
+            wins=wins,
+            average_scores=average_scores,
+            matches=list(matches),
+            metadata=self._build_tournament_metadata(
+                matches=matches,
+                criteria=criteria,
+                n_candidates=len(labels),
+            ),
+        )
 
     def _build_result(
         self,

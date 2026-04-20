@@ -660,6 +660,35 @@ class TestLLMAsVerifier:
         assert len(result.matches) == 3
         assert result.wins["best"] == 2.0
 
+    def test_select_best_executes_matches_concurrently(self):
+        model = ConcurrentTrackingModel(
+            [
+                _make_pairwise_response(
+                    "Analysis\n<score_A>A</score_A>\n<score_B>T</score_B>",
+                    token_a="A",
+                    token_b="T",
+                )
+                for _ in range(3)
+            ]
+        )
+        verifier = LLMAsVerifier(
+            model=model,
+            criteria=[CRITERION],
+        )
+
+        result = verifier.select_best(
+            task="Pick the strongest final answer.",
+            candidates={
+                "best": "best",
+                "okay": "okay",
+                "bad": "bad",
+            },
+        )
+
+        assert result.winner == "best"
+        assert model.max_active_calls > 1
+        assert len(model.calls) == 3
+
     def test_select_best_verbose_mode_aggregates_match_outputs(self):
         verifier = LLMAsVerifier(
             model=DynamicPairwiseModel(),
@@ -679,6 +708,36 @@ class TestLLMAsVerifier:
         assert result.metadata["verbose"] is True
         assert len(result.metadata["raw_outputs"]) == 3
         assert result.metadata["raw_outputs"][0]["outputs"]
+
+    @pytest.mark.asyncio
+    async def test_aselect_best_executes_matches_concurrently(self):
+        model = ConcurrentTrackingModel(
+            [
+                _make_pairwise_response(
+                    "Analysis\n<score_A>A</score_A>\n<score_B>T</score_B>",
+                    token_a="A",
+                    token_b="T",
+                )
+                for _ in range(3)
+            ]
+        )
+        verifier = LLMAsVerifier(
+            model=model,
+            criteria=[CRITERION],
+        )
+
+        result = await verifier.aselect_best(
+            task="Pick the strongest final answer.",
+            candidates={
+                "best": "best",
+                "okay": "okay",
+                "bad": "bad",
+            },
+        )
+
+        assert result.winner == "best"
+        assert model.max_active_calls > 1
+        assert len(model.calls) == 3
 
     def test_call_rejects_more_than_two_candidates(self):
         verifier = LLMAsVerifier(

@@ -126,6 +126,12 @@ That boundary is intentional:
 of the base verifier. They run pairwise matches, accumulate wins, and use
 average score as a tiebreaker.
 
+The tournament layer can also fan out its pairwise matches concurrently. That
+means a multi-candidate selection now has two concurrency layers:
+
+- concurrent attempts inside each verifier call
+- concurrent pairwise matches across the tournament
+
 This keeps the core verifier simple instead of making `__call__` return
 different shapes for different candidate counts.
 
