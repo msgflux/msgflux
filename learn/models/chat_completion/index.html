@@ -1216,10 +1216,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#13-response-metadata" class="md-nav__link">
+  <a href="#13-token-logprobs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        13. Response Metadata
+        13. Token Logprobs
       
     </span>
   </a>
@@ -1227,10 +1227,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#14-error-handling" class="md-nav__link">
+  <a href="#14-response-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       
-        14. Error Handling
+        14. Response Metadata
       
     </span>
   </a>
@@ -1238,10 +1238,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#15-model-profiles" class="md-nav__link">
+  <a href="#15-error-handling" class="md-nav__link">
     <span class="md-ellipsis">
       
-        15. Model Profiles
+        15. Error Handling
       
     </span>
   </a>
@@ -1249,15 +1249,26 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#16-adding-a-custom-provider" class="md-nav__link">
+  <a href="#16-model-profiles" class="md-nav__link">
     <span class="md-ellipsis">
       
-        16. Adding a Custom Provider
+        16. Model Profiles
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="16. Adding a Custom Provider">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-adding-a-custom-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. Adding a Custom Provider
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="17. Adding a Custom Provider">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5313,10 +5324,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#13-response-metadata" class="md-nav__link">
+  <a href="#13-token-logprobs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        13. Response Metadata
+        13. Token Logprobs
       
     </span>
   </a>
@@ -5324,10 +5335,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#14-error-handling" class="md-nav__link">
+  <a href="#14-response-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       
-        14. Error Handling
+        14. Response Metadata
       
     </span>
   </a>
@@ -5335,10 +5346,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#15-model-profiles" class="md-nav__link">
+  <a href="#15-error-handling" class="md-nav__link">
     <span class="md-ellipsis">
       
-        15. Model Profiles
+        15. Error Handling
       
     </span>
   </a>
@@ -5346,15 +5357,26 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#16-adding-a-custom-provider" class="md-nav__link">
+  <a href="#16-model-profiles" class="md-nav__link">
     <span class="md-ellipsis">
       
-        16. Adding a Custom Provider
+        16. Model Profiles
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="16. Adding a Custom Provider">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-adding-a-custom-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. Adding a Custom Provider
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="17. Adding a Custom Provider">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5559,6 +5581,8 @@ Chat completion models are stateless - they don&#x27;t maintain conversation his
         modalities=[&quot;text&quot;],           # [&quot;text&quot;], [&quot;audio&quot;] or [&quot;text&quot;, &quot;audio&quot;]
         audio={&quot;voice&quot;: &quot;alloy&quot;, &quot;format&quot;: &quot;mp3&quot;},  # Audio output config
         verbosity=&quot;medium&quot;,            # Response verbosity: &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;
+        logprobs=True,                 # Include token logprobs in metadata
+        top_logprobs=2,                # Return 2 alternatives per token
         parallel_tool_calls=True,      # Allow model to call multiple tools in parallel
         validate_typed_parser_output=False,  # Validate typed parser output with schema
         verbose=False,                 # Print raw output before transformation
@@ -6903,7 +6927,36 @@ if &quot;tool_call&quot; in model_response.response_type:
 
 The Agent reads `model_response.reasoning` to pass it downstream. If the Agent&#x27;s `config[&quot;reasoning_in_response&quot;]` is `True`, the final output is wrapped as `dotdict(answer=raw_response, reasoning=reasoning)` — this is an explicit opt-in at the Agent level, not a silent model-level behaviour.
 
-## 13. **Response Metadata**
+## 13. **Token Logprobs**
+
+`logprobs` and `top_logprobs` are forwarded for `openai/...` chat completion models. Providers that inherit from `OpenAIChatCompletion` but are not OpenAI do not receive these fields.
+
+Use `logprobs=True` to request token log probabilities. Set `top_logprobs` to the number of alternative tokens you want returned for each generated token.
+
+| Parameter | Description |
+|---|---|
+| `logprobs` | Enables token-level logprob data in the response metadata. |
+| `top_logprobs` | Number of alternative tokens returned per generated token. Use with `logprobs=True`. |
+
+The returned payload is exposed in `response.metadata.logprobs` and follows OpenAI&#x27;s native shape. It includes the `content` list with token entries and nested `top_logprobs` alternatives.
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    model = mf.Model.chat_completion(
+        &quot;openai/gpt-4.1-mini&quot;,
+        logprobs=True,
+        top_logprobs=2,
+    )
+
+    response = model(&quot;Hello!&quot;)
+    print(response.metadata.logprobs[&quot;content&quot;][0][&quot;token&quot;])
+    print(response.metadata.logprobs[&quot;content&quot;][0][&quot;top_logprobs&quot;][0][&quot;token&quot;])
+    ```
+
+## 14. **Response Metadata**
 
 All responses include metadata with usage information:
 
@@ -6939,7 +6992,7 @@ All responses include metadata with usage information:
         print(f&quot;Request cost: ${cost:.4f}&quot;)
     ```
 
-## 14. **Error Handling**
+## 15. **Error Handling**
 
 Handle common errors gracefully:
 
@@ -6961,7 +7014,7 @@ Handle common errors gracefully:
         print(f&quot;API error: {e}&quot;)
     ```
 
-## 15. **Model Profiles**
+## 16. **Model Profiles**
 
 Model profiles provide metadata about capabilities, pricing, and limits from [models.dev](https://models.dev).
 
@@ -7027,7 +7080,7 @@ Every initialized model exposes a `.profile` property that returns this metadata
             print(f&quot;Estimated cost: ${cost:.4f}&quot;)
         ```
 
-## 16. **Adding a Custom Provider**
+## 17. **Adding a Custom Provider**
 
 If the service you want to use exposes an **OpenAI-compatible API**, you can add it as a provider by subclassing `OpenAIChatCompletion`. The process has two stages depending on how compatible the endpoint is.
 
@@ -7416,19 +7469,21 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 </span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>    <span class="n">modalities</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">],</span>           <span class="c1"># [&quot;text&quot;], [&quot;audio&quot;] or [&quot;text&quot;, &quot;audio&quot;]</span>
 </span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="n">audio</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;voice&quot;</span><span class="p">:</span> <span class="s2">&quot;alloy&quot;</span><span class="p">,</span> <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s2">&quot;mp3&quot;</span><span class="p">},</span>  <span class="c1"># Audio output config</span>
 </span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>    <span class="n">verbosity</span><span class="o">=</span><span class="s2">&quot;medium&quot;</span><span class="p">,</span>            <span class="c1"># Response verbosity: &quot;low&quot;, &quot;medium&quot;, &quot;high&quot;</span>
-</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>    <span class="n">parallel_tool_calls</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># Allow model to call multiple tools in parallel</span>
-</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>    <span class="n">validate_typed_parser_output</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Validate typed parser output with schema</span>
-</span><span id="__span-12-22"><a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>    <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>                 <span class="c1"># Print raw output before transformation</span>
-</span><span id="__span-12-23"><a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>    <span class="c1"># --- Search ---</span>
-</span><span id="__span-12-24"><a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="n">web_search_options</span><span class="o">=</span><span class="p">{},</span>         <span class="c1"># Web search config (OpenAI / OpenRouter only)</span>
-</span><span id="__span-12-25"><a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>    <span class="n">prompt_cache_retention</span><span class="o">=</span><span class="s2">&quot;24h&quot;</span><span class="p">,</span>  <span class="c1"># OpenAI only: &quot;in_memory&quot; or &quot;24h&quot;</span>
-</span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>    <span class="c1"># --- Infrastructure ---</span>
-</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.openai.com/v1&quot;</span><span class="p">,</span>  <span class="c1"># Override provider API endpoint</span>
-</span><span id="__span-12-28"><a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="n">context_length</span><span class="o">=</span><span class="mi">128000</span><span class="p">,</span>         <span class="c1"># Override maximum context window</span>
-</span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>    <span class="n">enable_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>             <span class="c1"># Cache identical API responses in-process</span>
-</span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>    <span class="n">cache_size</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>                <span class="c1"># Max number of cached entries</span>
-</span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="n">retry</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>                    <span class="c1"># Custom tenacity retry configuration</span>
-</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a><span class="p">)</span>
+</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>    <span class="n">logprobs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>                 <span class="c1"># Include token logprobs in metadata</span>
+</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>    <span class="n">top_logprobs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>                <span class="c1"># Return 2 alternatives per token</span>
+</span><span id="__span-12-22"><a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>    <span class="n">parallel_tool_calls</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># Allow model to call multiple tools in parallel</span>
+</span><span id="__span-12-23"><a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>    <span class="n">validate_typed_parser_output</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Validate typed parser output with schema</span>
+</span><span id="__span-12-24"><a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>                 <span class="c1"># Print raw output before transformation</span>
+</span><span id="__span-12-25"><a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>    <span class="c1"># --- Search ---</span>
+</span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>    <span class="n">web_search_options</span><span class="o">=</span><span class="p">{},</span>         <span class="c1"># Web search config (OpenAI / OpenRouter only)</span>
+</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>    <span class="n">prompt_cache_retention</span><span class="o">=</span><span class="s2">&quot;24h&quot;</span><span class="p">,</span>  <span class="c1"># OpenAI only: &quot;in_memory&quot; or &quot;24h&quot;</span>
+</span><span id="__span-12-28"><a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="c1"># --- Infrastructure ---</span>
+</span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.openai.com/v1&quot;</span><span class="p">,</span>  <span class="c1"># Override provider API endpoint</span>
+</span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>    <span class="n">context_length</span><span class="o">=</span><span class="mi">128000</span><span class="p">,</span>         <span class="c1"># Override maximum context window</span>
+</span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="n">enable_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>             <span class="c1"># Cache identical API responses in-process</span>
+</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">cache_size</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>                <span class="c1"># Max number of cached entries</span>
+</span><span id="__span-12-33"><a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>    <span class="n">retry</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>                    <span class="c1"># Custom tenacity retry configuration</span>
+</span><span id="__span-12-34"><a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a><span class="p">)</span>
 </span></code></pre></div>
 </details>
 <h2 id="2-system-prompt">2. <strong>System Prompt</strong></h2>
@@ -8807,59 +8862,96 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 </span><span id="__span-62-7"><a id="__codelineno-62-7" name="__codelineno-62-7" href="#__codelineno-62-7"></a>    <span class="c1"># process tool calls...</span>
 </span></code></pre></div>
 <p>The Agent reads <code>model_response.reasoning</code> to pass it downstream. If the Agent's <code>config["reasoning_in_response"]</code> is <code>True</code>, the final output is wrapped as <code>dotdict(answer=raw_response, reasoning=reasoning)</code> — this is an explicit opt-in at the Agent level, not a silent model-level behaviour.</p>
-<h2 id="13-response-metadata">13. <strong>Response Metadata</strong></h2>
-<p>All responses include metadata with usage information:</p>
+<h2 id="13-token-logprobs">13. <strong>Token Logprobs</strong></h2>
+<p><code>logprobs</code> and <code>top_logprobs</code> are forwarded for <code>openai/...</code> chat completion models. Providers that inherit from <code>OpenAIChatCompletion</code> but are not OpenAI do not receive these fields.</p>
+<p>Use <code>logprobs=True</code> to request token log probabilities. Set <code>top_logprobs</code> to the number of alternative tokens you want returned for each generated token.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>logprobs</code></td>
+<td>Enables token-level logprob data in the response metadata.</td>
+</tr>
+<tr>
+<td><code>top_logprobs</code></td>
+<td>Number of alternative tokens returned per generated token. Use with <code>logprobs=True</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The returned payload is exposed in <code>response.metadata.logprobs</code> and follows OpenAI's native shape. It includes the <code>content</code> list with token entries and nested <code>top_logprobs</code> alternatives.</p>
 <details class="example" open="open">
 <summary>Example</summary>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-63-1"><a id="__codelineno-63-1" name="__codelineno-63-1" href="#__codelineno-63-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
 </span><span id="__span-63-2"><a id="__codelineno-63-2" name="__codelineno-63-2" href="#__codelineno-63-2"></a>
-</span><span id="__span-63-3"><a id="__codelineno-63-3" name="__codelineno-63-3" href="#__codelineno-63-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-63-4"><a id="__codelineno-63-4" name="__codelineno-63-4" href="#__codelineno-63-4"></a>
-</span><span id="__span-63-5"><a id="__codelineno-63-5" name="__codelineno-63-5" href="#__codelineno-63-5"></a><span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Hello&quot;</span><span class="p">}])</span>
-</span><span id="__span-63-6"><a id="__codelineno-63-6" name="__codelineno-63-6" href="#__codelineno-63-6"></a>
-</span><span id="__span-63-7"><a id="__codelineno-63-7" name="__codelineno-63-7" href="#__codelineno-63-7"></a><span class="c1"># Access metadata</span>
-</span><span id="__span-63-8"><a id="__codelineno-63-8" name="__codelineno-63-8" href="#__codelineno-63-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">metadata</span><span class="p">)</span>
-</span><span id="__span-63-9"><a id="__codelineno-63-9" name="__codelineno-63-9" href="#__codelineno-63-9"></a><span class="c1"># {</span>
-</span><span id="__span-63-10"><a id="__codelineno-63-10" name="__codelineno-63-10" href="#__codelineno-63-10"></a><span class="c1">#     &#39;usage&#39;: {</span>
-</span><span id="__span-63-11"><a id="__codelineno-63-11" name="__codelineno-63-11" href="#__codelineno-63-11"></a><span class="c1">#         &#39;completion_tokens&#39;: 9,</span>
-</span><span id="__span-63-12"><a id="__codelineno-63-12" name="__codelineno-63-12" href="#__codelineno-63-12"></a><span class="c1">#         &#39;prompt_tokens&#39;: 19,</span>
-</span><span id="__span-63-13"><a id="__codelineno-63-13" name="__codelineno-63-13" href="#__codelineno-63-13"></a><span class="c1">#         &#39;total_tokens&#39;: 28</span>
-</span><span id="__span-63-14"><a id="__codelineno-63-14" name="__codelineno-63-14" href="#__codelineno-63-14"></a><span class="c1">#     }</span>
-</span><span id="__span-63-15"><a id="__codelineno-63-15" name="__codelineno-63-15" href="#__codelineno-63-15"></a><span class="c1"># }</span>
-</span><span id="__span-63-16"><a id="__codelineno-63-16" name="__codelineno-63-16" href="#__codelineno-63-16"></a>
-</span><span id="__span-63-17"><a id="__codelineno-63-17" name="__codelineno-63-17" href="#__codelineno-63-17"></a><span class="c1"># Calculate cost using profile</span>
-</span><span id="__span-63-18"><a id="__codelineno-63-18" name="__codelineno-63-18" href="#__codelineno-63-18"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model_profile</span>
-</span><span id="__span-63-19"><a id="__codelineno-63-19" name="__codelineno-63-19" href="#__codelineno-63-19"></a>
-</span><span id="__span-63-20"><a id="__codelineno-63-20" name="__codelineno-63-20" href="#__codelineno-63-20"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">get_model_profile</span><span class="p">(</span><span class="s2">&quot;gpt-4.1-mini&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
-</span><span id="__span-63-21"><a id="__codelineno-63-21" name="__codelineno-63-21" href="#__codelineno-63-21"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
-</span><span id="__span-63-22"><a id="__codelineno-63-22" name="__codelineno-63-22" href="#__codelineno-63-22"></a>    <span class="n">usage</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">usage</span>
-</span><span id="__span-63-23"><a id="__codelineno-63-23" name="__codelineno-63-23" href="#__codelineno-63-23"></a>    <span class="n">cost</span> <span class="o">=</span> <span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">calculate</span><span class="p">(</span>
-</span><span id="__span-63-24"><a id="__codelineno-63-24" name="__codelineno-63-24" href="#__codelineno-63-24"></a>        <span class="n">input_tokens</span><span class="o">=</span><span class="n">usage</span><span class="o">.</span><span class="n">prompt_tokens</span><span class="p">,</span>
-</span><span id="__span-63-25"><a id="__codelineno-63-25" name="__codelineno-63-25" href="#__codelineno-63-25"></a>        <span class="n">output_tokens</span><span class="o">=</span><span class="n">usage</span><span class="o">.</span><span class="n">completion_tokens</span>
-</span><span id="__span-63-26"><a id="__codelineno-63-26" name="__codelineno-63-26" href="#__codelineno-63-26"></a>    <span class="p">)</span>
-</span><span id="__span-63-27"><a id="__codelineno-63-27" name="__codelineno-63-27" href="#__codelineno-63-27"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Request cost: $</span><span class="si">{</span><span class="n">cost</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-63-3"><a id="__codelineno-63-3" name="__codelineno-63-3" href="#__codelineno-63-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span>
+</span><span id="__span-63-4"><a id="__codelineno-63-4" name="__codelineno-63-4" href="#__codelineno-63-4"></a>    <span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-63-5"><a id="__codelineno-63-5" name="__codelineno-63-5" href="#__codelineno-63-5"></a>    <span class="n">logprobs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-63-6"><a id="__codelineno-63-6" name="__codelineno-63-6" href="#__codelineno-63-6"></a>    <span class="n">top_logprobs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-63-7"><a id="__codelineno-63-7" name="__codelineno-63-7" href="#__codelineno-63-7"></a><span class="p">)</span>
+</span><span id="__span-63-8"><a id="__codelineno-63-8" name="__codelineno-63-8" href="#__codelineno-63-8"></a>
+</span><span id="__span-63-9"><a id="__codelineno-63-9" name="__codelineno-63-9" href="#__codelineno-63-9"></a><span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="s2">&quot;Hello!&quot;</span><span class="p">)</span>
+</span><span id="__span-63-10"><a id="__codelineno-63-10" name="__codelineno-63-10" href="#__codelineno-63-10"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">logprobs</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;token&quot;</span><span class="p">])</span>
+</span><span id="__span-63-11"><a id="__codelineno-63-11" name="__codelineno-63-11" href="#__codelineno-63-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">logprobs</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;top_logprobs&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;token&quot;</span><span class="p">])</span>
 </span></code></pre></div>
 </details>
-<h2 id="14-error-handling">14. <strong>Error Handling</strong></h2>
-<p>Handle common errors gracefully:</p>
+<h2 id="14-response-metadata">14. <strong>Response Metadata</strong></h2>
+<p>All responses include metadata with usage information:</p>
 <details class="example" open="open">
 <summary>Example</summary>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-64-1"><a id="__codelineno-64-1" name="__codelineno-64-1" href="#__codelineno-64-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
 </span><span id="__span-64-2"><a id="__codelineno-64-2" name="__codelineno-64-2" href="#__codelineno-64-2"></a>
 </span><span id="__span-64-3"><a id="__codelineno-64-3" name="__codelineno-64-3" href="#__codelineno-64-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
 </span><span id="__span-64-4"><a id="__codelineno-64-4" name="__codelineno-64-4" href="#__codelineno-64-4"></a>
-</span><span id="__span-64-5"><a id="__codelineno-64-5" name="__codelineno-64-5" href="#__codelineno-64-5"></a><span class="k">try</span><span class="p">:</span>
-</span><span id="__span-64-6"><a id="__codelineno-64-6" name="__codelineno-64-6" href="#__codelineno-64-6"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Hello&quot;</span><span class="p">}])</span>
-</span><span id="__span-64-7"><a id="__codelineno-64-7" name="__codelineno-64-7" href="#__codelineno-64-7"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">consume</span><span class="p">()</span>
-</span><span id="__span-64-8"><a id="__codelineno-64-8" name="__codelineno-64-8" href="#__codelineno-64-8"></a><span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
-</span><span id="__span-64-9"><a id="__codelineno-64-9" name="__codelineno-64-9" href="#__codelineno-64-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Provider not installed&quot;</span><span class="p">)</span>
-</span><span id="__span-64-10"><a id="__codelineno-64-10" name="__codelineno-64-10" href="#__codelineno-64-10"></a><span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-</span><span id="__span-64-11"><a id="__codelineno-64-11" name="__codelineno-64-11" href="#__codelineno-64-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid parameters: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-64-12"><a id="__codelineno-64-12" name="__codelineno-64-12" href="#__codelineno-64-12"></a><span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-</span><span id="__span-64-13"><a id="__codelineno-64-13" name="__codelineno-64-13" href="#__codelineno-64-13"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;API error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-64-5"><a id="__codelineno-64-5" name="__codelineno-64-5" href="#__codelineno-64-5"></a><span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Hello&quot;</span><span class="p">}])</span>
+</span><span id="__span-64-6"><a id="__codelineno-64-6" name="__codelineno-64-6" href="#__codelineno-64-6"></a>
+</span><span id="__span-64-7"><a id="__codelineno-64-7" name="__codelineno-64-7" href="#__codelineno-64-7"></a><span class="c1"># Access metadata</span>
+</span><span id="__span-64-8"><a id="__codelineno-64-8" name="__codelineno-64-8" href="#__codelineno-64-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">metadata</span><span class="p">)</span>
+</span><span id="__span-64-9"><a id="__codelineno-64-9" name="__codelineno-64-9" href="#__codelineno-64-9"></a><span class="c1"># {</span>
+</span><span id="__span-64-10"><a id="__codelineno-64-10" name="__codelineno-64-10" href="#__codelineno-64-10"></a><span class="c1">#     &#39;usage&#39;: {</span>
+</span><span id="__span-64-11"><a id="__codelineno-64-11" name="__codelineno-64-11" href="#__codelineno-64-11"></a><span class="c1">#         &#39;completion_tokens&#39;: 9,</span>
+</span><span id="__span-64-12"><a id="__codelineno-64-12" name="__codelineno-64-12" href="#__codelineno-64-12"></a><span class="c1">#         &#39;prompt_tokens&#39;: 19,</span>
+</span><span id="__span-64-13"><a id="__codelineno-64-13" name="__codelineno-64-13" href="#__codelineno-64-13"></a><span class="c1">#         &#39;total_tokens&#39;: 28</span>
+</span><span id="__span-64-14"><a id="__codelineno-64-14" name="__codelineno-64-14" href="#__codelineno-64-14"></a><span class="c1">#     }</span>
+</span><span id="__span-64-15"><a id="__codelineno-64-15" name="__codelineno-64-15" href="#__codelineno-64-15"></a><span class="c1"># }</span>
+</span><span id="__span-64-16"><a id="__codelineno-64-16" name="__codelineno-64-16" href="#__codelineno-64-16"></a>
+</span><span id="__span-64-17"><a id="__codelineno-64-17" name="__codelineno-64-17" href="#__codelineno-64-17"></a><span class="c1"># Calculate cost using profile</span>
+</span><span id="__span-64-18"><a id="__codelineno-64-18" name="__codelineno-64-18" href="#__codelineno-64-18"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model_profile</span>
+</span><span id="__span-64-19"><a id="__codelineno-64-19" name="__codelineno-64-19" href="#__codelineno-64-19"></a>
+</span><span id="__span-64-20"><a id="__codelineno-64-20" name="__codelineno-64-20" href="#__codelineno-64-20"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">get_model_profile</span><span class="p">(</span><span class="s2">&quot;gpt-4.1-mini&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
+</span><span id="__span-64-21"><a id="__codelineno-64-21" name="__codelineno-64-21" href="#__codelineno-64-21"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
+</span><span id="__span-64-22"><a id="__codelineno-64-22" name="__codelineno-64-22" href="#__codelineno-64-22"></a>    <span class="n">usage</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">usage</span>
+</span><span id="__span-64-23"><a id="__codelineno-64-23" name="__codelineno-64-23" href="#__codelineno-64-23"></a>    <span class="n">cost</span> <span class="o">=</span> <span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">calculate</span><span class="p">(</span>
+</span><span id="__span-64-24"><a id="__codelineno-64-24" name="__codelineno-64-24" href="#__codelineno-64-24"></a>        <span class="n">input_tokens</span><span class="o">=</span><span class="n">usage</span><span class="o">.</span><span class="n">prompt_tokens</span><span class="p">,</span>
+</span><span id="__span-64-25"><a id="__codelineno-64-25" name="__codelineno-64-25" href="#__codelineno-64-25"></a>        <span class="n">output_tokens</span><span class="o">=</span><span class="n">usage</span><span class="o">.</span><span class="n">completion_tokens</span>
+</span><span id="__span-64-26"><a id="__codelineno-64-26" name="__codelineno-64-26" href="#__codelineno-64-26"></a>    <span class="p">)</span>
+</span><span id="__span-64-27"><a id="__codelineno-64-27" name="__codelineno-64-27" href="#__codelineno-64-27"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Request cost: $</span><span class="si">{</span><span class="n">cost</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
-<h2 id="15-model-profiles">15. <strong>Model Profiles</strong></h2>
+<h2 id="15-error-handling">15. <strong>Error Handling</strong></h2>
+<p>Handle common errors gracefully:</p>
+<details class="example" open="open">
+<summary>Example</summary>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-65-1"><a id="__codelineno-65-1" name="__codelineno-65-1" href="#__codelineno-65-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-65-2"><a id="__codelineno-65-2" name="__codelineno-65-2" href="#__codelineno-65-2"></a>
+</span><span id="__span-65-3"><a id="__codelineno-65-3" name="__codelineno-65-3" href="#__codelineno-65-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-65-4"><a id="__codelineno-65-4" name="__codelineno-65-4" href="#__codelineno-65-4"></a>
+</span><span id="__span-65-5"><a id="__codelineno-65-5" name="__codelineno-65-5" href="#__codelineno-65-5"></a><span class="k">try</span><span class="p">:</span>
+</span><span id="__span-65-6"><a id="__codelineno-65-6" name="__codelineno-65-6" href="#__codelineno-65-6"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Hello&quot;</span><span class="p">}])</span>
+</span><span id="__span-65-7"><a id="__codelineno-65-7" name="__codelineno-65-7" href="#__codelineno-65-7"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">consume</span><span class="p">()</span>
+</span><span id="__span-65-8"><a id="__codelineno-65-8" name="__codelineno-65-8" href="#__codelineno-65-8"></a><span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+</span><span id="__span-65-9"><a id="__codelineno-65-9" name="__codelineno-65-9" href="#__codelineno-65-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Provider not installed&quot;</span><span class="p">)</span>
+</span><span id="__span-65-10"><a id="__codelineno-65-10" name="__codelineno-65-10" href="#__codelineno-65-10"></a><span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+</span><span id="__span-65-11"><a id="__codelineno-65-11" name="__codelineno-65-11" href="#__codelineno-65-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid parameters: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-65-12"><a id="__codelineno-65-12" name="__codelineno-65-12" href="#__codelineno-65-12"></a><span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+</span><span id="__span-65-13"><a id="__codelineno-65-13" name="__codelineno-65-13" href="#__codelineno-65-13"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;API error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+</details>
+<h2 id="16-model-profiles">16. <strong>Model Profiles</strong></h2>
 <p>Model profiles provide metadata about capabilities, pricing, and limits from <a href="https://models.dev">models.dev</a>.</p>
 <p>Every initialized model exposes a <code>.profile</code> property that returns this metadata without any extra setup:</p>
 <details class="example" open="open">
@@ -8867,99 +8959,99 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 <div class="tabbed-set tabbed-alternate" data-tabs="14:3"><input checked="checked" id="__tabbed_14_1" name="__tabbed_14" type="radio" /><input id="__tabbed_14_2" name="__tabbed_14" type="radio" /><input id="__tabbed_14_3" name="__tabbed_14" type="radio" /><div class="tabbed-labels"><label for="__tabbed_14_1">Instance Profile</label><label for="__tabbed_14_2">Profile Information</label><label for="__tabbed_14_3">Cost Calculation</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-65-1"><a id="__codelineno-65-1" name="__codelineno-65-1" href="#__codelineno-65-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-65-2"><a id="__codelineno-65-2" name="__codelineno-65-2" href="#__codelineno-65-2"></a>
-</span><span id="__span-65-3"><a id="__codelineno-65-3" name="__codelineno-65-3" href="#__codelineno-65-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-65-4"><a id="__codelineno-65-4" name="__codelineno-65-4" href="#__codelineno-65-4"></a>
-</span><span id="__span-65-5"><a id="__codelineno-65-5" name="__codelineno-65-5" href="#__codelineno-65-5"></a><span class="c1"># Access profile directly from the instance</span>
-</span><span id="__span-65-6"><a id="__codelineno-65-6" name="__codelineno-65-6" href="#__codelineno-65-6"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">profile</span>  <span class="c1"># ModelProfile | None</span>
-</span><span id="__span-65-7"><a id="__codelineno-65-7" name="__codelineno-65-7" href="#__codelineno-65-7"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
-</span><span id="__span-65-8"><a id="__codelineno-65-8" name="__codelineno-65-8" href="#__codelineno-65-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Context window: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">limits</span><span class="o">.</span><span class="n">context</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-65-9"><a id="__codelineno-65-9" name="__codelineno-65-9" href="#__codelineno-65-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tool calling: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">tool_call</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-66-1"><a id="__codelineno-66-1" name="__codelineno-66-1" href="#__codelineno-66-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-66-2"><a id="__codelineno-66-2" name="__codelineno-66-2" href="#__codelineno-66-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model_profile</span>
-</span><span id="__span-66-3"><a id="__codelineno-66-3" name="__codelineno-66-3" href="#__codelineno-66-3"></a>
-</span><span id="__span-66-4"><a id="__codelineno-66-4" name="__codelineno-66-4" href="#__codelineno-66-4"></a><span class="c1"># Get profile for a model</span>
-</span><span id="__span-66-5"><a id="__codelineno-66-5" name="__codelineno-66-5" href="#__codelineno-66-5"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">get_model_profile</span><span class="p">(</span><span class="s2">&quot;gpt-4.1-mini&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
-</span><span id="__span-66-6"><a id="__codelineno-66-6" name="__codelineno-66-6" href="#__codelineno-66-6"></a>
+</span><span id="__span-66-2"><a id="__codelineno-66-2" name="__codelineno-66-2" href="#__codelineno-66-2"></a>
+</span><span id="__span-66-3"><a id="__codelineno-66-3" name="__codelineno-66-3" href="#__codelineno-66-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-66-4"><a id="__codelineno-66-4" name="__codelineno-66-4" href="#__codelineno-66-4"></a>
+</span><span id="__span-66-5"><a id="__codelineno-66-5" name="__codelineno-66-5" href="#__codelineno-66-5"></a><span class="c1"># Access profile directly from the instance</span>
+</span><span id="__span-66-6"><a id="__codelineno-66-6" name="__codelineno-66-6" href="#__codelineno-66-6"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">profile</span>  <span class="c1"># ModelProfile | None</span>
 </span><span id="__span-66-7"><a id="__codelineno-66-7" name="__codelineno-66-7" href="#__codelineno-66-7"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
-</span><span id="__span-66-8"><a id="__codelineno-66-8" name="__codelineno-66-8" href="#__codelineno-66-8"></a>    <span class="c1"># Check capabilities</span>
+</span><span id="__span-66-8"><a id="__codelineno-66-8" name="__codelineno-66-8" href="#__codelineno-66-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Context window: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">limits</span><span class="o">.</span><span class="n">context</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span><span id="__span-66-9"><a id="__codelineno-66-9" name="__codelineno-66-9" href="#__codelineno-66-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tool calling: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">tool_call</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-66-10"><a id="__codelineno-66-10" name="__codelineno-66-10" href="#__codelineno-66-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Structured output: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">structured_output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-66-11"><a id="__codelineno-66-11" name="__codelineno-66-11" href="#__codelineno-66-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Reasoning: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">reasoning</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-66-12"><a id="__codelineno-66-12" name="__codelineno-66-12" href="#__codelineno-66-12"></a>
-</span><span id="__span-66-13"><a id="__codelineno-66-13" name="__codelineno-66-13" href="#__codelineno-66-13"></a>    <span class="c1"># Check modalities</span>
-</span><span id="__span-66-14"><a id="__codelineno-66-14" name="__codelineno-66-14" href="#__codelineno-66-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">modalities</span><span class="o">.</span><span class="n">input</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># [&#39;text&#39;, &#39;image&#39;]</span>
-</span><span id="__span-66-15"><a id="__codelineno-66-15" name="__codelineno-66-15" href="#__codelineno-66-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">modalities</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># [&#39;text&#39;]</span>
-</span><span id="__span-66-16"><a id="__codelineno-66-16" name="__codelineno-66-16" href="#__codelineno-66-16"></a>
-</span><span id="__span-66-17"><a id="__codelineno-66-17" name="__codelineno-66-17" href="#__codelineno-66-17"></a>    <span class="c1"># Check limits</span>
-</span><span id="__span-66-18"><a id="__codelineno-66-18" name="__codelineno-66-18" href="#__codelineno-66-18"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Context window: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">limits</span><span class="o">.</span><span class="n">context</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 128000</span>
-</span><span id="__span-66-19"><a id="__codelineno-66-19" name="__codelineno-66-19" href="#__codelineno-66-19"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max output: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">limits</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>       <span class="c1"># 16384</span>
-</span><span id="__span-66-20"><a id="__codelineno-66-20" name="__codelineno-66-20" href="#__codelineno-66-20"></a>
-</span><span id="__span-66-21"><a id="__codelineno-66-21" name="__codelineno-66-21" href="#__codelineno-66-21"></a>    <span class="c1"># Check pricing</span>
-</span><span id="__span-66-22"><a id="__codelineno-66-22" name="__codelineno-66-22" href="#__codelineno-66-22"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input: $</span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">input_per_million</span><span class="si">}</span><span class="s2">/M tokens&quot;</span><span class="p">)</span>
-</span><span id="__span-66-23"><a id="__codelineno-66-23" name="__codelineno-66-23" href="#__codelineno-66-23"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output: $</span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">output_per_million</span><span class="si">}</span><span class="s2">/M tokens&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-67-1"><a id="__codelineno-67-1" name="__codelineno-67-1" href="#__codelineno-67-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model_profile</span>
-</span><span id="__span-67-2"><a id="__codelineno-67-2" name="__codelineno-67-2" href="#__codelineno-67-2"></a>
-</span><span id="__span-67-3"><a id="__codelineno-67-3" name="__codelineno-67-3" href="#__codelineno-67-3"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">get_model_profile</span><span class="p">(</span><span class="s2">&quot;gpt-4.1-mini&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
-</span><span id="__span-67-4"><a id="__codelineno-67-4" name="__codelineno-67-4" href="#__codelineno-67-4"></a>
-</span><span id="__span-67-5"><a id="__codelineno-67-5" name="__codelineno-67-5" href="#__codelineno-67-5"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
-</span><span id="__span-67-6"><a id="__codelineno-67-6" name="__codelineno-67-6" href="#__codelineno-67-6"></a>    <span class="c1"># Calculate cost for a request</span>
-</span><span id="__span-67-7"><a id="__codelineno-67-7" name="__codelineno-67-7" href="#__codelineno-67-7"></a>    <span class="n">cost</span> <span class="o">=</span> <span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">calculate</span><span class="p">(</span>
-</span><span id="__span-67-8"><a id="__codelineno-67-8" name="__codelineno-67-8" href="#__codelineno-67-8"></a>        <span class="n">input_tokens</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
-</span><span id="__span-67-9"><a id="__codelineno-67-9" name="__codelineno-67-9" href="#__codelineno-67-9"></a>        <span class="n">output_tokens</span><span class="o">=</span><span class="mi">500</span>
-</span><span id="__span-67-10"><a id="__codelineno-67-10" name="__codelineno-67-10" href="#__codelineno-67-10"></a>    <span class="p">)</span>
-</span><span id="__span-67-11"><a id="__codelineno-67-11" name="__codelineno-67-11" href="#__codelineno-67-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Estimated cost: $</span><span class="si">{</span><span class="n">cost</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-67-1"><a id="__codelineno-67-1" name="__codelineno-67-1" href="#__codelineno-67-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-67-2"><a id="__codelineno-67-2" name="__codelineno-67-2" href="#__codelineno-67-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model_profile</span>
+</span><span id="__span-67-3"><a id="__codelineno-67-3" name="__codelineno-67-3" href="#__codelineno-67-3"></a>
+</span><span id="__span-67-4"><a id="__codelineno-67-4" name="__codelineno-67-4" href="#__codelineno-67-4"></a><span class="c1"># Get profile for a model</span>
+</span><span id="__span-67-5"><a id="__codelineno-67-5" name="__codelineno-67-5" href="#__codelineno-67-5"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">get_model_profile</span><span class="p">(</span><span class="s2">&quot;gpt-4.1-mini&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
+</span><span id="__span-67-6"><a id="__codelineno-67-6" name="__codelineno-67-6" href="#__codelineno-67-6"></a>
+</span><span id="__span-67-7"><a id="__codelineno-67-7" name="__codelineno-67-7" href="#__codelineno-67-7"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
+</span><span id="__span-67-8"><a id="__codelineno-67-8" name="__codelineno-67-8" href="#__codelineno-67-8"></a>    <span class="c1"># Check capabilities</span>
+</span><span id="__span-67-9"><a id="__codelineno-67-9" name="__codelineno-67-9" href="#__codelineno-67-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tool calling: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">tool_call</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-67-10"><a id="__codelineno-67-10" name="__codelineno-67-10" href="#__codelineno-67-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Structured output: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">structured_output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-67-11"><a id="__codelineno-67-11" name="__codelineno-67-11" href="#__codelineno-67-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Reasoning: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">capabilities</span><span class="o">.</span><span class="n">reasoning</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-67-12"><a id="__codelineno-67-12" name="__codelineno-67-12" href="#__codelineno-67-12"></a>
+</span><span id="__span-67-13"><a id="__codelineno-67-13" name="__codelineno-67-13" href="#__codelineno-67-13"></a>    <span class="c1"># Check modalities</span>
+</span><span id="__span-67-14"><a id="__codelineno-67-14" name="__codelineno-67-14" href="#__codelineno-67-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">modalities</span><span class="o">.</span><span class="n">input</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># [&#39;text&#39;, &#39;image&#39;]</span>
+</span><span id="__span-67-15"><a id="__codelineno-67-15" name="__codelineno-67-15" href="#__codelineno-67-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">modalities</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># [&#39;text&#39;]</span>
+</span><span id="__span-67-16"><a id="__codelineno-67-16" name="__codelineno-67-16" href="#__codelineno-67-16"></a>
+</span><span id="__span-67-17"><a id="__codelineno-67-17" name="__codelineno-67-17" href="#__codelineno-67-17"></a>    <span class="c1"># Check limits</span>
+</span><span id="__span-67-18"><a id="__codelineno-67-18" name="__codelineno-67-18" href="#__codelineno-67-18"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Context window: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">limits</span><span class="o">.</span><span class="n">context</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 128000</span>
+</span><span id="__span-67-19"><a id="__codelineno-67-19" name="__codelineno-67-19" href="#__codelineno-67-19"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max output: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">limits</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>       <span class="c1"># 16384</span>
+</span><span id="__span-67-20"><a id="__codelineno-67-20" name="__codelineno-67-20" href="#__codelineno-67-20"></a>
+</span><span id="__span-67-21"><a id="__codelineno-67-21" name="__codelineno-67-21" href="#__codelineno-67-21"></a>    <span class="c1"># Check pricing</span>
+</span><span id="__span-67-22"><a id="__codelineno-67-22" name="__codelineno-67-22" href="#__codelineno-67-22"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input: $</span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">input_per_million</span><span class="si">}</span><span class="s2">/M tokens&quot;</span><span class="p">)</span>
+</span><span id="__span-67-23"><a id="__codelineno-67-23" name="__codelineno-67-23" href="#__codelineno-67-23"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output: $</span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">output_per_million</span><span class="si">}</span><span class="s2">/M tokens&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-68-1"><a id="__codelineno-68-1" name="__codelineno-68-1" href="#__codelineno-68-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model_profile</span>
+</span><span id="__span-68-2"><a id="__codelineno-68-2" name="__codelineno-68-2" href="#__codelineno-68-2"></a>
+</span><span id="__span-68-3"><a id="__codelineno-68-3" name="__codelineno-68-3" href="#__codelineno-68-3"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">get_model_profile</span><span class="p">(</span><span class="s2">&quot;gpt-4.1-mini&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
+</span><span id="__span-68-4"><a id="__codelineno-68-4" name="__codelineno-68-4" href="#__codelineno-68-4"></a>
+</span><span id="__span-68-5"><a id="__codelineno-68-5" name="__codelineno-68-5" href="#__codelineno-68-5"></a><span class="k">if</span> <span class="n">profile</span><span class="p">:</span>
+</span><span id="__span-68-6"><a id="__codelineno-68-6" name="__codelineno-68-6" href="#__codelineno-68-6"></a>    <span class="c1"># Calculate cost for a request</span>
+</span><span id="__span-68-7"><a id="__codelineno-68-7" name="__codelineno-68-7" href="#__codelineno-68-7"></a>    <span class="n">cost</span> <span class="o">=</span> <span class="n">profile</span><span class="o">.</span><span class="n">cost</span><span class="o">.</span><span class="n">calculate</span><span class="p">(</span>
+</span><span id="__span-68-8"><a id="__codelineno-68-8" name="__codelineno-68-8" href="#__codelineno-68-8"></a>        <span class="n">input_tokens</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+</span><span id="__span-68-9"><a id="__codelineno-68-9" name="__codelineno-68-9" href="#__codelineno-68-9"></a>        <span class="n">output_tokens</span><span class="o">=</span><span class="mi">500</span>
+</span><span id="__span-68-10"><a id="__codelineno-68-10" name="__codelineno-68-10" href="#__codelineno-68-10"></a>    <span class="p">)</span>
+</span><span id="__span-68-11"><a id="__codelineno-68-11" name="__codelineno-68-11" href="#__codelineno-68-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Estimated cost: $</span><span class="si">{</span><span class="n">cost</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
 </div>
 </details>
-<h2 id="16-adding-a-custom-provider">16. <strong>Adding a Custom Provider</strong></h2>
+<h2 id="17-adding-a-custom-provider">17. <strong>Adding a Custom Provider</strong></h2>
 <p>If the service you want to use exposes an <strong>OpenAI-compatible API</strong>, you can add it as a provider by subclassing <code>OpenAIChatCompletion</code>. The process has two stages depending on how compatible the endpoint is.</p>
 <h3 id="161-stage-1-url-and-api-key-only">16.1 <strong>Stage 1 — URL and API key only</strong></h3>
 <p>When the target API is fully OpenAI-compatible and only requires a different base URL and authentication key, the entire subclass is a small configuration mixin plus the <code>@register_model</code> decorator.</p>
 <details class="example" open="open">
 <summary>Custom provider — minimal setup</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-68-1"><a id="__codelineno-68-1" name="__codelineno-68-1" href="#__codelineno-68-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span>
-</span><span id="__span-68-2"><a id="__codelineno-68-2" name="__codelineno-68-2" href="#__codelineno-68-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.providers.openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatCompletion</span>
-</span><span id="__span-68-3"><a id="__codelineno-68-3" name="__codelineno-68-3" href="#__codelineno-68-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_model</span>
-</span><span id="__span-68-4"><a id="__codelineno-68-4" name="__codelineno-68-4" href="#__codelineno-68-4"></a>
-</span><span id="__span-68-5"><a id="__codelineno-68-5" name="__codelineno-68-5" href="#__codelineno-68-5"></a>
-</span><span id="__span-68-6"><a id="__codelineno-68-6" name="__codelineno-68-6" href="#__codelineno-68-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">_BaseMyProvider</span><span class="p">:</span>
-</span><span id="__span-68-7"><a id="__codelineno-68-7" name="__codelineno-68-7" href="#__codelineno-68-7"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Configuration mixin for MyProvider.&quot;&quot;&quot;</span>
-</span><span id="__span-68-8"><a id="__codelineno-68-8" name="__codelineno-68-8" href="#__codelineno-68-8"></a>
-</span><span id="__span-68-9"><a id="__codelineno-68-9" name="__codelineno-68-9" href="#__codelineno-68-9"></a>    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;myprovider&quot;</span>  <span class="c1"># used in &quot;myprovider/model-name&quot;</span>
-</span><span id="__span-68-10"><a id="__codelineno-68-10" name="__codelineno-68-10" href="#__codelineno-68-10"></a>
-</span><span id="__span-68-11"><a id="__codelineno-68-11" name="__codelineno-68-11" href="#__codelineno-68-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_base_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-68-12"><a id="__codelineno-68-12" name="__codelineno-68-12" href="#__codelineno-68-12"></a>        <span class="k">return</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_BASE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;https://api.myprovider.com/v1&quot;</span><span class="p">)</span>
-</span><span id="__span-68-13"><a id="__codelineno-68-13" name="__codelineno-68-13" href="#__codelineno-68-13"></a>
-</span><span id="__span-68-14"><a id="__codelineno-68-14" name="__codelineno-68-14" href="#__codelineno-68-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-68-15"><a id="__codelineno-68-15" name="__codelineno-68-15" href="#__codelineno-68-15"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_API_KEY&quot;</span><span class="p">)</span>
-</span><span id="__span-68-16"><a id="__codelineno-68-16" name="__codelineno-68-16" href="#__codelineno-68-16"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
-</span><span id="__span-68-17"><a id="__codelineno-68-17" name="__codelineno-68-17" href="#__codelineno-68-17"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please set `MYPROVIDER_API_KEY`&quot;</span><span class="p">)</span>
-</span><span id="__span-68-18"><a id="__codelineno-68-18" name="__codelineno-68-18" href="#__codelineno-68-18"></a>        <span class="k">return</span> <span class="n">key</span>
-</span><span id="__span-68-19"><a id="__codelineno-68-19" name="__codelineno-68-19" href="#__codelineno-68-19"></a>
-</span><span id="__span-68-20"><a id="__codelineno-68-20" name="__codelineno-68-20" href="#__codelineno-68-20"></a>
-</span><span id="__span-68-21"><a id="__codelineno-68-21" name="__codelineno-68-21" href="#__codelineno-68-21"></a><span class="nd">@register_model</span>
-</span><span id="__span-68-22"><a id="__codelineno-68-22" name="__codelineno-68-22" href="#__codelineno-68-22"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyProviderChatCompletion</span><span class="p">(</span><span class="n">_BaseMyProvider</span><span class="p">,</span> <span class="n">OpenAIChatCompletion</span><span class="p">):</span>
-</span><span id="__span-68-23"><a id="__codelineno-68-23" name="__codelineno-68-23" href="#__codelineno-68-23"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;MyProvider Chat Completion.&quot;&quot;&quot;</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-69-1"><a id="__codelineno-69-1" name="__codelineno-69-1" href="#__codelineno-69-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span>
+</span><span id="__span-69-2"><a id="__codelineno-69-2" name="__codelineno-69-2" href="#__codelineno-69-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.providers.openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatCompletion</span>
+</span><span id="__span-69-3"><a id="__codelineno-69-3" name="__codelineno-69-3" href="#__codelineno-69-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_model</span>
+</span><span id="__span-69-4"><a id="__codelineno-69-4" name="__codelineno-69-4" href="#__codelineno-69-4"></a>
+</span><span id="__span-69-5"><a id="__codelineno-69-5" name="__codelineno-69-5" href="#__codelineno-69-5"></a>
+</span><span id="__span-69-6"><a id="__codelineno-69-6" name="__codelineno-69-6" href="#__codelineno-69-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">_BaseMyProvider</span><span class="p">:</span>
+</span><span id="__span-69-7"><a id="__codelineno-69-7" name="__codelineno-69-7" href="#__codelineno-69-7"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Configuration mixin for MyProvider.&quot;&quot;&quot;</span>
+</span><span id="__span-69-8"><a id="__codelineno-69-8" name="__codelineno-69-8" href="#__codelineno-69-8"></a>
+</span><span id="__span-69-9"><a id="__codelineno-69-9" name="__codelineno-69-9" href="#__codelineno-69-9"></a>    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;myprovider&quot;</span>  <span class="c1"># used in &quot;myprovider/model-name&quot;</span>
+</span><span id="__span-69-10"><a id="__codelineno-69-10" name="__codelineno-69-10" href="#__codelineno-69-10"></a>
+</span><span id="__span-69-11"><a id="__codelineno-69-11" name="__codelineno-69-11" href="#__codelineno-69-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_base_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-69-12"><a id="__codelineno-69-12" name="__codelineno-69-12" href="#__codelineno-69-12"></a>        <span class="k">return</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_BASE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;https://api.myprovider.com/v1&quot;</span><span class="p">)</span>
+</span><span id="__span-69-13"><a id="__codelineno-69-13" name="__codelineno-69-13" href="#__codelineno-69-13"></a>
+</span><span id="__span-69-14"><a id="__codelineno-69-14" name="__codelineno-69-14" href="#__codelineno-69-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-69-15"><a id="__codelineno-69-15" name="__codelineno-69-15" href="#__codelineno-69-15"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_API_KEY&quot;</span><span class="p">)</span>
+</span><span id="__span-69-16"><a id="__codelineno-69-16" name="__codelineno-69-16" href="#__codelineno-69-16"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+</span><span id="__span-69-17"><a id="__codelineno-69-17" name="__codelineno-69-17" href="#__codelineno-69-17"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please set `MYPROVIDER_API_KEY`&quot;</span><span class="p">)</span>
+</span><span id="__span-69-18"><a id="__codelineno-69-18" name="__codelineno-69-18" href="#__codelineno-69-18"></a>        <span class="k">return</span> <span class="n">key</span>
+</span><span id="__span-69-19"><a id="__codelineno-69-19" name="__codelineno-69-19" href="#__codelineno-69-19"></a>
+</span><span id="__span-69-20"><a id="__codelineno-69-20" name="__codelineno-69-20" href="#__codelineno-69-20"></a>
+</span><span id="__span-69-21"><a id="__codelineno-69-21" name="__codelineno-69-21" href="#__codelineno-69-21"></a><span class="nd">@register_model</span>
+</span><span id="__span-69-22"><a id="__codelineno-69-22" name="__codelineno-69-22" href="#__codelineno-69-22"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyProviderChatCompletion</span><span class="p">(</span><span class="n">_BaseMyProvider</span><span class="p">,</span> <span class="n">OpenAIChatCompletion</span><span class="p">):</span>
+</span><span id="__span-69-23"><a id="__codelineno-69-23" name="__codelineno-69-23" href="#__codelineno-69-23"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;MyProvider Chat Completion.&quot;&quot;&quot;</span>
 </span></code></pre></div>
 </details>
 <p>After registering, the model is available through the standard factory. The string before the <code>/</code> must match the <code>provider</code> class attribute:</p>
 <details class="example" open="open">
 <summary>Using the custom provider</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-69-1"><a id="__codelineno-69-1" name="__codelineno-69-1" href="#__codelineno-69-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-69-2"><a id="__codelineno-69-2" name="__codelineno-69-2" href="#__codelineno-69-2"></a>
-</span><span id="__span-69-3"><a id="__codelineno-69-3" name="__codelineno-69-3" href="#__codelineno-69-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;myprovider/my-model-name&quot;</span><span class="p">)</span>
-</span><span id="__span-69-4"><a id="__codelineno-69-4" name="__codelineno-69-4" href="#__codelineno-69-4"></a><span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="s2">&quot;Hello!&quot;</span><span class="p">)</span>
-</span><span id="__span-69-5"><a id="__codelineno-69-5" name="__codelineno-69-5" href="#__codelineno-69-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">consume</span><span class="p">())</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-70-1"><a id="__codelineno-70-1" name="__codelineno-70-1" href="#__codelineno-70-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-70-2"><a id="__codelineno-70-2" name="__codelineno-70-2" href="#__codelineno-70-2"></a>
+</span><span id="__span-70-3"><a id="__codelineno-70-3" name="__codelineno-70-3" href="#__codelineno-70-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;myprovider/my-model-name&quot;</span><span class="p">)</span>
+</span><span id="__span-70-4"><a id="__codelineno-70-4" name="__codelineno-70-4" href="#__codelineno-70-4"></a><span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="s2">&quot;Hello!&quot;</span><span class="p">)</span>
+</span><span id="__span-70-5"><a id="__codelineno-70-5" name="__codelineno-70-5" href="#__codelineno-70-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">consume</span><span class="p">())</span>
 </span></code></pre></div>
 </details>
 <h3 id="162-stage-2-adapting-parameters">16.2 <strong>Stage 2 — Adapting parameters</strong></h3>
@@ -8968,51 +9060,51 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 <p>The built-in OpenRouter provider is a real-world example:</p>
 <details class="example" open="open">
 <summary>Custom provider — with parameter adaptation</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-70-1"><a id="__codelineno-70-1" name="__codelineno-70-1" href="#__codelineno-70-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span>
-</span><span id="__span-70-2"><a id="__codelineno-70-2" name="__codelineno-70-2" href="#__codelineno-70-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span>
-</span><span id="__span-70-3"><a id="__codelineno-70-3" name="__codelineno-70-3" href="#__codelineno-70-3"></a>
-</span><span id="__span-70-4"><a id="__codelineno-70-4" name="__codelineno-70-4" href="#__codelineno-70-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.providers.openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatCompletion</span>
-</span><span id="__span-70-5"><a id="__codelineno-70-5" name="__codelineno-70-5" href="#__codelineno-70-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_model</span>
-</span><span id="__span-70-6"><a id="__codelineno-70-6" name="__codelineno-70-6" href="#__codelineno-70-6"></a>
-</span><span id="__span-70-7"><a id="__codelineno-70-7" name="__codelineno-70-7" href="#__codelineno-70-7"></a>
-</span><span id="__span-70-8"><a id="__codelineno-70-8" name="__codelineno-70-8" href="#__codelineno-70-8"></a><span class="k">class</span><span class="w"> </span><span class="nc">_BaseMyProvider</span><span class="p">:</span>
-</span><span id="__span-70-9"><a id="__codelineno-70-9" name="__codelineno-70-9" href="#__codelineno-70-9"></a>    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;myprovider&quot;</span>
-</span><span id="__span-70-10"><a id="__codelineno-70-10" name="__codelineno-70-10" href="#__codelineno-70-10"></a>
-</span><span id="__span-70-11"><a id="__codelineno-70-11" name="__codelineno-70-11" href="#__codelineno-70-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_base_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-70-12"><a id="__codelineno-70-12" name="__codelineno-70-12" href="#__codelineno-70-12"></a>        <span class="k">return</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_BASE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;https://api.myprovider.com/v1&quot;</span><span class="p">)</span>
-</span><span id="__span-70-13"><a id="__codelineno-70-13" name="__codelineno-70-13" href="#__codelineno-70-13"></a>
-</span><span id="__span-70-14"><a id="__codelineno-70-14" name="__codelineno-70-14" href="#__codelineno-70-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-70-15"><a id="__codelineno-70-15" name="__codelineno-70-15" href="#__codelineno-70-15"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_API_KEY&quot;</span><span class="p">)</span>
-</span><span id="__span-70-16"><a id="__codelineno-70-16" name="__codelineno-70-16" href="#__codelineno-70-16"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
-</span><span id="__span-70-17"><a id="__codelineno-70-17" name="__codelineno-70-17" href="#__codelineno-70-17"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please set `MYPROVIDER_API_KEY`&quot;</span><span class="p">)</span>
-</span><span id="__span-70-18"><a id="__codelineno-70-18" name="__codelineno-70-18" href="#__codelineno-70-18"></a>        <span class="k">return</span> <span class="n">key</span>
-</span><span id="__span-70-19"><a id="__codelineno-70-19" name="__codelineno-70-19" href="#__codelineno-70-19"></a>
-</span><span id="__span-70-20"><a id="__codelineno-70-20" name="__codelineno-70-20" href="#__codelineno-70-20"></a>
-</span><span id="__span-70-21"><a id="__codelineno-70-21" name="__codelineno-70-21" href="#__codelineno-70-21"></a><span class="nd">@register_model</span>
-</span><span id="__span-70-22"><a id="__codelineno-70-22" name="__codelineno-70-22" href="#__codelineno-70-22"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyProviderChatCompletion</span><span class="p">(</span><span class="n">_BaseMyProvider</span><span class="p">,</span> <span class="n">OpenAIChatCompletion</span><span class="p">):</span>
-</span><span id="__span-70-23"><a id="__codelineno-70-23" name="__codelineno-70-23" href="#__codelineno-70-23"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;MyProvider Chat Completion.&quot;&quot;&quot;</span>
-</span><span id="__span-70-24"><a id="__codelineno-70-24" name="__codelineno-70-24" href="#__codelineno-70-24"></a>
-</span><span id="__span-70-25"><a id="__codelineno-70-25" name="__codelineno-70-25" href="#__codelineno-70-25"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_adapt_params</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
-</span><span id="__span-70-26"><a id="__codelineno-70-26" name="__codelineno-70-26" href="#__codelineno-70-26"></a>        <span class="c1"># 1. Rename max_tokens to the provider-specific field</span>
-</span><span id="__span-70-27"><a id="__codelineno-70-27" name="__codelineno-70-27" href="#__codelineno-70-27"></a>        <span class="n">params</span><span class="p">[</span><span class="s2">&quot;max_completion_tokens&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;max_tokens&quot;</span><span class="p">)</span>
-</span><span id="__span-70-28"><a id="__codelineno-70-28" name="__codelineno-70-28" href="#__codelineno-70-28"></a>
-</span><span id="__span-70-29"><a id="__codelineno-70-29" name="__codelineno-70-29" href="#__codelineno-70-29"></a>        <span class="c1"># 2. Provider requires tool_choice to be set explicitly</span>
-</span><span id="__span-70-30"><a id="__codelineno-70-30" name="__codelineno-70-30" href="#__codelineno-70-30"></a>        <span class="k">if</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;tool_choice&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-70-31"><a id="__codelineno-70-31" name="__codelineno-70-31" href="#__codelineno-70-31"></a>            <span class="n">params</span><span class="p">[</span><span class="s2">&quot;tool_choice&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;auto&quot;</span> <span class="k">if</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;tools&quot;</span><span class="p">]</span> <span class="k">else</span> <span class="s2">&quot;none&quot;</span>
-</span><span id="__span-70-32"><a id="__codelineno-70-32" name="__codelineno-70-32" href="#__codelineno-70-32"></a>
-</span><span id="__span-70-33"><a id="__codelineno-70-33" name="__codelineno-70-33" href="#__codelineno-70-33"></a>        <span class="c1"># 3. Map reasoning_effort to the provider format</span>
-</span><span id="__span-70-34"><a id="__codelineno-70-34" name="__codelineno-70-34" href="#__codelineno-70-34"></a>        <span class="n">reasoning_effort</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;reasoning_effort&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-70-35"><a id="__codelineno-70-35" name="__codelineno-70-35" href="#__codelineno-70-35"></a>        <span class="k">if</span> <span class="n">reasoning_effort</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-70-36"><a id="__codelineno-70-36" name="__codelineno-70-36" href="#__codelineno-70-36"></a>            <span class="n">extra_body</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;extra_body&quot;</span><span class="p">,</span> <span class="p">{})</span>
-</span><span id="__span-70-37"><a id="__codelineno-70-37" name="__codelineno-70-37" href="#__codelineno-70-37"></a>            <span class="n">extra_body</span><span class="p">[</span><span class="s2">&quot;reasoning&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;effort&quot;</span><span class="p">:</span> <span class="n">reasoning_effort</span><span class="p">}</span>
-</span><span id="__span-70-38"><a id="__codelineno-70-38" name="__codelineno-70-38" href="#__codelineno-70-38"></a>            <span class="n">params</span><span class="p">[</span><span class="s2">&quot;extra_body&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">extra_body</span>
-</span><span id="__span-70-39"><a id="__codelineno-70-39" name="__codelineno-70-39" href="#__codelineno-70-39"></a>
-</span><span id="__span-70-40"><a id="__codelineno-70-40" name="__codelineno-70-40" href="#__codelineno-70-40"></a>        <span class="c1"># 4. Add required headers</span>
-</span><span id="__span-70-41"><a id="__codelineno-70-41" name="__codelineno-70-41" href="#__codelineno-70-41"></a>        <span class="n">params</span><span class="p">[</span><span class="s2">&quot;extra_headers&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-70-42"><a id="__codelineno-70-42" name="__codelineno-70-42" href="#__codelineno-70-42"></a>            <span class="s2">&quot;X-App-Name&quot;</span><span class="p">:</span> <span class="s2">&quot;myapp&quot;</span><span class="p">,</span>
-</span><span id="__span-70-43"><a id="__codelineno-70-43" name="__codelineno-70-43" href="#__codelineno-70-43"></a>        <span class="p">}</span>
-</span><span id="__span-70-44"><a id="__codelineno-70-44" name="__codelineno-70-44" href="#__codelineno-70-44"></a>
-</span><span id="__span-70-45"><a id="__codelineno-70-45" name="__codelineno-70-45" href="#__codelineno-70-45"></a>        <span class="k">return</span> <span class="n">params</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-71-1"><a id="__codelineno-71-1" name="__codelineno-71-1" href="#__codelineno-71-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span>
+</span><span id="__span-71-2"><a id="__codelineno-71-2" name="__codelineno-71-2" href="#__codelineno-71-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span>
+</span><span id="__span-71-3"><a id="__codelineno-71-3" name="__codelineno-71-3" href="#__codelineno-71-3"></a>
+</span><span id="__span-71-4"><a id="__codelineno-71-4" name="__codelineno-71-4" href="#__codelineno-71-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.providers.openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatCompletion</span>
+</span><span id="__span-71-5"><a id="__codelineno-71-5" name="__codelineno-71-5" href="#__codelineno-71-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_model</span>
+</span><span id="__span-71-6"><a id="__codelineno-71-6" name="__codelineno-71-6" href="#__codelineno-71-6"></a>
+</span><span id="__span-71-7"><a id="__codelineno-71-7" name="__codelineno-71-7" href="#__codelineno-71-7"></a>
+</span><span id="__span-71-8"><a id="__codelineno-71-8" name="__codelineno-71-8" href="#__codelineno-71-8"></a><span class="k">class</span><span class="w"> </span><span class="nc">_BaseMyProvider</span><span class="p">:</span>
+</span><span id="__span-71-9"><a id="__codelineno-71-9" name="__codelineno-71-9" href="#__codelineno-71-9"></a>    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;myprovider&quot;</span>
+</span><span id="__span-71-10"><a id="__codelineno-71-10" name="__codelineno-71-10" href="#__codelineno-71-10"></a>
+</span><span id="__span-71-11"><a id="__codelineno-71-11" name="__codelineno-71-11" href="#__codelineno-71-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_base_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-71-12"><a id="__codelineno-71-12" name="__codelineno-71-12" href="#__codelineno-71-12"></a>        <span class="k">return</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_BASE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;https://api.myprovider.com/v1&quot;</span><span class="p">)</span>
+</span><span id="__span-71-13"><a id="__codelineno-71-13" name="__codelineno-71-13" href="#__codelineno-71-13"></a>
+</span><span id="__span-71-14"><a id="__codelineno-71-14" name="__codelineno-71-14" href="#__codelineno-71-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-71-15"><a id="__codelineno-71-15" name="__codelineno-71-15" href="#__codelineno-71-15"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_API_KEY&quot;</span><span class="p">)</span>
+</span><span id="__span-71-16"><a id="__codelineno-71-16" name="__codelineno-71-16" href="#__codelineno-71-16"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+</span><span id="__span-71-17"><a id="__codelineno-71-17" name="__codelineno-71-17" href="#__codelineno-71-17"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please set `MYPROVIDER_API_KEY`&quot;</span><span class="p">)</span>
+</span><span id="__span-71-18"><a id="__codelineno-71-18" name="__codelineno-71-18" href="#__codelineno-71-18"></a>        <span class="k">return</span> <span class="n">key</span>
+</span><span id="__span-71-19"><a id="__codelineno-71-19" name="__codelineno-71-19" href="#__codelineno-71-19"></a>
+</span><span id="__span-71-20"><a id="__codelineno-71-20" name="__codelineno-71-20" href="#__codelineno-71-20"></a>
+</span><span id="__span-71-21"><a id="__codelineno-71-21" name="__codelineno-71-21" href="#__codelineno-71-21"></a><span class="nd">@register_model</span>
+</span><span id="__span-71-22"><a id="__codelineno-71-22" name="__codelineno-71-22" href="#__codelineno-71-22"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyProviderChatCompletion</span><span class="p">(</span><span class="n">_BaseMyProvider</span><span class="p">,</span> <span class="n">OpenAIChatCompletion</span><span class="p">):</span>
+</span><span id="__span-71-23"><a id="__codelineno-71-23" name="__codelineno-71-23" href="#__codelineno-71-23"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;MyProvider Chat Completion.&quot;&quot;&quot;</span>
+</span><span id="__span-71-24"><a id="__codelineno-71-24" name="__codelineno-71-24" href="#__codelineno-71-24"></a>
+</span><span id="__span-71-25"><a id="__codelineno-71-25" name="__codelineno-71-25" href="#__codelineno-71-25"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_adapt_params</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+</span><span id="__span-71-26"><a id="__codelineno-71-26" name="__codelineno-71-26" href="#__codelineno-71-26"></a>        <span class="c1"># 1. Rename max_tokens to the provider-specific field</span>
+</span><span id="__span-71-27"><a id="__codelineno-71-27" name="__codelineno-71-27" href="#__codelineno-71-27"></a>        <span class="n">params</span><span class="p">[</span><span class="s2">&quot;max_completion_tokens&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;max_tokens&quot;</span><span class="p">)</span>
+</span><span id="__span-71-28"><a id="__codelineno-71-28" name="__codelineno-71-28" href="#__codelineno-71-28"></a>
+</span><span id="__span-71-29"><a id="__codelineno-71-29" name="__codelineno-71-29" href="#__codelineno-71-29"></a>        <span class="c1"># 2. Provider requires tool_choice to be set explicitly</span>
+</span><span id="__span-71-30"><a id="__codelineno-71-30" name="__codelineno-71-30" href="#__codelineno-71-30"></a>        <span class="k">if</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;tool_choice&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-71-31"><a id="__codelineno-71-31" name="__codelineno-71-31" href="#__codelineno-71-31"></a>            <span class="n">params</span><span class="p">[</span><span class="s2">&quot;tool_choice&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;auto&quot;</span> <span class="k">if</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;tools&quot;</span><span class="p">]</span> <span class="k">else</span> <span class="s2">&quot;none&quot;</span>
+</span><span id="__span-71-32"><a id="__codelineno-71-32" name="__codelineno-71-32" href="#__codelineno-71-32"></a>
+</span><span id="__span-71-33"><a id="__codelineno-71-33" name="__codelineno-71-33" href="#__codelineno-71-33"></a>        <span class="c1"># 3. Map reasoning_effort to the provider format</span>
+</span><span id="__span-71-34"><a id="__codelineno-71-34" name="__codelineno-71-34" href="#__codelineno-71-34"></a>        <span class="n">reasoning_effort</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;reasoning_effort&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-71-35"><a id="__codelineno-71-35" name="__codelineno-71-35" href="#__codelineno-71-35"></a>        <span class="k">if</span> <span class="n">reasoning_effort</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-71-36"><a id="__codelineno-71-36" name="__codelineno-71-36" href="#__codelineno-71-36"></a>            <span class="n">extra_body</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;extra_body&quot;</span><span class="p">,</span> <span class="p">{})</span>
+</span><span id="__span-71-37"><a id="__codelineno-71-37" name="__codelineno-71-37" href="#__codelineno-71-37"></a>            <span class="n">extra_body</span><span class="p">[</span><span class="s2">&quot;reasoning&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;effort&quot;</span><span class="p">:</span> <span class="n">reasoning_effort</span><span class="p">}</span>
+</span><span id="__span-71-38"><a id="__codelineno-71-38" name="__codelineno-71-38" href="#__codelineno-71-38"></a>            <span class="n">params</span><span class="p">[</span><span class="s2">&quot;extra_body&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">extra_body</span>
+</span><span id="__span-71-39"><a id="__codelineno-71-39" name="__codelineno-71-39" href="#__codelineno-71-39"></a>
+</span><span id="__span-71-40"><a id="__codelineno-71-40" name="__codelineno-71-40" href="#__codelineno-71-40"></a>        <span class="c1"># 4. Add required headers</span>
+</span><span id="__span-71-41"><a id="__codelineno-71-41" name="__codelineno-71-41" href="#__codelineno-71-41"></a>        <span class="n">params</span><span class="p">[</span><span class="s2">&quot;extra_headers&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-71-42"><a id="__codelineno-71-42" name="__codelineno-71-42" href="#__codelineno-71-42"></a>            <span class="s2">&quot;X-App-Name&quot;</span><span class="p">:</span> <span class="s2">&quot;myapp&quot;</span><span class="p">,</span>
+</span><span id="__span-71-43"><a id="__codelineno-71-43" name="__codelineno-71-43" href="#__codelineno-71-43"></a>        <span class="p">}</span>
+</span><span id="__span-71-44"><a id="__codelineno-71-44" name="__codelineno-71-44" href="#__codelineno-71-44"></a>
+</span><span id="__span-71-45"><a id="__codelineno-71-45" name="__codelineno-71-45" href="#__codelineno-71-45"></a>        <span class="k">return</span> <span class="n">params</span>
 </span></code></pre></div>
 </details>
 <p>Common adaptations inside <code>_adapt_params</code>:</p>
@@ -9079,58 +9171,58 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 <p>The response object returned by <code>.chat.completions.create()</code> must be OpenAI-compatible: it needs <code>.choices[0].message</code> and <code>.usage</code> attributes. Any SDK that advertises OpenAI compatibility will satisfy this contract.</p>
 <details class="example" open="open">
 <summary>Custom provider — with a different client</summary>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-71-1"><a id="__codelineno-71-1" name="__codelineno-71-1" href="#__codelineno-71-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span>
-</span><span id="__span-71-2"><a id="__codelineno-71-2" name="__codelineno-71-2" href="#__codelineno-71-2"></a>
-</span><span id="__span-71-3"><a id="__codelineno-71-3" name="__codelineno-71-3" href="#__codelineno-71-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.cache</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResponseCache</span>
-</span><span id="__span-71-4"><a id="__codelineno-71-4" name="__codelineno-71-4" href="#__codelineno-71-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.providers.openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatCompletion</span>
-</span><span id="__span-71-5"><a id="__codelineno-71-5" name="__codelineno-71-5" href="#__codelineno-71-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_model</span>
-</span><span id="__span-71-6"><a id="__codelineno-71-6" name="__codelineno-71-6" href="#__codelineno-71-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.utils.tenacity</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_retry</span><span class="p">,</span> <span class="n">default_model_retry</span>
-</span><span id="__span-71-7"><a id="__codelineno-71-7" name="__codelineno-71-7" href="#__codelineno-71-7"></a>
-</span><span id="__span-71-8"><a id="__codelineno-71-8" name="__codelineno-71-8" href="#__codelineno-71-8"></a><span class="c1"># Replace with the SDK you actually want to use.</span>
-</span><span id="__span-71-9"><a id="__codelineno-71-9" name="__codelineno-71-9" href="#__codelineno-71-9"></a><span class="c1"># It must expose client.chat.completions.create() / aclient.chat.completions.create().</span>
-</span><span id="__span-71-10"><a id="__codelineno-71-10" name="__codelineno-71-10" href="#__codelineno-71-10"></a><span class="kn">import</span><span class="w"> </span><span class="nn">my_sdk</span>
-</span><span id="__span-71-11"><a id="__codelineno-71-11" name="__codelineno-71-11" href="#__codelineno-71-11"></a>
-</span><span id="__span-71-12"><a id="__codelineno-71-12" name="__codelineno-71-12" href="#__codelineno-71-12"></a>
-</span><span id="__span-71-13"><a id="__codelineno-71-13" name="__codelineno-71-13" href="#__codelineno-71-13"></a><span class="k">class</span><span class="w"> </span><span class="nc">_BaseMyProvider</span><span class="p">:</span>
-</span><span id="__span-71-14"><a id="__codelineno-71-14" name="__codelineno-71-14" href="#__codelineno-71-14"></a>    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;myprovider&quot;</span>
-</span><span id="__span-71-15"><a id="__codelineno-71-15" name="__codelineno-71-15" href="#__codelineno-71-15"></a>
-</span><span id="__span-71-16"><a id="__codelineno-71-16" name="__codelineno-71-16" href="#__codelineno-71-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_base_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-71-17"><a id="__codelineno-71-17" name="__codelineno-71-17" href="#__codelineno-71-17"></a>        <span class="k">return</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_BASE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;https://api.myprovider.com/v1&quot;</span><span class="p">)</span>
-</span><span id="__span-71-18"><a id="__codelineno-71-18" name="__codelineno-71-18" href="#__codelineno-71-18"></a>
-</span><span id="__span-71-19"><a id="__codelineno-71-19" name="__codelineno-71-19" href="#__codelineno-71-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-71-20"><a id="__codelineno-71-20" name="__codelineno-71-20" href="#__codelineno-71-20"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_API_KEY&quot;</span><span class="p">)</span>
-</span><span id="__span-71-21"><a id="__codelineno-71-21" name="__codelineno-71-21" href="#__codelineno-71-21"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
-</span><span id="__span-71-22"><a id="__codelineno-71-22" name="__codelineno-71-22" href="#__codelineno-71-22"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please set `MYPROVIDER_API_KEY`&quot;</span><span class="p">)</span>
-</span><span id="__span-71-23"><a id="__codelineno-71-23" name="__codelineno-71-23" href="#__codelineno-71-23"></a>        <span class="k">return</span> <span class="n">key</span>
-</span><span id="__span-71-24"><a id="__codelineno-71-24" name="__codelineno-71-24" href="#__codelineno-71-24"></a>
-</span><span id="__span-71-25"><a id="__codelineno-71-25" name="__codelineno-71-25" href="#__codelineno-71-25"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-71-26"><a id="__codelineno-71-26" name="__codelineno-71-26" href="#__codelineno-71-26"></a>        <span class="n">base_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_base_url</span><span class="p">()</span>
-</span><span id="__span-71-27"><a id="__codelineno-71-27" name="__codelineno-71-27" href="#__codelineno-71-27"></a>        <span class="n">api_key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_api_key</span><span class="p">()</span>
-</span><span id="__span-71-28"><a id="__codelineno-71-28" name="__codelineno-71-28" href="#__codelineno-71-28"></a>
-</span><span id="__span-71-29"><a id="__codelineno-71-29" name="__codelineno-71-29" href="#__codelineno-71-29"></a>        <span class="c1"># Sync and async clients from your chosen SDK.</span>
-</span><span id="__span-71-30"><a id="__codelineno-71-30" name="__codelineno-71-30" href="#__codelineno-71-30"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">my_sdk</span><span class="o">.</span><span class="n">Client</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">base_url</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
-</span><span id="__span-71-31"><a id="__codelineno-71-31" name="__codelineno-71-31" href="#__codelineno-71-31"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">aclient</span> <span class="o">=</span> <span class="n">my_sdk</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">base_url</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
-</span><span id="__span-71-32"><a id="__codelineno-71-32" name="__codelineno-71-32" href="#__codelineno-71-32"></a>
-</span><span id="__span-71-33"><a id="__codelineno-71-33" name="__codelineno-71-33" href="#__codelineno-71-33"></a>        <span class="c1"># Preserve response caching (reads enable_cache / cache_size set by __init__).</span>
-</span><span id="__span-71-34"><a id="__codelineno-71-34" name="__codelineno-71-34" href="#__codelineno-71-34"></a>        <span class="n">cache_size</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;cache_size&quot;</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>
-</span><span id="__span-71-35"><a id="__codelineno-71-35" name="__codelineno-71-35" href="#__codelineno-71-35"></a>        <span class="n">enable_cache</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;enable_cache&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-71-36"><a id="__codelineno-71-36" name="__codelineno-71-36" href="#__codelineno-71-36"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span> <span class="o">=</span> <span class="p">(</span>
-</span><span id="__span-71-37"><a id="__codelineno-71-37" name="__codelineno-71-37" href="#__codelineno-71-37"></a>            <span class="n">ResponseCache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="n">cache_size</span><span class="p">)</span> <span class="k">if</span> <span class="n">enable_cache</span> <span class="k">else</span> <span class="kc">None</span>
-</span><span id="__span-71-38"><a id="__codelineno-71-38" name="__codelineno-71-38" href="#__codelineno-71-38"></a>        <span class="p">)</span>
-</span><span id="__span-71-39"><a id="__codelineno-71-39" name="__codelineno-71-39" href="#__codelineno-71-39"></a>
-</span><span id="__span-71-40"><a id="__codelineno-71-40" name="__codelineno-71-40" href="#__codelineno-71-40"></a>        <span class="c1"># Preserve retry logic.</span>
-</span><span id="__span-71-41"><a id="__codelineno-71-41" name="__codelineno-71-41" href="#__codelineno-71-41"></a>        <span class="n">retry_config</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;retry&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-71-42"><a id="__codelineno-71-42" name="__codelineno-71-42" href="#__codelineno-71-42"></a>        <span class="bp">self</span><span class="o">.</span><span class="fm">__call__</span> <span class="o">=</span> <span class="n">apply_retry</span><span class="p">(</span>
-</span><span id="__span-71-43"><a id="__codelineno-71-43" name="__codelineno-71-43" href="#__codelineno-71-43"></a>            <span class="bp">self</span><span class="o">.</span><span class="fm">__call__</span><span class="p">,</span> <span class="n">retry_config</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">default_model_retry</span>
-</span><span id="__span-71-44"><a id="__codelineno-71-44" name="__codelineno-71-44" href="#__codelineno-71-44"></a>        <span class="p">)</span>
-</span><span id="__span-71-45"><a id="__codelineno-71-45" name="__codelineno-71-45" href="#__codelineno-71-45"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">acall</span> <span class="o">=</span> <span class="n">apply_retry</span><span class="p">(</span>
-</span><span id="__span-71-46"><a id="__codelineno-71-46" name="__codelineno-71-46" href="#__codelineno-71-46"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">acall</span><span class="p">,</span> <span class="n">retry_config</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">default_model_retry</span>
-</span><span id="__span-71-47"><a id="__codelineno-71-47" name="__codelineno-71-47" href="#__codelineno-71-47"></a>        <span class="p">)</span>
-</span><span id="__span-71-48"><a id="__codelineno-71-48" name="__codelineno-71-48" href="#__codelineno-71-48"></a>
-</span><span id="__span-71-49"><a id="__codelineno-71-49" name="__codelineno-71-49" href="#__codelineno-71-49"></a>
-</span><span id="__span-71-50"><a id="__codelineno-71-50" name="__codelineno-71-50" href="#__codelineno-71-50"></a><span class="nd">@register_model</span>
-</span><span id="__span-71-51"><a id="__codelineno-71-51" name="__codelineno-71-51" href="#__codelineno-71-51"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyProviderChatCompletion</span><span class="p">(</span><span class="n">_BaseMyProvider</span><span class="p">,</span> <span class="n">OpenAIChatCompletion</span><span class="p">):</span>
-</span><span id="__span-71-52"><a id="__codelineno-71-52" name="__codelineno-71-52" href="#__codelineno-71-52"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;MyProvider Chat Completion using a custom SDK.&quot;&quot;&quot;</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-72-1"><a id="__codelineno-72-1" name="__codelineno-72-1" href="#__codelineno-72-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">getenv</span>
+</span><span id="__span-72-2"><a id="__codelineno-72-2" name="__codelineno-72-2" href="#__codelineno-72-2"></a>
+</span><span id="__span-72-3"><a id="__codelineno-72-3" name="__codelineno-72-3" href="#__codelineno-72-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.cache</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResponseCache</span>
+</span><span id="__span-72-4"><a id="__codelineno-72-4" name="__codelineno-72-4" href="#__codelineno-72-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.providers.openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatCompletion</span>
+</span><span id="__span-72-5"><a id="__codelineno-72-5" name="__codelineno-72-5" href="#__codelineno-72-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.models.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_model</span>
+</span><span id="__span-72-6"><a id="__codelineno-72-6" name="__codelineno-72-6" href="#__codelineno-72-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.utils.tenacity</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_retry</span><span class="p">,</span> <span class="n">default_model_retry</span>
+</span><span id="__span-72-7"><a id="__codelineno-72-7" name="__codelineno-72-7" href="#__codelineno-72-7"></a>
+</span><span id="__span-72-8"><a id="__codelineno-72-8" name="__codelineno-72-8" href="#__codelineno-72-8"></a><span class="c1"># Replace with the SDK you actually want to use.</span>
+</span><span id="__span-72-9"><a id="__codelineno-72-9" name="__codelineno-72-9" href="#__codelineno-72-9"></a><span class="c1"># It must expose client.chat.completions.create() / aclient.chat.completions.create().</span>
+</span><span id="__span-72-10"><a id="__codelineno-72-10" name="__codelineno-72-10" href="#__codelineno-72-10"></a><span class="kn">import</span><span class="w"> </span><span class="nn">my_sdk</span>
+</span><span id="__span-72-11"><a id="__codelineno-72-11" name="__codelineno-72-11" href="#__codelineno-72-11"></a>
+</span><span id="__span-72-12"><a id="__codelineno-72-12" name="__codelineno-72-12" href="#__codelineno-72-12"></a>
+</span><span id="__span-72-13"><a id="__codelineno-72-13" name="__codelineno-72-13" href="#__codelineno-72-13"></a><span class="k">class</span><span class="w"> </span><span class="nc">_BaseMyProvider</span><span class="p">:</span>
+</span><span id="__span-72-14"><a id="__codelineno-72-14" name="__codelineno-72-14" href="#__codelineno-72-14"></a>    <span class="n">provider</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;myprovider&quot;</span>
+</span><span id="__span-72-15"><a id="__codelineno-72-15" name="__codelineno-72-15" href="#__codelineno-72-15"></a>
+</span><span id="__span-72-16"><a id="__codelineno-72-16" name="__codelineno-72-16" href="#__codelineno-72-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_base_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-72-17"><a id="__codelineno-72-17" name="__codelineno-72-17" href="#__codelineno-72-17"></a>        <span class="k">return</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_BASE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;https://api.myprovider.com/v1&quot;</span><span class="p">)</span>
+</span><span id="__span-72-18"><a id="__codelineno-72-18" name="__codelineno-72-18" href="#__codelineno-72-18"></a>
+</span><span id="__span-72-19"><a id="__codelineno-72-19" name="__codelineno-72-19" href="#__codelineno-72-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_get_api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-72-20"><a id="__codelineno-72-20" name="__codelineno-72-20" href="#__codelineno-72-20"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;MYPROVIDER_API_KEY&quot;</span><span class="p">)</span>
+</span><span id="__span-72-21"><a id="__codelineno-72-21" name="__codelineno-72-21" href="#__codelineno-72-21"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="p">:</span>
+</span><span id="__span-72-22"><a id="__codelineno-72-22" name="__codelineno-72-22" href="#__codelineno-72-22"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please set `MYPROVIDER_API_KEY`&quot;</span><span class="p">)</span>
+</span><span id="__span-72-23"><a id="__codelineno-72-23" name="__codelineno-72-23" href="#__codelineno-72-23"></a>        <span class="k">return</span> <span class="n">key</span>
+</span><span id="__span-72-24"><a id="__codelineno-72-24" name="__codelineno-72-24" href="#__codelineno-72-24"></a>
+</span><span id="__span-72-25"><a id="__codelineno-72-25" name="__codelineno-72-25" href="#__codelineno-72-25"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-72-26"><a id="__codelineno-72-26" name="__codelineno-72-26" href="#__codelineno-72-26"></a>        <span class="n">base_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_base_url</span><span class="p">()</span>
+</span><span id="__span-72-27"><a id="__codelineno-72-27" name="__codelineno-72-27" href="#__codelineno-72-27"></a>        <span class="n">api_key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_api_key</span><span class="p">()</span>
+</span><span id="__span-72-28"><a id="__codelineno-72-28" name="__codelineno-72-28" href="#__codelineno-72-28"></a>
+</span><span id="__span-72-29"><a id="__codelineno-72-29" name="__codelineno-72-29" href="#__codelineno-72-29"></a>        <span class="c1"># Sync and async clients from your chosen SDK.</span>
+</span><span id="__span-72-30"><a id="__codelineno-72-30" name="__codelineno-72-30" href="#__codelineno-72-30"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">my_sdk</span><span class="o">.</span><span class="n">Client</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">base_url</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
+</span><span id="__span-72-31"><a id="__codelineno-72-31" name="__codelineno-72-31" href="#__codelineno-72-31"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">aclient</span> <span class="o">=</span> <span class="n">my_sdk</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">base_url</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
+</span><span id="__span-72-32"><a id="__codelineno-72-32" name="__codelineno-72-32" href="#__codelineno-72-32"></a>
+</span><span id="__span-72-33"><a id="__codelineno-72-33" name="__codelineno-72-33" href="#__codelineno-72-33"></a>        <span class="c1"># Preserve response caching (reads enable_cache / cache_size set by __init__).</span>
+</span><span id="__span-72-34"><a id="__codelineno-72-34" name="__codelineno-72-34" href="#__codelineno-72-34"></a>        <span class="n">cache_size</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;cache_size&quot;</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>
+</span><span id="__span-72-35"><a id="__codelineno-72-35" name="__codelineno-72-35" href="#__codelineno-72-35"></a>        <span class="n">enable_cache</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;enable_cache&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-72-36"><a id="__codelineno-72-36" name="__codelineno-72-36" href="#__codelineno-72-36"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-72-37"><a id="__codelineno-72-37" name="__codelineno-72-37" href="#__codelineno-72-37"></a>            <span class="n">ResponseCache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="n">cache_size</span><span class="p">)</span> <span class="k">if</span> <span class="n">enable_cache</span> <span class="k">else</span> <span class="kc">None</span>
+</span><span id="__span-72-38"><a id="__codelineno-72-38" name="__codelineno-72-38" href="#__codelineno-72-38"></a>        <span class="p">)</span>
+</span><span id="__span-72-39"><a id="__codelineno-72-39" name="__codelineno-72-39" href="#__codelineno-72-39"></a>
+</span><span id="__span-72-40"><a id="__codelineno-72-40" name="__codelineno-72-40" href="#__codelineno-72-40"></a>        <span class="c1"># Preserve retry logic.</span>
+</span><span id="__span-72-41"><a id="__codelineno-72-41" name="__codelineno-72-41" href="#__codelineno-72-41"></a>        <span class="n">retry_config</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;retry&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-72-42"><a id="__codelineno-72-42" name="__codelineno-72-42" href="#__codelineno-72-42"></a>        <span class="bp">self</span><span class="o">.</span><span class="fm">__call__</span> <span class="o">=</span> <span class="n">apply_retry</span><span class="p">(</span>
+</span><span id="__span-72-43"><a id="__codelineno-72-43" name="__codelineno-72-43" href="#__codelineno-72-43"></a>            <span class="bp">self</span><span class="o">.</span><span class="fm">__call__</span><span class="p">,</span> <span class="n">retry_config</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">default_model_retry</span>
+</span><span id="__span-72-44"><a id="__codelineno-72-44" name="__codelineno-72-44" href="#__codelineno-72-44"></a>        <span class="p">)</span>
+</span><span id="__span-72-45"><a id="__codelineno-72-45" name="__codelineno-72-45" href="#__codelineno-72-45"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">acall</span> <span class="o">=</span> <span class="n">apply_retry</span><span class="p">(</span>
+</span><span id="__span-72-46"><a id="__codelineno-72-46" name="__codelineno-72-46" href="#__codelineno-72-46"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">acall</span><span class="p">,</span> <span class="n">retry_config</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">default_model_retry</span>
+</span><span id="__span-72-47"><a id="__codelineno-72-47" name="__codelineno-72-47" href="#__codelineno-72-47"></a>        <span class="p">)</span>
+</span><span id="__span-72-48"><a id="__codelineno-72-48" name="__codelineno-72-48" href="#__codelineno-72-48"></a>
+</span><span id="__span-72-49"><a id="__codelineno-72-49" name="__codelineno-72-49" href="#__codelineno-72-49"></a>
+</span><span id="__span-72-50"><a id="__codelineno-72-50" name="__codelineno-72-50" href="#__codelineno-72-50"></a><span class="nd">@register_model</span>
+</span><span id="__span-72-51"><a id="__codelineno-72-51" name="__codelineno-72-51" href="#__codelineno-72-51"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyProviderChatCompletion</span><span class="p">(</span><span class="n">_BaseMyProvider</span><span class="p">,</span> <span class="n">OpenAIChatCompletion</span><span class="p">):</span>
+</span><span id="__span-72-52"><a id="__codelineno-72-52" name="__codelineno-72-52" href="#__codelineno-72-52"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;MyProvider Chat Completion using a custom SDK.&quot;&quot;&quot;</span>
 </span></code></pre></div>
 </details>
 <p>The pattern above keeps caching and retry behaviour identical to every other built-in provider. The only thing that changes is the objects assigned to <code>self.client</code> and <code>self.aclient</code>.</p>
