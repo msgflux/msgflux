@@ -5,17 +5,16 @@
 `LLMAsVerifier` is a logprob-aware verification pattern adapted from
 [LLM-as-a-Verifier](https://llm-as-a-verifier.notion.site/).
 
-For the internal execution model and design choices, see
-[Anatomy: LLM-as-a-Verifier](../anatomy/llm-as-a-verifier.md).
+Think of it as a teacher grading answers.
 
-- it decomposes evaluation into explicit criteria
-- it can repeat the verification multiple times
-- it asks the model to emit a discrete score token
-- it computes the final score from the expected value of the score-token
-  distribution, instead of trusting only the chosen token
+You give it:
 
-Use it when you want a reusable verifier that can score, compare, and select
-model outputs with a stable signal.
+- a `task`
+- one or more `candidates`
+- a list of `criteria`
+
+The verifier then scores each candidate, compares them when needed, and returns
+either a verdict, a winner, or a tournament ranking.
 
 ## Single Candidate
 
@@ -48,10 +47,12 @@ print(result.score)    # normalized score in [0, 1]
 print(result.scores)   # {"answer": ...}
 ```
 
-`LLMAsVerifier` requests `logprobs=True` and `top_logprobs` automatically on the
-model call. If the provider returns token logprobs, the verifier uses them to
-compute the score distribution. If not, it falls back to parsing the emitted
-score from text. Set `strict_logprobs=True` to require logprob-based extraction.
+!!! info
+    `LLMAsVerifier` requests `logprobs=True` and `top_logprobs` automatically
+    on the model call. If the provider returns token logprobs, the verifier
+    uses them to compute the score distribution. If not, it falls back to
+    parsing the emitted score from text. Set `strict_logprobs=True` to require
+    logprob-based extraction.
 
 ## Pairwise Comparison
 
@@ -126,6 +127,137 @@ tournament = verifier.select_best(
 )
 ```
 
+## How It Works
+
+The verifier does not ask the model for a vague overall judgment. It breaks the
+evaluation into smaller pieces and then aggregates them.
+
+### `criteria`
+
+`criteria` are the grading rules.
+
+Examples:
+
+- `correctness`
+- `completeness`
+- `grounding`
+- `error_signals`
+
+Instead of asking only "is this good?", the verifier asks smaller questions
+such as:
+
+- is it correct?
+- is it complete?
+- is it grounded in the evidence?
+- are there unresolved errors?
+
+That makes the final result easier to control and easier to reuse across
+different tasks.
+
+### `n_verifications`
+
+`n_verifications` controls how many times each criterion is evaluated.
+
+If you have:
+
+- `3` criteria
+- `n_verifications=2`
+
+the verifier runs `6` evaluations in total, then averages the repeated attempts
+for each criterion.
+
+Use this to reduce noise:
+
+- `n_verifications=1` is the simplest setting
+- larger values usually give a more stable signal
+
+### `granularity`
+
+`granularity` controls how many levels exist in the score scale.
+
+```python
+from msgflux.generation.verifiers import LLMAsVerifier, ScoreScale
+
+verifier = LLMAsVerifier.answer_reranking(
+    model="openai/gpt-4.1-mini",
+    score_scale=ScoreScale.letter(granularity=20),
+)
+```
+
+With `granularity=20`, the scale is `A..T`:
+
+- `A` is best
+- `T` is worst
+
+The model does not return a floating-point score such as `0.83`. It returns a
+discrete score token from the configured scale:
+
+```text
+<score>A</score>
+```
+
+In pairwise mode it returns one score token per candidate:
+
+```text
+<score_A>B</score_A>
+<score_B>H</score_B>
+```
+
+Supported range:
+
+- `2..26`
+
+The runtime keeps the scale letter-based because letter tokens are more stable
+for `logprobs` extraction than numeric labels such as `1..20`.
+
+### `logprobs`
+
+This is the part that makes the technique more useful than just reading the
+final score token.
+
+The verifier asks the model for:
+
+- `logprobs=True`
+- `top_logprobs=<scale size or override>`
+
+So it can see not only the chosen score token, but also nearby alternatives.
+
+For example, even if the model emits:
+
+```text
+<score>A</score>
+```
+
+the underlying distribution might be closer to:
+
+- `A`: `0.70`
+- `B`: `0.20`
+- `C`: `0.10`
+
+The verifier uses that distribution to compute the final normalized score in
+`[0, 1]`, instead of trusting only the chosen token.
+
+### What Gets Returned
+
+With one candidate, the verifier returns:
+
+- `pass`
+- `fail`
+- `uncertain`
+
+With two candidates, it returns:
+
+- the winning label
+- or `tie`
+
+With more than two candidates, `select_best(...)` runs pairwise comparisons and
+returns:
+
+- `winner`
+- `ranking`
+- `wins`
+- `average_scores`
+
 ## Verbose Debugging
 
 Set `verbose=True` when you want the verifier to return the final prompt and raw
@@ -195,10 +327,12 @@ verifier = LLMAsVerifier(
 
 ## Built-In Presets
 
-`LLMAsVerifier` ships with preset constructors for common evaluation tasks. Each
-preset returns a regular `LLMAsVerifier`, so you can still override `criteria`,
-`ground_truth_note`, `extra_instructions`, `n_verifications`, and the model
-request kwargs.
+Use a preset when you want a good default set of criteria without defining it
+by hand.
+
+Each preset still returns a normal `LLMAsVerifier`, so you can override
+`criteria`, `ground_truth_note`, `extra_instructions`, `n_verifications`, and
+the model request kwargs.
 
 ```python
 from msgflux.generation.verifiers import LLMAsVerifier
@@ -238,7 +372,7 @@ swe = LLMAsVerifier.swe_bench_verified(
 
 ### `trajectory_analysis`
 
-Use for agent runs and reasoning trajectories.
+Use this for agent runs and reasoning trajectories.
 
 - checks whether the task was actually completed
 - checks whether verification was meaningful
@@ -246,7 +380,7 @@ Use for agent runs and reasoning trajectories.
 
 ### `answer_reranking`
 
-Use for comparing multiple final drafts of the same task.
+Use this when you have multiple final drafts of the same task.
 
 - correctness
 - instruction following
@@ -255,7 +389,7 @@ Use for comparing multiple final drafts of the same task.
 
 ### `grounded_answer_verification`
 
-Use for RAG and other context-grounded tasks.
+Use this for RAG and other context-grounded tasks.
 
 - grounding in context
 - unsupported claims
@@ -263,7 +397,7 @@ Use for RAG and other context-grounded tasks.
 
 ### `patch_selection`
 
-Use for comparing candidate patches or code changes.
+Use this for comparing candidate patches or code changes.
 
 - requirement coverage
 - correctness risk
@@ -272,8 +406,8 @@ Use for comparing candidate patches or code changes.
 
 ### `tool_trace_verification`
 
-Use for tool-using agents when you want to compare the final answer against the
-trace and tool outputs.
+Use this for tool-using agents when you want to compare the final answer
+against the trace and tool outputs.
 
 - tool grounding
 - unresolved errors
@@ -282,7 +416,7 @@ trace and tool outputs.
 
 ### `synthetic_data_filtering`
 
-Use for generated examples before adding them to datasets, evals, or
+Use this for generated examples before adding them to datasets, evals, or
 distillation corpora.
 
 - consistency
@@ -292,7 +426,7 @@ distillation corpora.
 
 ### `terminal_bench`
 
-Use for terminal-task trajectory selection in the style of Terminal-Bench.
+Use this for terminal-task trajectory selection in the style of Terminal-Bench.
 
 - specification adherence
 - output match
@@ -301,40 +435,18 @@ Use for terminal-task trajectory selection in the style of Terminal-Bench.
 
 ### `swe_bench_verified`
 
-Use for patch and trajectory evaluation in the style of SWE-bench Verified.
+Use this for patch and trajectory evaluation in the style of SWE-bench
+Verified.
 
 - root-cause analysis
 - code review quality
 - empirical verification from executed commands
 - narration treated as weaker evidence than the actual patch and outputs
 
-## Score Scale And Granularity
-
-The default verifier already uses a 20-level letter scale (`A..T`). If you want
-to set that explicitly, or choose a different number of score levels, pass
-`score_scale=ScoreScale.letter(granularity=...)`.
-
-```python
-from msgflux.generation.verifiers import LLMAsVerifier, ScoreScale
-
-verifier = LLMAsVerifier.answer_reranking(
-    model="openai/gpt-4.1-mini",
-    score_scale=ScoreScale.letter(granularity=20),
-)
-```
-
-- `granularity=20` gives the usual `A..T` scale
-- supported range is `2..26`
-- `top_logprobs` follows the scale size automatically unless you override it
-
-Use `ScoreScale.letter(granularity=20)` to request a 20-level score scale.
-The runtime keeps the scale letter-based because letter tokens are more stable
-for `logprobs` extraction than numeric labels such as `1..20`.
-
 ## Trajectory Formatting Helpers
 
 For benchmark-style presets, pass the full trajectory as the candidate
-evidence, not only the final answer. msgFlux ships two helpers for that:
+evidence, not only the final answer. Two helpers are available:
 
 - `format_terminal_trajectory(...)`
 - `format_swe_bench_trajectory(...)`
@@ -405,12 +517,12 @@ result = verifier(
 
 ## Best Use Cases
 
-`LLMAsVerifier` is most useful when you need to compare or filter candidates,
-not when the task already has a deterministic validator.
+This technique is most useful when you need to compare, rank, or filter
+candidates and the task does not already have a deterministic validator.
 
 ### Trajectory Selection
 
-This is the most natural fit for the technique.
+This is the most natural fit.
 
 - compare alternative reasoning trajectories
 - compare multiple agent runs for the same task
@@ -428,16 +540,16 @@ Use it to rerank multiple drafts of the same task.
 ### Patch Selection
 
 It works well for code generation when you want to compare multiple candidate
-patches before running heavier validation.
+patches before running deeper validation.
 
 - choose the patch that best satisfies the task
 - prefer the patch that looks more correct or complete
-- filter obviously weak candidates before expensive execution
+- filter obviously weak candidates before tests or deeper validation
 
 ### Tool-Using Agent Verification
 
-It is useful for checking whether a final answer is consistent with the tool
-results and the execution trace.
+Use it to check whether a final answer is consistent with tool results and the
+execution trace.
 
 - verify completion quality
 - verify grounding in tool outputs
@@ -454,7 +566,7 @@ distillation corpora.
 
 ### Optimizer Feedback
 
-This is a strong fit for future optimizer integrations.
+Use it as a reusable feedback signal for future optimizer integrations.
 
 - provide a reusable reward signal
 - score prompt variants
