@@ -57,7 +57,7 @@ def test_init_custom_params(mock_tavily_client):
 
 @pytest.mark.asyncio
 async def test_search(mock_tavily_client):
-    sync_client, async_client = mock_tavily_client
+    _sync_client, async_client = mock_tavily_client
 
     with patch.dict("os.environ", {"TAVILY_API_KEY": "test_key"}):
         retriever = TavilyWebRetriever()
@@ -93,7 +93,7 @@ async def test_search(mock_tavily_client):
 
 @pytest.mark.asyncio
 async def test_search_with_filters(mock_tavily_client):
-    sync_client, async_client = mock_tavily_client
+    _sync_client, async_client = mock_tavily_client
 
     with patch.dict("os.environ", {"TAVILY_API_KEY": "test_key"}):
         retriever = TavilyWebRetriever(
@@ -115,7 +115,7 @@ async def test_search_with_filters(mock_tavily_client):
 
 
 def test_sync_search(mock_tavily_client):
-    sync_client, async_client = mock_tavily_client
+    sync_client, _async_client = mock_tavily_client
 
     with patch.dict("os.environ", {"TAVILY_API_KEY": "test_key"}):
         retriever = TavilyWebRetriever()

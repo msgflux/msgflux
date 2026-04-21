@@ -8,10 +8,10 @@ except ImportError:
     TavilyClient = None
     AsyncTavilyClient = None
 
+from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
 from msgflux.data.retrievers.registry import register_retriever
 from msgflux.data.retrievers.types import WebRetriever
-from msgflux.core.dotdict import dotdict
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
