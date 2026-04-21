@@ -9,7 +9,7 @@ def test_init_raises_without_api_key():
             BraveChatCompletion(model_id="test-model")
 
 def test_config():
-    # Chat completion still uses BRAVE_API_KEY in implementation, 
+    # Chat completion still uses BRAVE_API_KEY in implementation,
     # ensuring consistency with user's previous request or standard unless changed.
     # The user complaint was about self retention in retriever.
     with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test_key"}):
