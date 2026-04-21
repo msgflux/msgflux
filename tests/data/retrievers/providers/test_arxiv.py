@@ -1,7 +1,7 @@
 """Tests for ArxivWebRetriever."""
 
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,8 +35,8 @@ class TestArxivWebRetriever:
         mock_author = MagicMock()
         mock_author.name = "John Doe"
         mock_result.authors = [mock_author]
-        mock_result.published = datetime(2024, 1, 15, 12, 0, 0)
-        mock_result.updated = datetime(2024, 1, 20, 12, 0, 0)
+        mock_result.published = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_result.updated = datetime(2024, 1, 20, 12, 0, 0, tzinfo=timezone.utc)
         mock_result.pdf_url = "https://arxiv.org/pdf/2401.12345.pdf"
         mock_result.entry_id = "http://arxiv.org/abs/2401.12345v1"
         mock_result.categories = ["cs.CL", "cs.LG"]
@@ -118,8 +118,8 @@ class TestArxivWebRetriever:
         mock_author = MagicMock()
         mock_author.name = "Author Name"
         mock_result.authors = [mock_author]
-        mock_result.published = datetime(2024, 1, 15)
-        mock_result.updated = datetime(2024, 1, 20)
+        mock_result.published = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        mock_result.updated = datetime(2024, 1, 20, tzinfo=timezone.utc)
         mock_result.pdf_url = "https://arxiv.org/pdf/test.pdf"
         mock_result.entry_id = "http://arxiv.org/abs/test"
         mock_result.categories = ["cs.AI"]

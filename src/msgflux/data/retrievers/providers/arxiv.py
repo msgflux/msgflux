@@ -1,17 +1,17 @@
 import asyncio
 from typing import Any, List, Mapping, Optional, Union
 
+from msgflux.core.dotdict import dotdict
+from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
+from msgflux.data.retrievers.registry import register_retriever
+from msgflux.data.retrievers.types import WebRetriever
+from msgflux.logger import logger
+from msgflux.nn import functional as F
+
 try:
     import arxiv
 except ImportError:
     arxiv = None
-
-from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
-from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
-from msgflux.core.dotdict import dotdict
-from msgflux.logger import logger
-from msgflux.nn import functional as F
 
 
 @register_retriever
