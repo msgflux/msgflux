@@ -144,6 +144,13 @@ hide:
 
 ### Web Search
 
-| Provider    | Dependency    |
-|-------------|---------------|
-| Wikipedia   | `wikipedia`   |
+| Provider    | Installation                     | Auth Env                         |
+|-------------|----------------------------------|-----------------------------------|
+| Trafilatura | `httpx`, `trafilatura`           |                                   |
+| SerpApi     | `google-search-results`          | `SERPAPI_API_KEY`                 |
+| Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
+| Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
+| Exa         | `exa-py`                         | `EXA_API_KEY`                     |
+| Brave       | `brave-search-python-client`     | `BRAVE_SEARCH_API_KEY`            |
+| arXiv       | `arxiv`                          |                                   |
+| Wikipedia   | `wikipedia`                      |                                   |

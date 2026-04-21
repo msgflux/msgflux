@@ -37,8 +37,7 @@ class BraveWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     ):
         """Initialize BraveWebRetriever.
 
-        Requires the `BRAVE_SEARCH_PYTHON_CLIENT_API_KEY` environment variable
-        to be set.
+        Requires the `BRAVE_SEARCH_API_KEY` environment variable to be set.
 
         Args:
             mode:
