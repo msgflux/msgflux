@@ -9,7 +9,7 @@ except ImportError:
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
 from msgflux.data.retrievers.registry import register_retriever
 from msgflux.data.retrievers.types import WebRetriever
-from msgflux.dotdict import dotdict
+from msgflux.core.dotdict import dotdict
 from msgflux.logger import logger
 from msgflux.nn import functional as F
 
