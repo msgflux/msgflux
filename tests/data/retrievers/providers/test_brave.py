@@ -7,7 +7,7 @@ mock_brave_module = MagicMock()
 sys.modules["brave_search_python_client"] = mock_brave_module
 
 from msgflux.data.retrievers.providers.brave import BraveWebRetriever
-from msgflux.dotdict import dotdict
+from msgflux.core.dotdict import dotdict
 
 @pytest.fixture
 def mock_brave_client():
