@@ -34,6 +34,8 @@ hide:
 
 msgFlux is an open-source framework for building dynamic AI systems with **composable modules**. It treats prompts, signatures, tools, and message flow as explicit program structure instead of ad-hoc glue. Architecture, data flow, and prompting remain separate layers, so systems can evolve by changing contracts, modules, or routes without forcing everything to change together.
 
+For web search, msgFlux includes both retriever-backed and model-backed options. The built-in `WebSearch` tool can be pointed at a retriever backend like `retriever/wikipedia` or a model backend like `model/openai/gpt-4o-search-preview`, and returns `data` plus `annotations` when the backend supplies citations.
+
 ## **AI Systems *not* ML Systems**
 
 **ML systems** are systems *for* AI - they train, evaluate, and deploy models. **AI systems** are systems *with* AI - software where pretrained models operate as components inside a broader application. In that setting, the model is not the whole product; it is one building block among many. You are not optimizing weights - you are designing behavior, interfaces, and flow around a model. This is the space msgFlux occupies.

@@ -218,6 +218,45 @@ When the model decides to use a tool, the Agent intercepts the response, execute
         response = agent("Summarize the main points from https://news.ycombinator.com")
         ```
 
+    === "Web Search"
+
+        Use a built-in web search tool backed by either a retriever or a model:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.tools.builtin import WebSearch
+
+        # Option 1: retriever-backed web search
+        wikipedia_search = WebSearch("retriever/wikipedia")
+
+        # Option 2: model-backed web search
+        openai_search = WebSearch(
+            "model/openai/gpt-4o-search-preview",
+            web_search_options={"search_context_size": "low"},
+        )
+
+        # Or read the engine from the environment:
+        # export MSGFLUX_WEB_SEARCH_ENGINE="retriever/wikipedia"
+        env_search = WebSearch()
+
+        class Researcher(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            system_message = "You help users find up-to-date information."
+            tools = [wikipedia_search, openai_search, env_search]
+            config = {"verbose": True}
+
+        agent = Researcher()
+
+        result = agent("What is the latest Python version?")
+        ```
+
+        The tool returns a `dict` with:
+
+        - `data`: the search result payload
+        - `annotations`: citation metadata when available
+
     === "Wikipedia Search"
 
         Use msgflux's built-in Wikipedia retriever as a tool:
