@@ -124,9 +124,7 @@ async def test_fetch_multiple_urls(retriever, mock_metadata):
     mock_trafilatura.extract.return_value = "Content"
     mock_trafilatura.extract_metadata.return_value = mock_metadata
 
-    results = await retriever.acall(
-        ["https://example.com", "https://python.org"]
-    )
+    results = await retriever.acall(["https://example.com", "https://python.org"])
 
     assert results.response_type == "web_fetch"
     assert len(results.data) == 2
