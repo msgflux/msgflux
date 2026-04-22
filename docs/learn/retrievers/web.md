@@ -197,7 +197,215 @@ for i, query in enumerate(queries):
 
 ---
 
-## 9. **Tavily Search**
+## 9. **SerpApi Search**
+
+The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
+
+!!! info "Dependencies"
+    Requires `httpx` and the `SERPAPI_KEY` env variable:
+    `pip install httpx`
+
+    For compatibility, `SERPAPI_API_KEY` and `SERP_API_KEY` are also accepted.
+    Both synchronous and async calls use direct requests to
+    `https://serpapi.com/search.json`.
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `engine` | `"google"` | Search engine to use, such as `"google"`, `"bing"`, or `"yahoo"` |
+| `location` | `None` | Location for localized results, such as `"Austin,Texas"` |
+| `gl` | `None` | Google country code, such as `"us"` or `"br"` |
+| `hl` | `None` | Google UI language, such as `"en"` or `"pt"` |
+| `safe` | `None` | Safe search mode, such as `"active"` or `"off"` |
+| `tbm` | `None` | Search type, such as `"nws"` for news or `"isch"` for images |
+
+### Examples
+
+=== "Web"
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(SERPAPI_KEY="...")
+
+    retriever = mf.Retriever.web("serpapi")
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== "Localized"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "serpapi",
+        location="Sao Paulo, Brazil",
+        gl="br",
+        hl="pt",
+    )
+    response = retriever("melhores frameworks Python", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+    ```
+
+=== "News"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("serpapi", tbm="nws", gl="us", hl="en")
+    response = retriever("AI regulation", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.date)
+        print(result.data.url)
+    ```
+
+=== "Images"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("serpapi", tbm="isch")
+    response = retriever("James Webb Space Telescope", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+=== "Batch"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("serpapi", engine="google")
+
+    queries = ["Python packaging", "Rust async runtime"]
+    response = retriever(queries, top_k=2)
+
+    for i, query in enumerate(queries):
+        print(f"\n{query}")
+        for result in response.data[i].results:
+            print(result.data.title)
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("serpapi", gl="us", hl="en")
+
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
+
+---
+
+## 10. **Brave Search**
+
+The `brave` retriever queries Brave Search and can return web, news, or image results. Use it when you need search results from Brave with a single provider interface.
+
+!!! info "Dependencies"
+    Requires `brave-search-python-client` and the `BRAVE_SEARCH_API_KEY` env variable:
+    `pip install brave-search-python-client`
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mode` | `"search"` | Search mode: `"search"`, `"news"`, or `"image"` |
+| `return_images` | `False` | Whether to include thumbnail image URLs for web/news results |
+
+### Examples
+
+=== "Web"
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+    retriever = mf.Retriever.web("brave")
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== "Thumbnails"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "brave",
+        mode="search",
+        return_images=True,
+    )
+    response = retriever("Python tutorials", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+=== "News"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="news")
+    response = retriever("AI regulation", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.date)
+        print(result.data.url)
+    ```
+
+=== "Images"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="image")
+    response = retriever("James Webb Space Telescope", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="search")
+
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
+
+---
+
+## 11. **Tavily Search**
 
 The `tavily` retriever queries Tavily and returns search results optimized for AI applications. It supports search depth, topic filters, time ranges, domain filters, generated answers, images, and raw page content.
 
@@ -205,9 +413,22 @@ The `tavily` retriever queries Tavily and returns search results optimized for A
     Requires `tavily-python` and the `TAVILY_API_KEY` env variable:
     `pip install tavily-python`
 
-### Quick Start
+### Parameters
 
-???+ example
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `search_depth` | `"basic"` | Search depth: `"basic"` or `"advanced"` |
+| `topic` | `"general"` | Topic category: `"general"`, `"news"`, or `"finance"` |
+| `time_range` | `None` | Time range: `"day"`, `"week"`, `"month"`, `"year"` or `"d"`, `"w"`, `"m"`, `"y"` |
+| `include_domains` | `None` | Domains to restrict search to |
+| `exclude_domains` | `None` | Domains to exclude from search |
+| `include_answer` | `False` | Whether Tavily should include an AI-generated answer |
+| `include_images` | `False` | Whether to include image results |
+| `include_raw_content` | `False` | Whether to include raw page content |
+
+### Examples
+
+=== "Web"
 
     ```python
     import msgflux as mf
@@ -223,35 +444,25 @@ The `tavily` retriever queries Tavily and returns search results optimized for A
         print(result.data.content)
     ```
 
-### Parameters
+=== "Advanced"
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `search_depth` | `"basic"` | Search depth: `"basic"` or `"advanced"` |
-| `topic` | `"general"` | Topic category: `"general"`, `"news"`, or `"finance"` |
-| `time_range` | `None` | Time range: `"day"`, `"week"`, `"month"`, `"year"` or `"d"`, `"w"`, `"m"`, `"y"` |
-| `include_domains` | `None` | Domains to restrict search to |
-| `exclude_domains` | `None` | Domains to exclude from search |
-| `include_answer` | `False` | Whether Tavily should include an AI-generated answer |
-| `include_images` | `False` | Whether to include image results |
-| `include_raw_content` | `False` | Whether to include raw page content |
+    ```python
+    import msgflux as mf
 
-```python
-import msgflux as mf
+    retriever = mf.Retriever.web(
+        "tavily",
+        search_depth="advanced",
+        topic="news",
+        time_range="week",
+    )
+    response = retriever("latest AI news", top_k=5)
 
-retriever = mf.Retriever.web(
-    "tavily",
-    search_depth="advanced",
-    topic="news",
-    time_range="week",
-)
-```
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+    ```
 
-### Raw Content
-
-Enable `include_raw_content=True` when the downstream model needs more complete page text:
-
-???+ example
+=== "Raw Content"
 
     ```python
     import msgflux as mf
@@ -269,29 +480,33 @@ Enable `include_raw_content=True` when the downstream model needs more complete 
         print(result.data.raw_content[:500])
     ```
 
-### Domain Filters
+=== "Filters"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web(
-    "tavily",
-    include_domains=["python.org", "pypi.org"],
-    exclude_domains=["example.com"],
-)
+    retriever = mf.Retriever.web(
+        "tavily",
+        include_domains=["python.org", "pypi.org"],
+        exclude_domains=["example.com"],
+    )
 
-response = retriever("packaging metadata", top_k=3)
-```
+    response = retriever("packaging metadata", top_k=3)
 
-### Async Search
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+    ```
 
-```python
-import msgflux as mf
+=== "Async"
 
-retriever = mf.Retriever.web("tavily", search_depth="advanced")
+    ```python
+    import msgflux as mf
 
-response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+    retriever = mf.Retriever.web("tavily", search_depth="advanced")
 
-for item in response.data:
-    print(item.results[0].data.title)
-```
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
