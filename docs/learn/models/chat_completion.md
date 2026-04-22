@@ -798,6 +798,9 @@ OpenAI-compatible search providers can also expose chat completion models that s
 
     === "Brave Search"
 
+        Brave Answers uses an OpenAI-compatible endpoint. Set
+        `BRAVE_SEARCH_API_KEY` and use the `brave/brave` model id:
+
         ```python
         import msgflux as mf
 
@@ -808,6 +811,63 @@ OpenAI-compatible search providers can also expose chat completion models that s
 
         print(response.consume())
         ```
+
+        Brave-specific request fields are passed through `extra_body`:
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+        model = mf.Model.chat_completion(
+            "brave/brave",
+            extra_body={
+                "country": "BR",   # target country for search results
+                "language": "pt",  # answer language
+            },
+        )
+
+        response = model("Quais foram as principais novidades do Python este mês?")
+        print(response.consume())
+        ```
+
+        Brave's richer answer fields require streaming mode:
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+        model = mf.Model.chat_completion(
+            "brave/brave",
+            extra_body={
+                "country": "US",
+                "language": "en",
+                "enable_citations": True,
+                "enable_entities": True,
+                "enable_research": False,
+            },
+        )
+
+        response = model("Summarize the latest Python packaging updates.", stream=True)
+
+        async for chunk in response.consume():
+            print(chunk, end="", flush=True)
+        ```
+
+        Supported Brave Answers parameters include:
+
+        | Parameter | Description | Default |
+        |---|---|---|
+        | `country` | Target country for search results | `"us"` |
+        | `language` | Response language | `"en"` |
+        | `enable_citations` | Include inline citation tags in streamed responses | `False` |
+        | `enable_entities` | Include entity tags in streamed responses | `False` |
+        | `enable_research` | Enable multi-search research mode for more thorough answers | `False` |
+
+        `enable_citations`, `enable_entities`, and `enable_research` require
+        `stream=True`. Research mode can be slower and more expensive because
+        Brave may run multiple searches before answering.
 
 ### 11.1 **search_context_size**
 
