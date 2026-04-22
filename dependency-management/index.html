@@ -5356,16 +5356,17 @@
 
 ### Chat Completion
 
-| Provider    | Dependency        | Auth Env             |
-|-------------|-------------------|----------------------|
-| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`   |
-| Groq        | `msgflux[openai]` | `GROQ_API_KEY`       |
-| Ollama      | `msgflux[openai]` |                      |
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`     |
-| OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY` |
-| SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`  |
-| Together    | `msgflux[openai]` | `TOGETHER_API_KEY`   |
-| vLLM        | `msgflux[openai]` |                      |
+| Provider    | Dependency        | Auth Env               |
+|-------------|-------------------|------------------------|
+| Brave       | `msgflux[openai]` | `BRAVE_SEARCH_API_KEY` |
+| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`     |
+| Groq        | `msgflux[openai]` | `GROQ_API_KEY`         |
+| Ollama      | `msgflux[openai]` |                        |
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`       |
+| OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY`   |
+| SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`    |
+| Together    | `msgflux[openai]` | `TOGETHER_API_KEY`     |
+| vLLM        | `msgflux[openai]` |                        |
 
 ### Image Embedder
 
@@ -5490,9 +5491,16 @@
 
 ### Web Search
 
-| Provider    | Dependency    |
-|-------------|---------------|
-| Wikipedia   | `wikipedia`   |
+| Provider    | Installation                     | Auth Env                         |
+|-------------|----------------------------------|-----------------------------------|
+| Trafilatura | `httpx`, `trafilatura`           |                                   |
+| SerpApi     | `google-search-results`          | `SERPAPI_API_KEY`                 |
+| Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
+| Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
+| Exa         | `exa-py`                         | `EXA_API_KEY`                     |
+| Brave       | `brave-search-python-client`     | `BRAVE_SEARCH_API_KEY`            |
+| arXiv       | `arxiv`                          |                                   |
+| Wikipedia   | `wikipedia`                      |                                   |
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -5572,6 +5580,11 @@
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>Brave</td>
+<td><code>msgflux[openai]</code></td>
+<td><code>BRAVE_SEARCH_API_KEY</code></td>
+</tr>
 <tr>
 <td>Cerebras</td>
 <td><code>msgflux[openai]</code></td>
@@ -5952,13 +5965,50 @@
 <thead>
 <tr>
 <th>Provider</th>
-<th>Dependency</th>
+<th>Installation</th>
+<th>Auth Env</th>
 </tr>
 </thead>
 <tbody>
 <tr>
+<td>Trafilatura</td>
+<td><code>httpx</code>, <code>trafilatura</code></td>
+<td></td>
+</tr>
+<tr>
+<td>SerpApi</td>
+<td><code>google-search-results</code></td>
+<td><code>SERPAPI_API_KEY</code></td>
+</tr>
+<tr>
+<td>Linkup</td>
+<td><code>linkup-sdk</code></td>
+<td><code>LINKUP_API_KEY</code></td>
+</tr>
+<tr>
+<td>Tavily</td>
+<td><code>tavily-python</code></td>
+<td><code>TAVILY_API_KEY</code></td>
+</tr>
+<tr>
+<td>Exa</td>
+<td><code>exa-py</code></td>
+<td><code>EXA_API_KEY</code></td>
+</tr>
+<tr>
+<td>Brave</td>
+<td><code>brave-search-python-client</code></td>
+<td><code>BRAVE_SEARCH_API_KEY</code></td>
+</tr>
+<tr>
+<td>arXiv</td>
+<td><code>arxiv</code></td>
+<td></td>
+</tr>
+<tr>
 <td>Wikipedia</td>
 <td><code>wikipedia</code></td>
+<td></td>
 </tr>
 </tbody>
 </table>
