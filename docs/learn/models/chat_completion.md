@@ -741,6 +741,8 @@ Force the model to start its response with specific text. msgFlux appends the va
 
 The `web_search_options` parameter enables real-time web search, letting the model ground its answers in up-to-date information retrieved from the internet. It is currently supported by OpenAI search models (`gpt-4o-search-preview`, `gpt-4o-mini-search-preview`) and OpenRouter.
 
+OpenAI-compatible search providers can also expose chat completion models that search the web before answering. Brave uses `BRAVE_SEARCH_API_KEY` with the `brave/brave` model id, and Exa uses `EXA_API_KEY` with the `exa/exa` model id.
+
 !!! info "Dependencies"
     Install the OpenAI extra if you haven't already:
 
@@ -796,6 +798,92 @@ The `web_search_options` parameter enables real-time web search, letting the mod
         )
 
         response = model("What are the top tech events happening this month?")
+        print(response.consume())
+        ```
+
+    === "Brave Search"
+
+        Brave Answers uses an OpenAI-compatible endpoint. Set
+        `BRAVE_SEARCH_API_KEY` and use the `brave/brave` model id:
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+        model = mf.Model.chat_completion("brave/brave")
+        response = model("What are the latest Python packaging updates?")
+
+        print(response.consume())
+        ```
+
+        Brave-specific request fields are passed through `extra_body`:
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+        model = mf.Model.chat_completion(
+            "brave/brave",
+            extra_body={
+                "country": "BR",   # target country for search results
+                "language": "pt",  # answer language
+            },
+        )
+
+        response = model("Quais foram as principais novidades do Python este mês?")
+        print(response.consume())
+        ```
+
+        Brave's richer answer fields require streaming mode:
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+        model = mf.Model.chat_completion(
+            "brave/brave",
+            extra_body={
+                "country": "US",
+                "language": "en",
+                "enable_citations": True,
+                "enable_entities": True,
+                "enable_research": False,
+            },
+        )
+
+        response = model("Summarize the latest Python packaging updates.", stream=True)
+
+        async for chunk in response.consume():
+            print(chunk, end="", flush=True)
+        ```
+
+        Supported Brave Answers parameters include:
+
+        | Parameter | Description | Default |
+        |---|---|---|
+        | `country` | Target country for search results | `"us"` |
+        | `language` | Response language | `"en"` |
+        | `enable_citations` | Include inline citation tags in streamed responses | `False` |
+        | `enable_entities` | Include entity tags in streamed responses | `False` |
+        | `enable_research` | Enable multi-search research mode for more thorough answers | `False` |
+
+        `enable_citations`, `enable_entities`, and `enable_research` require
+        `stream=True`. Research mode can be slower and more expensive because
+        Brave may run multiple searches before answering.
+
+    === "Exa Answer"
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(EXA_API_KEY="...")
+
+        model = mf.Model.chat_completion("exa/exa")
+        response = model("What are the latest changes in Python packaging?")
+
         print(response.consume())
         ```
 
