@@ -12,9 +12,7 @@ from msgflux.tools.builtin.web_search import WebSearch
 
 class TestRetrieverAlias:
     def test_web_search_alias_calls_web_factory(self, mocker):
-        mock_factory = mocker.patch(
-            "msgflux.data.retrievers.retriever.Retriever.web"
-        )
+        mock_factory = mocker.patch("msgflux.data.retrievers.retriever.Retriever.web")
 
         sentinel = object()
         mock_factory.return_value = sentinel
@@ -36,7 +34,7 @@ class TestWebSearchInit:
         )
         mocker.patch.dict(
             "os.environ",
-            {"MSGFLUX_WEB_SEARCH_ENGINE": "retriever/wikipedia"},
+            {"MSGFLUX_TOOL_WEB_SEARCH_ENGINE": "retriever/wikipedia"},
             clear=False,
         )
 
@@ -44,6 +42,77 @@ class TestWebSearchInit:
 
         assert tool.engine == "retriever/wikipedia"
         assert tool.engine_kind == "retriever"
+
+    def test_params_can_be_loaded_from_env_json(self, mocker):
+        mock_retriever = MagicMock()
+        mock_factory = mocker.patch(
+            "msgflux.tools.builtin.web_search.Retriever.web_search",
+            return_value=mock_retriever,
+        )
+        mocker.patch.dict(
+            "os.environ",
+            {
+                "MSGFLUX_TOOL_WEB_SEARCH_ENGINE": "retriever/wikipedia",
+                "MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS": '{"language": "pt"}',
+                "MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS": '{"top_k": 2}',
+            },
+            clear=True,
+        )
+
+        tool = WebSearch()
+        tool("python")
+
+        assert tool.init_params == {"language": "pt"}
+        assert tool.call_params == {"top_k": 2}
+        mock_factory.assert_called_once_with("wikipedia", language="pt")
+        mock_retriever.assert_called_once_with("python", top_k=2)
+
+    def test_explicit_params_override_env_json(self, mocker):
+        mock_retriever = MagicMock()
+        mock_factory = mocker.patch(
+            "msgflux.tools.builtin.web_search.Retriever.web_search",
+            return_value=mock_retriever,
+        )
+        mocker.patch.dict(
+            "os.environ",
+            {
+                "MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS": '{"language": "pt"}',
+                "MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS": '{"top_k": 1}',
+            },
+            clear=True,
+        )
+
+        tool = WebSearch(
+            "retriever/wikipedia",
+            init_params={"language": "en"},
+            call_params={"top_k": 3},
+        )
+        tool("python")
+
+        mock_factory.assert_called_once_with("wikipedia", language="en")
+        mock_retriever.assert_called_once_with("python", top_k=3)
+
+    def test_env_params_must_be_json_objects(self, mocker):
+        mocker.patch.dict(
+            "os.environ",
+            {
+                "MSGFLUX_TOOL_WEB_SEARCH_ENGINE": "retriever/wikipedia",
+                "MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS": '["invalid"]',
+            },
+            clear=True,
+        )
+
+        with pytest.raises(ValueError, match="MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS"):
+            WebSearch()
+
+    def test_explicit_params_must_be_dicts(self, mocker):
+        mocker.patch(
+            "msgflux.tools.builtin.web_search.Retriever.web_search",
+            return_value=MagicMock(),
+        )
+
+        with pytest.raises(TypeError, match="init_params"):
+            WebSearch("retriever/wikipedia", init_params=[])
 
     def test_retriever_engine_sets_query_only_schema(self, mocker):
         mock_retriever = MagicMock()
@@ -69,7 +138,7 @@ class TestWebSearchInit:
 
         tool = WebSearch(
             "model/openai/gpt-4o-search-preview",
-            web_search_options={"search_context_size": "low"},
+            init_params={"web_search_options": {"search_context_size": "low"}},
         )
 
         assert tool.engine_kind == "model"
@@ -78,7 +147,7 @@ class TestWebSearchInit:
         assert tool.annotations["prompt"] == Optional[str]
         assert tool.annotations["return"] == str
         assert "openai/gpt-4o-search-preview" in tool.description
-        assert "web_search_options" in tool.description
+        assert "init_params" in tool.description
         mock_factory.assert_called_once_with(
             "openai/gpt-4o-search-preview",
             web_search_options={"search_context_size": "low"},
@@ -102,7 +171,7 @@ class TestWebSearchInit:
     def test_missing_engine_raises(self, mocker):
         mocker.patch.dict("os.environ", {}, clear=True)
 
-        with pytest.raises(ValueError, match="MSGFLUX_WEB_SEARCH_ENGINE"):
+        with pytest.raises(ValueError, match="MSGFLUX_TOOL_WEB_SEARCH_ENGINE"):
             WebSearch()
 
 
@@ -131,10 +200,10 @@ class TestWebSearchCall:
             return_value=mock_retriever,
         )
 
-        tool = WebSearch("retriever/wikipedia", top_k=3)
-        result = tool("python")
+        tool = WebSearch("retriever/wikipedia", call_params={"top_k": 3})
+        result = tool("python", call_params={"language": "en"})
 
-        mock_retriever.assert_called_once_with("python", top_k=3)
+        mock_retriever.assert_called_once_with("python", top_k=3, language="en")
         assert result["data"] == [
             {
                 "results": [
@@ -153,11 +222,7 @@ class TestWebSearchCall:
         mock_response = MagicMock()
         mock_response.consume.return_value = "final answer"
         mock_response.metadata = dotdict(
-            {
-                "annotations": [
-                    {"url_citation": {"url": "https://example.com"}}
-                ]
-            }
+            {"annotations": [{"url_citation": {"url": "https://example.com"}}]}
         )
         mock_model = MagicMock(return_value=mock_response)
         mocker.patch(
@@ -167,7 +232,8 @@ class TestWebSearchCall:
 
         tool = WebSearch(
             "model/openai/gpt-4o-search-preview",
-            web_search_options={"search_context_size": "low"},
+            init_params={"web_search_options": {"search_context_size": "low"}},
+            call_params={"timeout": 30},
         )
 
         result = tool("What is the latest release?", prompt="Use concise style.")
@@ -179,6 +245,7 @@ class TestWebSearchCall:
         mock_model.assert_called_once_with(
             messages="What is the latest release?",
             system_prompt="Use concise style.",
+            timeout=30,
         )
         mock_response.consume.assert_called_once()
 
@@ -215,3 +282,4 @@ class TestWebSearchToolLibraryIntegration:
         assert "query" in props
         assert "prompt" in props
         assert "web_search_options" not in props
+        assert "call_params" not in props

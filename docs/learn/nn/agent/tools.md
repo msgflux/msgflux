@@ -229,16 +229,23 @@ When the model decides to use a tool, the Agent intercepts the response, execute
         from msgflux.tools.builtin import WebSearch
 
         # Option 1: retriever-backed web search
-        wikipedia_search = WebSearch("retriever/wikipedia")
+        wikipedia_search = WebSearch(
+            "retriever/wikipedia",
+            call_params={"top_k": 2},
+        )
 
         # Option 2: model-backed web search
         openai_search = WebSearch(
             "model/openai/gpt-4o-search-preview",
-            web_search_options={"search_context_size": "low"},
+            init_params={
+                "web_search_options": {"search_context_size": "low"},
+            },
         )
 
-        # Or read the engine from the environment:
-        # export MSGFLUX_WEB_SEARCH_ENGINE="retriever/wikipedia"
+        # Or read the engine and params from the environment:
+        # export MSGFLUX_TOOL_WEB_SEARCH_ENGINE="retriever/wikipedia"
+        # export MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS='{"language": "pt"}'
+        # export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS='{"top_k": 2}'
         env_search = WebSearch()
 
         class Researcher(nn.Agent):
@@ -256,6 +263,13 @@ When the model decides to use a tool, the Agent intercepts the response, execute
 
         - `data`: the search result payload
         - `annotations`: citation metadata when available
+
+        `init_params` is unpacked into the backend constructor
+        (`Retriever.web_search(...)` or `Model.chat_completion(...)`).
+        `call_params` is unpacked whenever the selected backend is called. If
+        these values are not passed explicitly, `WebSearch` reads the JSON
+        objects from `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
+        `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
 
     === "Wikipedia Search"
 
