@@ -194,3 +194,100 @@ for i, query in enumerate(queries):
     result = response.data[i].results[0]
     print(f"\n{query} → {result.data.title}")
 ```
+
+---
+
+## 9. **SerpApi Search**
+
+The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
+
+!!! info "Dependencies"
+    Requires `google-search-results` and the `SERPAPI_API_KEY` env variable:
+    `pip install google-search-results`
+
+### Quick Start
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(SERPAPI_API_KEY="...")
+
+    retriever = mf.Retriever.web("serpapi")
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `engine` | `"google"` | Search engine to use, such as `"google"`, `"bing"`, or `"yahoo"` |
+| `location` | `None` | Location for localized results, such as `"Austin,Texas"` |
+| `gl` | `None` | Google country code, such as `"us"` or `"br"` |
+| `hl` | `None` | Google UI language, such as `"en"` or `"pt"` |
+| `safe` | `None` | Safe search mode, such as `"active"` or `"off"` |
+| `tbm` | `None` | Search type, such as `"nws"` for news or `"isch"` for images |
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web(
+    "serpapi",
+    location="Sao Paulo, Brazil",
+    gl="br",
+    hl="pt",
+)
+```
+
+### News Search
+
+Set `tbm="nws"` to retrieve news results:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("serpapi", tbm="nws", gl="us", hl="en")
+    response = retriever("AI regulation", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.date)
+        print(result.data.url)
+    ```
+
+### Batch Queries
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("serpapi", engine="google")
+
+queries = ["Python packaging", "Rust async runtime"]
+response = retriever(queries, top_k=2)
+
+for i, query in enumerate(queries):
+    print(f"\n{query}")
+    for result in response.data[i].results:
+        print(result.data.title)
+```
+
+### Async Search
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("serpapi", gl="us", hl="en")
+
+response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+for item in response.data:
+    print(item.results[0].data.title)
+```
