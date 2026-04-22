@@ -9,6 +9,7 @@ sys.modules["brave_search_python_client"] = mock_brave_module
 from msgflux.data.retrievers.providers.brave import BraveWebRetriever
 from msgflux.core.dotdict import dotdict
 
+
 @pytest.fixture
 def mock_brave_client():
     # Setup the client instance that BraveSearch() will return
@@ -16,12 +17,12 @@ def mock_brave_client():
     mock_brave_module.BraveSearch.return_value = client_instance
     return client_instance
 
+
 @pytest.fixture
 def retriever(mock_brave_client):
     with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test_key"}):
         # BraveSearch is already mocked via sys.modules
         return BraveWebRetriever()
-
 
 
 @pytest.mark.asyncio
@@ -59,6 +60,7 @@ async def test_search_mode(retriever, mock_brave_client):
     # Verify client.web was called (implying the request object was passed)
     mock_brave_client.web.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_news_mode(mock_brave_client):
     with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test_key"}):
@@ -85,6 +87,7 @@ async def test_news_mode(mock_brave_client):
         mock_brave_module.NewsSearchRequest.assert_called_with(q="news query", count=2)
         mock_brave_client.news.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_image_mode(mock_brave_client):
     with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test_key"}):
@@ -105,5 +108,7 @@ async def test_image_mode(mock_brave_client):
         assert results.data[0].results[0]["images"][0] == "http://img.com"
 
         # Verify ImagesSearchRequest was initialized correctly
-        mock_brave_module.ImagesSearchRequest.assert_called_with(q="image query", count=3)
+        mock_brave_module.ImagesSearchRequest.assert_called_with(
+            q="image query", count=3
+        )
         mock_brave_client.images.assert_called_once()
