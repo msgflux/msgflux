@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-04-20
+
+- Features: added OpenAI prompt cache retention support (#52), token logprobs metadata for chat completions (#53), and the `LLMAsVerifier` workflow with docs and examples (#54).
+- Fixes: mapped OpenRouter `reasoning_max_tokens` to `extra_body.reasoning.max_tokens` and enforced the `reasoning_effort` conflict rule (#57).
+- Docs: updated chat completion and agent reasoning docs to reflect the OpenRouter-only reasoning budget behavior (#56, #57).
+- Maintenance: updated pre-commit hooks (#55).
+
 ## [0.2.0] - 2026-04-17
 
 - Features: added `provider/model-id` string shorthand support to `Agent`, `Speaker`, and `Transcriber` (#26, #27, #28), plus runtime tool controls for `Agent` (#30).
