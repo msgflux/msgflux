@@ -79,5 +79,10 @@ class Retriever:
         return cls._create_retriever("web", provider, **kwargs)
 
     @classmethod
+    def web_search(cls, provider: str, **kwargs) -> WebRetriever:
+        """Alias for ``web`` kept for readability in web search flows."""
+        return cls.web(provider, **kwargs)
+
+    @classmethod
     def fuzzy(cls, provider: str, **kwargs) -> FuzzyRetriever:
         return cls._create_retriever("fuzzy", provider, **kwargs)
