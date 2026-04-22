@@ -197,7 +197,7 @@ for i, query in enumerate(queries):
 
 ---
 
-## 9. **Brave Search**
+## 10. **Brave Search**
 
 The `brave` retriever queries Brave Search and can return web, news, or image results. Use it when you need search results from Brave with a single provider interface.
 
@@ -205,9 +205,16 @@ The `brave` retriever queries Brave Search and can return web, news, or image re
     Requires `brave-search-python-client` and the `BRAVE_SEARCH_API_KEY` env variable:
     `pip install brave-search-python-client`
 
-### Quick Start
+### Parameters
 
-???+ example
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mode` | `"search"` | Search mode: `"search"`, `"news"`, or `"image"` |
+| `return_images` | `False` | Whether to include thumbnail image URLs for web/news results |
+
+### Examples
+
+=== "Web"
 
     ```python
     import msgflux as mf
@@ -223,28 +230,24 @@ The `brave` retriever queries Brave Search and can return web, news, or image re
         print(result.data.content)
     ```
 
-### Parameters
+=== "Thumbnails"
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `mode` | `"search"` | Search mode: `"search"`, `"news"`, or `"image"` |
-| `return_images` | `False` | Whether to include thumbnail image URLs for web/news results |
+    ```python
+    import msgflux as mf
 
-```python
-import msgflux as mf
+    retriever = mf.Retriever.web(
+        "brave",
+        mode="search",
+        return_images=True,
+    )
+    response = retriever("Python tutorials", top_k=3)
 
-retriever = mf.Retriever.web(
-    "brave",
-    mode="search",
-    return_images=True,
-)
-```
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
 
-### News Search
-
-Use `mode="news"` to retrieve news results:
-
-???+ example
+=== "News"
 
     ```python
     import msgflux as mf
@@ -258,11 +261,7 @@ Use `mode="news"` to retrieve news results:
         print(result.data.url)
     ```
 
-### Image Search
-
-Use `mode="image"` when the image URL is the primary result:
-
-???+ example
+=== "Images"
 
     ```python
     import msgflux as mf
@@ -275,15 +274,15 @@ Use `mode="image"` when the image URL is the primary result:
         print(result.images[0])
     ```
 
-### Async Search
+=== "Async"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("brave", mode="search")
+    retriever = mf.Retriever.web("brave", mode="search")
 
-response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
 
-for item in response.data:
-    print(item.results[0].data.title)
-```
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
