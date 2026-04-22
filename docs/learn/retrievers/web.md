@@ -144,7 +144,7 @@ The `wikipedia` retriever fetches and returns Wikipedia article content at query
 
 ---
 
-## 9. **SerpApi Search**
+## 2. **SerpApi Search**
 
 The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
 
@@ -260,7 +260,7 @@ The `serpapi` retriever queries SerpApi and returns structured search results fr
 
 ---
 
-## 10. **Brave Search**
+## 3. **Brave Search**
 
 The `brave` retriever queries Brave Search and can return web, news, or image results. Use it when you need search results from Brave with a single provider interface.
 
@@ -352,7 +352,7 @@ The `brave` retriever queries Brave Search and can return web, news, or image re
 
 ---
 
-## 11. **Tavily Search**
+## 4. **Tavily Search**
 
 The `tavily` retriever queries Tavily and returns search results optimized for AI applications. It supports search depth, topic filters, time ranges, domain filters, generated answers, images, and raw page content.
 
@@ -460,7 +460,7 @@ The `tavily` retriever queries Tavily and returns search results optimized for A
 
 ---
 
-## 12. **Linkup Search**
+## 5. **Linkup Search**
 
 The `linkup` retriever queries Linkup and returns AI-oriented web results. It supports standard search, deeper agentic search, domain filters, image inclusion, and sourced answers.
 
@@ -562,7 +562,7 @@ The `linkup` retriever queries Linkup and returns AI-oriented web results. It su
 
 ---
 
-## 13. **Exa Search**
+## 6. **Exa Search**
 
 The `exa` retriever queries Exa for semantic web search results. It can return URLs only, or fetch page text together with each result for RAG and summarization workflows.
 
@@ -648,7 +648,7 @@ The `exa` retriever queries Exa for semantic web search results. It can return U
 
 ---
 
-## 14. **arXiv Search**
+## 7. **arXiv Search**
 
 The `arxiv` retriever searches arXiv papers and returns structured academic metadata such as title, summary, authors, publication dates, categories, and PDF URLs.
 
