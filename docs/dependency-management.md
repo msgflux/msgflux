@@ -148,7 +148,7 @@ hide:
 | Provider    | Installation                     | Auth Env                         |
 |-------------|----------------------------------|-----------------------------------|
 | Trafilatura | `httpx`, `trafilatura`           |                                   |
-| SerpApi     | `google-search-results`          | `SERPAPI_API_KEY`                 |
+| SerpApi     | `httpx`                          | `SERPAPI_KEY`                     |
 | Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
 | Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
 | Exa         | `exa-py`                         | `EXA_API_KEY`                     |

@@ -402,3 +402,111 @@ The `brave` retriever queries Brave Search and can return web, news, or image re
     for item in response.data:
         print(item.results[0].data.title)
     ```
+
+---
+
+## 11. **Tavily Search**
+
+The `tavily` retriever queries Tavily and returns search results optimized for AI applications. It supports search depth, topic filters, time ranges, domain filters, generated answers, images, and raw page content.
+
+!!! info "Dependencies"
+    Requires `tavily-python` and the `TAVILY_API_KEY` env variable:
+    `pip install tavily-python`
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `search_depth` | `"basic"` | Search depth: `"basic"` or `"advanced"` |
+| `topic` | `"general"` | Topic category: `"general"`, `"news"`, or `"finance"` |
+| `time_range` | `None` | Time range: `"day"`, `"week"`, `"month"`, `"year"` or `"d"`, `"w"`, `"m"`, `"y"` |
+| `include_domains` | `None` | Domains to restrict search to |
+| `exclude_domains` | `None` | Domains to exclude from search |
+| `include_answer` | `False` | Whether Tavily should include an AI-generated answer |
+| `include_images` | `False` | Whether to include image results |
+| `include_raw_content` | `False` | Whether to include raw page content |
+
+### Examples
+
+=== "Web"
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(TAVILY_API_KEY="...")
+
+    retriever = mf.Retriever.web("tavily")
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== "Advanced"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "tavily",
+        search_depth="advanced",
+        topic="news",
+        time_range="week",
+    )
+    response = retriever("latest AI news", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+    ```
+
+=== "Raw Content"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "tavily",
+        search_depth="advanced",
+        include_raw_content=True,
+    )
+
+    response = retriever("Python packaging standards", top_k=2)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.raw_content[:500])
+    ```
+
+=== "Filters"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "tavily",
+        include_domains=["python.org", "pypi.org"],
+        exclude_domains=["example.com"],
+    )
+
+    response = retriever("packaging metadata", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("tavily", search_depth="advanced")
+
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
