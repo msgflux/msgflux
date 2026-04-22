@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.4.0] - 2026-04-22
+
 ## [0.3.0] - 2026-04-20
 
 - Features: added OpenAI prompt cache retention support (#52), token logprobs metadata for chat completions (#53), and the `LLMAsVerifier` workflow with docs and examples (#54).
