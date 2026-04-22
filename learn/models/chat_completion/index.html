@@ -6042,6 +6042,7 @@ Chat completion models are stateless - they don&#x27;t maintain conversation his
         verbose=False,                 # Print raw output before transformation
         # --- Search ---
         web_search_options={},         # Web search config (OpenAI / OpenRouter only)
+        extra_body={},                 # Provider-specific OpenAI-compatible extensions
         prompt_cache_retention=&quot;24h&quot;,  # OpenAI only: &quot;in_memory&quot; or &quot;24h&quot;
         # --- Infrastructure ---
         base_url=&quot;https://api.openai.com/v1&quot;,  # Override provider API endpoint
@@ -6051,6 +6052,10 @@ Chat completion models are stateless - they don&#x27;t maintain conversation his
         retry=None,                    # Custom tenacity retry configuration
     )
     ```
+
+Use `extra_body` for provider-specific request body fields supported by
+OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
+forwarded to the underlying OpenAI SDK client.
 
 ## 2. **System Prompt**
 
@@ -8028,16 +8033,20 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 </span><span id="__span-12-24"><a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>                 <span class="c1"># Print raw output before transformation</span>
 </span><span id="__span-12-25"><a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>    <span class="c1"># --- Search ---</span>
 </span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>    <span class="n">web_search_options</span><span class="o">=</span><span class="p">{},</span>         <span class="c1"># Web search config (OpenAI / OpenRouter only)</span>
-</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>    <span class="n">prompt_cache_retention</span><span class="o">=</span><span class="s2">&quot;24h&quot;</span><span class="p">,</span>  <span class="c1"># OpenAI only: &quot;in_memory&quot; or &quot;24h&quot;</span>
-</span><span id="__span-12-28"><a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="c1"># --- Infrastructure ---</span>
-</span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.openai.com/v1&quot;</span><span class="p">,</span>  <span class="c1"># Override provider API endpoint</span>
-</span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>    <span class="n">context_length</span><span class="o">=</span><span class="mi">128000</span><span class="p">,</span>         <span class="c1"># Override maximum context window</span>
-</span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="n">enable_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>             <span class="c1"># Cache identical API responses in-process</span>
-</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">cache_size</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>                <span class="c1"># Max number of cached entries</span>
-</span><span id="__span-12-33"><a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>    <span class="n">retry</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>                    <span class="c1"># Custom tenacity retry configuration</span>
-</span><span id="__span-12-34"><a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a><span class="p">)</span>
+</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>    <span class="n">extra_body</span><span class="o">=</span><span class="p">{},</span>                 <span class="c1"># Provider-specific OpenAI-compatible extensions</span>
+</span><span id="__span-12-28"><a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="n">prompt_cache_retention</span><span class="o">=</span><span class="s2">&quot;24h&quot;</span><span class="p">,</span>  <span class="c1"># OpenAI only: &quot;in_memory&quot; or &quot;24h&quot;</span>
+</span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>    <span class="c1"># --- Infrastructure ---</span>
+</span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.openai.com/v1&quot;</span><span class="p">,</span>  <span class="c1"># Override provider API endpoint</span>
+</span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="n">context_length</span><span class="o">=</span><span class="mi">128000</span><span class="p">,</span>         <span class="c1"># Override maximum context window</span>
+</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">enable_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>             <span class="c1"># Cache identical API responses in-process</span>
+</span><span id="__span-12-33"><a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>    <span class="n">cache_size</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span>                <span class="c1"># Max number of cached entries</span>
+</span><span id="__span-12-34"><a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a>    <span class="n">retry</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>                    <span class="c1"># Custom tenacity retry configuration</span>
+</span><span id="__span-12-35"><a id="__codelineno-12-35" name="__codelineno-12-35" href="#__codelineno-12-35"></a><span class="p">)</span>
 </span></code></pre></div>
 </details>
+<p>Use <code>extra_body</code> for provider-specific request body fields supported by
+OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
+forwarded to the underlying OpenAI SDK client.</p>
 <h2 id="2-system-prompt">2. <strong>System Prompt</strong></h2>
 <p>The <code>system_prompt</code> parameter sets the model's overarching behavior and role before any user messages. It is a convenience shorthand: when provided, msgFlux automatically inserts a <code>system</code> message at the beginning of the conversation, so you don't have to do it manually in the messages list.</p>
 <details class="example" open="open">
