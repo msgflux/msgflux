@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.4.1] - 2026-04-22
+
 ## [0.4.0] - 2026-04-22
 
 - Features: added new web retrievers (Arxiv, Brave, Exa, LinkUp, SerpAPI, Tavily) and model integrations (Brave, Exa), plus configurable WebSearch tool (#71).
