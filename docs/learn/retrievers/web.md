@@ -202,8 +202,10 @@ for i, query in enumerate(queries):
 The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
 
 !!! info "Dependencies"
-    Requires `google-search-results` and the `SERPAPI_API_KEY` env variable:
-    `pip install google-search-results`
+    Requires `serpapi` and the `SERPAPI_KEY` env variable:
+    `pip install serpapi`
+
+    For compatibility, `SERPAPI_API_KEY` and `SERP_API_KEY` are also accepted.
 
 ### Quick Start
 
@@ -212,7 +214,7 @@ The `serpapi` retriever queries SerpApi and returns structured search results fr
     ```python
     import msgflux as mf
 
-    mf.set_envs(SERPAPI_API_KEY="...")
+    mf.set_envs(SERPAPI_KEY="...")
 
     retriever = mf.Retriever.web("serpapi")
     response = retriever("latest Python release", top_k=3)

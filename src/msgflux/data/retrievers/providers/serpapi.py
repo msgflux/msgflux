@@ -1,11 +1,11 @@
 import asyncio
 from os import getenv
-from typing import List, Optional
+from typing import Any, List, Mapping, Optional
 
 try:
-    from serpapi import GoogleSearch
+    import serpapi
 except ImportError:
-    GoogleSearch = None
+    serpapi = None
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
@@ -14,6 +14,16 @@ from msgflux.data.retrievers.types import WebRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
+
+API_KEY_ENV_NAMES = ("SERPAPI_KEY", "SERPAPI_API_KEY", "SERP_API_KEY")
+QUERY_PARAM_BY_ENGINE = {
+    "apple_app_store": "term",
+    "ebay": "_nkw",
+    "naver": "query",
+    "walmart": "query",
+    "yahoo": "p",
+    "youtube": "search_query",
+}
 
 
 @register_retriever
@@ -38,7 +48,7 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     ):
         """Initialize SerpApiWebRetriever.
 
-        Requires the `SERPAPI_API_KEY` environment variable to be set.
+        Requires the `SERPAPI_KEY` environment variable to be set.
 
         Args:
             engine:
@@ -68,16 +78,10 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        if GoogleSearch is None:
+        if serpapi is None:
             raise ImportError(
-                "The 'google-search-results' package is not installed. "
-                "Please install it via pip: pip install google-search-results"
-            )
-
-        api_key = getenv("SERPAPI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "The SerpAPI API key is not available. Please set `SERPAPI_API_KEY`"
+                "The 'serpapi' package is not installed. "
+                "Please install it via pip: pip install serpapi"
             )
 
         self.engine = engine or "google"
@@ -86,13 +90,26 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         self.hl = hl
         self.safe = safe
         self.tbm = tbm
+        self.client = serpapi.Client(api_key=self._get_api_key())
+
+    def _get_api_key(self) -> str:
+        for env_name in API_KEY_ENV_NAMES:
+            api_key = getenv(env_name)
+            if api_key:
+                return api_key
+
+        raise ValueError(
+            "The SerpApi API key is not available. Please set `SERPAPI_KEY`"
+        )
+
+    def _get_query_param(self) -> str:
+        return QUERY_PARAM_BY_ENGINE.get(self.engine, "q")
 
     def _build_search_params(self, query: str, top_k: int) -> dict:
         """Build params for SerpAPI search."""
-        api_key = getenv("SERPAPI_API_KEY")
         params = {
-            "q": query,
-            "api_key": api_key,
+            "engine": self.engine,
+            self._get_query_param(): query,
             "num": top_k,
         }
 
@@ -109,38 +126,38 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
 
         return params
 
-    def _parse_results(self, response: dict) -> List[dict]:
+    def _format_result(self, result: Mapping[str, Any]) -> dict:
+        data = {
+            "title": result.get("title"),
+            "content": result.get("snippet") or result.get("source"),
+            "url": result.get("link") or result.get("url") or result.get("original"),
+        }
+
+        for field in ("date", "price", "source"):
+            if result.get(field):
+                data[field] = result[field]
+
+        item = {"data": data}
+        image_url = result.get("thumbnail") or result.get("original")
+        if image_url:
+            item["images"] = [image_url]
+
+        return item
+
+    def _parse_results(self, response: Mapping[str, Any], top_k: int) -> List[dict]:
         """Parse SerpAPI response into standard format."""
         results = []
 
-        # Handle organic results (web search)
-        organic_results = response.get("organic_results", [])
-        for result in organic_results:
-            data = {
-                "title": result.get("title"),
-                "content": result.get("snippet"),
-                "url": result.get("link"),
-            }
-
-            # Add date if available
-            if result.get("date"):
-                data["date"] = result["date"]
-
-            results.append({"data": data})
-
-        # Handle news results if tbm=nws
-        news_results = response.get("news_results", [])
-        for result in news_results:
-            data = {
-                "title": result.get("title"),
-                "content": result.get("snippet"),
-                "url": result.get("link"),
-            }
-
-            if result.get("date"):
-                data["date"] = result["date"]
-
-            results.append({"data": data})
+        for collection in (
+            "organic_results",
+            "news_results",
+            "images_results",
+            "shopping_results",
+        ):
+            for result in response.get(collection, []):
+                results.append(self._format_result(result))
+                if len(results) >= top_k:
+                    return results
 
         return results
 
@@ -148,16 +165,15 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         """Internal method to search SerpAPI for a single query."""
         try:
             params = self._build_search_params(query, top_k)
-            search = GoogleSearch(params)
-            response = search.get_dict()
-            return self._parse_results(response)
+            response = self.client.search(params)
+            return self._parse_results(response, top_k)
         except Exception as e:
             logger.warning("SerpAPI search failed for query '%s': %s", query, e)
             return []
 
     async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
         """Async internal method to search SerpAPI for a single query."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, lambda: self._single_search(query, top_k)
         )
