@@ -1282,6 +1282,45 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#9-serpapi-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. SerpApi Search
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. SerpApi Search">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4961,6 +5000,45 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#9-serpapi-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. SerpApi Search
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. SerpApi Search">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5254,6 +5332,122 @@ for i, query in enumerate(queries):
     result = response.data[i].results[0]
     print(f&quot;\n{query} → {result.data.title}&quot;)
 ```
+
+---
+
+## 9. **SerpApi Search**
+
+The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
+
+!!! info &quot;Dependencies&quot;
+    Requires `httpx` and the `SERPAPI_KEY` env variable:
+    `pip install httpx`
+
+    For compatibility, `SERPAPI_API_KEY` and `SERP_API_KEY` are also accepted.
+    Both synchronous and async calls use direct requests to
+    `https://serpapi.com/search.json`.
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `engine` | `&quot;google&quot;` | Search engine to use, such as `&quot;google&quot;`, `&quot;bing&quot;`, or `&quot;yahoo&quot;` |
+| `location` | `None` | Location for localized results, such as `&quot;Austin,Texas&quot;` |
+| `gl` | `None` | Google country code, such as `&quot;us&quot;` or `&quot;br&quot;` |
+| `hl` | `None` | Google UI language, such as `&quot;en&quot;` or `&quot;pt&quot;` |
+| `safe` | `None` | Safe search mode, such as `&quot;active&quot;` or `&quot;off&quot;` |
+| `tbm` | `None` | Search type, such as `&quot;nws&quot;` for news or `&quot;isch&quot;` for images |
+
+### Examples
+
+=== &quot;Web&quot;
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(SERPAPI_KEY=&quot;...&quot;)
+
+    retriever = mf.Retriever.web(&quot;serpapi&quot;)
+    response = retriever(&quot;latest Python release&quot;, top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== &quot;Localized&quot;
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        &quot;serpapi&quot;,
+        location=&quot;Sao Paulo, Brazil&quot;,
+        gl=&quot;br&quot;,
+        hl=&quot;pt&quot;,
+    )
+    response = retriever(&quot;melhores frameworks Python&quot;, top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+    ```
+
+=== &quot;News&quot;
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(&quot;serpapi&quot;, tbm=&quot;nws&quot;, gl=&quot;us&quot;, hl=&quot;en&quot;)
+    response = retriever(&quot;AI regulation&quot;, top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.date)
+        print(result.data.url)
+    ```
+
+=== &quot;Images&quot;
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(&quot;serpapi&quot;, tbm=&quot;isch&quot;)
+    response = retriever(&quot;James Webb Space Telescope&quot;, top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+=== &quot;Batch&quot;
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(&quot;serpapi&quot;, engine=&quot;google&quot;)
+
+    queries = [&quot;Python packaging&quot;, &quot;Rust async runtime&quot;]
+    response = retriever(queries, top_k=2)
+
+    for i, query in enumerate(queries):
+        print(f&quot;\n{query}&quot;)
+        for result in response.data[i].results:
+            print(result.data.title)
+    ```
+
+=== &quot;Async&quot;
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(&quot;serpapi&quot;, gl=&quot;us&quot;, hl=&quot;en&quot;)
+
+    response = await retriever.acall([&quot;Python 3.14&quot;, &quot;Django release&quot;], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -5509,6 +5703,141 @@ for i, query in enumerate(queries):
 </span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 </span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span></code></pre></div>
+<hr />
+<h2 id="9-serpapi-search">9. <strong>SerpApi Search</strong></h2>
+<p>The <code>serpapi</code> retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.</p>
+<div class="admonition info">
+<p class="admonition-title">Dependencies</p>
+<p>Requires <code>httpx</code> and the <code>SERPAPI_KEY</code> env variable:
+<code>pip install httpx</code></p>
+<p>For compatibility, <code>SERPAPI_API_KEY</code> and <code>SERP_API_KEY</code> are also accepted.
+Both synchronous and async calls use direct requests to
+<code>https://serpapi.com/search.json</code>.</p>
+</div>
+<h3 id="parameters">Parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>engine</code></td>
+<td><code>"google"</code></td>
+<td>Search engine to use, such as <code>"google"</code>, <code>"bing"</code>, or <code>"yahoo"</code></td>
+</tr>
+<tr>
+<td><code>location</code></td>
+<td><code>None</code></td>
+<td>Location for localized results, such as <code>"Austin,Texas"</code></td>
+</tr>
+<tr>
+<td><code>gl</code></td>
+<td><code>None</code></td>
+<td>Google country code, such as <code>"us"</code> or <code>"br"</code></td>
+</tr>
+<tr>
+<td><code>hl</code></td>
+<td><code>None</code></td>
+<td>Google UI language, such as <code>"en"</code> or <code>"pt"</code></td>
+</tr>
+<tr>
+<td><code>safe</code></td>
+<td><code>None</code></td>
+<td>Safe search mode, such as <code>"active"</code> or <code>"off"</code></td>
+</tr>
+<tr>
+<td><code>tbm</code></td>
+<td><code>None</code></td>
+<td>Search type, such as <code>"nws"</code> for news or <code>"isch"</code> for images</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples">Examples</h3>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:6"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><input id="__tabbed_2_5" name="__tabbed_2" type="radio" /><input id="__tabbed_2_6" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Web</label><label for="__tabbed_2_2">Localized</label><label for="__tabbed_2_3">News</label><label for="__tabbed_2_4">Images</label><label for="__tabbed_2_5">Batch</label><label for="__tabbed_2_6">Async</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">mf</span><span class="o">.</span><span class="n">set_envs</span><span class="p">(</span><span class="n">SERPAPI_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;serpapi&quot;</span><span class="p">)</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;latest Python release&quot;</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">url</span><span class="p">)</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="s2">&quot;serpapi&quot;</span><span class="p">,</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">location</span><span class="o">=</span><span class="s2">&quot;Sao Paulo, Brazil&quot;</span><span class="p">,</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">gl</span><span class="o">=</span><span class="s2">&quot;br&quot;</span><span class="p">,</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">hl</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="p">)</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;melhores frameworks Python&quot;</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;serpapi&quot;</span><span class="p">,</span> <span class="n">tbm</span><span class="o">=</span><span class="s2">&quot;nws&quot;</span><span class="p">,</span> <span class="n">gl</span><span class="o">=</span><span class="s2">&quot;us&quot;</span><span class="p">,</span> <span class="n">hl</span><span class="o">=</span><span class="s2">&quot;en&quot;</span><span class="p">)</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;AI regulation&quot;</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">date</span><span class="p">)</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">url</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;serpapi&quot;</span><span class="p">,</span> <span class="n">tbm</span><span class="o">=</span><span class="s2">&quot;isch&quot;</span><span class="p">)</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;James Webb Space Telescope&quot;</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">images</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;serpapi&quot;</span><span class="p">,</span> <span class="n">engine</span><span class="o">=</span><span class="s2">&quot;google&quot;</span><span class="p">)</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">queries</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Python packaging&quot;</span><span class="p">,</span> <span class="s2">&quot;Rust async runtime&quot;</span><span class="p">]</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">query</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">queries</span><span class="p">):</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;serpapi&quot;</span><span class="p">,</span> <span class="n">gl</span><span class="o">=</span><span class="s2">&quot;us&quot;</span><span class="p">,</span> <span class="n">hl</span><span class="o">=</span><span class="s2">&quot;en&quot;</span><span class="p">)</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">retriever</span><span class="o">.</span><span class="n">acall</span><span class="p">([</span><span class="s2">&quot;Python 3.14&quot;</span><span class="p">,</span> <span class="s2">&quot;Django release&quot;</span><span class="p">],</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">:</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">item</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 
 
 
