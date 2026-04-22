@@ -32,7 +32,7 @@ class OpenRouterChatCompletion(_BaseOpenRouter, OpenAIChatCompletion):
     """OpenRouter Chat Completion."""
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        extra_body = params.get("extra_body", {})
+        extra_body = dict(params.get("extra_body") or {})
         plugins = []
 
         if params["tool_choice"] is None:

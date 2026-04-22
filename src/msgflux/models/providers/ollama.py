@@ -37,7 +37,7 @@ class OllamaChatCompletion(_BaseOllama, OpenAIChatCompletion):
     """Ollama Chat Completion."""
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        extra_body = params.get("extra_body", {})
+        extra_body = dict(params.get("extra_body") or {})
 
         if self.enable_thinking is not None:
             extra_body["think"] = self.enable_thinking

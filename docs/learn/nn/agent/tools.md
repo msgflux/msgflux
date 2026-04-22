@@ -218,6 +218,60 @@ When the model decides to use a tool, the Agent intercepts the response, execute
         response = agent("Summarize the main points from https://news.ycombinator.com")
         ```
 
+    === "Web Search"
+
+        Use a built-in web search tool backed by either a retriever or a model:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.tools.builtin import WebSearch
+
+        # Option 1: retriever-backed web search
+        wikipedia_search = WebSearch(
+            "retriever/wikipedia",
+            call_params={"top_k": 2},
+        )
+
+        # Option 2: model-backed web search
+        openai_search = WebSearch(
+            "model/openai/gpt-4o-search-preview",
+            init_params={
+                "web_search_options": {"search_context_size": "low"},
+            },
+        )
+
+        # Or read the engine and params from the environment:
+        # export MSGFLUX_TOOL_WEB_SEARCH_ENGINE="retriever/wikipedia"
+        # export MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS='{"language": "pt"}'
+        # export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS='{"top_k": 2}'
+        env_search = WebSearch()
+
+        class Researcher(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            system_message = "You help users find up-to-date information."
+            tools = [wikipedia_search, openai_search, env_search]
+            config = {"verbose": True}
+
+        agent = Researcher()
+
+        result = agent("What is the latest Python version?")
+        ```
+
+        The tool returns a `dict` with:
+
+        - `data`: the search result payload
+        - `annotations`: citation metadata when available
+
+        `init_params` is unpacked into the backend constructor
+        (`Retriever.web_search(...)` or `Model.chat_completion(...)`).
+        `call_params` is supported only for retriever engines and is unpacked
+        whenever the retriever is called. If these values are not passed
+        explicitly, `WebSearch` reads the JSON objects from
+        `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
+        `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
+
     === "Wikipedia Search"
 
         Use msgflux's built-in Wikipedia retriever as a tool:

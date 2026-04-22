@@ -46,7 +46,7 @@ class VLLMChatCompletion(_BaseVLLM, OpenAIChatCompletion):
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         response_format = params.pop("response_format", None)
-        extra_body = params.get("extra_body", {})
+        extra_body = dict(params.get("extra_body") or {})
 
         if response_format is not None:
             extra_body["guided_json"] = response_format

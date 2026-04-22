@@ -92,6 +92,51 @@ class TestOpenAIChatCompletion:
         assert model.sampling_run_params["temperature"] == 0.7
         assert model.sampling_run_params["top_p"] == 0.9
 
+    def test_chat_completion_with_extra_body(self, mock_openai_client):
+        """Test provider-specific OpenAI-compatible request extensions."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        extra_body = {"country": "BR", "enable_citations": True}
+        model = OpenAIChatCompletion(model_id="gpt-4", extra_body=extra_body)
+
+        assert model.sampling_run_params["extra_body"] == extra_body
+        assert model.sampling_run_params["extra_body"] is not extra_body
+
+    def test_chat_completion_forwards_extra_body(self, mock_openai_client):
+        """Test extra_body is forwarded to the OpenAI-compatible client."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"country": "BR", "enable_citations": True},
+        )
+        model("Hello")
+
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["extra_body"] == {
+            "country": "BR",
+            "enable_citations": True,
+        }
+
     def test_chat_completion_missing_api_key(self, monkeypatch):
         """Test that missing API key raises ValueError."""
         pytest.importorskip("openai")
