@@ -2,6 +2,11 @@
 
 ## [0.4.0] - 2026-04-22
 
+- Features: added new web retrievers (Arxiv, Brave, Exa, LinkUp, SerpAPI, Tavily) and model integrations (Brave, Exa), plus configurable WebSearch tool (#71).
+- Web Retriever: added support for Wikipedia highlighting in web retriever section (#73).
+- Providers: added OpenAI-compatible `extra_body` support for chat completions (#72).
+- Maintenance: removed uv.lock file (#74).
+
 ## [0.3.0] - 2026-04-20
 
 - Features: added OpenAI prompt cache retention support (#52), token logprobs metadata for chat completions (#53), and the `LLMAsVerifier` workflow with docs and examples (#54).
