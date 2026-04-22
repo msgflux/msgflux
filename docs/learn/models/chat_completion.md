@@ -72,6 +72,7 @@ Chat completion models are stateless - they don't maintain conversation history 
         verbose=False,                 # Print raw output before transformation
         # --- Search ---
         web_search_options={},         # Web search config (OpenAI / OpenRouter only)
+        extra_body={},                 # Provider-specific OpenAI-compatible extensions
         prompt_cache_retention="24h",  # OpenAI only: "in_memory" or "24h"
         # --- Infrastructure ---
         base_url="https://api.openai.com/v1",  # Override provider API endpoint
@@ -81,6 +82,10 @@ Chat completion models are stateless - they don't maintain conversation history 
         retry=None,                    # Custom tenacity retry configuration
     )
     ```
+
+Use `extra_body` for provider-specific request body fields supported by
+OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
+forwarded to the underlying OpenAI SDK client.
 
 ## 2. **System Prompt**
 

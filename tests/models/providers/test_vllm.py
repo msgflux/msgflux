@@ -142,6 +142,30 @@ class TestVLLMChatCompletion:
         assert "extra_body" in adapted
         assert adapted["extra_body"]["guided_json"] == {"type": "json_object"}
 
+    def test_chat_completion_adapt_params_preserves_extra_body(
+        self, mock_openai_client
+    ):
+        """Test VLLMChatCompletion copies existing extra_body before extending it."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.vllm import VLLMChatCompletion
+
+        model = VLLMChatCompletion(model_id="llama-3")
+
+        extra_body = {"custom": {"value": 1}}
+        params = {
+            "messages": [],
+            "response_format": {"type": "json_object"},
+            "extra_body": extra_body,
+        }
+
+        adapted = model._adapt_params(params)
+
+        assert adapted["extra_body"]["custom"] == {"value": 1}
+        assert adapted["extra_body"]["guided_json"] == {"type": "json_object"}
+        assert adapted["extra_body"] is not extra_body
+        assert extra_body == {"custom": {"value": 1}}
+
     def test_chat_completion_adapt_params_enable_thinking(self, mock_openai_client):
         """Test VLLMChatCompletion adapts enable_thinking parameter."""
         pytest.importorskip("openai")

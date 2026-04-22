@@ -148,6 +148,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         audio: Optional[Dict[str, str]] = None,
         verbosity: Optional[str] = None,
         web_search_options: Optional[Dict[str, Any]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = False,
         base_url: Optional[str] = None,
         context_length: Optional[int] = None,
@@ -215,6 +216,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         web_search_options:
             This tool searches the web for relevant results to use in a response.
             OpenAI and OpenRouter only.
+        extra_body:
+            Provider-specific request body extensions forwarded to
+            OpenAI-compatible clients.
         verbose:
             If True, Prints the model output to the console before it is transformed
             into typed structured output.
@@ -255,6 +259,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["modalities"] = modalities
         if web_search_options:
             sampling_run_params["web_search_options"] = web_search_options
+        if extra_body is not None:
+            sampling_run_params["extra_body"] = dict(extra_body)
         if audio:
             sampling_run_params["audio"] = audio
         if reasoning_effort:
