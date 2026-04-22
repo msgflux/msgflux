@@ -114,6 +114,9 @@ class TestWebSearchInit:
         with pytest.raises(TypeError, match="init_params"):
             WebSearch("retriever/wikipedia", init_params=[])
 
+        with pytest.raises(TypeError, match="call_params"):
+            WebSearch("retriever/wikipedia", call_params=[])
+
     def test_retriever_engine_sets_query_only_schema(self, mocker):
         mock_retriever = MagicMock()
         mocker.patch(
@@ -152,6 +155,23 @@ class TestWebSearchInit:
             "openai/gpt-4o-search-preview",
             web_search_options={"search_context_size": "low"},
         )
+
+    def test_model_engine_rejects_call_params(self):
+        with pytest.raises(ValueError, match="call_params"):
+            WebSearch(
+                "model/openai/gpt-4o-search-preview",
+                call_params={"top_k": 2},
+            )
+
+    def test_model_engine_rejects_env_call_params(self, mocker):
+        mocker.patch.dict(
+            "os.environ",
+            {"MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS": '{"top_k": 2}'},
+            clear=True,
+        )
+
+        with pytest.raises(ValueError, match="call_params"):
+            WebSearch("model/openai/gpt-4o-search-preview")
 
     def test_invalid_engine_format_raises(self):
         with pytest.raises(ValueError, match="engine format"):
@@ -201,9 +221,9 @@ class TestWebSearchCall:
         )
 
         tool = WebSearch("retriever/wikipedia", call_params={"top_k": 3})
-        result = tool("python", call_params={"language": "en"})
+        result = tool("python")
 
-        mock_retriever.assert_called_once_with("python", top_k=3, language="en")
+        mock_retriever.assert_called_once_with("python", top_k=3)
         assert result["data"] == [
             {
                 "results": [
@@ -233,7 +253,6 @@ class TestWebSearchCall:
         tool = WebSearch(
             "model/openai/gpt-4o-search-preview",
             init_params={"web_search_options": {"search_context_size": "low"}},
-            call_params={"timeout": 30},
         )
 
         result = tool("What is the latest release?", prompt="Use concise style.")
@@ -245,7 +264,6 @@ class TestWebSearchCall:
         mock_model.assert_called_once_with(
             messages="What is the latest release?",
             system_prompt="Use concise style.",
-            timeout=30,
         )
         mock_response.consume.assert_called_once()
 

@@ -18,8 +18,9 @@ class WebSearch:
       ``MSGFLUX_TOOL_WEB_SEARCH_ENGINE`` from the environment
 
     ``init_params`` are forwarded when the backend client is initialized.
-    ``call_params`` are forwarded on every backend call. When they are omitted,
-    the tool reads ``MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS`` and
+    ``call_params`` are supported for retriever engines and forwarded on every
+    retriever call. When they are omitted, the tool reads
+    ``MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS`` and
     ``MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`` as JSON objects.
 
     The public tool schema is configured dynamically from the selected engine.
@@ -70,14 +71,17 @@ class WebSearch:
             )
             self.annotations = {"query": str, "return": str}
         else:
+            if self.call_params:
+                raise ValueError(
+                    "`call_params` is only supported for retriever engines."
+                )
             self.model = Model.chat_completion(self.engine_target, **self.init_params)
             self.annotations = {"query": str, "prompt": Optional[str], "return": str}
 
         self.description = self._build_description()
 
-    @classmethod
+    @staticmethod
     def _resolve_params(
-        cls,
         params: Optional[Dict[str, Any]],
         *,
         env_var: str,
@@ -101,17 +105,6 @@ class WebSearch:
             raise ValueError(f"`{env_var}` must be a JSON object")
 
         return decoded
-
-    def _merge_call_params(
-        self, call_params: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        if call_params is not None and not isinstance(call_params, dict):
-            raise TypeError("`call_params` must be a dict")
-
-        merged = dict(self.call_params)
-        if call_params:
-            merged.update(call_params)
-        return merged
 
     @staticmethod
     def _parse_engine(engine: str) -> Tuple[str, str]:
@@ -158,8 +151,7 @@ class WebSearch:
 
             This mode relies on the model's built-in web search capability and
             accepts model initialization options through `init_params`. The
-            call-time `prompt` argument can steer the model before it answers,
-            while `call_params` can forward runtime options to the model call.
+            call-time `prompt` argument can steer the model before it answers.
             """
         )
 
@@ -184,9 +176,8 @@ class WebSearch:
     def _run_retriever(
         self,
         query: str,
-        call_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        result = self.retriever(query, **self._merge_call_params(call_params))
+        result = self.retriever(query, **self.call_params)
         return {
             "data": getattr(result, "data", result),
             "annotations": self._extract_annotations(result),
@@ -196,20 +187,14 @@ class WebSearch:
         self,
         query: str,
         prompt: Optional[str] = None,
-        call_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        effective_params = self._merge_call_params(call_params)
-        effective_prompt = effective_params.pop(
-            "system_prompt",
-            self._default_model_prompt(),
-        )
+        effective_prompt = self._default_model_prompt()
         if prompt is not None:
             effective_prompt = prompt
 
         response = self.model(
             messages=query,
             system_prompt=effective_prompt,
-            **effective_params,
         )
         consumed = response.consume() if hasattr(response, "consume") else response
         return {
@@ -221,7 +206,6 @@ class WebSearch:
         self,
         query: str,
         prompt: Optional[str] = None,
-        call_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Search the web with the configured backend."""
         if self.engine_kind == "retriever":
@@ -229,14 +213,13 @@ class WebSearch:
                 raise ValueError(
                     "The `prompt` argument is only supported for model engines."
                 )
-            return self._run_retriever(query, call_params=call_params)
-        return self._run_model(query, prompt=prompt, call_params=call_params)
+            return self._run_retriever(query)
+        return self._run_model(query, prompt=prompt)
 
     async def acall(
         self,
         query: str,
         prompt: Optional[str] = None,
-        call_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Async version of ``__call__``."""
         if self.engine_kind == "retriever":
@@ -246,25 +229,20 @@ class WebSearch:
                 )
             result = await self.retriever.acall(
                 query,
-                **self._merge_call_params(call_params),
+                **self.call_params,
             )
             return {
                 "data": getattr(result, "data", result),
                 "annotations": self._extract_annotations(result),
             }
 
-        effective_params = self._merge_call_params(call_params)
-        effective_prompt = effective_params.pop(
-            "system_prompt",
-            self._default_model_prompt(),
-        )
+        effective_prompt = self._default_model_prompt()
         if prompt is not None:
             effective_prompt = prompt
 
         response = await self.model.acall(
             messages=query,
             system_prompt=effective_prompt,
-            **effective_params,
         )
         consumed = response.consume() if hasattr(response, "consume") else response
         return {

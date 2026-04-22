@@ -266,9 +266,10 @@ When the model decides to use a tool, the Agent intercepts the response, execute
 
         `init_params` is unpacked into the backend constructor
         (`Retriever.web_search(...)` or `Model.chat_completion(...)`).
-        `call_params` is unpacked whenever the selected backend is called. If
-        these values are not passed explicitly, `WebSearch` reads the JSON
-        objects from `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
+        `call_params` is supported only for retriever engines and is unpacked
+        whenever the retriever is called. If these values are not passed
+        explicitly, `WebSearch` reads the JSON objects from
+        `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
         `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
 
     === "Wikipedia Search"
