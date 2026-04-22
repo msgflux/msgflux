@@ -173,6 +173,13 @@ class WebSearch:
             return metadata.get("annotations", []) or []
         return getattr(metadata, "annotations", []) or []
 
+    @staticmethod
+    def _consume_response(response: Any) -> Any:
+        return response.consume() if hasattr(response, "consume") else response
+
+    def _model_prompt(self, prompt: Optional[str]) -> str:
+        return prompt if prompt is not None else self._default_model_prompt()
+
     def _run_retriever(
         self,
         query: str,
@@ -188,17 +195,36 @@ class WebSearch:
         query: str,
         prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        effective_prompt = self._default_model_prompt()
-        if prompt is not None:
-            effective_prompt = prompt
-
         response = self.model(
             messages=query,
-            system_prompt=effective_prompt,
+            system_prompt=self._model_prompt(prompt),
         )
-        consumed = response.consume() if hasattr(response, "consume") else response
         return {
-            "data": consumed,
+            "data": self._consume_response(response),
+            "annotations": self._extract_annotations(response),
+        }
+
+    async def _arun_retriever(
+        self,
+        query: str,
+    ) -> Dict[str, Any]:
+        result = await self.retriever.acall(query, **self.call_params)
+        return {
+            "data": getattr(result, "data", result),
+            "annotations": self._extract_annotations(result),
+        }
+
+    async def _arun_model(
+        self,
+        query: str,
+        prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        response = await self.model.acall(
+            messages=query,
+            system_prompt=self._model_prompt(prompt),
+        )
+        return {
+            "data": self._consume_response(response),
             "annotations": self._extract_annotations(response),
         }
 
@@ -227,25 +253,5 @@ class WebSearch:
                 raise ValueError(
                     "The `prompt` argument is only supported for model engines."
                 )
-            result = await self.retriever.acall(
-                query,
-                **self.call_params,
-            )
-            return {
-                "data": getattr(result, "data", result),
-                "annotations": self._extract_annotations(result),
-            }
-
-        effective_prompt = self._default_model_prompt()
-        if prompt is not None:
-            effective_prompt = prompt
-
-        response = await self.model.acall(
-            messages=query,
-            system_prompt=effective_prompt,
-        )
-        consumed = response.consume() if hasattr(response, "consume") else response
-        return {
-            "data": consumed,
-            "annotations": self._extract_annotations(response),
-        }
+            return await self._arun_retriever(query)
+        return await self._arun_model(query, prompt=prompt)
