@@ -197,7 +197,7 @@ for i, query in enumerate(queries):
 
 ---
 
-## 9. **Exa Search**
+## 13. **Exa Search**
 
 The `exa` retriever queries Exa for semantic web search results. It can return URLs only, or fetch page text together with each result for RAG and summarization workflows.
 
@@ -205,9 +205,21 @@ The `exa` retriever queries Exa for semantic web search results. It can return U
     Requires `exa-py` and the `EXA_API_KEY` env variable:
     `pip install exa-py`
 
-### Quick Start
+### Parameters
 
-???+ example
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `search_type` | `"auto"` | Search type: `"auto"`, `"neural"`, `"fast"`, or `"deep"` |
+| `include_domains` | `None` | Domains to restrict search to |
+| `exclude_domains` | `None` | Domains to exclude from search |
+| `start_published_date` | `None` | ISO date filter for results published after a date |
+| `end_published_date` | `None` | ISO date filter for results published before a date |
+| `include_text` | `True` | Whether to fetch page text with each result |
+| `max_characters` | `None` | Maximum number of text characters returned per result |
+
+### Examples
+
+=== "Web"
 
     ```python
     import msgflux as mf
@@ -223,34 +235,7 @@ The `exa` retriever queries Exa for semantic web search results. It can return U
         print(result.data.content[:300])
     ```
 
-### Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `search_type` | `"auto"` | Search type: `"auto"`, `"neural"`, `"fast"`, or `"deep"` |
-| `include_domains` | `None` | Domains to restrict search to |
-| `exclude_domains` | `None` | Domains to exclude from search |
-| `start_published_date` | `None` | ISO date filter for results published after a date |
-| `end_published_date` | `None` | ISO date filter for results published before a date |
-| `include_text` | `True` | Whether to fetch page text with each result |
-| `max_characters` | `None` | Maximum number of text characters returned per result |
-
-```python
-import msgflux as mf
-
-retriever = mf.Retriever.web(
-    "exa",
-    search_type="neural",
-    include_text=True,
-    max_characters=1000,
-)
-```
-
-### URL-Only Search
-
-Set `include_text=False` when you only need titles and URLs:
-
-???+ example
+=== "URL Only"
 
     ```python
     import msgflux as mf
@@ -263,31 +248,35 @@ Set `include_text=False` when you only need titles and URLs:
         print(result.data.url)
     ```
 
-### Domain And Date Filters
+=== "Filters"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web(
-    "exa",
-    include_domains=["python.org", "pypi.org"],
-    start_published_date="2025-01-01",
-    include_text=True,
-    max_characters=2000,
-)
+    retriever = mf.Retriever.web(
+        "exa",
+        include_domains=["python.org", "pypi.org"],
+        start_published_date="2025-01-01",
+        include_text=True,
+        max_characters=2000,
+    )
 
-response = retriever("packaging metadata standards", top_k=3)
-```
+    response = retriever("packaging metadata standards", top_k=3)
 
-### Async Search
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+    ```
 
-```python
-import msgflux as mf
+=== "Async"
 
-retriever = mf.Retriever.web("exa", search_type="auto", include_text=True)
+    ```python
+    import msgflux as mf
 
-response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+    retriever = mf.Retriever.web("exa", search_type="auto", include_text=True)
 
-for item in response.data:
-    print(item.results[0].data.title)
-```
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```

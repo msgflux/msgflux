@@ -147,4 +147,5 @@ hide:
 
 | Provider    | Dependency    |
 |-------------|---------------|
+| Exa         | `exa-py`      |
 | Wikipedia   | `wikipedia`   |

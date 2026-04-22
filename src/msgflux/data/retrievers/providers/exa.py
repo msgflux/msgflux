@@ -3,8 +3,9 @@ from os import getenv
 from typing import List, Optional
 
 try:
-    from exa_py import Exa
+    from exa_py import AsyncExa, Exa
 except ImportError:
+    AsyncExa = None
     Exa = None
 
 from msgflux.core.dotdict import dotdict
@@ -71,10 +72,10 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        if Exa is None:
+        if Exa is None or AsyncExa is None:
             raise ImportError(
-                "The 'exa-py' package is not installed. "
-                "Please install it via pip: pip install exa-py"
+                "The 'exa-py' package is not installed or is outdated. "
+                "Please install it via pip: pip install -U exa-py"
             )
 
         api_key = getenv("EXA_API_KEY")
@@ -84,6 +85,7 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             )
 
         self.client = Exa(api_key=api_key)
+        self.async_client = AsyncExa(api_key=api_key)
         self.search_type = search_type or "auto"
         self.include_domains = include_domains
         self.exclude_domains = exclude_domains
@@ -121,6 +123,25 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
 
         return {"text": text_opts if text_opts else True}
 
+    def _parse_response(self, response) -> List[dict]:
+        """Parse an Exa response into msgflux web search result items."""
+        results = []
+        for result in response.results:
+            data = {
+                "title": result.title,
+                "url": result.url,
+            }
+
+            if hasattr(result, "text") and result.text:
+                data["content"] = result.text
+
+            if hasattr(result, "published_date") and result.published_date:
+                data["date"] = result.published_date
+
+            results.append({"data": data})
+
+        return results
+
     def _single_search(self, query: str, top_k: int) -> List[dict]:
         """Internal method to search Exa for a single query."""
         try:
@@ -133,24 +154,7 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             else:
                 response = self.client.search(query, **kwargs)
 
-            results = []
-            for result in response.results:
-                data = {
-                    "title": result.title,
-                    "url": result.url,
-                }
-
-                # Add text content if available
-                if hasattr(result, "text") and result.text:
-                    data["content"] = result.text
-
-                # Add published date if available
-                if hasattr(result, "published_date") and result.published_date:
-                    data["date"] = result.published_date
-
-                results.append({"data": data})
-
-            return results
+            return self._parse_response(response)
 
         except Exception as e:
             logger.warning("Exa search failed for query '%s': %s", query, e)
@@ -158,10 +162,21 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
 
     async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
         """Async internal method to search Exa for a single query."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: self._single_search(query, top_k)
-        )
+        try:
+            kwargs = self._build_search_kwargs(top_k)
+
+            if self.include_text:
+                text_opts = self._build_text_options()
+                kwargs.update(text_opts)
+                response = await self.async_client.search_and_contents(query, **kwargs)
+            else:
+                response = await self.async_client.search(query, **kwargs)
+
+            return self._parse_response(response)
+
+        except Exception as e:
+            logger.warning("Exa async search failed for query '%s': %s", query, e)
+            return []
 
     def _search(self, queries: List[str], top_k: int) -> List[dotdict]:
         """Synchronous search for multiple queries."""
