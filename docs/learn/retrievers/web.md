@@ -194,3 +194,96 @@ for i, query in enumerate(queries):
     result = response.data[i].results[0]
     print(f"\n{query} → {result.data.title}")
 ```
+
+---
+
+## 9. **Brave Search**
+
+The `brave` retriever queries Brave Search and can return web, news, or image results. Use it when you need search results from Brave with a single provider interface.
+
+!!! info "Dependencies"
+    Requires `brave-search-python-client` and the `BRAVE_SEARCH_API_KEY` env variable:
+    `pip install brave-search-python-client`
+
+### Quick Start
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+    retriever = mf.Retriever.web("brave")
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mode` | `"search"` | Search mode: `"search"`, `"news"`, or `"image"` |
+| `return_images` | `False` | Whether to include thumbnail image URLs for web/news results |
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web(
+    "brave",
+    mode="search",
+    return_images=True,
+)
+```
+
+### News Search
+
+Use `mode="news"` to retrieve news results:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="news")
+    response = retriever("AI regulation", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.date)
+        print(result.data.url)
+    ```
+
+### Image Search
+
+Use `mode="image"` when the image URL is the primary result:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="image")
+    response = retriever("James Webb Space Telescope", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+### Async Search
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("brave", mode="search")
+
+response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+for item in response.data:
+    print(item.results[0].data.title)
+```
