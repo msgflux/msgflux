@@ -736,7 +736,7 @@ Force the model to start its response with specific text. msgFlux appends the va
 
 The `web_search_options` parameter enables real-time web search, letting the model ground its answers in up-to-date information retrieved from the internet. It is currently supported by OpenAI search models (`gpt-4o-search-preview`, `gpt-4o-mini-search-preview`) and OpenRouter.
 
-OpenAI-compatible search providers can also expose chat completion models that search the web before answering. Brave uses `BRAVE_SEARCH_API_KEY` and can be initialized with the `brave/brave` model id.
+OpenAI-compatible search providers can also expose chat completion models that search the web before answering. Brave uses `BRAVE_SEARCH_API_KEY` with the `brave/brave` model id, and Exa uses `EXA_API_KEY` with the `exa/exa` model id.
 
 !!! info "Dependencies"
     Install the OpenAI extra if you haven't already:
@@ -868,6 +868,19 @@ OpenAI-compatible search providers can also expose chat completion models that s
         `enable_citations`, `enable_entities`, and `enable_research` require
         `stream=True`. Research mode can be slower and more expensive because
         Brave may run multiple searches before answering.
+
+    === "Exa Answer"
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(EXA_API_KEY="...")
+
+        model = mf.Model.chat_completion("exa/exa")
+        response = model("What are the latest changes in Python packaging?")
+
+        print(response.consume())
+        ```
 
 ### 11.1 **search_context_size**
 
