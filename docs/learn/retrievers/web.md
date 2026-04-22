@@ -310,3 +310,95 @@ The `serpapi` retriever queries SerpApi and returns structured search results fr
     for item in response.data:
         print(item.results[0].data.title)
     ```
+
+---
+
+## 10. **Brave Search**
+
+The `brave` retriever queries Brave Search and can return web, news, or image results. Use it when you need search results from Brave with a single provider interface.
+
+!!! info "Dependencies"
+    Requires `brave-search-python-client` and the `BRAVE_SEARCH_API_KEY` env variable:
+    `pip install brave-search-python-client`
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mode` | `"search"` | Search mode: `"search"`, `"news"`, or `"image"` |
+| `return_images` | `False` | Whether to include thumbnail image URLs for web/news results |
+
+### Examples
+
+=== "Web"
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(BRAVE_SEARCH_API_KEY="...")
+
+    retriever = mf.Retriever.web("brave")
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== "Thumbnails"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "brave",
+        mode="search",
+        return_images=True,
+    )
+    response = retriever("Python tutorials", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+=== "News"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="news")
+    response = retriever("AI regulation", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.date)
+        print(result.data.url)
+    ```
+
+=== "Images"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="image")
+    response = retriever("James Webb Space Telescope", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.images[0])
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("brave", mode="search")
+
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```

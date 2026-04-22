@@ -10,16 +10,17 @@ hide:
 
 ### Chat Completion
 
-| Provider    | Dependency        | Auth Env             |
-|-------------|-------------------|----------------------|
-| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`   |
-| Groq        | `msgflux[openai]` | `GROQ_API_KEY`       |
-| Ollama      | `msgflux[openai]` |                      |
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`     |
-| OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY` |
-| SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`  |
-| Together    | `msgflux[openai]` | `TOGETHER_API_KEY`   |
-| vLLM        | `msgflux[openai]` |                      |
+| Provider    | Dependency        | Auth Env               |
+|-------------|-------------------|------------------------|
+| Brave       | `msgflux[openai]` | `BRAVE_SEARCH_API_KEY` |
+| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`     |
+| Groq        | `msgflux[openai]` | `GROQ_API_KEY`         |
+| Ollama      | `msgflux[openai]` |                        |
+| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`       |
+| OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY`   |
+| SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`    |
+| Together    | `msgflux[openai]` | `TOGETHER_API_KEY`     |
+| vLLM        | `msgflux[openai]` |                        |
 
 ### Image Embedder
 
@@ -144,6 +145,13 @@ hide:
 
 ### Web Search
 
-| Provider    | Dependency    |
-|-------------|---------------|
-| Wikipedia   | `wikipedia`   |
+| Provider    | Installation                     | Auth Env                         |
+|-------------|----------------------------------|-----------------------------------|
+| Trafilatura | `httpx`, `trafilatura`           |                                   |
+| SerpApi     | `google-search-results`          | `SERPAPI_API_KEY`                 |
+| Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
+| Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
+| Exa         | `exa-py`                         | `EXA_API_KEY`                     |
+| Brave       | `brave-search-python-client`     | `BRAVE_SEARCH_API_KEY`            |
+| arXiv       | `arxiv`                          |                                   |
+| Wikipedia   | `wikipedia`                      |                                   |
