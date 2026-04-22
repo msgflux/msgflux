@@ -4898,6 +4898,8 @@
 
 msgFlux is an open-source framework for building dynamic AI systems with **composable modules**. It treats prompts, signatures, tools, and message flow as explicit program structure instead of ad-hoc glue. Architecture, data flow, and prompting remain separate layers, so systems can evolve by changing contracts, modules, or routes without forcing everything to change together.
 
+For web search, msgFlux includes both retriever-backed and model-backed options. The built-in `WebSearch` tool can be pointed at a retriever backend like `retriever/wikipedia` or a model backend like `model/openai/gpt-4o-search-preview`, returns `data` plus `annotations` when the backend supplies citations, and can read its engine plus JSON params from `MSGFLUX_TOOL_WEB_SEARCH_*` environment variables.
+
 ## **AI Systems *not* ML Systems**
 
 **ML systems** are systems *for* AI - they train, evaluate, and deploy models. **AI systems** are systems *with* AI - software where pretrained models operate as components inside a broader application. In that setting, the model is not the whole product; it is one building block among many. You are not optimizing weights - you are designing behavior, interfaces, and flow around a model. This is the space msgFlux occupies.
@@ -5687,6 +5689,7 @@ We are grateful to the authors and maintainers of these projects.
 </div>
 
 <p>msgFlux is an open-source framework for building dynamic AI systems with <strong>composable modules</strong>. It treats prompts, signatures, tools, and message flow as explicit program structure instead of ad-hoc glue. Architecture, data flow, and prompting remain separate layers, so systems can evolve by changing contracts, modules, or routes without forcing everything to change together.</p>
+<p>For web search, msgFlux includes both retriever-backed and model-backed options. The built-in <code>WebSearch</code> tool can be pointed at a retriever backend like <code>retriever/wikipedia</code> or a model backend like <code>model/openai/gpt-4o-search-preview</code>, returns <code>data</code> plus <code>annotations</code> when the backend supplies citations, and can read its engine plus JSON params from <code>MSGFLUX_TOOL_WEB_SEARCH_*</code> environment variables.</p>
 <h2 id="ai-systems-not-ml-systems"><strong>AI Systems <em>not</em> ML Systems</strong></h2>
 <p><strong>ML systems</strong> are systems <em>for</em> AI - they train, evaluate, and deploy models. <strong>AI systems</strong> are systems <em>with</em> AI - software where pretrained models operate as components inside a broader application. In that setting, the model is not the whole product; it is one building block among many. You are not optimizing weights - you are designing behavior, interfaces, and flow around a model. This is the space msgFlux occupies.</p>
 <h2 id="declarative-and-imperative"><strong>Declarative and Imperative</strong></h2>
