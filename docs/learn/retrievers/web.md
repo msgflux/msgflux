@@ -194,3 +194,78 @@ for i, query in enumerate(queries):
     result = response.data[i].results[0]
     print(f"\n{query} → {result.data.title}")
 ```
+
+---
+
+## 9. **Trafilatura Fetcher**
+
+The `trafilatura` retriever fetches web pages by URL and extracts clean readable text from the HTML. Use it when you already know which pages you want to read, rather than when you need to search the web.
+
+!!! info "Dependencies"
+    Requires `httpx` and `trafilatura`: `pip install httpx trafilatura`
+
+### Quick Start
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("trafilatura", output_format="markdown")
+
+    response = retriever("https://example.com")
+    result = response.data[0].results[0].data
+
+    print(result.title)
+    print(result.content[:500])
+    ```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `include_comments` | `False` | Whether to include HTML comments in extracted text |
+| `include_tables` | `True` | Whether to include table content |
+| `output_format` | `"txt"` | Extraction format: `"txt"`, `"markdown"`, `"xml"`, or `"json"` |
+| `timeout` | `30.0` | HTTP request timeout in seconds |
+| `follow_redirects` | `True` | Whether HTTP redirects should be followed |
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web(
+    "trafilatura",
+    output_format="markdown",
+    include_tables=True,
+    timeout=15.0,
+)
+```
+
+### Batch URLs
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("trafilatura", output_format="txt")
+
+urls = ["https://example.com", "https://www.python.org"]
+response = retriever(urls)
+
+for item in response.data:
+    result = item.results[0].data
+    print(result.url)
+    print(result.content[:200])
+```
+
+### Async Fetch
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("trafilatura", output_format="markdown")
+
+response = await retriever.acall(["https://example.com", "https://www.python.org"])
+
+for item in response.data:
+    print(item.results[0].data.title)
+```
