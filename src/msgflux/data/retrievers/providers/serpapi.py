@@ -7,6 +7,11 @@ try:
 except ImportError:
     serpapi = None
 
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
 from msgflux.data.retrievers.registry import register_retriever
@@ -16,6 +21,7 @@ from msgflux.logger import init_logger
 logger = init_logger(__name__)
 
 API_KEY_ENV_NAMES = ("SERPAPI_KEY", "SERPAPI_API_KEY", "SERP_API_KEY")
+SERPAPI_SEARCH_URL = "https://serpapi.com/search.json"
 QUERY_PARAM_BY_ENGINE = {
     "apple_app_store": "term",
     "ebay": "_nkw",
@@ -90,7 +96,8 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         self.hl = hl
         self.safe = safe
         self.tbm = tbm
-        self.client = serpapi.Client(api_key=self._get_api_key())
+        self.api_key = self._get_api_key()
+        self.client = serpapi.Client(api_key=self.api_key)
 
     def _get_api_key(self) -> str:
         for env_name in API_KEY_ENV_NAMES:
@@ -124,6 +131,12 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         if self.tbm:
             params["tbm"] = self.tbm
 
+        return params
+
+    def _build_async_search_params(self, query: str, top_k: int) -> dict:
+        """Build params for direct async SerpApi search requests."""
+        params = self._build_search_params(query, top_k)
+        params["api_key"] = self.api_key
         return params
 
     def _format_result(self, result: Mapping[str, Any]) -> dict:
@@ -173,10 +186,31 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
 
     async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
         """Async internal method to search SerpAPI for a single query."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, lambda: self._single_search(query, top_k)
-        )
+        if httpx is None:
+            raise ImportError(
+                "The 'httpx' package is not installed. "
+                "Please install it via pip: pip install httpx"
+            )
+
+        try:
+            params = self._build_async_search_params(query, top_k)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(SERPAPI_SEARCH_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            if data.get("error"):
+                logger.warning(
+                    "SerpAPI search failed for query '%s': %s",
+                    query,
+                    data["error"],
+                )
+                return []
+
+            return self._parse_results(data, top_k)
+        except Exception as e:
+            logger.warning("SerpAPI search failed for query '%s': %s", query, e)
+            return []
 
     def _search(self, queries: List[str], top_k: int) -> List[dotdict]:
         """Synchronous search for multiple queries."""

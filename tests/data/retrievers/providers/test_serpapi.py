@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,25 @@ def mock_serpapi_client_instance(mock_serpapi_client):
     client_instance = MagicMock()
     mock_serpapi_client.return_value = client_instance
     return client_instance
+
+
+@pytest.fixture
+def mock_httpx_async_client():
+    response = MagicMock()
+    response.json.return_value = {}
+    response.raise_for_status.return_value = None
+
+    client = MagicMock()
+    client.get = AsyncMock(return_value=response)
+
+    client_context = MagicMock()
+    client_context.__aenter__ = AsyncMock(return_value=client)
+    client_context.__aexit__ = AsyncMock(return_value=None)
+
+    async_client_cls = MagicMock(return_value=client_context)
+    fake_httpx = SimpleNamespace(AsyncClient=async_client_cls)
+    with patch.object(serpapi_provider, "httpx", fake_httpx):
+        yield async_client_cls, client, response
 
 
 @pytest.fixture
@@ -69,7 +88,7 @@ def test_init_accepts_legacy_env_names(mock_serpapi_client):
 
 
 @pytest.mark.asyncio
-async def test_organic_search(mock_serpapi_client_instance):
+async def test_organic_search(mock_serpapi_client_instance, mock_httpx_async_client):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever()
 
@@ -84,7 +103,8 @@ async def test_organic_search(mock_serpapi_client_instance):
             ]
         }
 
-        mock_serpapi_client_instance.search.return_value = mock_response
+        _, _, response = mock_httpx_async_client
+        response.json.return_value = mock_response
 
         results = await retriever.acall("test query", top_k=1)
 
@@ -100,7 +120,7 @@ async def test_organic_search(mock_serpapi_client_instance):
 
 
 @pytest.mark.asyncio
-async def test_news_search(mock_serpapi_client_instance):
+async def test_news_search(mock_serpapi_client_instance, mock_httpx_async_client):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever(tbm="nws")
 
@@ -115,7 +135,8 @@ async def test_news_search(mock_serpapi_client_instance):
             ]
         }
 
-        mock_serpapi_client_instance.search.return_value = mock_response
+        _, _, response = mock_httpx_async_client
+        response.json.return_value = mock_response
 
         results = await retriever.acall("news query", top_k=1)
 
@@ -126,7 +147,10 @@ async def test_news_search(mock_serpapi_client_instance):
 
 
 @pytest.mark.asyncio
-async def test_search_with_location_and_engine(mock_serpapi_client_instance):
+async def test_async_search_uses_direct_httpx_request(
+    mock_serpapi_client_instance,
+    mock_httpx_async_client,
+):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever(
             engine="bing",
@@ -135,17 +159,35 @@ async def test_search_with_location_and_engine(mock_serpapi_client_instance):
         )
 
         mock_response = {"organic_results": []}
-        mock_serpapi_client_instance.search.return_value = mock_response
+        _, client, response = mock_httpx_async_client
+        response.json.return_value = mock_response
 
         await retriever.acall("local query", top_k=5)
 
-        call_args = mock_serpapi_client_instance.search.call_args[0][0]
-        assert call_args["engine"] == "bing"
-        assert call_args["q"] == "local query"
-        assert call_args["location"] == "Austin,Texas"
-        assert call_args["gl"] == "us"
-        assert call_args["num"] == 5
-        assert "api_key" not in call_args
+        call_args = client.get.call_args
+        assert call_args[0][0] == serpapi_provider.SERPAPI_SEARCH_URL
+        params = call_args[1]["params"]
+        assert params["engine"] == "bing"
+        assert params["q"] == "local query"
+        assert params["location"] == "Austin,Texas"
+        assert params["gl"] == "us"
+        assert params["num"] == 5
+        assert params["api_key"] == "test_key"
+
+
+def test_sync_search_uses_sdk_without_api_key_param(mock_serpapi_client_instance):
+    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
+        retriever = SerpApiWebRetriever(engine="bing")
+
+    mock_serpapi_client_instance.search.return_value = {"organic_results": []}
+
+    retriever("sync query", top_k=2)
+
+    params = mock_serpapi_client_instance.search.call_args[0][0]
+    assert params["engine"] == "bing"
+    assert params["q"] == "sync query"
+    assert params["num"] == 2
+    assert "api_key" not in params
 
 
 def test_search_uses_engine_specific_query_param(mock_serpapi_client_instance):
