@@ -197,7 +197,7 @@ for i, query in enumerate(queries):
 
 ---
 
-## 9. **Linkup Search**
+## 12. **Linkup Search**
 
 The `linkup` retriever queries Linkup and returns AI-oriented web results. It supports standard search, deeper agentic search, domain filters, image inclusion, and sourced answers.
 
@@ -205,9 +205,19 @@ The `linkup` retriever queries Linkup and returns AI-oriented web results. It su
     Requires `linkup-sdk` and the `LINKUP_API_KEY` env variable:
     `pip install linkup-sdk`
 
-### Quick Start
+### Parameters
 
-???+ example
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `depth` | `"standard"` | Search depth: `"standard"` for faster search or `"deep"` for agentic search |
+| `output_type` | `"searchResults"` | Output mode: `"searchResults"` or `"sourcedAnswer"` |
+| `include_domains` | `None` | Domains to restrict search to |
+| `exclude_domains` | `None` | Domains to exclude from search |
+| `include_images` | `False` | Whether to ask Linkup to include images |
+
+### Examples
+
+=== "Web"
 
     ```python
     import msgflux as mf
@@ -223,31 +233,24 @@ The `linkup` retriever queries Linkup and returns AI-oriented web results. It su
         print(result.data.content)
     ```
 
-### Parameters
+=== "Deep"
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `depth` | `"standard"` | Search depth: `"standard"` for faster search or `"deep"` for agentic search |
-| `output_type` | `"searchResults"` | Output mode: `"searchResults"` or `"sourcedAnswer"` |
-| `include_domains` | `None` | Domains to restrict search to |
-| `exclude_domains` | `None` | Domains to exclude from search |
-| `include_images` | `False` | Whether to ask Linkup to include images |
+    ```python
+    import msgflux as mf
 
-```python
-import msgflux as mf
+    retriever = mf.Retriever.web(
+        "linkup",
+        depth="deep",
+        include_domains=["python.org", "pypi.org"],
+    )
+    response = retriever("recent Python packaging changes", top_k=3)
 
-retriever = mf.Retriever.web(
-    "linkup",
-    depth="deep",
-    include_domains=["python.org", "pypi.org"],
-)
-```
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+    ```
 
-### Sourced Answers
-
-Use `output_type="sourcedAnswer"` when you want Linkup to produce source-backed answer results:
-
-???+ example
+=== "Sourced Answer"
 
     ```python
     import msgflux as mf
@@ -265,31 +268,31 @@ Use `output_type="sourcedAnswer"` when you want Linkup to produce source-backed 
         print(source.data.url)
     ```
 
-### Batch Queries
+=== "Batch"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("linkup", depth="standard")
+    retriever = mf.Retriever.web("linkup", depth="standard")
 
-queries = ["Python packaging", "Rust async runtime"]
-response = retriever(queries, top_k=2)
+    queries = ["Python packaging", "Rust async runtime"]
+    response = retriever(queries, top_k=2)
 
-for i, query in enumerate(queries):
-    print(f"\n{query}")
-    for result in response.data[i].results:
-        print(result.data.title)
-```
+    for i, query in enumerate(queries):
+        print(f"\n{query}")
+        for result in response.data[i].results:
+            print(result.data.title)
+    ```
 
-### Async Search
+=== "Async"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("linkup", depth="deep")
+    retriever = mf.Retriever.web("linkup", depth="deep")
 
-response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
 
-for item in response.data:
-    print(item.results[0].data.title)
-```
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
