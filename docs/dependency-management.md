@@ -13,6 +13,7 @@ hide:
 | Provider    | Dependency        | Auth Env             |
 |-------------|-------------------|----------------------|
 | Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`   |
+| Exa         | `msgflux[openai]` | `EXA_API_KEY`        |
 | Groq        | `msgflux[openai]` | `GROQ_API_KEY`       |
 | Ollama      | `msgflux[openai]` |                      |
 | OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`     |

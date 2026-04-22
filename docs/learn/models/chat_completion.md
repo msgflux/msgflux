@@ -736,6 +736,8 @@ Force the model to start its response with specific text. msgFlux appends the va
 
 The `web_search_options` parameter enables real-time web search, letting the model ground its answers in up-to-date information retrieved from the internet. It is currently supported by OpenAI search models (`gpt-4o-search-preview`, `gpt-4o-mini-search-preview`) and OpenRouter.
 
+OpenAI-compatible search providers can also expose chat completion models that search the web before answering. Exa uses `EXA_API_KEY` and can be initialized with the `exa/exa` model id.
+
 !!! info "Dependencies"
     Install the OpenAI extra if you haven't already:
 
@@ -791,6 +793,19 @@ The `web_search_options` parameter enables real-time web search, letting the mod
         )
 
         response = model("What are the top tech events happening this month?")
+        print(response.consume())
+        ```
+
+    === "Exa Answer"
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(EXA_API_KEY="...")
+
+        model = mf.Model.chat_completion("exa/exa")
+        response = model("What are the latest changes in Python packaging?")
+
         print(response.consume())
         ```
 
