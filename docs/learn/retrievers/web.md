@@ -207,9 +207,20 @@ The `serpapi` retriever queries SerpApi and returns structured search results fr
 
     For compatibility, `SERPAPI_API_KEY` and `SERP_API_KEY` are also accepted.
 
-### Quick Start
+### Parameters
 
-???+ example
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `engine` | `"google"` | Search engine to use, such as `"google"`, `"bing"`, or `"yahoo"` |
+| `location` | `None` | Location for localized results, such as `"Austin,Texas"` |
+| `gl` | `None` | Google country code, such as `"us"` or `"br"` |
+| `hl` | `None` | Google UI language, such as `"en"` or `"pt"` |
+| `safe` | `None` | Safe search mode, such as `"active"` or `"off"` |
+| `tbm` | `None` | Search type, such as `"nws"` for news or `"isch"` for images |
+
+### Examples
+
+=== "Web"
 
     ```python
     import msgflux as mf
@@ -225,33 +236,24 @@ The `serpapi` retriever queries SerpApi and returns structured search results fr
         print(result.data.content)
     ```
 
-### Parameters
+=== "Localized"
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `engine` | `"google"` | Search engine to use, such as `"google"`, `"bing"`, or `"yahoo"` |
-| `location` | `None` | Location for localized results, such as `"Austin,Texas"` |
-| `gl` | `None` | Google country code, such as `"us"` or `"br"` |
-| `hl` | `None` | Google UI language, such as `"en"` or `"pt"` |
-| `safe` | `None` | Safe search mode, such as `"active"` or `"off"` |
-| `tbm` | `None` | Search type, such as `"nws"` for news or `"isch"` for images |
+    ```python
+    import msgflux as mf
 
-```python
-import msgflux as mf
+    retriever = mf.Retriever.web(
+        "serpapi",
+        location="Sao Paulo, Brazil",
+        gl="br",
+        hl="pt",
+    )
+    response = retriever("melhores frameworks Python", top_k=3)
 
-retriever = mf.Retriever.web(
-    "serpapi",
-    location="Sao Paulo, Brazil",
-    gl="br",
-    hl="pt",
-)
-```
+    for result in response.data[0].results:
+        print(result.data.title)
+    ```
 
-### News Search
-
-Set `tbm="nws"` to retrieve news results:
-
-???+ example
+=== "News"
 
     ```python
     import msgflux as mf
@@ -265,31 +267,44 @@ Set `tbm="nws"` to retrieve news results:
         print(result.data.url)
     ```
 
-### Batch Queries
+=== "Images"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("serpapi", engine="google")
+    retriever = mf.Retriever.web("serpapi", tbm="isch")
+    response = retriever("James Webb Space Telescope", top_k=3)
 
-queries = ["Python packaging", "Rust async runtime"]
-response = retriever(queries, top_k=2)
-
-for i, query in enumerate(queries):
-    print(f"\n{query}")
-    for result in response.data[i].results:
+    for result in response.data[0].results:
         print(result.data.title)
-```
+        print(result.images[0])
+    ```
 
-### Async Search
+=== "Batch"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("serpapi", gl="us", hl="en")
+    retriever = mf.Retriever.web("serpapi", engine="google")
 
-response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+    queries = ["Python packaging", "Rust async runtime"]
+    response = retriever(queries, top_k=2)
 
-for item in response.data:
-    print(item.results[0].data.title)
-```
+    for i, query in enumerate(queries):
+        print(f"\n{query}")
+        for result in response.data[i].results:
+            print(result.data.title)
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("serpapi", gl="us", hl="en")
+
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
