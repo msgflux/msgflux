@@ -1,20 +1,23 @@
-import importlib
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Mock httpx and trafilatura BEFORE importing the retriever
-mock_httpx = MagicMock()
-mock_trafilatura = MagicMock()
-sys.modules["httpx"] = mock_httpx
-sys.modules["trafilatura"] = mock_trafilatura
-
-# Reload the retriever module to pick up the mock
-if "msgflux.data.retrievers.providers.trafilatura" in sys.modules:
-    importlib.reload(sys.modules["msgflux.data.retrievers.providers.trafilatura"])
-
+import msgflux.data.retrievers.providers.trafilatura as trafilatura_module
 from msgflux.data.retrievers.providers.trafilatura import TrafilaturaWebRetriever
+
+
+@pytest.fixture
+def mock_httpx(monkeypatch):
+    mock = MagicMock()
+    monkeypatch.setattr(trafilatura_module, "httpx", mock)
+    return mock
+
+
+@pytest.fixture
+def mock_trafilatura(monkeypatch):
+    mock = MagicMock()
+    monkeypatch.setattr(trafilatura_module, "trafilatura", mock)
+    return mock
 
 
 @pytest.fixture
@@ -27,7 +30,7 @@ def mock_metadata():
 
 
 @pytest.fixture
-def retriever():
+def retriever(mock_httpx, mock_trafilatura):
     return TrafilaturaWebRetriever()
 
 
@@ -39,7 +42,7 @@ def test_init_defaults(retriever):
     assert retriever.follow_redirects is True
 
 
-def test_init_custom_params():
+def test_init_custom_params(mock_httpx, mock_trafilatura):
     retriever = TrafilaturaWebRetriever(
         include_comments=True,
         include_tables=False,
@@ -54,7 +57,7 @@ def test_init_custom_params():
     assert retriever.follow_redirects is False
 
 
-def test_extract_content(retriever, mock_metadata):
+def test_extract_content(retriever, mock_metadata, mock_trafilatura):
     mock_trafilatura.extract.return_value = "Extracted text content"
     mock_trafilatura.extract_metadata.return_value = mock_metadata
 
@@ -68,7 +71,7 @@ def test_extract_content(retriever, mock_metadata):
     assert result["success"] is True
 
 
-def test_sync_fetch(retriever, mock_metadata):
+def test_sync_fetch(retriever, mock_metadata, mock_httpx, mock_trafilatura):
     mock_response = MagicMock()
     mock_response.text = "<html>test</html>"
     mock_response.raise_for_status = MagicMock()
@@ -89,7 +92,7 @@ def test_sync_fetch(retriever, mock_metadata):
 
 
 @pytest.mark.asyncio
-async def test_async_fetch(retriever, mock_metadata):
+async def test_async_fetch(retriever, mock_metadata, mock_httpx, mock_trafilatura):
     mock_response = MagicMock()
     mock_response.text = "<html>test</html>"
     mock_response.raise_for_status = MagicMock()
@@ -110,7 +113,9 @@ async def test_async_fetch(retriever, mock_metadata):
 
 
 @pytest.mark.asyncio
-async def test_fetch_multiple_urls(retriever, mock_metadata):
+async def test_fetch_multiple_urls(
+    retriever, mock_metadata, mock_httpx, mock_trafilatura
+):
     mock_response = MagicMock()
     mock_response.text = "<html>test</html>"
     mock_response.raise_for_status = MagicMock()
