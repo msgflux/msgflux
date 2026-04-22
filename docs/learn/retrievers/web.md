@@ -698,3 +698,86 @@ The `exa` retriever queries Exa for semantic web search results. It can return U
     for item in response.data:
         print(item.results[0].data.title)
     ```
+
+---
+
+## 14. **arXiv Search**
+
+The `arxiv` retriever searches arXiv papers and returns structured academic metadata such as title, summary, authors, publication dates, categories, and PDF URLs.
+
+!!! info "Dependencies"
+    Requires the `arxiv` package: `pip install arxiv`
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_results` | `10` | Maximum number of arXiv results fetched per query |
+| `sort_by` | `"relevance"` | Sort criterion: `"relevance"`, `"lastUpdatedDate"`, or `"submittedDate"` |
+| `sort_order` | `"descending"` | Sort order: `"ascending"` or `"descending"` |
+
+### Examples
+
+=== "Search"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("arxiv")
+    response = retriever("retrieval augmented generation", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.authors)
+        print(result.data.pdf_url)
+        print(result.data.summary[:300])
+    ```
+
+=== "Recent"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "arxiv",
+        max_results=5,
+        sort_by="submittedDate",
+        sort_order="descending",
+    )
+
+    response = retriever("large language model agents", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.published)
+        print(result.data.title)
+        print(result.data.pdf_url)
+    ```
+
+=== "Batch"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("arxiv", sort_by="relevance")
+
+    queries = ["graph neural networks", "diffusion models"]
+    response = retriever(queries, top_k=2)
+
+    for i, query in enumerate(queries):
+        print(f"\n{query}")
+        for result in response.data[i].results:
+            print(result.data.title)
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("arxiv", sort_by="submittedDate")
+
+    response = await retriever.acall(["RAG evaluation", "agent benchmarks"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
