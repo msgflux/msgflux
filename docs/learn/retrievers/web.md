@@ -197,16 +197,24 @@ for i, query in enumerate(queries):
 
 ---
 
-## 9. **arXiv Search**
+## 14. **arXiv Search**
 
 The `arxiv` retriever searches arXiv papers and returns structured academic metadata such as title, summary, authors, publication dates, categories, and PDF URLs.
 
 !!! info "Dependencies"
     Requires the `arxiv` package: `pip install arxiv`
 
-### Quick Start
+### Parameters
 
-???+ example
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_results` | `10` | Maximum number of arXiv results fetched per query |
+| `sort_by` | `"relevance"` | Sort criterion: `"relevance"`, `"lastUpdatedDate"`, or `"submittedDate"` |
+| `sort_order` | `"descending"` | Sort order: `"ascending"` or `"descending"` |
+
+### Examples
+
+=== "Search"
 
     ```python
     import msgflux as mf
@@ -221,36 +229,14 @@ The `arxiv` retriever searches arXiv papers and returns structured academic meta
         print(result.data.summary[:300])
     ```
 
-### Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `max_results` | `10` | Maximum number of arXiv results fetched per query |
-| `sort_by` | `"relevance"` | Sort criterion: `"relevance"`, `"lastUpdatedDate"`, or `"submittedDate"` |
-| `sort_order` | `"descending"` | Sort order: `"ascending"` or `"descending"` |
-
-```python
-import msgflux as mf
-
-retriever = mf.Retriever.web(
-    "arxiv",
-    max_results=5,
-    sort_by="submittedDate",
-    sort_order="descending",
-)
-```
-
-### Recent Papers
-
-Use `sort_by="submittedDate"` to prioritize recently submitted papers:
-
-???+ example
+=== "Recent"
 
     ```python
     import msgflux as mf
 
     retriever = mf.Retriever.web(
         "arxiv",
+        max_results=5,
         sort_by="submittedDate",
         sort_order="descending",
     )
@@ -263,31 +249,31 @@ Use `sort_by="submittedDate"` to prioritize recently submitted papers:
         print(result.data.pdf_url)
     ```
 
-### Batch Queries
+=== "Batch"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("arxiv", sort_by="relevance")
+    retriever = mf.Retriever.web("arxiv", sort_by="relevance")
 
-queries = ["graph neural networks", "diffusion models"]
-response = retriever(queries, top_k=2)
+    queries = ["graph neural networks", "diffusion models"]
+    response = retriever(queries, top_k=2)
 
-for i, query in enumerate(queries):
-    print(f"\n{query}")
-    for result in response.data[i].results:
-        print(result.data.title)
-```
+    for i, query in enumerate(queries):
+        print(f"\n{query}")
+        for result in response.data[i].results:
+            print(result.data.title)
+    ```
 
-### Async Search
+=== "Async"
 
-```python
-import msgflux as mf
+    ```python
+    import msgflux as mf
 
-retriever = mf.Retriever.web("arxiv", sort_by="submittedDate")
+    retriever = mf.Retriever.web("arxiv", sort_by="submittedDate")
 
-response = await retriever.acall(["RAG evaluation", "agent benchmarks"], top_k=2)
+    response = await retriever.acall(["RAG evaluation", "agent benchmarks"], top_k=2)
 
-for item in response.data:
-    print(item.results[0].data.title)
-```
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```

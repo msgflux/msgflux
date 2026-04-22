@@ -146,4 +146,5 @@ hide:
 
 | Provider    | Dependency    |
 |-------------|---------------|
+| arXiv       | `arxiv`       |
 | Wikipedia   | `wikipedia`   |
