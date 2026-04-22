@@ -194,3 +194,102 @@ for i, query in enumerate(queries):
     result = response.data[i].results[0]
     print(f"\n{query} → {result.data.title}")
 ```
+
+---
+
+## 9. **Linkup Search**
+
+The `linkup` retriever queries Linkup and returns AI-oriented web results. It supports standard search, deeper agentic search, domain filters, image inclusion, and sourced answers.
+
+!!! info "Dependencies"
+    Requires `linkup-sdk` and the `LINKUP_API_KEY` env variable:
+    `pip install linkup-sdk`
+
+### Quick Start
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(LINKUP_API_KEY="...")
+
+    retriever = mf.Retriever.web("linkup")
+    response = retriever("latest Python packaging changes", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `depth` | `"standard"` | Search depth: `"standard"` for faster search or `"deep"` for agentic search |
+| `output_type` | `"searchResults"` | Output mode: `"searchResults"` or `"sourcedAnswer"` |
+| `include_domains` | `None` | Domains to restrict search to |
+| `exclude_domains` | `None` | Domains to exclude from search |
+| `include_images` | `False` | Whether to ask Linkup to include images |
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web(
+    "linkup",
+    depth="deep",
+    include_domains=["python.org", "pypi.org"],
+)
+```
+
+### Sourced Answers
+
+Use `output_type="sourcedAnswer"` when you want Linkup to produce source-backed answer results:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "linkup",
+        depth="deep",
+        output_type="sourcedAnswer",
+    )
+
+    response = retriever("What changed in Python packaging recently?", top_k=5)
+
+    for source in response.data[0].results:
+        print(source.data.title)
+        print(source.data.url)
+    ```
+
+### Batch Queries
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("linkup", depth="standard")
+
+queries = ["Python packaging", "Rust async runtime"]
+response = retriever(queries, top_k=2)
+
+for i, query in enumerate(queries):
+    print(f"\n{query}")
+    for result in response.data[i].results:
+        print(result.data.title)
+```
+
+### Async Search
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.web("linkup", depth="deep")
+
+response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+for item in response.data:
+    print(item.results[0].data.title)
+```
