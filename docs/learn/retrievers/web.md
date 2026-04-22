@@ -202,12 +202,12 @@ for i, query in enumerate(queries):
 The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
 
 !!! info "Dependencies"
-    Requires `serpapi`, `httpx`, and the `SERPAPI_KEY` env variable:
-    `pip install serpapi httpx`
+    Requires `httpx` and the `SERPAPI_KEY` env variable:
+    `pip install httpx`
 
     For compatibility, `SERPAPI_API_KEY` and `SERP_API_KEY` are also accepted.
-    Synchronous calls use the official `serpapi` SDK; async calls use direct
-    requests to `https://serpapi.com/search.json`.
+    Both synchronous and async calls use direct requests to
+    `https://serpapi.com/search.json`.
 
 ### Parameters
 

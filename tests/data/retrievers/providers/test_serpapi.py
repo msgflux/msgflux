@@ -8,41 +8,39 @@ from msgflux.data.retrievers.providers.serpapi import SerpApiWebRetriever
 
 
 @pytest.fixture
-def mock_serpapi_client():
-    client_cls = MagicMock()
-    fake_serpapi = SimpleNamespace(Client=client_cls)
-    with patch.object(serpapi_provider, "serpapi", fake_serpapi):
-        yield client_cls
-
-
-@pytest.fixture
-def mock_serpapi_client_instance(mock_serpapi_client):
-    client_instance = MagicMock()
-    mock_serpapi_client.return_value = client_instance
-    return client_instance
-
-
-@pytest.fixture
-def mock_httpx_async_client():
+def mock_httpx_clients():
     response = MagicMock()
     response.json.return_value = {}
     response.raise_for_status.return_value = None
 
-    client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    sync_client = MagicMock()
+    sync_client.get.return_value = response
+    sync_context = MagicMock()
+    sync_context.__enter__.return_value = sync_client
+    sync_context.__exit__.return_value = None
 
-    client_context = MagicMock()
-    client_context.__aenter__ = AsyncMock(return_value=client)
-    client_context.__aexit__ = AsyncMock(return_value=None)
+    async_client = MagicMock()
+    async_client.get = AsyncMock(return_value=response)
+    async_context = MagicMock()
+    async_context.__aenter__ = AsyncMock(return_value=async_client)
+    async_context.__aexit__ = AsyncMock(return_value=None)
 
-    async_client_cls = MagicMock(return_value=client_context)
-    fake_httpx = SimpleNamespace(AsyncClient=async_client_cls)
+    client_cls = MagicMock(return_value=sync_context)
+    async_client_cls = MagicMock(return_value=async_context)
+    fake_httpx = SimpleNamespace(Client=client_cls, AsyncClient=async_client_cls)
+
     with patch.object(serpapi_provider, "httpx", fake_httpx):
-        yield async_client_cls, client, response
+        yield SimpleNamespace(
+            response=response,
+            client_cls=client_cls,
+            sync_client=sync_client,
+            async_client_cls=async_client_cls,
+            async_client=async_client,
+        )
 
 
 @pytest.fixture
-def retriever(mock_serpapi_client_instance):
+def retriever(mock_httpx_clients):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         return SerpApiWebRetriever()
 
@@ -56,7 +54,7 @@ def test_init_defaults(retriever):
     assert retriever.tbm is None
 
 
-def test_init_custom_params(mock_serpapi_client_instance):
+def test_init_custom_params(mock_httpx_clients):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever(
             engine="google",
@@ -73,84 +71,23 @@ def test_init_custom_params(mock_serpapi_client_instance):
         assert retriever.tbm == "nws"
 
 
-def test_init_uses_official_serpapi_client(mock_serpapi_client):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        SerpApiWebRetriever()
-
-    mock_serpapi_client.assert_called_once_with(api_key="test_key")
-
-
-def test_init_accepts_legacy_env_names(mock_serpapi_client):
+def test_init_accepts_legacy_env_names(mock_httpx_clients):
     with patch.dict("os.environ", {"SERP_API_KEY": "test_key"}, clear=True):
-        SerpApiWebRetriever()
-
-    mock_serpapi_client.assert_called_once_with(api_key="test_key")
-
-
-@pytest.mark.asyncio
-async def test_organic_search(mock_serpapi_client_instance, mock_httpx_async_client):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever()
 
-        mock_response = {
-            "organic_results": [
-                {
-                    "title": "Test Title",
-                    "link": "https://example.com",
-                    "snippet": "Test snippet content",
-                    "date": "2024-01-15",
-                }
-            ]
-        }
-
-        _, _, response = mock_httpx_async_client
-        response.json.return_value = mock_response
-
-        results = await retriever.acall("test query", top_k=1)
-
-        assert results.response_type == "web_search"
-        assert len(results.data) == 1
-        assert len(results.data[0].results) == 1
-
-        result_data = results.data[0].results[0]["data"]
-        assert result_data["title"] == "Test Title"
-        assert result_data["url"] == "https://example.com"
-        assert result_data["content"] == "Test snippet content"
-        assert result_data["date"] == "2024-01-15"
+    assert retriever.api_key == "test_key"
 
 
-@pytest.mark.asyncio
-async def test_news_search(mock_serpapi_client_instance, mock_httpx_async_client):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        retriever = SerpApiWebRetriever(tbm="nws")
-
-        mock_response = {
-            "news_results": [
-                {
-                    "title": "News Title",
-                    "link": "https://news.com",
-                    "snippet": "News snippet",
-                    "date": "2 hours ago",
-                }
-            ]
-        }
-
-        _, _, response = mock_httpx_async_client
-        response.json.return_value = mock_response
-
-        results = await retriever.acall("news query", top_k=1)
-
-        assert results.response_type == "web_search"
-        assert len(results.data[0].results) == 1
-        result_data = results.data[0].results[0]["data"]
-        assert result_data["title"] == "News Title"
+def test_init_raises_without_httpx():
+    with (
+        patch.object(serpapi_provider, "httpx", None),
+        patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}),
+        pytest.raises(ImportError),
+    ):
+        SerpApiWebRetriever()
 
 
-@pytest.mark.asyncio
-async def test_async_search_uses_direct_httpx_request(
-    mock_serpapi_client_instance,
-    mock_httpx_async_client,
-):
+def test_sync_search_uses_direct_httpx_request(mock_httpx_clients):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever(
             engine="bing",
@@ -158,54 +95,109 @@ async def test_async_search_uses_direct_httpx_request(
             gl="us",
         )
 
-        mock_response = {"organic_results": []}
-        _, client, response = mock_httpx_async_client
-        response.json.return_value = mock_response
+    mock_httpx_clients.response.json.return_value = {"organic_results": []}
 
-        await retriever.acall("local query", top_k=5)
+    retriever("local query", top_k=5)
 
-        call_args = client.get.call_args
-        assert call_args[0][0] == serpapi_provider.SERPAPI_SEARCH_URL
-        params = call_args[1]["params"]
-        assert params["engine"] == "bing"
-        assert params["q"] == "local query"
-        assert params["location"] == "Austin,Texas"
-        assert params["gl"] == "us"
-        assert params["num"] == 5
-        assert params["api_key"] == "test_key"
-
-
-def test_sync_search_uses_sdk_without_api_key_param(mock_serpapi_client_instance):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        retriever = SerpApiWebRetriever(engine="bing")
-
-    mock_serpapi_client_instance.search.return_value = {"organic_results": []}
-
-    retriever("sync query", top_k=2)
-
-    params = mock_serpapi_client_instance.search.call_args[0][0]
+    call_args = mock_httpx_clients.sync_client.get.call_args
+    assert call_args[0][0] == serpapi_provider.SERPAPI_SEARCH_URL
+    params = call_args[1]["params"]
+    assert params["api_key"] == "test_key"
     assert params["engine"] == "bing"
-    assert params["q"] == "sync query"
-    assert params["num"] == 2
-    assert "api_key" not in params
+    assert params["q"] == "local query"
+    assert params["location"] == "Austin,Texas"
+    assert params["gl"] == "us"
+    assert params["num"] == 5
 
 
-def test_search_uses_engine_specific_query_param(mock_serpapi_client_instance):
+@pytest.mark.asyncio
+async def test_async_search_uses_direct_httpx_request(mock_httpx_clients):
+    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
+        retriever = SerpApiWebRetriever(
+            engine="bing",
+            location="Austin,Texas",
+            gl="us",
+        )
+
+    mock_httpx_clients.response.json.return_value = {"organic_results": []}
+
+    await retriever.acall("local query", top_k=5)
+
+    call_args = mock_httpx_clients.async_client.get.call_args
+    assert call_args[0][0] == serpapi_provider.SERPAPI_SEARCH_URL
+    params = call_args[1]["params"]
+    assert params["api_key"] == "test_key"
+    assert params["engine"] == "bing"
+    assert params["q"] == "local query"
+    assert params["location"] == "Austin,Texas"
+    assert params["gl"] == "us"
+    assert params["num"] == 5
+
+
+@pytest.mark.asyncio
+async def test_organic_search(retriever, mock_httpx_clients):
+    mock_httpx_clients.response.json.return_value = {
+        "organic_results": [
+            {
+                "title": "Test Title",
+                "link": "https://example.com",
+                "snippet": "Test snippet content",
+                "date": "2024-01-15",
+            }
+        ]
+    }
+
+    results = await retriever.acall("test query", top_k=1)
+
+    assert results.response_type == "web_search"
+    assert len(results.data) == 1
+    assert len(results.data[0].results) == 1
+
+    result_data = results.data[0].results[0]["data"]
+    assert result_data["title"] == "Test Title"
+    assert result_data["url"] == "https://example.com"
+    assert result_data["content"] == "Test snippet content"
+    assert result_data["date"] == "2024-01-15"
+
+
+@pytest.mark.asyncio
+async def test_news_search(mock_httpx_clients):
+    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
+        retriever = SerpApiWebRetriever(tbm="nws")
+
+    mock_httpx_clients.response.json.return_value = {
+        "news_results": [
+            {
+                "title": "News Title",
+                "link": "https://news.com",
+                "snippet": "News snippet",
+                "date": "2 hours ago",
+            }
+        ]
+    }
+
+    results = await retriever.acall("news query", top_k=1)
+
+    assert results.response_type == "web_search"
+    assert len(results.data[0].results) == 1
+    result_data = results.data[0].results[0]["data"]
+    assert result_data["title"] == "News Title"
+
+
+def test_search_uses_engine_specific_query_param(mock_httpx_clients):
     with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
         retriever = SerpApiWebRetriever(engine="yahoo")
 
     params = retriever._build_search_params("query", top_k=1)
 
+    assert params["api_key"] == "test_key"
     assert params["engine"] == "yahoo"
     assert params["p"] == "query"
     assert "q" not in params
 
 
-def test_image_search(mock_serpapi_client_instance):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        retriever = SerpApiWebRetriever(tbm="isch")
-
-    mock_response = {
+def test_image_search(retriever, mock_httpx_clients):
+    mock_httpx_clients.response.json.return_value = {
         "images_results": [
             {
                 "title": "Image Title",
@@ -216,7 +208,6 @@ def test_image_search(mock_serpapi_client_instance):
             }
         ]
     }
-    mock_serpapi_client_instance.search.return_value = mock_response
 
     results = retriever("image query", top_k=1)
 
@@ -226,11 +217,8 @@ def test_image_search(mock_serpapi_client_instance):
     assert result["images"] == ["https://example.com/thumb.jpg"]
 
 
-def test_shopping_search(mock_serpapi_client_instance):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        retriever = SerpApiWebRetriever(tbm="shop")
-
-    mock_response = {
+def test_shopping_search(retriever, mock_httpx_clients):
+    mock_httpx_clients.response.json.return_value = {
         "shopping_results": [
             {
                 "title": "Product Title",
@@ -240,7 +228,6 @@ def test_shopping_search(mock_serpapi_client_instance):
             }
         ]
     }
-    mock_serpapi_client_instance.search.return_value = mock_response
 
     results = retriever("shopping query", top_k=1)
 
@@ -250,11 +237,8 @@ def test_shopping_search(mock_serpapi_client_instance):
     assert result_data["price"] == "$10.00"
 
 
-def test_results_are_limited_to_top_k(mock_serpapi_client_instance):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        retriever = SerpApiWebRetriever()
-
-    mock_serpapi_client_instance.search.return_value = {
+def test_results_are_limited_to_top_k(retriever, mock_httpx_clients):
+    mock_httpx_clients.response.json.return_value = {
         "organic_results": [
             {"title": "First", "link": "https://example.com/1"},
             {"title": "Second", "link": "https://example.com/2"},
@@ -267,30 +251,25 @@ def test_results_are_limited_to_top_k(mock_serpapi_client_instance):
     assert results.data[0].results[0]["data"]["title"] == "First"
 
 
-def test_sync_search(mock_serpapi_client_instance):
-    with patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}):
-        retriever = SerpApiWebRetriever()
+def test_sync_search(retriever, mock_httpx_clients):
+    mock_httpx_clients.response.json.return_value = {
+        "organic_results": [
+            {
+                "title": "Sync Test",
+                "link": "https://sync.com",
+                "snippet": "Sync content",
+            }
+        ]
+    }
 
-        mock_response = {
-            "organic_results": [
-                {
-                    "title": "Sync Test",
-                    "link": "https://sync.com",
-                    "snippet": "Sync content",
-                }
-            ]
-        }
+    results = retriever(["sync query"], top_k=1)
 
-        mock_serpapi_client_instance.search.return_value = mock_response
-
-        results = retriever(["sync query"], top_k=1)
-
-        assert results.response_type == "web_search"
-        assert len(results.data) == 1
-        assert results.data[0].results[0]["data"]["title"] == "Sync Test"
+    assert results.response_type == "web_search"
+    assert len(results.data) == 1
+    assert results.data[0].results[0]["data"]["title"] == "Sync Test"
 
 
-def test_init_raises_without_api_key(mock_serpapi_client):
+def test_init_raises_without_api_key(mock_httpx_clients):
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError):
             SerpApiWebRetriever()

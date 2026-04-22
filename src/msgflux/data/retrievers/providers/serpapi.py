@@ -3,11 +3,6 @@ from os import getenv
 from typing import Any, List, Mapping, Optional
 
 try:
-    import serpapi
-except ImportError:
-    serpapi = None
-
-try:
     import httpx
 except ImportError:
     httpx = None
@@ -84,11 +79,7 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        if serpapi is None:
-            raise ImportError(
-                "The 'serpapi' package is not installed. "
-                "Please install it via pip: pip install serpapi"
-            )
+        self._ensure_httpx()
 
         self.engine = engine or "google"
         self.location = location
@@ -97,7 +88,13 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         self.safe = safe
         self.tbm = tbm
         self.api_key = self._get_api_key()
-        self.client = serpapi.Client(api_key=self.api_key)
+
+    def _ensure_httpx(self) -> None:
+        if httpx is None:
+            raise ImportError(
+                "The 'httpx' package is not installed. "
+                "Please install it via pip: pip install httpx"
+            )
 
     def _get_api_key(self) -> str:
         for env_name in API_KEY_ENV_NAMES:
@@ -115,6 +112,7 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     def _build_search_params(self, query: str, top_k: int) -> dict:
         """Build params for SerpAPI search."""
         params = {
+            "api_key": self.api_key,
             "engine": self.engine,
             self._get_query_param(): query,
             "num": top_k,
@@ -131,12 +129,6 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         if self.tbm:
             params["tbm"] = self.tbm
 
-        return params
-
-    def _build_async_search_params(self, query: str, top_k: int) -> dict:
-        """Build params for direct async SerpApi search requests."""
-        params = self._build_search_params(query, top_k)
-        params["api_key"] = self.api_key
         return params
 
     def _format_result(self, result: Mapping[str, Any]) -> dict:
@@ -174,40 +166,43 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
 
         return results
 
+    def _parse_response_data(
+        self, data: Mapping[str, Any], query: str, top_k: int
+    ) -> List[dict]:
+        if data.get("error"):
+            logger.warning(
+                "SerpAPI search failed for query '%s': %s",
+                query,
+                data["error"],
+            )
+            return []
+
+        return self._parse_results(data, top_k)
+
     def _single_search(self, query: str, top_k: int) -> List[dict]:
         """Internal method to search SerpAPI for a single query."""
         try:
             params = self._build_search_params(query, top_k)
-            response = self.client.search(params)
-            return self._parse_results(response, top_k)
+            with httpx.Client() as client:
+                response = client.get(SERPAPI_SEARCH_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            return self._parse_response_data(data, query, top_k)
         except Exception as e:
             logger.warning("SerpAPI search failed for query '%s': %s", query, e)
             return []
 
     async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
         """Async internal method to search SerpAPI for a single query."""
-        if httpx is None:
-            raise ImportError(
-                "The 'httpx' package is not installed. "
-                "Please install it via pip: pip install httpx"
-            )
-
         try:
-            params = self._build_async_search_params(query, top_k)
+            params = self._build_search_params(query, top_k)
             async with httpx.AsyncClient() as client:
                 response = await client.get(SERPAPI_SEARCH_URL, params=params)
                 response.raise_for_status()
                 data = response.json()
 
-            if data.get("error"):
-                logger.warning(
-                    "SerpAPI search failed for query '%s': %s",
-                    query,
-                    data["error"],
-                )
-                return []
-
-            return self._parse_results(data, top_k)
+            return self._parse_response_data(data, query, top_k)
         except Exception as e:
             logger.warning("SerpAPI search failed for query '%s': %s", query, e)
             return []
