@@ -62,6 +62,72 @@ When the model decides to use a tool, the Agent intercepts the response, execute
              (next cycle)     [ Output ]
 ```
 
+---
+
+## Builtin Tools
+
+msgFlux provides built-in tools that work out of the box:
+
+!!! info "Installation"
+    Some tools require additional dependencies. Install them with:
+    ```bash
+    pip install msgflux[openai] wikipedia
+    ```
+
+### WebFetch
+
+`WebFetch` fetches and parses web pages at request time. It uses an LLM to convert HTML to markdown.
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import WebFetch
+
+class WebReader(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    system_message = "You help users understand web content."
+    tools = [WebFetch]
+    config = {"verbose": True}
+
+agent = WebReader()
+result = agent("Summarize the main points from https://news.ycombinator.com")
+```
+
+### WebSearch
+
+`WebSearch` performs web searches backed by either a retriever or a model:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import WebSearch
+
+# Retriever-backed search (using Exa, Brave, Tavily, etc.)
+retriever_search = WebSearch("retriever/exa")
+
+# Model-backed search
+model_search = WebSearch("model/openai/gpt-4o-search-preview")
+
+# Or use environment variables:
+# export MSGFLUX_TOOL_WEB_SEARCH_ENGINE="retriever/wikipedia"
+env_search = WebSearch()
+
+class Researcher(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    system_message = "You help users find up-to-date information."
+    tools = [retriever_search, model_search, env_search]
+    config = {"verbose": True}
+
+agent = Researcher()
+result = agent("What is the latest Python version?")
+```
+
+Supported retriever engines: `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
+
+Supported model engines: any OpenAI-compatible model.
+
+---
+
 ???+ example
 
     === "GitHub API"
