@@ -368,7 +368,9 @@ class TestModule:
     def test_register_method_hook_preserves_bound_method_semantics(self):
         """Test hooked methods still behave like bound methods."""
         module = MethodHookModule()
-        module.register_method_hook("transform", lambda mod, args, kwargs, output: output)
+        module.register_method_hook(
+            "transform", lambda mod, args, kwargs, output: output
+        )
 
         wrapped = module.transform
 

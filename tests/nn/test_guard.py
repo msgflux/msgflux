@@ -166,7 +166,9 @@ class TestGuardRegistration:
                 return data
 
         module = GuardedModule()
-        guard = Guard(validator=lambda data: {"safe": True}, on="pre", method="validate")
+        guard = Guard(
+            validator=lambda data: {"safe": True}, on="pre", method="validate"
+        )
         handle = guard.register(module)
 
         assert len(module._method_pre_hooks["validate"]) == 1
