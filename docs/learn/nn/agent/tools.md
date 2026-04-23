@@ -64,19 +64,13 @@ When the model decides to use a tool, the Agent intercepts the response, execute
 
 ---
 
-## Builtin Tools
+### Builtin Tools
 
 msgFlux provides built-in tools that work out of the box:
 
-!!! info "Installation"
-    Some tools require additional dependencies. Install them with:
-    ```bash
-    pip install msgflux[openai] wikipedia
-    ```
+#### WebFetch
 
-### WebFetch
-
-`WebFetch` fetches and parses web pages at request time. It uses an LLM to convert HTML to markdown.
+`WebFetch` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing.
 
 ```python
 import msgflux as mf
@@ -93,7 +87,7 @@ agent = WebReader()
 result = agent("Summarize the main points from https://news.ycombinator.com")
 ```
 
-### WebSearch
+#### WebSearch
 
 `WebSearch` performs web searches backed by either a retriever or a model:
 
