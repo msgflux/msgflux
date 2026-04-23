@@ -64,64 +64,6 @@ When the model decides to use a tool, the Agent intercepts the response, execute
 
 ---
 
-### Builtin Tools
-
-msgFlux provides built-in tools that work out of the box:
-
-#### WebFetch
-
-`WebFetch` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing.
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from msgflux.tools.builtin import WebFetch
-
-class WebReader(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = "You help users understand web content."
-    tools = [WebFetch]
-    config = {"verbose": True}
-
-agent = WebReader()
-result = agent("Summarize the main points from https://news.ycombinator.com")
-```
-
-#### WebSearch
-
-`WebSearch` performs web searches backed by either a retriever or a model:
-
-```python
-import msgflux as mf
-import msgflux.nn as nn
-from msgflux.tools.builtin import WebSearch
-
-# Retriever-backed search (using Exa, Brave, Tavily, etc.)
-retriever_search = WebSearch("retriever/exa")
-
-# Model-backed search
-model_search = WebSearch("model/openai/gpt-4o-search-preview")
-
-# Or use environment variables:
-# export MSGFLUX_TOOL_WEB_SEARCH_ENGINE="retriever/wikipedia"
-env_search = WebSearch()
-
-class Researcher(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = "You help users find up-to-date information."
-    tools = [retriever_search, model_search, env_search]
-    config = {"verbose": True}
-
-agent = Researcher()
-result = agent("What is the latest Python version?")
-```
-
-Supported retriever engines: `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
-
-Supported model engines: any OpenAI-compatible model.
-
----
-
 ???+ example
 
     === "GitHub API"
@@ -254,6 +196,91 @@ Supported model engines: any OpenAI-compatible model.
 
         response = agent("List Python files in the current directory")
         ```
+
+---
+
+### Builtin Tools
+
+msgFlux provides built-in tools that work out of the box:
+
+#### WebFetch
+
+`WebFetch` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing.
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import WebFetch
+
+class WebReader(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    system_message = "You help users understand web content."
+    tools = [WebFetch]
+    config = {"verbose": True}
+
+agent = WebReader()
+result = agent("Summarize the main points from https://news.ycombinator.com")
+```
+
+#### WebSearch
+
+`WebSearch` performs web searches backed by either a retriever or a model:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import WebSearch
+
+# Retriever-backed search (using Exa, Brave, Tavily, etc.)
+retriever_search = WebSearch("retriever/exa")
+
+# Model-backed search
+model_search = WebSearch("model/openai/gpt-4o-search-preview")
+
+# Or use environment variables:
+# export MSGFLUX_TOOL_WEB_SEARCH_ENGINE="retriever/wikipedia"
+env_search = WebSearch()
+
+class Researcher(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    system_message = "You help users find up-to-date information."
+    tools = [retriever_search, model_search, env_search]
+    config = {"verbose": True}
+
+agent = Researcher()
+result = agent("What is the latest Python version?")
+```
+
+Supported retriever engines: `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
+
+Supported model engines: any OpenAI-compatible model.
+
+#### Parameters
+
+- **`init_params`**: Passed when initializing the retriever or model backend.
+
+- **`call_params`**: Passed on each retriever call (retriever engines only).
+
+```python
+# init_params: configure the backend at initialization
+search = WebSearch(
+    "retriever/exa",
+    init_params={"include_text": True, "max_characters": 2000},
+)
+
+# call_params: passed on each call (retriever engines only)
+result = search("Python news", call_params={"top_k": 5})
+```
+
+Alternatively, read from environment variables:
+```bash
+export MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS='{"include_text": true}'
+export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS='{"top_k": 5}'
+```
+
+---
+
+???+ example
 
     === "Web Fetch"
 
