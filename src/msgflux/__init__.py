@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from msgspec_ext import load_dotenv
 
     from msgflux.cache import response_cache
+    from msgflux.channels import ChannelRegistry
     from msgflux.core.dotdict import dotdict
     from msgflux.core.examples import Example
     from msgflux.core.message import Message
@@ -31,6 +32,7 @@ __all__ = [
     "Audio",
     "ChatBlock",
     "ChatML",
+    "ChannelRegistry",
     "Example",
     "File",
     "Image",
@@ -63,6 +65,7 @@ _LAZY_IMPORTS = {
     "Audio": ("msgflux.data.types", "Audio"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),
+    "ChannelRegistry": ("msgflux.channels", "ChannelRegistry"),
     "DB": ("msgflux.data.dbs", "DB"),
     "Example": ("msgflux.core.examples", "Example"),
     "File": ("msgflux.data.types", "File"),

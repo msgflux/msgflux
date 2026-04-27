@@ -76,10 +76,17 @@ Homepage = "https://github.com/msgflux/msgflux"
 Documentation = "https://github.com/msgflux/msgflux"
 Repository = "https://github.com/msgflux/msgflux"
 
+[project.scripts]
+msgflux = "msgflux.channels.cli:main"
+
 [project.optional-dependencies]
 openai = [
     "openai>=1.97.1",
     "opentelemetry-instrumentation-openai>=0.43.1",
+]
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
 httpx = [
     "httpx>=0.28.1",
