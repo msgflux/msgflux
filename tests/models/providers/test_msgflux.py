@@ -64,14 +64,14 @@ class TestMsgFluxChatCompletion:
 
         model = MsgFluxChatCompletion(
             model_id="support",
-            run_config={"kwargs": {"debug": True}},
+            run_config={"model_preference": "fast"},
             variables={"tenant": "acme"},
         )
 
         adapted = model._adapt_params({"messages": [], "model": "support"})
 
         assert adapted["extra_body"]["run_config"] == {
-            "kwargs": {"debug": True},
+            "model_preference": "fast",
             "vars": {"tenant": "acme"},
         }
 

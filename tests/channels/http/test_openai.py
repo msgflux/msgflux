@@ -72,6 +72,36 @@ async def test_create_chat_completion_calls_agent_with_run_config():
 
 
 @pytest.mark.asyncio
+async def test_create_chat_completion_does_not_accept_run_config_kwargs():
+    registry = ChannelRegistry()
+    agent = FakeAgent("hello")
+    registry.agent(agent)
+    request = ChatCompletionRequest(
+        model="support",
+        messages=[{"role": "user", "content": "hi"}],
+        run_config={
+            "kwargs": {
+                "stream": True,
+                "messages": [],
+                "task": "ignored",
+            },
+        },
+    )
+
+    await create_chat_completion(registry, request)
+
+    assert agent.calls == [
+        {
+            "messages": [{"role": "user", "content": "hi"}],
+            "vars": {},
+            "model_preference": None,
+            "tool_filter": None,
+            "stream": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_create_chat_completion_applies_pre_and_post_processors():
     registry = ChannelRegistry()
     agent = FakeAgent("hello")

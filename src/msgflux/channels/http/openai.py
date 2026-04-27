@@ -203,7 +203,6 @@ async def prepare_agent_run(
         stream=request.stream,
         model_preference=run_config.get("model_preference"),
         tool_filter=run_config.get("tool_filter"),
-        kwargs=dict(run_config.get("kwargs") or {}),
     )
 
     for processor in registry.pre_processors(request.model):

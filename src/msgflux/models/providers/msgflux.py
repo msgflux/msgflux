@@ -76,7 +76,7 @@ def _merge_run_config(
 ) -> Dict[str, Any]:
     merged = dict(base or {})
     for key, value in dict(update or {}).items():
-        if key in {"vars", "kwargs"}:
+        if key == "vars":
             merged[key] = {
                 **dict(merged.get(key) or {}),
                 **dict(value or {}),

@@ -97,7 +97,6 @@ The supported request fields are:
 | `vars` | Runtime variables passed to the Agent. |
 | `model_preference` | Optional model preference forwarded to the Agent. |
 | `tool_filter` | Optional tool filtering metadata forwarded to the Agent. |
-| `kwargs` | Extra runtime kwargs forwarded to `Agent.acall`. |
 
 The request is converted into an `AgentRun` before the Agent is executed:
 
@@ -108,14 +107,141 @@ The request is converted into an `AgentRun` before the Agent is executed:
 | `run_config.vars` | `run.variables` | `Agent.acall(vars=...)` |
 | `run_config.model_preference` | `run.model_preference` | `Agent.acall(model_preference=...)` |
 | `run_config.tool_filter` | `run.tool_filter` | `Agent.acall(tool_filter=...)` |
-| `run_config.kwargs` | `run.kwargs` | expanded into `Agent.acall(**kwargs)` |
 
-Use `run_config.kwargs` for Agent runtime inputs that are not part of the
-OpenAI Chat Completions shape, such as `task`, `task_context` and
-`task_multimodal`.
+`AgentRun` also has an internal `run.kwargs` field. It is not accepted from the
+HTTP request. Use pre-processors to populate it when you need Agent runtime
+inputs that are not part of the OpenAI Chat Completions shape, such as `task`,
+`task_context` and `task_multimodal`.
 
 The endpoint does not persist sessions. Each request should contain the
 messages required for that turn.
+
+## Model preference
+
+Use `run_config.model_preference` when the Agent uses a `ModelGateway`. This
+lets the caller select a named model deployment without changing the public
+agent name in `model`.
+
+```python
+import msgflux as mf
+from msgflux import nn
+
+gateway = mf.ModelGateway([
+    {
+        "model_name": "fast",
+        "model": mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    },
+    {
+        "model_name": "quality",
+        "model": mf.Model.chat_completion("openai/gpt-5.2"),
+    },
+])
+
+registry = mf.ChannelRegistry()
+registry.agent(nn.Agent("assistant", gateway), name="assistant")
+```
+
+Select the gateway model per request:
+
+```bash
+curl -s http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "assistant",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Summarize this contract clause."
+      }
+    ],
+    "run_config": {
+      "model_preference": "quality"
+    }
+  }'
+```
+
+With the msgFlux client provider:
+
+```python
+model = mf.Model.chat_completion(
+    "msgflux/assistant",
+    run_config={"model_preference": "fast"},
+)
+```
+
+You can still override it per request through `extra_body`:
+
+```python
+response = await model.acall(
+    [{"role": "user", "content": "Analyze this carefully."}],
+    extra_body={
+        "run_config": {
+            "model_preference": "quality",
+        }
+    },
+)
+```
+
+## Tool filter
+
+Use `run_config.tool_filter` to control which Agent tools are available for a
+single HTTP request. This is useful when the same Agent is exposed to different
+surfaces with different safety or capability rules.
+
+`tool_filter` must contain exactly one key:
+
+| Shape | Behavior |
+|---|---|
+| `{"allow": "tool_name"}` | Exposes only one tool. |
+| `{"allow": ["tool_a", "tool_b"]}` | Exposes only the listed tools. |
+| `{"block": "tool_name"}` | Blocks one tool. |
+| `{"block": ["tool_a", "tool_b"]}` | Blocks the listed tools. |
+| `{"block": "*"}` | Disables all tools for that request. |
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Check order A1002, but do not browse external pages."
+      }
+    ],
+    "run_config": {
+      "vars": {
+        "tenant": "acme"
+      },
+      "tool_filter": {
+        "allow": ["get_order_status"]
+      }
+    }
+  }'
+```
+
+Disable all tools temporarily:
+
+```bash
+curl -s http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Answer from model knowledge only."
+      }
+    ],
+    "run_config": {
+      "tool_filter": {
+        "block": "*"
+      }
+    }
+  }'
+```
 
 ## cURL
 
@@ -252,7 +378,7 @@ pre-processor can:
 - Add or replace `run.variables`.
 - Override `run.stream`.
 - Set `run.model_preference` or `run.tool_filter`.
-- Add `run.kwargs` such as `task`, `task_context` or `task_multimodal`.
+- Add internal `run.kwargs` such as `task`, `task_context` or `task_multimodal`.
 
 Prefer passing server-side data through `run.variables` instead of injecting
 extra `system` messages into the client-provided `messages`.
@@ -285,7 +411,6 @@ def force_billing_vars(_request, _context, run):
             **run.variables,
             "department": "billing",
         },
-        "kwargs": run.kwargs,
     }
 ```
 
@@ -403,21 +528,35 @@ def openai_images_to_task_multimodal(_request, _context, run):
 | `video` | URL, local path, or list of video sources. |
 | `file` | URL, local path, or list of file sources. |
 
-You can also bypass message conversion and pass Agent kwargs directly:
+Alternatively, if you control the server-side pre-processor, define a compact
+client contract in `run_config.vars` and translate it into `task_multimodal`:
 
 ```json
 {
   "model": "vision",
   "messages": [],
   "run_config": {
-    "kwargs": {
+    "vars": {
       "task": "Describe this image.",
-      "task_multimodal": {
-        "image": "https://raw.githubusercontent.com/msgflux/msgflux/main/docs/assets/logo.png"
-      }
+      "image_url": "https://raw.githubusercontent.com/msgflux/msgflux/main/docs/assets/logo.png"
     }
   }
 }
+```
+
+```python
+@registry.pre("vision")
+def vars_to_multimodal(_request, _context, run):
+    image_url = run.variables.get("image_url")
+    task = run.variables.get("task", "Describe the image.")
+
+    run.messages = []
+    run.kwargs = {
+        **run.kwargs,
+        "task": task,
+        "task_multimodal": {"image": image_url},
+    }
+    return run
 ```
 
 ## Post-processing
