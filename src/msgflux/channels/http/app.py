@@ -18,6 +18,7 @@ from msgflux.channels.registry import ChannelRegistry
 def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
     try:
         fastapi_cls = import_module("fastapi").FastAPI
+        request_cls = import_module("fastapi").Request
         responses = import_module("fastapi.responses")
         response_cls = responses.Response
         streaming_response_cls = responses.StreamingResponse
@@ -37,7 +38,7 @@ def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
         return {"status": "ok", "agents": sorted(registry.agents())}
 
     @app.post("/v1/chat/completions", response_class=msgspec_json_response)
-    async def chat_completions(http_request: Any):
+    async def chat_completions(http_request: request_cls):
         try:
             request = decode_chat_completion_request(await http_request.body())
         except msgspec.ValidationError as e:
