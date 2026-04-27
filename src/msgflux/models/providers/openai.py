@@ -156,6 +156,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         enable_cache: Optional[bool] = False,
         cache_size: Optional[int] = 128,
         retry: Optional[Any] = None,
+        **extra_body_kwargs: Any,
     ):
         """Args:
         model_id:
@@ -219,6 +220,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         extra_body:
             Provider-specific request body extensions forwarded to
             OpenAI-compatible clients.
+        extra_body_kwargs:
+            Additional provider-specific request body extensions passed
+            directly as keyword arguments. These are merged into
+            ``extra_body``.
         verbose:
             If True, Prints the model output to the console before it is transformed
             into typed structured output.
@@ -259,8 +264,21 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["modalities"] = modalities
         if web_search_options:
             sampling_run_params["web_search_options"] = web_search_options
-        if extra_body is not None:
-            sampling_run_params["extra_body"] = dict(extra_body)
+        merged_extra_body = dict(extra_body or {})
+        if extra_body_kwargs:
+            duplicated_extra_body_keys = sorted(
+                set(merged_extra_body).intersection(extra_body_kwargs)
+            )
+            if duplicated_extra_body_keys:
+                duplicated = ", ".join(duplicated_extra_body_keys)
+                raise ValueError(
+                    "Duplicate provider extra-body keys passed in both "
+                    "`extra_body` and direct kwargs: "
+                    f"{duplicated}"
+                )
+            merged_extra_body.update(extra_body_kwargs)
+        if extra_body is not None or extra_body_kwargs:
+            sampling_run_params["extra_body"] = merged_extra_body
         if audio:
             sampling_run_params["audio"] = audio
         if reasoning_effort:

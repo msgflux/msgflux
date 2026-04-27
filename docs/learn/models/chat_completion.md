@@ -87,6 +87,20 @@ Use `extra_body` for provider-specific request body fields supported by
 OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
 forwarded to the underlying OpenAI SDK client.
 
+You can also pass provider-specific fields directly as keyword arguments
+in the model constructor. msgFlux merges these kwargs into `extra_body`.
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "brave/brave",
+    extra_body={"enable_citations": True},
+    enable_entities=True,    # merged into extra_body
+    enable_research=False,   # merged into extra_body
+)
+```
+
 ## 2. **System Prompt**
 
 The `system_prompt` parameter sets the model's overarching behavior and role before any user messages. It is a convenience shorthand: when provided, msgFlux automatically inserts a `system` message at the beginning of the conversation, so you don't have to do it manually in the messages list.
