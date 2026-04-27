@@ -56,6 +56,7 @@ _RESERVED_KWARGS = {
     "task",
     "vars",
     "messages",
+    "stream",
     "task_multimodal",
     "task_context",
     "model_preference",
@@ -405,6 +406,7 @@ class Agent(Module, metaclass=AutoParams):
                     - task_context: Override task context
                     - model_preference: Override model preference
                     - vars: Override template/tool variables
+                    - stream: Override streaming mode for this call only.
                     - tool_filter: Filter which tools are available to the model.
                       Must contain exactly one key: "allow" or "block".
                       Values can be a single tool name or a list of names.
@@ -489,6 +491,8 @@ class Agent(Module, metaclass=AutoParams):
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         model_execution_params = self._prepare_model_execution(
             messages=messages,
@@ -496,6 +500,7 @@ class Agent(Module, metaclass=AutoParams):
             model_preference=model_preference,
             vars=vars,
             tool_filter=tool_filter,
+            stream=stream,
         )
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
@@ -508,6 +513,8 @@ class Agent(Module, metaclass=AutoParams):
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         model_execution_params = self._prepare_model_execution(
             messages=messages,
@@ -515,6 +522,7 @@ class Agent(Module, metaclass=AutoParams):
             model_preference=model_preference,
             vars=vars,
             tool_filter=tool_filter,
+            stream=stream,
         )
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
@@ -527,7 +535,10 @@ class Agent(Module, metaclass=AutoParams):
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Mapping[str, Any]:
+        stream = self._resolve_stream(stream=stream)
         system_prompt = self.get_system_prompt(vars)
 
         tool_schemas = self.tool_library.get_tool_json_schemas()
@@ -567,7 +578,7 @@ class Agent(Module, metaclass=AutoParams):
             messages=messages,
             system_prompt=system_prompt or None,
             prefilling=prefilling,
-            stream=self.config.get("stream", False),
+            stream=stream,
             tool_definitions=tool_definitions,
             generation_schema=self.generation_schema,
             typed_parser=self.typed_parser,
@@ -577,6 +588,31 @@ class Agent(Module, metaclass=AutoParams):
             model_execution_params.model_preference = model_preference
 
         return model_execution_params
+
+    def _resolve_stream(self, *, stream: Optional[bool] = None) -> bool:
+        if stream is None:
+            stream = self.config.get("stream", False)
+        if not isinstance(stream, bool):
+            raise TypeError(f"`stream` must be a bool or None, given `{type(stream)}`")
+        if stream is True:
+            self._validate_stream_compatibility()
+        return stream
+
+    def _validate_stream_compatibility(self) -> None:
+        if self.generation_schema is not None:
+            raise ValueError("`generation_schema` is not `stream=True` compatible")
+
+        has_post_hooks = bool(self._forward_hooks)
+        if hasattr(self, "generator"):
+            has_post_hooks = has_post_hooks or bool(self.generator._forward_hooks)
+        if has_post_hooks:
+            raise ValueError("Hooks with `on='post'` are not `stream=True` compatible")
+
+        if self.templates.get("response") is not None:
+            raise ValueError("`templates['response']` is not `stream=True` compatible")
+
+        if self.typed_parser is not None:
+            raise ValueError("`typed_parser` is not `stream=True` compatible")
 
     # --- Response Processing ---
 
@@ -602,6 +638,8 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
         if isinstance(model_response, ModelStreamResponse):
             wait_for_event(model_response._response_type_event)
@@ -615,6 +653,7 @@ class Agent(Module, metaclass=AutoParams):
                 vars,
                 model_preference,
                 tool_filter,
+                stream=stream,
             )
         elif is_subclass_of(self.generation_schema, ToolFlowControl):
             model_response, messages = self._process_tool_flow_control_response(
@@ -624,6 +663,7 @@ class Agent(Module, metaclass=AutoParams):
                 vars,
                 model_preference,
                 tool_filter,
+                stream=stream,
             )
 
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
@@ -651,6 +691,8 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
         if isinstance(model_response, ModelStreamResponse):
             await await_for_event(model_response._response_type_event)
@@ -664,6 +706,7 @@ class Agent(Module, metaclass=AutoParams):
                 vars,
                 model_preference,
                 tool_filter,
+                stream=stream,
             )
         elif is_subclass_of(self.generation_schema, ToolFlowControl):
             (
@@ -676,6 +719,7 @@ class Agent(Module, metaclass=AutoParams):
                 vars,
                 model_preference,
                 tool_filter,
+                stream=stream,
             )
 
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
@@ -705,6 +749,8 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """Handle tool flow control responses using the ToolFlowControl interface."""
         max_tool_turns = self.config.get("max_tool_turns")
@@ -740,6 +786,7 @@ class Agent(Module, metaclass=AutoParams):
                         model_preference=model_preference,
                         vars=vars,
                         tool_filter=tool_filter,
+                        stream=stream,
                     )
                     continue
 
@@ -765,6 +812,7 @@ class Agent(Module, metaclass=AutoParams):
                 model_preference=model_preference,
                 vars=vars,
                 tool_filter=tool_filter,
+                stream=stream,
             )
 
     async def _aprocess_tool_flow_control_response(
@@ -775,6 +823,8 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """Async version of _process_tool_flow_control_response.
         Handle tool flow control responses using the ToolFlowControl interface.
@@ -812,6 +862,7 @@ class Agent(Module, metaclass=AutoParams):
                         model_preference=model_preference,
                         vars=vars,
                         tool_filter=tool_filter,
+                        stream=stream,
                     )
                     continue
 
@@ -839,6 +890,7 @@ class Agent(Module, metaclass=AutoParams):
                 model_preference=model_preference,
                 vars=vars,
                 tool_filter=tool_filter,
+                stream=stream,
             )
 
     def _process_tool_call_response(
@@ -849,6 +901,8 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """ToolCall example:
         [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
@@ -872,6 +926,7 @@ class Agent(Module, metaclass=AutoParams):
                         model_preference=model_preference,
                         vars=vars,
                         tool_filter=tool_filter,
+                        stream=stream,
                     )
                     continue
 
@@ -911,6 +966,7 @@ class Agent(Module, metaclass=AutoParams):
                 model_preference=model_preference,
                 vars=vars,
                 tool_filter=tool_filter,
+                stream=stream,
             )
 
     async def _aprocess_tool_call_response(
@@ -921,6 +977,8 @@ class Agent(Module, metaclass=AutoParams):
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        *,
+        stream: Optional[bool] = None,
     ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
         """Async version of _process_tool_call_response.
         ToolCall example: [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
@@ -944,6 +1002,7 @@ class Agent(Module, metaclass=AutoParams):
                         model_preference=model_preference,
                         vars=vars,
                         tool_filter=tool_filter,
+                        stream=stream,
                     )
                     continue
 
@@ -983,6 +1042,7 @@ class Agent(Module, metaclass=AutoParams):
                 model_preference=model_preference,
                 vars=vars,
                 tool_filter=tool_filter,
+                stream=stream,
             )
 
     def _process_tool_call(
@@ -1097,6 +1157,7 @@ class Agent(Module, metaclass=AutoParams):
         task = kwargs.pop("task", _UNSET)
         vars = kwargs.pop("vars", {})
         messages = kwargs.pop("messages", None)
+        stream = kwargs.pop("stream", None)
         model_preference = kwargs.pop("model_preference", None)
         tool_filter = kwargs.pop("tool_filter", None)
 
@@ -1181,6 +1242,7 @@ class Agent(Module, metaclass=AutoParams):
             "messages": messages,
             "model_preference": model_preference,
             "tool_filter": tool_filter,
+            "stream": stream,
             "vars": vars,
         }
 
@@ -1194,6 +1256,7 @@ class Agent(Module, metaclass=AutoParams):
         task = kwargs.pop("task", _UNSET)
         vars = kwargs.pop("vars", {})
         messages = kwargs.pop("messages", None)
+        stream = kwargs.pop("stream", None)
         model_preference = kwargs.pop("model_preference", None)
         tool_filter = kwargs.pop("tool_filter", None)
 
@@ -1279,6 +1342,7 @@ class Agent(Module, metaclass=AutoParams):
             "messages": messages,
             "model_preference": model_preference,
             "tool_filter": tool_filter,
+            "stream": stream,
             "vars": vars,
         }
 
