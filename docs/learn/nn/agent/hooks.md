@@ -15,6 +15,7 @@ A `Guard` validates inputs and/or outputs of a Module. Each Guard wraps a **vali
 - **`include_data`** — if `True`, attaches the data that triggered the guard to the raised exception via `exc.data`. Defaults to `False` for security (the data may contain unsafe content).
 
 The validator receives `data` as a positional argument and must return either a dict with `"safe"` (bool) or a `ModelResponse` (auto-consumed by Guard).
+For `Guard(..., on="pre", method=...)`, `data` is the method `kwargs` payload. If a method is intended to be guarded in pre-mode, prefer a keyword-oriented signature.
 
 ```python
 from msgflux.nn.hooks import Guard
@@ -32,6 +33,21 @@ guard = Guard(validator=my_validator, on="pre")
 # Guard a specific method on the module itself
 guard = Guard(validator=my_validator, on="post", method="_prepare_response")
 ```
+
+!!! note "Method Guard Input Shape"
+    `Guard` on a specific method is best suited for keyword-oriented extension points.
+    In `on="pre"` mode, the validator sees the method `kwargs`, not positional args.
+
+    ```python
+    class MyModule(nn.Module):
+        def forward(self, text):
+            return self.validate(data=text)
+
+        def validate(self, *, data):
+            return data
+
+    guard = Guard(validator=my_validator, on="pre", method="validate")
+    ```
 
 ???+ note "Guard Examples"
 

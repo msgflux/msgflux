@@ -18,6 +18,8 @@ class Guard(Hook):
 
     The validator receives ``data`` as a positional argument and must return
     either a dict with ``"safe"`` (bool) or a ``ModelResponse`` (auto-consumed).
+    For method guards with ``on="pre"``, ``data`` is the method ``kwargs`` payload,
+    so guarded extension points should prefer keyword-oriented signatures.
 
     Args:
         validator: Callable that receives ``data`` and returns
@@ -29,7 +31,8 @@ class Guard(Hook):
             Defaults to ``"generator"`` for forward hooks and ``None`` for
             method hooks.
         method: Optional method name to register the guard on. ``None``
-            targets the module execution boundary (`forward`).
+            targets the module execution boundary (`forward`). When used with
+            ``on="pre"``, the validator receives the method ``kwargs``.
         include_data: If ``True``, the data that triggered the guard is
             attached to the raised exception via ``exc.data``. Defaults
             to ``False`` for security (the data may contain unsafe content).

@@ -130,6 +130,12 @@ result = model(" Hello ")
 print(result)  # "[hello]"
 ```
 
+!!! note
+    Method hooks themselves can inspect both `args` and `kwargs`. If the method
+    will be used with `Guard(..., on="pre", method=...)`, prefer a
+    keyword-oriented method signature, because `Guard` validates the method
+    `kwargs` payload in that mode.
+
 ### Complete Hook Example
 
 ```python
