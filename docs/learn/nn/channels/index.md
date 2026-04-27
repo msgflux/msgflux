@@ -45,21 +45,25 @@ from msgflux import nn
 
 mf.load_dotenv()
 
+registry = mf.ChannelRegistry()
 
+
+@registry.agent(name="support")
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "You are a concise customer support specialist."
 
 
+@registry.agent(name="billing")
 class BillingAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "You are a concise billing support specialist."
-
-
-registry = mf.ChannelRegistry()
-registry.agent(SupportAgent(), name="support")
-registry.agent(BillingAgent(), name="billing")
 ```
+
+`registry.agent` accepts either an instance or a class. When you pass a class,
+the registry instantiates it with no arguments and stores the instance. With
+`@registry.agent(...)`, the class definition stays usable in Python, while the
+server receives an instantiated Agent.
 
 Run it:
 
@@ -138,7 +142,11 @@ gateway = mf.ModelGateway([
 ])
 
 registry = mf.ChannelRegistry()
-registry.agent(nn.Agent("assistant", gateway), name="assistant")
+
+
+@registry.agent(name="assistant")
+class AssistantAgent(nn.Agent):
+    model = gateway
 ```
 
 Select the gateway model per request:
@@ -468,12 +476,10 @@ expect multimodal inputs through `task_multimodal`, so the channel can translate
 the request shape before execution.
 
 ```python
+@registry.agent(name="vision")
 class VisionAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "Describe images clearly and concisely."
-
-
-registry.agent(VisionAgent(), name="vision")
 
 
 def split_openai_content(content):

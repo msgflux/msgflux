@@ -4,7 +4,8 @@
 #
 # Run this server with:
 #
-#   uv run --extra server --extra openai msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
+#   uv run --extra server --extra openai msgflux server \
+#     examples/server_streaming_agent.py:registry --host 127.0.0.1
 #
 # The server listens on http://127.0.0.1:8010/v1 by default and exposes:
 #
@@ -17,7 +18,6 @@
 
 import msgflux as mf
 from msgflux import nn
-
 
 mf.load_dotenv()
 
@@ -44,6 +44,10 @@ def get_invoice_status(invoice_id: str) -> str:
     return INVOICE_DB.get(invoice_id, f"Invoice {invoice_id} was not found.")
 
 
+registry = mf.ChannelRegistry()
+
+
+@registry.agent(name="support")
 class SupportAgent(nn.Agent):
     """Customer support agent exposed through the OpenAI-compatible server."""
 
@@ -67,6 +71,7 @@ class SupportAgent(nn.Agent):
     tools = [get_order_status]
 
 
+@registry.agent(name="billing")
 class BillingAgent(nn.Agent):
     """Billing agent exposed through the same OpenAI-compatible server."""
 
@@ -89,11 +94,6 @@ class BillingAgent(nn.Agent):
     If the invoice does not exist, ask the user to confirm the invoice id.
     """
     tools = [get_invoice_status]
-
-
-registry = mf.ChannelRegistry()
-registry.agent(SupportAgent(), name="support")
-registry.agent(BillingAgent(), name="billing")
 
 
 @registry.pre()

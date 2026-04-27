@@ -66,16 +66,45 @@ class ChannelRegistry:
         name: Optional[str] = None,
     ) -> T | Callable[[T], T]:
         if obj is not None:
-            key = self._resolve_name(obj, name)
-            self._agents[key] = obj
+            self._register_agent(obj, name=name)
             return obj
 
         def decorator(agent_obj: T) -> T:
-            key = self._resolve_name(agent_obj, name)
-            self._agents[key] = agent_obj
+            self._register_agent(agent_obj, name=name)
             return agent_obj
 
         return decorator
+
+    def _register_agent(self, obj: T, *, name: Optional[str] = None) -> Any:
+        agent = self._materialize_agent(obj)
+        key = self._resolve_agent_name(obj, agent, name)
+        self._agents[key] = agent
+        return agent
+
+    def _materialize_agent(self, obj: T) -> Any:
+        if not inspect.isclass(obj):
+            return obj
+        try:
+            return obj()
+        except TypeError as e:
+            raise TypeError(
+                "ChannelRegistry.agent can register agent classes only when they "
+                "are instantiable without arguments. Register an instance when "
+                "constructor arguments are required."
+            ) from e
+
+    def _resolve_agent_name(
+        self,
+        original: Any,
+        agent: Any,
+        name: Optional[str] = None,
+    ) -> str:
+        try:
+            return self._resolve_name(agent, name)
+        except TypeError:
+            if agent is not original:
+                return self._resolve_name(original, name)
+            raise
 
     def pre(
         self,
