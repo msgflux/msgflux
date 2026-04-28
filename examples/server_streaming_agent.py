@@ -4,7 +4,7 @@
 #
 # Run this server with:
 #
-#   uv run --extra server --extra openai msgflux server \
+#   uv run --with 'msgflux[server,openai]' msgflux server \
 #     examples/server_streaming_agent.py:registry --host 127.0.0.1
 #
 # The server listens on http://127.0.0.1:8010/v1 by default and exposes:
@@ -14,7 +14,7 @@
 #
 # Run the matching streaming client with:
 #
-#   uv run --extra openai python examples/server_streaming_client.py
+#   uv run --with openai python examples/server_streaming_client.py
 
 import msgflux as mf
 from msgflux import nn
@@ -98,10 +98,10 @@ class BillingAgent(nn.Agent):
 
 @registry.pre()
 def add_server_context(_request, context, run):
-    run.variables = {
-        **run.variables,
-        "tenant": run.variables.get("tenant", "default"),
-        "tier": run.variables.get("tier", "standard"),
+    run.vars = {
+        **run.vars,
+        "tenant": run.vars.get("tenant", "default"),
+        "tier": run.vars.get("tier", "standard"),
         "agent_name": context.agent_name,
         "request_id": context.request_id,
     }

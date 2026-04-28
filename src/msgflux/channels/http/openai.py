@@ -85,7 +85,7 @@ async def create_chat_completion(
 
     output = await agent.acall(
         messages=run.messages,
-        vars=run.variables,
+        vars=run.vars,
         model_preference=run.model_preference,
         tool_filter=run.tool_filter,
         stream=False,
@@ -131,7 +131,7 @@ async def create_chat_completion_stream(
 
     output = await agent.acall(
         messages=run.messages,
-        vars=run.variables,
+        vars=run.vars,
         model_preference=run.model_preference,
         tool_filter=run.tool_filter,
         stream=True,
@@ -199,7 +199,7 @@ async def prepare_agent_run(
     run_config = _merged_run_config(request)
     run = AgentRun(
         messages=list(request.messages),
-        variables=dict(run_config.get("vars") or {}),
+        vars=dict(run_config.get("vars") or {}),
         stream=request.stream,
         model_preference=run_config.get("model_preference"),
         tool_filter=run_config.get("tool_filter"),
@@ -239,16 +239,12 @@ def _apply_run_update(run: AgentRun, update: Any) -> AgentRun:
     field_updates = {
         "messages": _as_list,
         "vars": _as_dict,
-        "variables": _as_dict,
         "stream": _identity,
         "model_preference": _identity,
         "tool_filter": _identity,
         "kwargs": _as_dict,
     }
-    target_fields = {
-        "vars": "variables",
-        "variables": "variables",
-    }
+    target_fields = {"vars": "vars"}
 
     for field_name, transform in field_updates.items():
         if field_name in update:

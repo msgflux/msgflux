@@ -33,9 +33,22 @@ def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
     app = fastapi_cls(**fastapi_kwargs)
     app.router.route_class = msgspec_route
 
+    @app.get("/")
+    async def home():
+        return {
+            "status": "ok",
+            "agents": "/agents",
+            "health": "/health",
+            "chat_completions": "/v1/chat/completions",
+        }
+
     @app.get("/health")
     async def health():
-        return {"status": "ok", "agents": sorted(registry.agents())}
+        return {"status": "ok"}
+
+    @app.get("/agents")
+    async def agents():
+        return {"agents": sorted(registry.agents())}
 
     @app.post("/v1/chat/completions", response_class=msgspec_json_response)
     async def chat_completions(http_request: request_cls):
@@ -50,7 +63,6 @@ def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
 
         try:
             if request.stream:
-                registry.get_agent(request.model)
                 return streaming_response_cls(
                     create_chat_completion_stream(registry, request),
                     media_type="text/event-stream",

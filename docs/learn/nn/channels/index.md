@@ -8,30 +8,60 @@ This lets any OpenAI SDK client call specialized msgFlux agents as if they were
 regular chat models. The request `model` selects the agent name registered in
 the server.
 
-Source repository:
-
-```text
-https://github.com/msgflux/msgflux
-```
-
 ## Install
 
 The HTTP server depends on FastAPI and Uvicorn:
 
 ```bash
-pip install "msgflux[server,openai]"
+uv pip install "msgflux[server,openai]"
 ```
 
-When working inside this repository, use:
+To run the quickstart without cloning the repository, download the example file
+first:
 
 ```bash
-uv run --extra server --extra openai msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
+curl -L -o server_streaming_agent.py \
+  https://raw.githubusercontent.com/msgflux/msgflux/main/examples/server_streaming_agent.py
+```
+
+Then run it:
+
+```bash
+uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
 ```
 
 The default server address is:
 
 ```text
 http://127.0.0.1:8010/v1
+```
+
+With the server running, inspect the registered agents:
+
+```bash
+curl -s http://127.0.0.1:8010/agents
+```
+
+Then call an agent through the Chat Completions endpoint:
+
+```bash
+curl -s http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "billing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Invoice INV-44 failed. What should I do now?"
+      }
+    ],
+    "run_config": {
+      "vars": {
+        "tenant": "acme",
+        "tier": "priority"
+      }
+    }
+  }'
 ```
 
 ## Registry
@@ -41,14 +71,14 @@ object from the CLI target.
 
 ```python
 import msgflux as mf
-from msgflux import nn
+import msgflux.nn as nn
 
 mf.load_dotenv()
 
 registry = mf.ChannelRegistry()
 
 
-@registry.agent(name="support")
+@registry.agent()
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "You are a concise customer support specialist."
@@ -60,22 +90,31 @@ class BillingAgent(nn.Agent):
     system_message = "You are a concise billing support specialist."
 ```
 
-`registry.agent` accepts either an instance or a class. When you pass a class,
-the registry instantiates it with no arguments and stores the instance. With
-`@registry.agent(...)`, the class definition stays usable in Python, while the
-server receives an instantiated Agent.
+!!! tip "Agent registration"
 
-Run it:
+    `registry.agent` accepts either an Agent instance or an Agent class. When
+    you pass a class, the registry instantiates it with no arguments and
+    stores the instance.
 
-```bash
-uv run --extra server --extra openai msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
-```
+    If you do not pass `name=`, the registry uses the Agent name exposed by the
+    object. For `nn.Agent` subclasses, that usually comes from the class name
+    via AutoParams. Pass `name="..."` only when you want to override the
+    registered name.
+
+    The same decorator also works with instances:
+
+    ```python
+    registry.agent(SupportAgent())
+    ```
 
 Use `--port` to override the default `8010`:
 
 ```bash
-uv run --extra server --extra openai msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1 --port 9000
+uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1 --port 9000
 ```
+
+If your registry object has a different name, pass it explicitly as
+`module.py:object_name`.
 
 ## Chat Completions
 
@@ -108,7 +147,7 @@ The request is converted into an `AgentRun` before the Agent is executed:
 |---|---|---|
 | `messages` | `run.messages` | `Agent.acall(messages=...)` |
 | `stream` | `run.stream` | `Agent.acall(stream=...)` |
-| `run_config.vars` | `run.variables` | `Agent.acall(vars=...)` |
+| `run_config.vars` | `run.vars` | `Agent.acall(vars=...)` |
 | `run_config.model_preference` | `run.model_preference` | `Agent.acall(model_preference=...)` |
 | `run_config.tool_filter` | `run.tool_filter` | `Agent.acall(tool_filter=...)` |
 
@@ -117,8 +156,117 @@ HTTP request. Use pre-processors to populate it when you need Agent runtime
 inputs that are not part of the OpenAI Chat Completions shape, such as `task`,
 `task_context` and `task_multimodal`.
 
+The server also exposes `GET /health` and `GET /agents`. Use `/health` for a
+simple status check and `/agents` to inspect the registered agent names.
+
 The endpoint does not persist sessions. Each request should contain the
 messages required for that turn.
+
+### Inspect Agents
+
+Use `/agents` to confirm the names you can send in `model`:
+
+```bash
+curl -s http://127.0.0.1:8010/agents
+```
+
+Because `SupportAgent` does not pass `name=`, the registry uses the class name
+as the registered name. `BillingAgent` is registered as `billing`.
+
+You can then call one of those names directly:
+
+```bash
+curl -s http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "billing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Invoice INV-44 failed. What should I do now?"
+      }
+    ],
+    "run_config": {
+      "vars": {
+        "tenant": "acme",
+        "tier": "priority"
+      }
+    }
+  }'
+```
+
+## Tools and Streaming
+
+This is the quickest end-to-end example because it combines a real tool,
+streaming output, and request-level tool control.
+
+The agent still needs to be registered with tools for `tool_filter` to matter:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import WebFetch, WebSearch
+
+
+registry = mf.ChannelRegistry()
+
+
+@registry.agent(name="support")
+class SupportAgent(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    tools = [
+        WebFetch,
+        WebSearch("retriever/wikipedia"),
+    ]
+    config = {"stream": True}
+```
+
+Stream a response while allowing only the web search tool:
+
+```bash
+curl -N http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "What can you tell me about the Python programming language?"
+      }
+    ],
+    "run_config": {
+      "vars": {
+        "tenant": "acme"
+      },
+      "tool_filter": {
+        "allow": ["web_search"]
+      }
+    }
+  }'
+```
+
+Block all tools for the same agent:
+
+```bash
+curl -N http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Answer from model knowledge only."
+      }
+    ],
+    "run_config": {
+      "tool_filter": {
+        "block": "*"
+      }
+    }
+  }'
+```
 
 ## Model preference
 
@@ -128,7 +276,7 @@ agent name in `model`.
 
 ```python
 import msgflux as mf
-from msgflux import nn
+import msgflux.nn as nn
 
 gateway = mf.ModelGateway([
     {
@@ -190,67 +338,6 @@ response = await model.acall(
 )
 ```
 
-## Tool filter
-
-Use `run_config.tool_filter` to control which Agent tools are available for a
-single HTTP request. This is useful when the same Agent is exposed to different
-surfaces with different safety or capability rules.
-
-`tool_filter` must contain exactly one key:
-
-| Shape | Behavior |
-|---|---|
-| `{"allow": "tool_name"}` | Exposes only one tool. |
-| `{"allow": ["tool_a", "tool_b"]}` | Exposes only the listed tools. |
-| `{"block": "tool_name"}` | Blocks one tool. |
-| `{"block": ["tool_a", "tool_b"]}` | Blocks the listed tools. |
-| `{"block": "*"}` | Disables all tools for that request. |
-
-Example:
-
-```bash
-curl -s http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "support",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Check order A1002, but do not browse external pages."
-      }
-    ],
-    "run_config": {
-      "vars": {
-        "tenant": "acme"
-      },
-      "tool_filter": {
-        "allow": ["get_order_status"]
-      }
-    }
-  }'
-```
-
-Disable all tools temporarily:
-
-```bash
-curl -s http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "support",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Answer from model knowledge only."
-      }
-    ],
-    "run_config": {
-      "tool_filter": {
-        "block": "*"
-      }
-    }
-  }'
-```
-
 ## cURL
 
 Non-streaming request:
@@ -263,7 +350,7 @@ curl -s http://127.0.0.1:8010/v1/chat/completions \
     "messages": [
       {
         "role": "user",
-        "content": "Meu pedido A1002 ainda nao chegou. O que aconteceu?"
+        "content": "My order A1002 still has not arrived. What happened?"
       }
     ],
     "run_config": {
@@ -286,7 +373,7 @@ curl -N http://127.0.0.1:8010/v1/chat/completions \
     "messages": [
       {
         "role": "user",
-        "content": "A fatura INV-44 falhou. O que devo fazer agora?"
+        "content": "Invoice INV-44 failed. What should I do now?"
       }
     ],
     "run_config": {
@@ -360,7 +447,7 @@ async def main():
         },
     )
     response = await model.acall(
-        [{"role": "user", "content": "Meu pedido A1002 ainda nao chegou."}],
+        [{"role": "user", "content": "My order A1002 still has not arrived."}],
         stream=True,
     )
 
@@ -374,7 +461,7 @@ asyncio.run(main())
 For a different server port:
 
 ```bash
-MSGFLUX_BASE_URL=http://127.0.0.1:9000/v1 uv run --extra openai python examples/server_streaming_client.py
+MSGFLUX_BASE_URL=http://127.0.0.1:9000/v1 uv run --with openai python examples/server_streaming_client.py
 ```
 
 ## Pre-processing
@@ -383,23 +470,31 @@ Use `registry.pre()` to mutate the `AgentRun` before `Agent.acall`. A
 pre-processor can:
 
 - Rewrite `run.messages`.
-- Add or replace `run.variables`.
+- Add or replace `run.vars`.
 - Override `run.stream`.
 - Set `run.model_preference` or `run.tool_filter`.
 - Add internal `run.kwargs` such as `task`, `task_context` or `task_multimodal`.
 
-Prefer passing server-side data through `run.variables` instead of injecting
-extra `system` messages into the client-provided `messages`.
+Prefer passing server-side data through `run.vars` instead of injecting extra
+`system` messages into the client-provided `messages`. `run.vars` is a flat
+shared dict: use it for request-scoped metadata that templates and tools should
+see, and use `run.kwargs` for structured agent inputs such as `task_context` or
+`task_multimodal`.
 
 ```python
 @registry.pre()
 def add_server_context(_request, context, run):
-    run.variables = {
-        **run.variables,
-        "tenant": run.variables.get("tenant", "default"),
-        "tier": run.variables.get("tier", "standard"),
-        "agent_name": context.agent_name,
-        "request_id": context.request_id,
+    run.vars = {
+        **run.vars,
+        "tenant": run.vars.get("tenant", "default"),
+        "tier": run.vars.get("tier", "standard"),
+    }
+    run.kwargs = {
+        **run.kwargs,
+        "task_context": {
+            "agent_name": context.agent_name,
+            "request_id": context.request_id,
+        },
     }
     return run
 ```
@@ -416,7 +511,7 @@ def force_billing_vars(_request, _context, run):
     return {
         "messages": run.messages,
         "vars": {
-            **run.variables,
+            **run.vars,
             "department": "billing",
         },
     }
@@ -451,8 +546,8 @@ def messages_to_task(_request, _context, run):
         **run.kwargs,
         "task": task,
         "task_context": {
-            "tenant": run.variables.get("tenant", "default"),
-            "tier": run.variables.get("tier", "standard"),
+            "tenant": run.vars.get("tenant", "default"),
+            "tier": run.vars.get("tier", "standard"),
         },
     }
     return run
@@ -463,7 +558,7 @@ This produces a call equivalent to:
 ```python
 await agent.acall(
     messages=[],
-    vars=run.variables,
+    vars=run.vars,
     task="...",
     task_context={...},
 )
@@ -553,8 +648,8 @@ client contract in `run_config.vars` and translate it into `task_multimodal`:
 ```python
 @registry.pre("vision")
 def vars_to_multimodal(_request, _context, run):
-    image_url = run.variables.get("image_url")
-    task = run.variables.get("task", "Describe the image.")
+    image_url = run.vars.get("image_url")
+    task = run.vars.get("task", "Describe the image.")
 
     run.messages = []
     run.kwargs = {
@@ -602,13 +697,13 @@ want to buffer the stream and lose incremental token delivery.
 The repository includes a multi-agent streaming example:
 
 ```bash
-uv run --extra server --extra openai msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
+uv run --with 'msgflux[server,openai]' msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
 ```
 
 In another terminal:
 
 ```bash
-uv run --extra openai python examples/server_streaming_client.py
+uv run --with openai python examples/server_streaming_client.py
 ```
 
 The example exposes two agents in the same server:

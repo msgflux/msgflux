@@ -4,11 +4,11 @@
 #
 # Start the server first:
 #
-#   uv run --extra server --extra openai msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
+#   uv run --with 'msgflux[server,openai]' msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
 #
 # Then run this streaming client:
 #
-#   uv run --extra openai python examples/server_streaming_client.py
+#   uv run --with openai python examples/server_streaming_client.py
 #
 # The provider uses MSGFLUX_BASE_URL when set. Otherwise it defaults to:
 #

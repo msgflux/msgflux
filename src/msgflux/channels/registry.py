@@ -25,7 +25,7 @@ class ChannelContext:
 @dataclass
 class AgentRun:
     messages: List[Mapping[str, Any]]
-    variables: Mapping[str, Any] = field(default_factory=dict)
+    vars: Mapping[str, Any] = field(default_factory=dict)
     stream: Optional[bool] = None
     model_preference: Optional[str] = None
     tool_filter: Optional[Mapping[str, Any]] = None
