@@ -30,6 +30,12 @@ Then run it:
 uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
 ```
 
+Use `--port` to override the default `8010`:
+
+```bash
+uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1 --port 9000
+```
+
 The default server address is:
 
 ```text
@@ -69,6 +75,12 @@ curl -s http://127.0.0.1:8010/v1/chat/completions \
 Create a Python file that exports a `ChannelRegistry`. The server loads this
 object from the CLI target.
 
+Save this as `server_streaming_agent.py` and run it with:
+
+```bash
+uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
+```
+
 ```python
 import msgflux as mf
 import msgflux.nn as nn
@@ -106,12 +118,6 @@ class BillingAgent(nn.Agent):
     ```python
     registry.agent(SupportAgent())
     ```
-
-Use `--port` to override the default `8010`:
-
-```bash
-uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1 --port 9000
-```
 
 If your registry object has a different name, pass it explicitly as
 `module.py:object_name`.
@@ -199,6 +205,9 @@ curl -s http://127.0.0.1:8010/v1/chat/completions \
 
 This is the quickest end-to-end example because it combines a real tool,
 streaming output, and request-level tool control.
+
+Add the following to the same `server_streaming_agent.py` file from the
+Registry section, then run it with the same server command.
 
 The agent still needs to be registered with tools for `tool_filter` to matter:
 
@@ -338,93 +347,6 @@ response = await model.acall(
 )
 ```
 
-## cURL
-
-Non-streaming request:
-
-```bash
-curl -s http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "support",
-    "messages": [
-      {
-        "role": "user",
-        "content": "My order A1002 still has not arrived. What happened?"
-      }
-    ],
-    "run_config": {
-      "vars": {
-        "tenant": "acme",
-        "tier": "priority"
-      }
-    }
-  }'
-```
-
-Streaming request:
-
-```bash
-curl -N http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "billing",
-    "stream": true,
-    "messages": [
-      {
-        "role": "user",
-        "content": "Invoice INV-44 failed. What should I do now?"
-      }
-    ],
-    "run_config": {
-      "vars": {
-        "tenant": "acme",
-        "tier": "priority"
-      }
-    }
-  }'
-```
-
-The streaming response uses Server-Sent Events with OpenAI-compatible chunks and
-ends with:
-
-```text
-data: [DONE]
-```
-
-Multimodal request:
-
-```bash
-curl -N http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "vision",
-    "stream": true,
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {
-            "type": "text",
-            "text": "Describe this image in one short paragraph."
-          },
-          {
-            "type": "image_url",
-            "image_url": {
-              "url": "https://raw.githubusercontent.com/msgflux/msgflux/main/docs/assets/logo.png"
-            }
-          }
-        ]
-      }
-    ],
-    "run_config": {
-      "vars": {
-        "tenant": "acme"
-      }
-    }
-  }'
-```
-
 ## msgFlux Client
 
 The `msgflux` model provider is a thin OpenAI-compatible client for a msgFlux
@@ -432,36 +354,25 @@ server. It uses `MSGFLUX_BASE_URL` when set, otherwise it defaults to
 `http://127.0.0.1:8010/v1`.
 
 ```python
-import asyncio
 import msgflux as mf
 
 mf.load_dotenv()
 
 
-async def main():
-    model = mf.Model.chat_completion(
-        "msgflux/support",
-        variables={
-            "tenant": "acme",
-            "tier": "priority",
-        },
-    )
-    response = await model.acall(
-        [{"role": "user", "content": "My order A1002 still has not arrived."}],
-        stream=True,
-    )
+model = mf.Model.chat_completion(
+    "msgflux/support",
+    vars={
+        "tenant": "acme",
+        "tier": "priority",
+    },
+)
+response = await model.acall(
+    [{"role": "user", "content": "My order A1002 still has not arrived."}],
+    stream=True,
+)
 
-    async for chunk in response.consume():
-        print(chunk, end="", flush=True)
-
-
-asyncio.run(main())
-```
-
-For a different server port:
-
-```bash
-MSGFLUX_BASE_URL=http://127.0.0.1:9000/v1 uv run --with openai python examples/server_streaming_client.py
+async for chunk in response.consume():
+    print(chunk, end="", flush=True)
 ```
 
 ## Pre-processing
