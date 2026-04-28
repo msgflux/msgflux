@@ -186,90 +186,12 @@ inputs that are not part of the OpenAI Chat Completions shape, such as `task`,
 The endpoint does not persist sessions. Each request should contain the
 messages required for that turn.
 
-### Inspect Agents
-
-Use `/agents` to confirm the names you can send in `model`:
-
-```bash
-curl -s http://127.0.0.1:8010/agents
-```
-
-Because `SupportAgent` does not pass `name=`, the registry uses the class name
-as the registered name. `BillingAgent` is registered as `billing`.
-
-You can then call one of those names directly:
-
-```bash
-curl -s http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "billing",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Invoice INV-44 failed. What should I do now?"
-      }
-    ],
-    "run_config": {
-      "vars": {
-        "tenant": "acme",
-        "tier": "priority"
-      }
-    }
-  }'
-```
-
-### Test a Request
-
-The simplest way to test the channel is to send a request directly to the
-OpenAI-compatible endpoint and inspect the response.
-
-```bash
-curl -s http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "support",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Write a short status update for a delayed order."
-      }
-    ],
-    "run_config": {
-      "vars": {
-        "tenant": "acme",
-        "tier": "standard"
-      }
-    }
-  }'
-```
-
-For streaming responses, add `stream: true` and use `curl -N`:
-
-```bash
-curl -N http://127.0.0.1:8010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "support",
-    "stream": true,
-    "messages": [
-      {
-        "role": "user",
-        "content": "What can you tell me about the Python programming language?"
-      }
-    ]
-  }'
-```
-
 ## 4. **Streaming and Tools**
 
 This is the most complete end-to-end example because it combines a real tool,
 streaming output, and request-level tool control.
 
-Add the following to the same `server_streaming_agent.py` file from the
-Registry section, then run it with the same server command.
-
-The agent still needs to register tools for `tool_filter` to matter:
+Save the following as `server_streaming_agent.py`:
 
 ```python
 import msgflux as mf
@@ -285,7 +207,12 @@ class SupportAgent(nn.Agent):
         WebFetch,
         WebSearch("retriever/wikipedia"),
     ]
-    config = {"stream": True}
+```
+
+Run it with `uv run --with` and include the `wikipedia` package:
+
+```bash
+uv run --with 'msgflux[server,openai]' --with wikipedia msgflux server server_streaming_agent.py --host 127.0.0.1
 ```
 
 Stream a response while allowing only the web search tool:
@@ -416,7 +343,6 @@ import msgflux as mf
 
 mf.load_dotenv()
 
-
 model = mf.Model.chat_completion(
     "msgflux/support",
 )
@@ -446,29 +372,10 @@ pre-processor can:
 - set `run.model_preference` or `run.tool_filter`
 - add internal `run.kwargs` such as `task`, `task_context`, or `task_multimodal`
 
-Prefer passing server-side data through `run.vars` instead of injecting extra
-`system` messages into the client-provided `messages`. `run.vars` is a flat
-shared dict: use it for request-scoped metadata that templates and tools should
-see. Use `run.kwargs` for structured agent inputs such as `task_context` or
-`task_multimodal` when you are translating the request into a more explicit
-Agent call.
-
-```python
-@registry.pre()
-def add_server_context(_request, _context, run):
-    run.vars = {
-        **run.vars,
-        "tenant": run.vars.get("tenant", "default"),
-        "tier": run.vars.get("tier", "standard"),
-    }
-    return run
-```
-
 Use `@registry.pre("support")` to target a single agent, or `@registry.pre()`
-to run the processor for every registered agent.
-
-Processors can mutate the `run` object in place and return it, return `None` to
-keep the current run, or return a mapping with replacement fields:
+to run the processor for every registered agent. Pre-processors can mutate the
+`run` object in place, return `None`, or return a mapping with replacement
+fields:
 
 ```python
 @registry.pre("billing")
@@ -487,9 +394,8 @@ you want to merge with the current execution state.
 
 ### 7.1 Convert Messages to Task
 
-Agents can be called with `messages`, but many msgFlux agent designs are more
-natural with `task`, `task_context`, and templates. A pre-processor can unwrap
-the OpenAI messages and call the Agent through the task interface instead.
+Use a pre-processor to reshape `messages` into a single `task` when you want
+to work with a task-oriented input instead of the raw chat history.
 
 ```python
 def last_user_text(messages):
@@ -505,16 +411,9 @@ def last_user_text(messages):
 def messages_to_task(_request, _context, run):
     task = last_user_text(run.messages)
 
-    # Clear messages so the Agent receives only the rendered task.
-    run.messages = []
-    run.kwargs = {
-        **run.kwargs,
-        "task": task,
-        "task_context": {
-            "tenant": run.vars.get("tenant", "default"),
-            "tier": run.vars.get("tier", "standard"),
-        },
-    }
+    # Clear the original chat history and pass only the derived task.
+    run.messages = None
+    run.kwargs["task"] = task
     return run
 ```
 
@@ -522,23 +421,34 @@ This produces a call equivalent to:
 
 ```python
 await agent.acall(
-    messages=[],
-    vars=run.vars,
+    messages=None,
     task="...",
-    task_context={...},
 )
 ```
 
 ### 7.2 Convert OpenAI Image Content to `task_multimodal`
 
-OpenAI clients often send multimodal content inside `messages[].content`.
-Agents expect multimodal inputs through `task_multimodal`, so the channel can
-translate the request shape before execution.
+Use a pre-processor to keep the chat input, store the image URL in `vars`, and
+route image-aware work through a dedicated tool.
 
 ```python
+import msgflux as mf
+
+@mf.tool_config(inject_vars=True)
+def inspect_image(**kwargs) -> str:
+    vars = kwargs.get("vars", {})
+    image_url = vars.get("image_url")
+    return f"Inspecting image at {image_url}"
+```
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+
 @registry.agent(name="vision")
 class VisionAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    tools = [inspect_image]
     system_message = "Describe images clearly and concisely."
 
 
@@ -574,56 +484,18 @@ def openai_images_to_task_multimodal(_request, _context, run):
     )
     task, image_urls = split_openai_content(last_user.get("content"))
 
-    run.messages = []
-    run.kwargs = {
-        **run.kwargs,
-        "task": task or "Describe the image.",
-        "task_multimodal": {
-            "image": image_urls,
-        },
-    }
+    run.messages = None
+    run.vars["image_url"] = image_urls[0] if image_urls else None
+    run.kwargs["task"] = task or "Describe the image."
+    run.kwargs["task_context"] = (
+        "The user attached an image. Call `inspect_image` before answering."
+    )
+    run.kwargs["task_multimodal"] = {"image": image_urls}
     return run
 ```
 
-`task_multimodal` accepts the same media keys supported by Agent:
-
-| Key | Example value |
-|---|---|
-| `image` | URL, local path, or list of image sources. |
-| `audio` | URL, local path, or list of audio sources. |
-| `video` | URL, local path, or list of video sources. |
-| `file` | URL, local path, or list of file sources. |
-
-If you control the server-side pre-processor, you can also define a compact
-client contract in `run_config.vars` and translate it into `task_multimodal`:
-
-```json
-{
-  "model": "vision",
-  "messages": [],
-  "run_config": {
-    "vars": {
-      "task": "Describe this image.",
-      "image_url": "https://raw.githubusercontent.com/msgflux/msgflux/main/docs/assets/logo.png"
-    }
-  }
-}
-```
-
-```python
-@registry.pre("vision")
-def vars_to_multimodal(_request, _context, run):
-    image_url = run.vars.get("image_url")
-    task = run.vars.get("task", "Describe the image.")
-
-    run.messages = []
-    run.kwargs = {
-        **run.kwargs,
-        "task": task,
-        "task_multimodal": {"image": image_url},
-    }
-    return run
-```
+With `inject_vars=True`, the tool receives `kwargs["vars"]` and can read the
+image URL directly from the execution context.
 
 ## 8. **Post-processing**
 
@@ -659,6 +531,6 @@ want to buffer the stream and lose incremental token delivery.
 
 ## 9. **See Also**
 
-- [Agent](../agent/index.md) - Core module that channels expose over HTTP
-- [Message](../message.md) - Structured message passing
-- [Model Gateway](../agent/model-gateway.md) - Multi-model routing for `model_preference`
+- [Agent](../nn/agent/index.md) - Core module that channels expose over HTTP
+- [Message](../nn/message.md) - Structured message passing
+- [Model Gateway](../nn/agent/model-gateway.md) - Multi-model routing for `model_preference`
