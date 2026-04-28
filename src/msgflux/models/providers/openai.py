@@ -360,6 +360,42 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         )
 
     @staticmethod
+    def _extract_generation_schema_reasoning(
+        generation_schema: Optional[msgspec.Struct],
+        response_content: Any,
+    ) -> Any:
+        if not getattr(generation_schema, "extract_reasoning", False):
+            return None
+
+        reasoning_field = getattr(generation_schema, "reasoning_field", None)
+        if not isinstance(reasoning_field, str) or not reasoning_field:
+            return None
+
+        if not isinstance(response_content, Mapping):
+            return None
+
+        reasoning = response_content.get(reasoning_field)
+        if reasoning is None:
+            return None
+
+        if isinstance(response_content, dict):
+            response_content.pop(reasoning_field, None)
+        return reasoning
+
+    @staticmethod
+    def _merge_reasoning(native_reasoning: Any, schema_reasoning: Any) -> Any:
+        if schema_reasoning is None:
+            return native_reasoning
+        if native_reasoning is None:
+            return schema_reasoning
+        if native_reasoning == schema_reasoning:
+            return native_reasoning
+        return {
+            "model_reasoning": native_reasoning,
+            "schema_reasoning": schema_reasoning,
+        }
+
+    @staticmethod
     def _extract_finish_reason(choice) -> Optional[str]:
         return getattr(choice, "finish_reason", None)
 
@@ -529,6 +565,14 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                 decoder = self._get_decoder(generation_schema)
                 struct = decoder.decode(self._encoder.encode(response_content))
                 response_content = dotdict(struct_to_dict(struct))
+                schema_reasoning = self._extract_generation_schema_reasoning(
+                    generation_schema,
+                    response_content,
+                )
+                reasoning_content = self._merge_reasoning(
+                    reasoning_content,
+                    schema_reasoning,
+                )
             else:
                 response.set_response_type("text_generation")
                 response_content = choice.message.content

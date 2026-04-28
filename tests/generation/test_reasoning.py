@@ -14,6 +14,7 @@ from msgflux.generation.reasoning.react import (
     Action,
     ReAct,
 )
+from msgflux.generation.reasoning.self_consistency import SelfConsistency
 from msgflux.tools.definitions import ToolDefinitions
 
 
@@ -35,6 +36,10 @@ class TestChainOfThought:
         )
         assert cot.final_answer == "42"
 
+    def test_chain_of_thought_declares_reasoning_extraction(self):
+        assert ChainOfThought.extract_reasoning is True
+        assert ChainOfThought.reasoning_field == "reasoning"
+
 
 class TestReActToolFlowControl:
     """Tests for ReAct ToolFlowControl interface implementation."""
@@ -47,6 +52,8 @@ class TestReActToolFlowControl:
         """Test that ReAct has system_message and tools_template."""
         assert ReAct.system_message == REACT_SYSTEM_MESSAGE
         assert ReAct.tools_template == REACT_TOOLS_TEMPLATE
+        assert ReAct.extract_reasoning is True
+        assert ReAct.reasoning_field == "thought"
 
     def test_action_struct(self):
         """Test that Action struct holds name and arguments."""
@@ -290,3 +297,9 @@ class TestReActToolFlowControl:
             ],
             "final_answer": None,
         }
+
+
+class TestSelfConsistency:
+    def test_self_consistency_declares_reasoning_extraction(self):
+        assert SelfConsistency.extract_reasoning is True
+        assert SelfConsistency.reasoning_field == "paths"

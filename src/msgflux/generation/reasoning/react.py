@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Mapping, Optional
 from uuid import uuid4
 
 import msgspec
@@ -101,6 +101,9 @@ class Action(Struct):
 
 
 class ReAct(Struct, ToolFlowControl):
+    extract_reasoning: ClassVar[bool] = True
+    reasoning_field: ClassVar[str] = "thought"
+
     thought: str
     actions: Optional[List[Action]] = None
     final_answer: Optional[str] = None

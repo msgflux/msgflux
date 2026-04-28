@@ -137,6 +137,28 @@ async def test_create_chat_completion_applies_pre_and_post_processors():
 
 
 @pytest.mark.asyncio
+async def test_create_chat_completion_serializes_structured_answer_with_reasoning():
+    registry = ChannelRegistry()
+    agent = FakeAgent(
+        {
+            "answer": {"final_answer": "42"},
+            "reasoning": "Step by step",
+        }
+    )
+    registry.agent(agent)
+    request = ChatCompletionRequest(
+        model="support",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+    response = await create_chat_completion(registry, request)
+
+    message = response.choices[0].message
+    assert message.content == '{"final_answer":"42"}'
+    assert message.reasoning_content == "Step by step"
+
+
+@pytest.mark.asyncio
 async def test_create_chat_completion_stream_yields_openai_sse_chunks():
     stream_response = ModelStreamResponse(mode="async")
     stream_response.set_response_type("text_generation")

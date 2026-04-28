@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import msgspec
 import pytest
 
+from msgflux.generation.reasoning.cot import ChainOfThought
 from msgflux.generation.reasoning.react import ReAct
+from msgflux.generation.reasoning.self_consistency import SelfConsistency
 from msgflux.tools.definitions import ToolDefinitions
 
 
@@ -1046,8 +1048,8 @@ class TestOpenAIChatCompletion:
         )
 
         assert response.response_type == "structured"
+        assert response.reasoning == "Store the fields"
         assert response.data == {
-            "thought": "Store the fields",
             "actions": [
                 {
                     "name": "store_fields",
@@ -1056,6 +1058,130 @@ class TestOpenAIChatCompletion:
             ],
             "final_answer": None,
         }
+
+    def test_process_completion_model_output_extracts_chain_of_thought_reasoning(
+        self, mock_openai_client
+    ):
+        """Builtin reasoning schemas move their reasoning field to ModelResponse.reasoning."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": ChainOfThought,
+            }
+        )[2]
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"reasoning":"Step by step","final_answer":"42"}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=ChainOfThought,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.reasoning == "Step by step"
+        assert response.data == {"final_answer": "42"}
+
+    def test_process_completion_model_output_leaves_custom_schema_reasoning_field(
+        self, mock_openai_client
+    ):
+        """Custom schemas must opt in before a field named reasoning is extracted."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        class CustomOutput(msgspec.Struct):
+            reasoning: str
+            final_answer: str
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": CustomOutput,
+            }
+        )[2]
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"reasoning":"Keep me","final_answer":"42"}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=CustomOutput,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.reasoning is None
+        assert response.data == {"reasoning": "Keep me", "final_answer": "42"}
+
+    def test_process_completion_model_output_extracts_self_consistency_reasoning(
+        self, mock_openai_client
+    ):
+        """SelfConsistency exposes paths as the reasoning payload."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        transport_generation_schema = model._prepare_generate_kwargs(
+            {
+                "typed_parser": None,
+                "generation_schema": SelfConsistency,
+            }
+        )[2]
+        model_output = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"paths":[{"reasoning":"Path A","answer":"42"}],"final_answer":"42"}',
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+
+        response = model._process_completion_model_output(
+            model_output,
+            generation_schema=SelfConsistency,
+            transport_generation_schema=transport_generation_schema,
+        )
+
+        assert response.response_type == "structured"
+        assert response.reasoning == [{"reasoning": "Path A", "answer": "42"}]
+        assert response.data == {"final_answer": "42"}
 
     def test_prepare_generate_kwargs_uses_typed_final_answer_for_react_subclass(
         self, mock_openai_client
@@ -1154,8 +1280,8 @@ class TestOpenAIChatCompletion:
         )
 
         assert response.response_type == "structured"
+        assert response.reasoning == "I have enough information"
         assert response.data == {
-            "thought": "I have enough information",
             "actions": None,
             "final_answer": {
                 "candidates": ["Alice Johnson"],

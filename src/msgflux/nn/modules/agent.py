@@ -741,6 +741,36 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- Tool Processing ---
 
+    def _restore_tool_flow_reasoning(
+        self,
+        raw_response: Any,
+        reasoning: Any,
+    ) -> tuple[Any, Optional[str]]:
+        if reasoning is None or not isinstance(raw_response, dict):
+            return raw_response, None
+        if not getattr(self.generation_schema, "extract_reasoning", False):
+            return raw_response, None
+
+        reasoning_field = getattr(self.generation_schema, "reasoning_field", None)
+        if not isinstance(reasoning_field, str) or not reasoning_field:
+            return raw_response, None
+        if reasoning_field in raw_response:
+            return raw_response, None
+
+        if isinstance(reasoning, Mapping):
+            reasoning = reasoning.get("schema_reasoning", reasoning)
+        raw_response[reasoning_field] = reasoning
+        return raw_response, reasoning_field
+
+    @staticmethod
+    def _remove_restored_tool_flow_reasoning(
+        final_response: Any,
+        reasoning_field: Optional[str],
+    ) -> Any:
+        if reasoning_field is not None and isinstance(final_response, dict):
+            final_response.pop(reasoning_field, None)
+        return final_response
+
     def _process_tool_flow_control_response(
         self,
         message: Union[str, Mapping[str, Any], Message],
@@ -758,13 +788,23 @@ class Agent(Module, metaclass=AutoParams):
         flow_control = self.generation_schema
         while True:
             raw_response = self._extract_raw_response(model_response)
+            response_reasoning = getattr(model_response, "reasoning", None)
+            raw_response, restored_reasoning_field = self._restore_tool_flow_reasoning(
+                raw_response,
+                response_reasoning,
+            )
 
             # Use ToolFlowControl interface via generation_schema
             flow_result = flow_control.extract_flow_result(raw_response)
+            if flow_result.reasoning is None:
+                flow_result.reasoning = response_reasoning
 
             if flow_result.is_complete:
                 if flow_result.final_response is not None:
-                    model_response.data = flow_result.final_response
+                    model_response.data = self._remove_restored_tool_flow_reasoning(
+                        flow_result.final_response,
+                        restored_reasoning_field,
+                    )
                 return model_response, messages
 
             if self.config.get("verbose", False) and flow_result.reasoning:
@@ -834,13 +874,23 @@ class Agent(Module, metaclass=AutoParams):
         flow_control = self.generation_schema
         while True:
             raw_response = self._extract_raw_response(model_response)
+            response_reasoning = getattr(model_response, "reasoning", None)
+            raw_response, restored_reasoning_field = self._restore_tool_flow_reasoning(
+                raw_response,
+                response_reasoning,
+            )
 
             # Use ToolFlowControl interface via generation_schema (async)
             flow_result = await flow_control.aextract_flow_result(raw_response)
+            if flow_result.reasoning is None:
+                flow_result.reasoning = response_reasoning
 
             if flow_result.is_complete:
                 if flow_result.final_response is not None:
-                    model_response.data = flow_result.final_response
+                    model_response.data = self._remove_restored_tool_flow_reasoning(
+                        flow_result.final_response,
+                        restored_reasoning_field,
+                    )
                 return model_response, messages
 
             if self.config.get("verbose", False) and flow_result.reasoning:

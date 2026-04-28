@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
+from msgflux.generation.reasoning import ReAct
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse
@@ -679,6 +680,32 @@ class TestAgentGenerationSchema:
 
         assert hasattr(agent, "generation_schema")
         assert agent.generation_schema is not None
+
+    def test_tool_flow_reasoning_restoration_does_not_leak_to_final_response(self):
+        """Provider-extracted ReAct reasoning is available to flow control only."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            generation_schema=ReAct,
+            config={"reasoning_in_response": True},
+        )
+        model_response = ModelResponse()
+        model_response.set_response_type("structured")
+        model_response.reasoning = "I have enough information"
+        model_response.add({"actions": None, "final_answer": "Done"})
+
+        response = agent._process_model_response(
+            "question",
+            model_response,
+            [],
+            {},
+        )
+
+        assert response.reasoning == "I have enough information"
+        assert response.answer == {"final_answer": "Done"}
+        assert "thought" not in response.answer
 
 
 class TestAgentTemplates:
