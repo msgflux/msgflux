@@ -40,24 +40,15 @@ class MsgFluxChatCompletion(_BaseMsgFlux, OpenAIChatCompletion):
         model_id: str,
         *,
         run_config: Optional[Mapping[str, Any]] = None,
-        variables: Optional[Mapping[str, Any]] = None,
         **kwargs: Any,
     ):
-        legacy_variables = kwargs.pop("vars", None)
-        if variables is not None and legacy_variables is not None:
-            raise ValueError("Use either `variables` or `vars`, not both.")
-
-        selected_variables = variables if variables is not None else legacy_variables
-        self.run_config = _merge_run_config(
-            run_config,
-            {"vars": selected_variables} if selected_variables is not None else None,
-        )
+        self.run_config = dict(run_config or {})
         super().__init__(model_id=model_id, **kwargs)
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super()._adapt_params(params)
         extra_body = dict(params.get("extra_body") or {})
-        request_run_config = extra_body.pop("run_config", None)
+        request_run_config = dict(extra_body.pop("run_config", None) or {})
         run_config = _merge_run_config(self.run_config, request_run_config)
 
         if run_config:

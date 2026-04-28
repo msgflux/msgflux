@@ -4,11 +4,24 @@ Channels expose msgFlux modules through external interfaces. The first channel
 is the HTTP server, which exposes registered `Agent` instances through an
 OpenAI-compatible Chat Completions endpoint.
 
-This lets any OpenAI SDK client call specialized msgFlux agents as if they were
-regular chat models. The request `model` selects the agent name registered in
-the server.
+This means any OpenAI SDK client can call specialized msgFlux agents as if they
+were regular chat models. The request `model` selects the registered agent name.
 
-## Install
+## ✦₊⁺ Overview
+
+The channel layer is the external boundary for msgFlux modules. In practice,
+it lets you:
+
+- expose agents over HTTP
+- reuse OpenAI-compatible clients
+- control execution with `run_config`
+- adapt incoming requests with pre-processors
+- adapt outgoing responses with post-processors
+
+The default channel is the HTTP server, but the design is meant to support
+other external interfaces as they are added.
+
+## 1. **Quick Start**
 
 The HTTP server depends on FastAPI and Uvicorn:
 
@@ -16,7 +29,7 @@ The HTTP server depends on FastAPI and Uvicorn:
 uv pip install "msgflux[server,openai]"
 ```
 
-To run the quickstart without cloning the repository, download the example file
+If you want to run the example without cloning the repository, download it
 first:
 
 ```bash
@@ -24,7 +37,7 @@ curl -L -o server_streaming_agent.py \
   https://raw.githubusercontent.com/msgflux/msgflux/main/examples/server_streaming_agent.py
 ```
 
-Then run it:
+Start the server:
 
 ```bash
 uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
@@ -36,50 +49,43 @@ Use `--port` to override the default `8010`:
 uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1 --port 9000
 ```
 
-The default server address is:
+!!! tip "Default address"
 
-```text
-http://127.0.0.1:8010/v1
-```
+    The default server address is:
 
-With the server running, inspect the registered agents:
+    ```text
+    http://127.0.0.1:8010/v1
+    ```
 
-```bash
-curl -s http://127.0.0.1:8010/agents
-```
-
-Then call an agent through the Chat Completions endpoint:
+Call a registered agent through the Chat Completions endpoint:
 
 ```bash
-curl -s http://127.0.0.1:8010/v1/chat/completions \
+curl -N http://127.0.0.1:8010/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "billing",
+    "model": "SupportAgent",
+    "stream": true,
     "messages": [
       {
         "role": "user",
-        "content": "Invoice INV-44 failed. What should I do now?"
+        "content": "Write a short status update for a delayed order."
       }
     ],
     "run_config": {
       "vars": {
         "tenant": "acme",
-        "tier": "priority"
+        "tier": "standard"
       }
     }
   }'
 ```
 
-## Registry
+## 2. **Registry**
 
-Create a Python file that exports a `ChannelRegistry`. The server loads this
+Create a Python file that exports a `ChannelRegistry`. The server loads that
 object from the CLI target.
 
-Save this as `server_streaming_agent.py` and run it with:
-
-```bash
-uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
-```
+Save the following example as `server_streaming_agent.py`:
 
 ```python
 import msgflux as mf
@@ -89,12 +95,10 @@ mf.load_dotenv()
 
 registry = mf.ChannelRegistry()
 
-
 @registry.agent()
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "You are a concise customer support specialist."
-
 
 @registry.agent(name="billing")
 class BillingAgent(nn.Agent):
@@ -102,13 +106,19 @@ class BillingAgent(nn.Agent):
     system_message = "You are a concise billing support specialist."
 ```
 
+Once the file is saved, run it with:
+
+```bash
+uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
+```
+
 !!! tip "Agent registration"
 
-    `registry.agent` accepts either an Agent instance or an Agent class. When
-    you pass a class, the registry instantiates it with no arguments and
-    stores the instance.
+    `registry.agent` accepts either an `Agent` instance or an `Agent` class.
+    When you pass a class, the registry instantiates it with no arguments and
+    stores the resulting instance.
 
-    If you do not pass `name=`, the registry uses the Agent name exposed by the
+    If you do not pass `name=`, the registry uses the agent name exposed by the
     object. For `nn.Agent` subclasses, that usually comes from the class name
     via AutoParams. Pass `name="..."` only when you want to override the
     registered name.
@@ -119,16 +129,27 @@ class BillingAgent(nn.Agent):
     registry.agent(SupportAgent())
     ```
 
-If your registry object has a different name, pass it explicitly as
-`module.py:object_name`.
+!!! tip "Custom registry object"
 
-## Chat Completions
+    If your registry object has a different name, pass it explicitly as
+    `module.py:object_name`.
 
-The server currently exposes:
+After registration, `/agents` returns `SupportAgent` and `billing`:
 
-```text
-POST /v1/chat/completions
+```bash
+curl -s http://127.0.0.1:8010/agents
 ```
+
+Use `model: "billing"` for the billing agent and `model: "SupportAgent"` for
+the support agent. The request examples below show each one in context.
+
+## 3. **HTTP API**
+
+| Name | Method | Description |
+|---|---|---|
+| `/v1/chat/completions` | `POST` | OpenAI-compatible endpoint that runs a registered agent. |
+| `/health` | `GET` | Basic status check for the server. |
+| `/agents` | `GET` | Lists the registered agent names. |
 
 The supported request fields are:
 
@@ -147,7 +168,7 @@ The supported request fields are:
 | `model_preference` | Optional model preference forwarded to the Agent. |
 | `tool_filter` | Optional tool filtering metadata forwarded to the Agent. |
 
-The request is converted into an `AgentRun` before the Agent is executed:
+The request is converted into an `AgentRun` before the Agent executes:
 
 | HTTP input | Runtime field | Agent call |
 |---|---|---|
@@ -160,10 +181,7 @@ The request is converted into an `AgentRun` before the Agent is executed:
 `AgentRun` also has an internal `run.kwargs` field. It is not accepted from the
 HTTP request. Use pre-processors to populate it when you need Agent runtime
 inputs that are not part of the OpenAI Chat Completions shape, such as `task`,
-`task_context` and `task_multimodal`.
-
-The server also exposes `GET /health` and `GET /agents`. Use `/health` for a
-simple status check and `/agents` to inspect the registered agent names.
+`task_context`, and `task_multimodal`.
 
 The endpoint does not persist sessions. Each request should contain the
 messages required for that turn.
@@ -201,24 +219,64 @@ curl -s http://127.0.0.1:8010/v1/chat/completions \
   }'
 ```
 
-## Tools and Streaming
+### Test a Request
 
-This is the quickest end-to-end example because it combines a real tool,
+The simplest way to test the channel is to send a request directly to the
+OpenAI-compatible endpoint and inspect the response.
+
+```bash
+curl -s http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Write a short status update for a delayed order."
+      }
+    ],
+    "run_config": {
+      "vars": {
+        "tenant": "acme",
+        "tier": "standard"
+      }
+    }
+  }'
+```
+
+For streaming responses, add `stream: true` and use `curl -N`:
+
+```bash
+curl -N http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "What can you tell me about the Python programming language?"
+      }
+    ]
+  }'
+```
+
+## 4. **Streaming and Tools**
+
+This is the most complete end-to-end example because it combines a real tool,
 streaming output, and request-level tool control.
 
 Add the following to the same `server_streaming_agent.py` file from the
 Registry section, then run it with the same server command.
 
-The agent still needs to be registered with tools for `tool_filter` to matter:
+The agent still needs to register tools for `tool_filter` to matter:
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.tools.builtin import WebFetch, WebSearch
 
-
 registry = mf.ChannelRegistry()
-
 
 @registry.agent(name="support")
 class SupportAgent(nn.Agent):
@@ -277,7 +335,7 @@ curl -N http://127.0.0.1:8010/v1/chat/completions \
   }'
 ```
 
-## Model preference
+## 5. **Model Preference**
 
 Use `run_config.model_preference` when the Agent uses a `ModelGateway`. This
 lets the caller select a named model deployment without changing the public
@@ -347,7 +405,7 @@ response = await model.acall(
 )
 ```
 
-## msgFlux Client
+## 6. **msgFlux Client**
 
 The `msgflux` model provider is a thin OpenAI-compatible client for a msgFlux
 server. It uses `MSGFLUX_BASE_URL` when set, otherwise it defaults to
@@ -361,51 +419,47 @@ mf.load_dotenv()
 
 model = mf.Model.chat_completion(
     "msgflux/support",
-    vars={
-        "tenant": "acme",
-        "tier": "priority",
-    },
 )
 response = await model.acall(
     [{"role": "user", "content": "My order A1002 still has not arrived."}],
     stream=True,
+    run_config={
+        "vars": {
+            "tenant": "acme",
+            "tier": "priority",
+        },
+    },
 )
 
 async for chunk in response.consume():
     print(chunk, end="", flush=True)
 ```
 
-## Pre-processing
+## 7. **Pre-processing**
 
 Use `registry.pre()` to mutate the `AgentRun` before `Agent.acall`. A
 pre-processor can:
 
-- Rewrite `run.messages`.
-- Add or replace `run.vars`.
-- Override `run.stream`.
-- Set `run.model_preference` or `run.tool_filter`.
-- Add internal `run.kwargs` such as `task`, `task_context` or `task_multimodal`.
+- rewrite `run.messages`
+- add or replace `run.vars`
+- override `run.stream`
+- set `run.model_preference` or `run.tool_filter`
+- add internal `run.kwargs` such as `task`, `task_context`, or `task_multimodal`
 
 Prefer passing server-side data through `run.vars` instead of injecting extra
 `system` messages into the client-provided `messages`. `run.vars` is a flat
 shared dict: use it for request-scoped metadata that templates and tools should
-see, and use `run.kwargs` for structured agent inputs such as `task_context` or
-`task_multimodal`.
+see. Use `run.kwargs` for structured agent inputs such as `task_context` or
+`task_multimodal` when you are translating the request into a more explicit
+Agent call.
 
 ```python
 @registry.pre()
-def add_server_context(_request, context, run):
+def add_server_context(_request, _context, run):
     run.vars = {
         **run.vars,
         "tenant": run.vars.get("tenant", "default"),
         "tier": run.vars.get("tier", "standard"),
-    }
-    run.kwargs = {
-        **run.kwargs,
-        "task_context": {
-            "agent_name": context.agent_name,
-            "request_id": context.request_id,
-        },
     }
     return run
 ```
@@ -431,10 +485,10 @@ def force_billing_vars(_request, _context, run):
 Returning a mapping replaces the provided fields. Mutate `run` in place when
 you want to merge with the current execution state.
 
-### Convert messages to task
+### 7.1 Convert Messages to Task
 
-Agents can be called with `messages`, but many msgFlux Agent designs are more
-natural with `task`, `task_context` and templates. A pre-processor can unwrap
+Agents can be called with `messages`, but many msgFlux agent designs are more
+natural with `task`, `task_context`, and templates. A pre-processor can unwrap
 the OpenAI messages and call the Agent through the task interface instead.
 
 ```python
@@ -475,11 +529,11 @@ await agent.acall(
 )
 ```
 
-### Convert OpenAI image content to task_multimodal
+### 7.2 Convert OpenAI Image Content to `task_multimodal`
 
-OpenAI clients often send multimodal content inside `messages[].content`. Agents
-expect multimodal inputs through `task_multimodal`, so the channel can translate
-the request shape before execution.
+OpenAI clients often send multimodal content inside `messages[].content`.
+Agents expect multimodal inputs through `task_multimodal`, so the channel can
+translate the request shape before execution.
 
 ```python
 @registry.agent(name="vision")
@@ -540,7 +594,7 @@ def openai_images_to_task_multimodal(_request, _context, run):
 | `video` | URL, local path, or list of video sources. |
 | `file` | URL, local path, or list of file sources. |
 
-Alternatively, if you control the server-side pre-processor, define a compact
+If you control the server-side pre-processor, you can also define a compact
 client contract in `run_config.vars` and translate it into `task_multimodal`:
 
 ```json
@@ -571,7 +625,7 @@ def vars_to_multimodal(_request, _context, run):
     return run
 ```
 
-## Post-processing
+## 8. **Post-processing**
 
 Use `registry.post()` to transform the Agent output before the HTTP response is
 encoded. Post-processors receive `(output, context, run)`.
@@ -603,23 +657,8 @@ For streaming responses, the Agent usually returns a `ModelStreamResponse`.
 Avoid converting it into a string in post-processing unless you intentionally
 want to buffer the stream and lose incremental token delivery.
 
-## Examples
+## 9. **See Also**
 
-The repository includes a multi-agent streaming example:
-
-```bash
-uv run --with 'msgflux[server,openai]' msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
-```
-
-In another terminal:
-
-```bash
-uv run --with openai python examples/server_streaming_client.py
-```
-
-The example exposes two agents in the same server:
-
-| Agent | Model path | Purpose |
-|---|---|---|
-| `support` | `msgflux/support` | Order support. |
-| `billing` | `msgflux/billing` | Invoice and payment support. |
+- [Agent](../agent/index.md) - Core module that channels expose over HTTP
+- [Message](../message.md) - Structured message passing
+- [Model Gateway](../agent/model-gateway.md) - Multi-model routing for `model_preference`

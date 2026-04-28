@@ -1,5 +1,6 @@
 """Tests for msgflux.models.providers.msgflux module."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -64,8 +65,10 @@ class TestMsgFluxChatCompletion:
 
         model = MsgFluxChatCompletion(
             model_id="support",
-            run_config={"model_preference": "fast"},
-            variables={"tenant": "acme"},
+            run_config={
+                "model_preference": "fast",
+                "vars": {"tenant": "acme"},
+            },
         )
 
         adapted = model._adapt_params({"messages": [], "model": "support"})
@@ -83,7 +86,7 @@ class TestMsgFluxChatCompletion:
 
         model = MsgFluxChatCompletion(
             model_id="support",
-            variables={"tenant": "acme", "tier": "standard"},
+            run_config={"vars": {"tenant": "acme", "tier": "standard"}},
         )
 
         adapted = model._adapt_params(
@@ -102,4 +105,36 @@ class TestMsgFluxChatCompletion:
         assert adapted["extra_body"]["run_config"] == {
             "vars": {"tenant": "acme", "tier": "priority"},
             "model_preference": "fast",
+        }
+
+    def test_chat_completion_forwards_runtime_run_config(self, mock_openai_client):
+        """Test call-time run_config is merged into the request run_config."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.msgflux import MsgFluxChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+        model = MsgFluxChatCompletion(
+            model_id="support",
+            run_config={"vars": {"tenant": "acme"}},
+        )
+        model("Hello", run_config={"vars": {"tier": "priority"}})
+
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["extra_body"]["run_config"] == {
+            "vars": {"tenant": "acme", "tier": "priority"},
         }

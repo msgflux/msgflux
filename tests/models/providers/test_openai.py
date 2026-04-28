@@ -223,6 +223,41 @@ class TestOpenAIChatCompletion:
             "enable_citations": True,
         }
 
+    def test_chat_completion_forwards_runtime_extra_body_kwargs(
+        self, mock_openai_client
+    ):
+        """Test runtime provider kwargs are merged into extra_body."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"enable_citations": True},
+        )
+        model("Hello", enable_entities=True)
+
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["extra_body"] == {
+            "enable_citations": True,
+            "enable_entities": True,
+        }
+
     def test_chat_completion_missing_api_key(self, monkeypatch):
         """Test that missing API key raises ValueError."""
         pytest.importorskip("openai")
@@ -340,6 +375,46 @@ class TestOpenAIChatCompletion:
         )
         assert call_kwargs["logprobs"] is True
         assert call_kwargs["top_logprobs"] == 2
+
+    @pytest.mark.asyncio
+    async def test_acall_forwards_runtime_extra_body_kwargs(
+        self, mock_openai_client
+    ):
+        """Test runtime provider kwargs are merged into extra_body on async calls."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content="done",
+                            tool_calls=None,
+                            audio=None,
+                            annotations=None,
+                        ),
+                    )
+                ],
+            )
+        )
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"enable_citations": True},
+        )
+        await model.acall("Hello", enable_entities=True)
+
+        call_kwargs = (
+            mock_async_client.return_value.chat.completions.create.await_args.kwargs
+        )
+        assert call_kwargs["extra_body"] == {
+            "enable_citations": True,
+            "enable_entities": True,
+        }
 
     def test_chat_completion_adapt_params(self, mock_openai_client):
         """Test parameter adaptation for OpenAI."""
