@@ -63,7 +63,7 @@ Call a registered agent through the Chat Completions endpoint:
 curl -N http://127.0.0.1:8010/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "SupportAgent",
+    "model": "support",
     "stream": true,
     "messages": [
       {
@@ -202,7 +202,7 @@ registry = mf.ChannelRegistry()
 
 @registry.agent(name="support")
 class SupportAgent(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = "openai/gpt-4.1-mini"
     tools = [
         WebFetch,
         WebSearch("retriever/wikipedia"),
@@ -315,53 +315,14 @@ With the msgFlux client provider:
 ```python
 model = mf.Model.chat_completion(
     "msgflux/assistant",
-    run_config={"model_preference": "fast"},
 )
-```
-
-You can still override it per request through `extra_body`:
-
-```python
 response = await model.acall(
     [{"role": "user", "content": "Analyze this carefully."}],
-    extra_body={
-        "run_config": {
-            "model_preference": "quality",
-        }
-    },
+    run_config={"model_preference": "quality"},
 )
 ```
 
-## 6. **msgFlux Client**
-
-The `msgflux` model provider is a thin OpenAI-compatible client for a msgFlux
-server. It uses `MSGFLUX_BASE_URL` when set, otherwise it defaults to
-`http://127.0.0.1:8010/v1`.
-
-```python
-import msgflux as mf
-
-mf.load_dotenv()
-
-model = mf.Model.chat_completion(
-    "msgflux/support",
-)
-response = await model.acall(
-    [{"role": "user", "content": "My order A1002 still has not arrived."}],
-    stream=True,
-    run_config={
-        "vars": {
-            "tenant": "acme",
-            "tier": "priority",
-        },
-    },
-)
-
-async for chunk in response.consume():
-    print(chunk, end="", flush=True)
-```
-
-## 7. **Pre-processing**
+## 6. **Pre-processing**
 
 Use `registry.pre()` to mutate the `AgentRun` before `Agent.acall`. A
 pre-processor can:
@@ -378,21 +339,26 @@ to run the processor for every registered agent. Pre-processors can mutate the
 fields:
 
 ```python
-@registry.pre("billing")
-def force_billing_vars(_request, _context, run):
-    return {
-        "messages": run.messages,
-        "vars": {
-            **run.vars,
-            "department": "billing",
-        },
-    }
+@registry.pre("support")
+def enforce_tool_policy(_request, _context, run):
+    tier = (run.vars or {}).get("tier", "basic")
+    mode = (run.vars or {}).get("mode", "default")
+
+    # Strict mode: model-only answer, no tool access.
+    if mode == "internal_only":
+        run.tool_filter = {"block": "*"}
+        return run
+
+    # Cost/risk policy by tenant tier.
+    if tier == "basic":
+        run.tool_filter = {"block": ["web_fetch", "web_search"]}
+    return run
 ```
 
 Returning a mapping replaces the provided fields. Mutate `run` in place when
 you want to merge with the current execution state.
 
-### 7.1 Convert Messages to Task
+### 6.1 Convert Messages to Task
 
 Use a pre-processor to reshape `messages` into a single `task` when you want
 to work with a task-oriented input instead of the raw chat history.
@@ -426,7 +392,7 @@ await agent.acall(
 )
 ```
 
-### 7.2 Convert OpenAI Image Content to `task_multimodal`
+### 6.2 Convert OpenAI Image Content to `task_multimodal`
 
 Use a pre-processor to keep the chat input, store the image URL in `vars`, and
 route image-aware work through a dedicated tool.
@@ -497,39 +463,226 @@ def openai_images_to_task_multimodal(_request, _context, run):
 With `inject_vars=True`, the tool receives `kwargs["vars"]` and can read the
 image URL directly from the execution context.
 
+## 7. **Reasoning**
+
+Reasoning can reach the HTTP response through two paths:
+
+- provider-level reasoning (for example, Groq `gpt-oss`) mapped to
+  `message.reasoning_content`
+- schema-level reasoning (for example, `ChainOfThought` and `ReAct`) extracted
+  and also mapped to `message.reasoning_content`
+
+### 7.1 Provider Reasoning (Best Streaming Support)
+
+Provider reasoning has the most complete streaming support in channels because
+it emits incremental reasoning tokens through SSE chunks:
+
+- `delta.reasoning_content` for reasoning tokens
+- `delta.content` for answer tokens
+
+!!! warning "Current streaming limitation with tool decisions"
+    Today, reasoning streaming is only released after the reasoning phase is
+    finalized. The channel cannot safely forward a raw `ModelStreamResponse`
+    to the client while the model may still decide between normal content and a
+    tool call. That decision is only known after the post-reasoning token
+    phase, which is why reasoning delivery is gated at that point.
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+
+registry = mf.ChannelRegistry()
+
+@registry.agent(name="groq_reasoning")
+class GroqReasoningAgent(nn.Agent):
+    model = mf.Model.chat_completion(
+        "groq/openai/gpt-oss-120b",
+        reasoning_effort="low",
+        return_reasoning=True,
+    )
+```
+
+```bash
+curl -sS -N http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "model": "groq_reasoning",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "Solve: (37 * 9) - 15"}
+    ]
+  }'
+```
+
+### 7.2 ChainOfThought (Non-streaming)
+
+`ChainOfThought` uses a generation schema. In non-streaming mode, channels
+return:
+
+- `message.content` with `final_answer`
+- `message.reasoning_content` with the CoT reasoning trace
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.generation.reasoning import ChainOfThought
+
+registry = mf.ChannelRegistry()
+
+@registry.agent(name="cot_solver")
+class CoTSolver(nn.Agent):
+    model = "openai/gpt-4.1-mini"
+    generation_schema = ChainOfThought
+```
+
+```bash
+curl -sS http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "cot_solver",
+    "stream": false,
+    "messages": [
+      {"role": "user", "content": "Solve: 8x + 7 = -23"}
+    ]
+  }'
+```
+
+### 7.3 ReAct + Tools (Non-streaming)
+
+`ReAct` is also schema-based and follows the same non-streaming mapping.
+Because `generation_schema` is not stream-compatible, keep `stream=false`.
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.generation.reasoning import ReAct
+from msgflux.tools.builtin import WebFetch
+
+registry = mf.ChannelRegistry()
+
+@registry.agent(name="openai_react")
+class OpenAIReActAgent(nn.Agent):
+    model = "openai/gpt-4.1-mini"
+    generation_schema = ReAct
+    tools = [WebFetch]
+    config = {"stream": False}
+```
+
+```bash
+curl -sS http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai_react",
+    "stream": false,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Use python.org and tell me the current Python release."
+      }
+    ]
+  }'
+```
+
+!!! info "Reasoning mapping notes"
+    For schema-based reasoning, channels expose reasoning in
+    `message.reasoning_content`; schema-specific fields like `reasoning`,
+    `thought`, and `paths` are extracted out of `message.content`.
+
+    Post-processors can override or enrich `reasoning_content` by returning a
+    mapping with `reasoning` or `reasoning_content`.
+
 ## 8. **Post-processing**
 
 Use `registry.post()` to transform the Agent output before the HTTP response is
 encoded. Post-processors receive `(output, context, run)`.
 
-```python
-@registry.post("support")
-def add_support_footer(output, _context, _run):
-    if not isinstance(output, str):
-        return output
-    return output + "\n\nIf this does not solve it, contact support."
-```
+### 8.1 Non-streaming output shaping
 
 Return `None` to keep the original output. Return a new value to replace it.
-For non-streaming responses, a mapping can control the final assistant message:
+For non-streaming responses, a mapping can control the final assistant message.
+
+A practical pattern is to centralize output policy (what to expose to users)
+in post-processing:
 
 ```python
-@registry.post("billing")
-def normalize_billing_output(output, context, _run):
-    return {
-        "response": str(output),
-        "reasoning_content": f"Handled by agent `{context.agent_name}`.",
-    }
+@registry.post("support")
+def normalize_support_output(output, context, run):
+    expose_reasoning = bool((run.vars or {}).get("debug_reasoning", False))
+
+    # `output` may already be a dict (for example from reasoning-enabled runs).
+    if isinstance(output, dict):
+        answer = str(output.get("answer") or output.get("response") or "")
+        reasoning = output.get("reasoning") or output.get("reasoning_content")
+    else:
+        answer = str(output)
+        reasoning = None
+
+    payload = {"answer": answer.strip()}
+    if expose_reasoning and reasoning:
+        payload["reasoning"] = str(reasoning)
+    return payload
 ```
 
-The adapter maps `response` or `answer` to `message.content`, and maps
-`reasoning` or `reasoning_content` to `message.reasoning_content`.
+The HTTP adapter maps these keys:
 
-For streaming responses, the Agent usually returns a `ModelStreamResponse`.
-Avoid converting it into a string in post-processing unless you intentionally
-want to buffer the stream and lose incremental token delivery.
+- `answer` or `response` -> `message.content`
+- `reasoning` or `reasoning_content` -> `message.reasoning_content`
 
-## 9. **See Also**
+This lets you standardize reasoning output in one place, even when upstream
+providers or generation schemas use different internal field names.
+
+!!! warning "Do not stringify stream responses"
+    Converting a `ModelStreamResponse` to `str` (or any fully buffered value)
+    forces buffering and removes incremental token delivery.
+
+!!! info "Practical rule"
+    Use post-processing to reshape **final** non-streaming payloads.
+    For streaming requests, treat `ModelStreamResponse` as passthrough.
+
+## 9. **Serving Custom Modules**
+
+Although channels are designed for `nn.Agent`, today the registry does not
+enforce a strict concrete type. In practice, what matters is keeping the same
+runtime call contract (`messages`, `stream`, `vars`, `model_preference`,
+`tool_filter`, and compatible return shapes).
+
+This allows a composed module that keeps the Agent-like interface but adds
+domain logic before delegating to an internal agent. A common case is mixed
+text/audio input: detect audio in `vars` (or parse it from `messages`),
+transcribe it, and append the transcript to the task context before calling
+the underlying agent.
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+
+class VoiceSupport(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.transcriber = nn.Transcriber("openai/whisper-1")
+        self.agent = nn.Agent(
+            model="openai/gpt-4.1-mini",
+            system_message="You are a concise support specialist."
+        )
+
+    async def aforward(self, messages, stream=False, vars=None, **kwargs):
+        vars = vars or {}
+        audio_path = vars.get("audio_path")
+        if audio_path:
+            transcript = await self.transcriber.acall(audio_path)
+            messages = list(messages) + [
+                {"role": "user", "content": f"Audio transcript: {transcript}"}
+            ]
+        return await self.agent.acall(messages=messages, stream=stream, vars=vars, **kwargs)
+```
+
+!!! info "Why not pre-processing?"
+    Pre-processors are intentionally sync and lightweight. They are ideal for
+    small request reshaping, not async I/O or external orchestration. For that,
+    prefer a composed module with the same Agent-compatible call contract.
+
+## 10. **See Also**
 
 - [Agent](../nn/agent/index.md) - Core module that channels expose over HTTP
 - [Message](../nn/message.md) - Structured message passing
