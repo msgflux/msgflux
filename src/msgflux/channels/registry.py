@@ -1,12 +1,15 @@
+import asyncio
 import importlib
 import importlib.util
 import inspect
+import time
+from collections.abc import Mapping as ABCMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, List, Mapping, Optional, TypeVar, cast
 
-from msgflux.channels.exceptions import AgentNotFoundError
+from msgflux.channels.exceptions import AgentNotFoundError, RateLimitExceededError
 
 T = TypeVar("T")
 Processor = Callable[..., Any]
@@ -30,6 +33,7 @@ class AgentRun:
     model_preference: Optional[str] = None
     tool_filter: Optional[Mapping[str, Any]] = None
     kwargs: Dict[str, Any] = field(default_factory=dict)
+    policies: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -46,6 +50,23 @@ class ChannelSettings:
     otel_kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class AgentDefaults:
+    vars: Dict[str, Any] = field(default_factory=dict)
+    model_preference: Optional[str] = None
+    tool_filter: Optional[Mapping[str, Any]] = None
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    stream_policy: Optional[Any] = None
+    reasoning_policy: Optional[Any] = None
+
+
+@dataclass
+class RateLimitPolicy:
+    requests: int
+    window_s: float = 60.0
+    by: str | Processor = "api_key"
+
+
 class ChannelRegistry:
     """Registry for channel-exposed agents and request processors."""
 
@@ -60,6 +81,11 @@ class ChannelRegistry:
         self._startup_hooks: List[Processor] = []
         self._shutdown_hooks: List[Processor] = []
         self._hooks: Dict[str, List[Processor]] = {}
+        self._defaults = AgentDefaults()
+        self._agent_defaults: Dict[str, AgentDefaults] = {}
+        self._rate_limits: List[RateLimitPolicy] = []
+        self._rate_limit_counters: Dict[tuple[int, str], tuple[int, float]] = {}
+        self._rate_limit_lock = asyncio.Lock()
 
     def settings(self, **updates: Any) -> ChannelSettings:
         if not updates:
@@ -70,6 +96,49 @@ class ChannelRegistry:
                 raise TypeError(f"Unknown channel setting `{key}`")
             setattr(self._settings, key, value)
         return self._settings
+
+    def defaults(
+        self,
+        agent_name: Optional[str] = None,
+        **updates: Any,
+    ) -> AgentDefaults:
+        defaults = self._defaults
+        if agent_name is not None:
+            defaults = self._agent_defaults.setdefault(agent_name, AgentDefaults())
+
+        if not updates:
+            return defaults
+
+        for key, value in updates.items():
+            if not hasattr(defaults, key):
+                raise TypeError(f"Unknown agent default `{key}`")
+            setattr(defaults, key, value)
+        return defaults
+
+    def run_defaults(self, agent_name: str) -> AgentDefaults:
+        return _merge_agent_defaults(
+            self._defaults,
+            self._agent_defaults.get(agent_name),
+        )
+
+    def rate_limit(
+        self,
+        *,
+        requests: int,
+        window_s: float = 60.0,
+        by: str | Processor = "api_key",
+    ) -> RateLimitPolicy:
+        if requests < 1:
+            raise ValueError("rate_limit requests must be >= 1")
+        if window_s <= 0:
+            raise ValueError("rate_limit window_s must be > 0")
+        if isinstance(by, str) and by not in {"api_key", "ip", "tenant"}:
+            raise ValueError(
+                "rate_limit by must be 'api_key', 'ip', 'tenant', or a callable"
+            )
+        policy = RateLimitPolicy(requests=requests, window_s=window_s, by=by)
+        self._rate_limits.append(policy)
+        return policy
 
     def _resolve_name(self, obj: Any, name: Optional[str] = None) -> str:
         if name:
@@ -343,6 +412,35 @@ class ChannelRegistry:
         for hook in self._hooks.get(event, []):
             await call_processor(hook, *args)
 
+    async def check_rate_limits(
+        self,
+        request: Any,
+        context: ChannelContext,
+        http_request: Any = None,
+    ) -> None:
+        if not self._rate_limits:
+            return
+
+        policies = list(self._rate_limits)
+        keys = [
+            await _rate_limit_key(policy, request, context, http_request)
+            for policy in policies
+        ]
+        now = time.monotonic()
+        async with self._rate_limit_lock:
+            for index, (policy, key) in enumerate(zip(policies, keys)):
+                counter_key = (index, str(key))
+                count, reset_at = self._rate_limit_counters.get(
+                    counter_key,
+                    (0, now + policy.window_s),
+                )
+                if now >= reset_at:
+                    count = 0
+                    reset_at = now + policy.window_s
+                if count >= policy.requests:
+                    raise RateLimitExceededError("Rate limit exceeded")
+                self._rate_limit_counters[counter_key] = (count + 1, reset_at)
+
     def __contains__(self, name: str) -> bool:
         return name in self._agents
 
@@ -384,6 +482,114 @@ def _select_supported_args(
         }
     ]
     return args[: len(positional)]
+
+
+def _merge_agent_defaults(
+    global_defaults: AgentDefaults,
+    agent_defaults: Optional[AgentDefaults],
+) -> AgentDefaults:
+    if agent_defaults is None:
+        return AgentDefaults(
+            vars=dict(global_defaults.vars),
+            model_preference=global_defaults.model_preference,
+            tool_filter=_copy_mapping(global_defaults.tool_filter),
+            kwargs=dict(global_defaults.kwargs),
+            stream_policy=global_defaults.stream_policy,
+            reasoning_policy=global_defaults.reasoning_policy,
+        )
+
+    return AgentDefaults(
+        vars={**global_defaults.vars, **agent_defaults.vars},
+        model_preference=(
+            agent_defaults.model_preference
+            if agent_defaults.model_preference is not None
+            else global_defaults.model_preference
+        ),
+        tool_filter=(
+            _copy_mapping(agent_defaults.tool_filter)
+            if agent_defaults.tool_filter is not None
+            else _copy_mapping(global_defaults.tool_filter)
+        ),
+        kwargs={**global_defaults.kwargs, **agent_defaults.kwargs},
+        stream_policy=(
+            agent_defaults.stream_policy
+            if agent_defaults.stream_policy is not None
+            else global_defaults.stream_policy
+        ),
+        reasoning_policy=(
+            agent_defaults.reasoning_policy
+            if agent_defaults.reasoning_policy is not None
+            else global_defaults.reasoning_policy
+        ),
+    )
+
+
+def _copy_mapping(value: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    return dict(value)
+
+
+async def _rate_limit_key(
+    policy: RateLimitPolicy,
+    request: Any,
+    context: ChannelContext,
+    http_request: Any = None,
+) -> str:
+    if callable(policy.by) and not isinstance(policy.by, str):
+        key = await call_processor(policy.by, request, context, http_request)
+        return "anonymous" if key is None else str(key)
+
+    by = str(policy.by)
+    if by == "api_key":
+        return _api_key_from_context(context, http_request) or "anonymous"
+    if by == "ip":
+        return _client_ip(http_request) or "unknown"
+    if by == "tenant":
+        return _tenant_from_context(request, context) or "unknown"
+    raise ValueError(
+        "rate_limit by must be 'api_key', 'ip', 'tenant', or a callable"
+    )
+
+
+def _api_key_from_context(context: ChannelContext, http_request: Any = None) -> str:
+    principal = context.state.get("principal")
+    if isinstance(principal, ABCMapping):
+        for key in ("api_key", "key", "id"):
+            value = principal.get(key)
+            if value:
+                return str(value)
+
+    headers = getattr(http_request, "headers", {}) if http_request is not None else {}
+    authorization = headers.get("authorization")
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    api_key = headers.get("x-api-key")
+    return str(api_key) if api_key else ""
+
+
+def _client_ip(http_request: Any = None) -> str:
+    if http_request is None:
+        return ""
+    forwarded_for = http_request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", maxsplit=1)[0].strip()
+    client = getattr(http_request, "client", None)
+    host = getattr(client, "host", None)
+    return str(host) if host else ""
+
+
+def _tenant_from_context(request: Any, context: ChannelContext) -> str:
+    principal = context.state.get("principal")
+    if isinstance(principal, ABCMapping) and principal.get("tenant"):
+        return str(principal["tenant"])
+
+    run_config = getattr(request, "run_config", None)
+    if isinstance(run_config, ABCMapping):
+        vars_ = run_config.get("vars")
+        if isinstance(vars_, ABCMapping) and vars_.get("tenant"):
+            return str(vars_["tenant"])
+    return ""
 
 
 def load_registry_target(target: str) -> ChannelRegistry:

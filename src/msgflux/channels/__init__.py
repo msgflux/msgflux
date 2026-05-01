@@ -3,18 +3,22 @@ from msgflux.channels.exceptions import (
     ChannelError,
     ForbiddenError,
     PayloadTooLargeError,
+    RateLimitExceededError,
     RequestTimeoutError,
     UnauthorizedError,
 )
 from msgflux.channels.registry import (
+    AgentDefaults,
     AgentRun,
     ChannelContext,
     ChannelRegistry,
     ChannelSettings,
+    RateLimitPolicy,
 )
 
 __all__ = [
     "AgentNotFoundError",
+    "AgentDefaults",
     "AgentRun",
     "ChannelContext",
     "ChannelError",
@@ -22,6 +26,8 @@ __all__ = [
     "ChannelSettings",
     "ForbiddenError",
     "PayloadTooLargeError",
+    "RateLimitExceededError",
+    "RateLimitPolicy",
     "RequestTimeoutError",
     "UnauthorizedError",
 ]

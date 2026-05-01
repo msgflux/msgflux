@@ -212,6 +212,45 @@ registry.settings(
 `opentelemetry-instrumentation-fastapi` adapter. The package is included in the
 `server` extra.
 
+Defaults can be global or agent-specific. Request `run_config` still wins over
+defaults, and pre-processors continue to run last:
+
+```python
+registry.defaults(
+    vars={"tenant": "default"},
+    model_preference="fast",
+    tool_filter={"block": "*"},
+    reasoning_policy={"effort": "low"},
+)
+
+registry.defaults(
+    "support",
+    vars={"tenant": "support"},
+    tool_filter={"allow": ["search_docs"]},
+)
+```
+
+Rate limits are configured at the boundary. The built-in limiter is in-memory
+and per Python process, which is useful for local protection and single-worker
+deployments. For multi-worker or distributed deployments, use a custom
+`@registry.auth`/`@registry.authorize` integration backed by Redis, a gateway,
+or your billing system.
+
+```python
+registry.rate_limit(requests=60, window_s=60, by="api_key")
+registry.rate_limit(requests=600, window_s=60, by="tenant")
+```
+
+`by` accepts `"api_key"`, `"ip"`, `"tenant"`, or a callable:
+
+```python
+def key_by_model(request, context):
+    return request.model
+
+
+registry.rate_limit(requests=20, window_s=60, by=key_by_model)
+```
+
 Authentication and authorization live on the registry and run before the agent
 is selected:
 

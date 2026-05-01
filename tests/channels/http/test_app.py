@@ -174,6 +174,42 @@ def test_auth_and_authorize_are_enforced():
     assert allowed.status_code == 200
 
 
+def test_rate_limit_by_api_key_returns_429():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    registry = ChannelRegistry()
+    registry.agent(FakeAgent())
+    registry.rate_limit(requests=1, window_s=60, by="api_key")
+    client = TestClient(create_app(registry))
+    payload = {
+        "model": "support",
+        "messages": [{"role": "user", "content": "hi"}],
+        "run_config": {"vars": {"tenant": "acme"}},
+    }
+
+    first = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-1"},
+        json=payload,
+    )
+    second = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-1"},
+        json=payload,
+    )
+    other_key = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-2"},
+        json=payload,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "rate_limit_exceeded"
+    assert other_key.status_code == 200
+
+
 def test_error_handler_maps_exception_to_http_payload():
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient

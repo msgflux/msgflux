@@ -30,3 +30,8 @@ class PayloadTooLargeError(ChannelError):
 class RequestTimeoutError(ChannelError):
     status_code = 504
     code = "request_timeout"
+
+
+class RateLimitExceededError(ChannelError):
+    status_code = 429
+    code = "rate_limit_exceeded"

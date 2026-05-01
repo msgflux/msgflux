@@ -1,9 +1,10 @@
 import textwrap
+from types import SimpleNamespace
 
 import pytest
 
 from msgflux.channels import ChannelRegistry
-from msgflux.channels.exceptions import AgentNotFoundError
+from msgflux.channels.exceptions import AgentNotFoundError, RateLimitExceededError
 from msgflux.channels.registry import load_registry_target
 
 
@@ -113,6 +114,60 @@ def test_channel_registry_settings_are_global_and_validated():
 
     with pytest.raises(TypeError, match="Unknown channel setting"):
         registry.settings(unknown=True)
+
+
+def test_channel_registry_defaults_are_global_and_per_agent():
+    registry = ChannelRegistry()
+
+    global_defaults = registry.defaults(
+        vars={"tenant": "default"},
+        model_preference="fast",
+        tool_filter={"block": "*"},
+        reasoning_policy={"effort": "low"},
+    )
+    support_defaults = registry.defaults(
+        "support",
+        vars={"tenant": "support"},
+        tool_filter={"allow": ["search"]},
+    )
+
+    merged = registry.run_defaults("support")
+
+    assert registry.defaults() is global_defaults
+    assert registry.defaults("support") is support_defaults
+    assert merged.vars == {"tenant": "support"}
+    assert merged.model_preference == "fast"
+    assert merged.tool_filter == {"allow": ["search"]}
+    assert merged.reasoning_policy == {"effort": "low"}
+
+    with pytest.raises(TypeError, match="Unknown agent default"):
+        registry.defaults(unknown=True)
+
+
+def test_channel_registry_rate_limit_validates_policy():
+    registry = ChannelRegistry()
+
+    with pytest.raises(ValueError, match="requests"):
+        registry.rate_limit(requests=0)
+
+    with pytest.raises(ValueError, match="window_s"):
+        registry.rate_limit(requests=1, window_s=0)
+
+    with pytest.raises(ValueError, match="api_key"):
+        registry.rate_limit(requests=1, by="unknown")
+
+
+@pytest.mark.asyncio
+async def test_channel_registry_rate_limit_by_tenant():
+    registry = ChannelRegistry()
+    registry.rate_limit(requests=1, window_s=60, by="tenant")
+    request = SimpleNamespace(run_config={"vars": {"tenant": "acme"}})
+    context = SimpleNamespace(state={})
+
+    await registry.check_rate_limits(request, context)
+
+    with pytest.raises(RateLimitExceededError):
+        await registry.check_rate_limits(request, context)
 
 
 def test_channel_registry_registers_auth_authorizer_and_hooks():

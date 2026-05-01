@@ -269,6 +269,7 @@ async def authenticate_request(
             raise ForbiddenError("Forbidden")
         if isinstance(result, ABCMapping):
             context.state.update(result)
+    await registry.check_rate_limits(request, context, http_request)
 
 
 async def _emit_sse_chunk(
@@ -286,13 +287,19 @@ async def prepare_agent_run(
     request: ChatCompletionRequest,
     context: ChannelContext,
 ) -> AgentRun:
+    defaults = registry.run_defaults(request.model)
     run_config = _merged_run_config(request)
     run = AgentRun(
         messages=list(request.messages),
-        vars=dict(run_config.get("vars") or {}),
+        vars={**defaults.vars, **dict(run_config.get("vars") or {})},
         stream=request.stream,
-        model_preference=run_config.get("model_preference"),
-        tool_filter=run_config.get("tool_filter"),
+        model_preference=run_config.get(
+            "model_preference",
+            defaults.model_preference,
+        ),
+        tool_filter=run_config.get("tool_filter", defaults.tool_filter),
+        kwargs=dict(defaults.kwargs),
+        policies=_run_policies(defaults),
     )
 
     for processor in registry.pre_processors(request.model):
@@ -348,6 +355,15 @@ def _apply_run_update(run: AgentRun, update: Any) -> AgentRun:
 
 def _merged_run_config(request: ChatCompletionRequest) -> Dict[str, Any]:
     return dict(request.run_config)
+
+
+def _run_policies(defaults: Any) -> Dict[str, Any]:
+    policies = {}
+    if defaults.stream_policy is not None:
+        policies["stream"] = defaults.stream_policy
+    if defaults.reasoning_policy is not None:
+        policies["reasoning"] = defaults.reasoning_policy
+    return policies
 
 
 async def _stream_response_chunks(
