@@ -29,15 +29,14 @@ The HTTP server depends on FastAPI and Uvicorn:
 uv pip install "msgflux[server,openai]"
 ```
 
-If you want to run the example without cloning the repository, download it
-first:
+If you want to run the example without cloning the repository, you can start
+directly from a remote Python file:
 
 ```bash
-curl -L -o server_streaming_agent.py \
-  https://raw.githubusercontent.com/msgflux/msgflux/main/examples/server_streaming_agent.py
+uv run --with 'msgflux[server,openai]' msgflux server https://raw.githubusercontent.com/msgflux/msgflux/main/examples/server_streaming_agent.py --trust-remote-code --host 127.0.0.1
 ```
 
-Start the server:
+Or start from a local file:
 
 ```bash
 uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1
@@ -48,6 +47,11 @@ Use `--port` to override the default `8010`:
 ```bash
 uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py --host 127.0.0.1 --port 9000
 ```
+
+!!! warning "Remote execution requires explicit trust"
+    Remote targets are blocked by default. Pass `--trust-remote-code` to allow
+    download and execution. The server logs an `INFO` message when downloading
+    the file and when saving it locally.
 
 !!! tip "Default address"
 

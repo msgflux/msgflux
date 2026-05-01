@@ -16,6 +16,14 @@ def build_parser() -> argparse.ArgumentParser:
         "target",
         help="Python target containing a ChannelRegistry, e.g. app.py:registry",
     )
+    server_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help=(
+            "Allow downloading and executing a remote Python file when `target` "
+            "is an http(s) URL."
+        ),
+    )
     server_parser.add_argument("--host", default="127.0.0.1")
     server_parser.add_argument("--port", default=8010, type=int)
     server_parser.add_argument("--title", default="msgflux")
