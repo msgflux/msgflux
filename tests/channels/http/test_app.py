@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from msgflux.channels import ChannelRegistry
+from msgflux.channels import ChannelRegistry, RateLimitDecision
 from msgflux.channels.http import app as app_module
 from msgflux.channels.http.app import create_app
 
@@ -275,6 +275,36 @@ def test_rate_limit_by_api_key_returns_429():
     assert second.json()["error"]["code"] == "rate_limit_exceeded"
     assert int(second.headers["retry-after"]) >= 1
     assert other_key.status_code == 200
+
+
+def test_pluggable_rate_limit_store_controls_http_429():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    class DenyStore:
+        async def hit(self, bucket):
+            assert bucket.name == "http-api-key"
+            return RateLimitDecision(allowed=False, retry_after_s=12)
+
+    registry = ChannelRegistry()
+    registry.agent(FakeAgent())
+    registry.rate_limit_store(DenyStore())
+    registry.rate_limit(name="http-api-key", requests=100, window_s=60, by="api_key")
+    client = TestClient(create_app(registry))
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-1"},
+        json={
+            "model": "support",
+            "messages": [{"role": "user", "content": "hi"}],
+            "run_config": {"vars": {"tenant": "acme"}},
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "12"
+    assert response.json()["error"]["code"] == "rate_limit_exceeded"
 
 
 def test_response_headers_include_request_and_correlation_ids():

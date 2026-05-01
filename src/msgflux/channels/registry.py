@@ -81,6 +81,60 @@ class RateLimitPolicy:
     window_s: float = 60.0
     by: str | Processor = "api_key"
     agent: Optional[str] = None
+    name: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RateLimitBucket:
+    name: str
+    key: str
+    identity: str
+    policy: RateLimitPolicy
+
+
+@dataclass(frozen=True)
+class RateLimitDecision:
+    allowed: bool
+    retry_after_s: Optional[float] = None
+    remaining: Optional[int] = None
+    reset_after_s: Optional[float] = None
+
+
+class InMemoryRateLimitStore:
+    """Atomic enough for a single Python process."""
+
+    def __init__(self) -> None:
+        self._counters: Dict[str, tuple[int, float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def hit(self, bucket: RateLimitBucket) -> RateLimitDecision:
+        now = time.monotonic()
+        policy = bucket.policy
+        async with self._lock:
+            count, reset_at = self._counters.get(
+                bucket.key,
+                (0, now + policy.window_s),
+            )
+            if now >= reset_at:
+                count = 0
+                reset_at = now + policy.window_s
+
+            reset_after_s = reset_at - now
+            if count >= policy.requests:
+                return RateLimitDecision(
+                    allowed=False,
+                    retry_after_s=reset_after_s,
+                    remaining=0,
+                    reset_after_s=reset_after_s,
+                )
+
+            count += 1
+            self._counters[bucket.key] = (count, reset_at)
+            return RateLimitDecision(
+                allowed=True,
+                remaining=max(0, policy.requests - count),
+                reset_after_s=reset_after_s,
+            )
 
 
 class ChannelRegistry:
@@ -101,8 +155,7 @@ class ChannelRegistry:
         self._defaults = AgentDefaults()
         self._agent_defaults: Dict[str, AgentDefaults] = {}
         self._rate_limits: List[RateLimitPolicy] = []
-        self._rate_limit_counters: Dict[tuple[int, str], tuple[int, float]] = {}
-        self._rate_limit_lock = asyncio.Lock()
+        self._rate_limit_store: Any = InMemoryRateLimitStore()
         self._readiness = ChannelReadiness()
 
     def settings(self, **updates: Any) -> ChannelSettings:
@@ -146,11 +199,18 @@ class ChannelRegistry:
         window_s: float = 60.0,
         by: str | Processor = "api_key",
         agent: Optional[str] = None,
+        name: Optional[str] = None,
     ) -> RateLimitPolicy:
         if requests < 1:
             raise ValueError("rate_limit requests must be >= 1")
         if window_s <= 0:
             raise ValueError("rate_limit window_s must be > 0")
+        if name == "":
+            raise ValueError("rate_limit name must not be empty")
+        if name is not None and any(
+            policy.name == name for policy in self._rate_limits
+        ):
+            raise ValueError(f"rate_limit name `{name}` is already registered")
         if isinstance(by, str) and by not in {
             "api_key",
             "client",
@@ -167,9 +227,22 @@ class ChannelRegistry:
             window_s=window_s,
             by=by,
             agent=agent,
+            name=name,
         )
         self._rate_limits.append(policy)
         return policy
+
+    def rate_limit_store(self, store: Any = None) -> Any:
+        if store is None:
+            return self._rate_limit_store
+
+        hit = getattr(store, "hit", None)
+        if not callable(store) and not callable(hit):
+            raise TypeError(
+                "rate_limit_store expects a callable or an object with hit(...)"
+            )
+        self._rate_limit_store = store
+        return store
 
     def _resolve_name(self, obj: Any, name: Optional[str] = None) -> str:
         if name:
@@ -515,27 +588,21 @@ class ChannelRegistry:
             for index, policy in enumerate(self._rate_limits)
             if policy.agent is None or policy.agent == context.agent_name
         ]
-        keys = [
-            await _rate_limit_key(policy, request, context, http_request)
-            for _, policy in policies
-        ]
-        now = time.monotonic()
-        async with self._rate_limit_lock:
-            for (index, policy), key in zip(policies, keys):
-                counter_key = (index, str(key))
-                count, reset_at = self._rate_limit_counters.get(
-                    counter_key,
-                    (0, now + policy.window_s),
+        for index, policy in policies:
+            identity = await _rate_limit_key(policy, request, context, http_request)
+            bucket = _rate_limit_bucket(index, policy, identity)
+            decision = await _rate_limit_store_hit(
+                self._rate_limit_store,
+                bucket,
+                request,
+                context,
+                http_request,
+            )
+            if not decision.allowed:
+                raise RateLimitExceededError(
+                    "Rate limit exceeded",
+                    retry_after_s=decision.retry_after_s or decision.reset_after_s,
                 )
-                if now >= reset_at:
-                    count = 0
-                    reset_at = now + policy.window_s
-                if count >= policy.requests:
-                    raise RateLimitExceededError(
-                        "Rate limit exceeded",
-                        retry_after_s=reset_at - now,
-                    )
-                self._rate_limit_counters[counter_key] = (count + 1, reset_at)
 
     def __contains__(self, name: str) -> bool:
         return name in self._agents
@@ -637,6 +704,69 @@ def _copy_mapping(value: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]
     if value is None:
         return None
     return dict(value)
+
+
+def _rate_limit_bucket(
+    index: int,
+    policy: RateLimitPolicy,
+    identity: str,
+) -> RateLimitBucket:
+    name = policy.name or f"policy:{index}"
+    identity = str(identity)
+    return RateLimitBucket(
+        name=name,
+        key=f"msgflux:rate_limit:{name}:{identity}",
+        identity=identity,
+        policy=policy,
+    )
+
+
+async def _rate_limit_store_hit(
+    store: Any,
+    bucket: RateLimitBucket,
+    request: Any,
+    context: ChannelContext,
+    http_request: Any = None,
+) -> RateLimitDecision:
+    hit = getattr(store, "hit", None)
+    handler = hit if callable(hit) else store
+    result = await call_processor(handler, bucket, request, context, http_request)
+    return _rate_limit_decision(result)
+
+
+def _rate_limit_decision(result: Any) -> RateLimitDecision:
+    if isinstance(result, RateLimitDecision):
+        return result
+    if result is None:
+        return RateLimitDecision(allowed=True)
+    if isinstance(result, bool):
+        return RateLimitDecision(allowed=result)
+    if isinstance(result, ABCMapping):
+        return RateLimitDecision(
+            allowed=bool(result.get("allowed", True)),
+            retry_after_s=_optional_float(
+                result.get("retry_after_s", result.get("retry_after"))
+            ),
+            remaining=_optional_int(result.get("remaining")),
+            reset_after_s=_optional_float(
+                result.get("reset_after_s", result.get("reset_after"))
+            ),
+        )
+    raise TypeError(
+        "rate limit store must return RateLimitDecision, a mapping, bool, or None"
+    )
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    return int(value)
 
 
 async def _rate_limit_key(

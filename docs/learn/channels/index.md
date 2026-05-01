@@ -255,18 +255,23 @@ registry.defaults(
 )
 ```
 
-Rate limits are configured at the boundary. The built-in limiter is in-memory
-and per Python process, which is useful for local protection and single-worker
-deployments. For multi-worker or distributed deployments, use a custom
-`@registry.auth`/`@registry.authorize` integration backed by Redis, a gateway,
-or your billing system.
+Rate limits are configured at the boundary. The default store is in-memory and
+per Python process, which is useful for local protection and single-worker
+deployments. For multi-worker or distributed deployments, plug a shared store
+such as Redis, a gateway, or your billing system.
 
 ```python
-registry.rate_limit(requests=60, window_s=60, by="api_key")
-registry.rate_limit(requests=300, window_s=60, by="client")
-registry.rate_limit(requests=600, window_s=60, by="tenant")
-registry.rate_limit(requests=2000, window_s=60, by="service")
-registry.rate_limit(agent="billing", requests=30, window_s=60, by="tenant")
+registry.rate_limit(name="api-key-minute", requests=60, window_s=60, by="api_key")
+registry.rate_limit(name="client-minute", requests=300, window_s=60, by="client")
+registry.rate_limit(name="tenant-minute", requests=600, window_s=60, by="tenant")
+registry.rate_limit(name="service-minute", requests=2000, window_s=60, by="service")
+registry.rate_limit(
+    name="billing-tenant-minute",
+    agent="billing",
+    requests=30,
+    window_s=60,
+    by="tenant",
+)
 ```
 
 `by` accepts:
@@ -289,6 +294,46 @@ def key_by_model(request, context):
 
 registry.rate_limit(requests=20, window_s=60, by=key_by_model)
 ```
+
+When using a distributed store, give every policy a stable `name`. The registry
+resolves the bucket identity from `by=...` and sends a `RateLimitBucket` to the
+store:
+
+```python
+from msgflux.channels import RateLimitDecision
+
+
+class RedisRateLimitStore:
+    def __init__(self, redis):
+        self.redis = redis
+
+    async def hit(self, bucket):
+        current = await self.redis.incr(bucket.key)
+        if current == 1:
+            await self.redis.expire(bucket.key, int(bucket.policy.window_s))
+
+        ttl = await self.redis.ttl(bucket.key)
+        retry_after_s = ttl if current > bucket.policy.requests else None
+        return RateLimitDecision(
+            allowed=current <= bucket.policy.requests,
+            remaining=max(0, bucket.policy.requests - current),
+            retry_after_s=retry_after_s,
+            reset_after_s=ttl,
+        )
+
+
+registry.rate_limit_store(RedisRateLimitStore(redis))
+registry.rate_limit(
+    name="api-key-minute",
+    requests=60,
+    window_s=60,
+    by="api_key",
+)
+```
+
+Custom stores may also be plain callables and can return `RateLimitDecision`, a
+mapping with `allowed`/`retry_after_s`, a boolean, or `None` to allow the
+request.
 
 Authentication and authorization live on the registry and run before the agent
 is selected:

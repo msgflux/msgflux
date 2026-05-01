@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from msgflux.channels import ChannelRegistry
+from msgflux.channels import ChannelRegistry, RateLimitDecision
 from msgflux.channels.exceptions import AgentNotFoundError, RateLimitExceededError
 from msgflux.channels.registry import load_registry_target
 
@@ -185,6 +185,17 @@ def test_channel_registry_rate_limit_validates_policy():
     with pytest.raises(ValueError, match="api_key"):
         registry.rate_limit(requests=1, by="unknown")
 
+    registry.rate_limit(name="api-key-minute", requests=1)
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.rate_limit(name="api-key-minute", requests=1)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        registry.rate_limit(name="", requests=1)
+
+    with pytest.raises(TypeError, match="rate_limit_store"):
+        registry.rate_limit_store(object())
+
 
 @pytest.mark.asyncio
 async def test_channel_registry_rate_limit_by_tenant():
@@ -249,6 +260,68 @@ async def test_channel_registry_rate_limit_can_target_agent():
         await registry.check_rate_limits(request, support_context)
 
     await registry.check_rate_limits(request, billing_context)
+
+
+@pytest.mark.asyncio
+async def test_channel_registry_uses_pluggable_rate_limit_store():
+    class RecordingRateLimitStore:
+        def __init__(self):
+            self.calls = []
+
+        async def hit(self, bucket, request, context, http_request):
+            self.calls.append((bucket, request, context, http_request))
+            return RateLimitDecision(
+                allowed=len(self.calls) == 1,
+                retry_after_s=7,
+            )
+
+    registry = ChannelRegistry()
+    store = RecordingRateLimitStore()
+    registry.rate_limit_store(store)
+    policy = registry.rate_limit(
+        name="support-api-key",
+        requests=10,
+        window_s=60,
+        by="api_key",
+    )
+    request = SimpleNamespace(run_config={})
+    context = SimpleNamespace(agent_name="support", state={})
+    http_request = SimpleNamespace(
+        headers={"authorization": "Bearer key-1"},
+        client=SimpleNamespace(host="10.0.0.1"),
+    )
+
+    assert registry.rate_limit_store() is store
+    await registry.check_rate_limits(request, context, http_request)
+
+    with pytest.raises(RateLimitExceededError) as exc_info:
+        await registry.check_rate_limits(request, context, http_request)
+
+    first_bucket = store.calls[0][0]
+    assert first_bucket.name == "support-api-key"
+    assert first_bucket.identity == "key-1"
+    assert first_bucket.key == "msgflux:rate_limit:support-api-key:key-1"
+    assert first_bucket.policy is policy
+    assert store.calls[0][1:] == (request, context, http_request)
+    assert exc_info.value.headers["Retry-After"] == "7"
+
+
+@pytest.mark.asyncio
+async def test_channel_registry_rate_limit_store_accepts_callable_mapping_result():
+    def deny(bucket):
+        assert bucket.name == "policy:0"
+        return {"allowed": False, "retry_after_s": 3}
+
+    registry = ChannelRegistry()
+    registry.rate_limit_store(deny)
+    registry.rate_limit(requests=1, window_s=60, by="service")
+    request = SimpleNamespace(run_config={})
+    context = SimpleNamespace(agent_name="support", state={})
+
+    with pytest.raises(RateLimitExceededError) as exc_info:
+        await registry.check_rate_limits(request, context)
+
+    assert exc_info.value.headers["Retry-After"] == "3"
 
 
 def test_channel_registry_registers_auth_authorizer_and_hooks():

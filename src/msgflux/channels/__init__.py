@@ -15,6 +15,9 @@ from msgflux.channels.registry import (
     ChannelReadiness,
     ChannelRegistry,
     ChannelSettings,
+    InMemoryRateLimitStore,
+    RateLimitBucket,
+    RateLimitDecision,
     RateLimitPolicy,
 )
 
@@ -29,7 +32,10 @@ __all__ = [
     "ChannelRegistry",
     "ChannelSettings",
     "ForbiddenError",
+    "InMemoryRateLimitStore",
     "PayloadTooLargeError",
+    "RateLimitBucket",
+    "RateLimitDecision",
     "RateLimitExceededError",
     "RateLimitPolicy",
     "RequestTimeoutError",
