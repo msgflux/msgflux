@@ -32,6 +32,20 @@ class AgentRun:
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ChannelSettings:
+    max_request_bytes: Optional[int] = None
+    request_timeout_s: Optional[float] = None
+    enable_docs: bool = True
+    cors: bool = False
+    allowed_origins: List[str] = field(default_factory=lambda: ["*"])
+    cors_allow_credentials: bool = False
+    cors_allowed_methods: List[str] = field(default_factory=lambda: ["*"])
+    cors_allowed_headers: List[str] = field(default_factory=lambda: ["*"])
+    enable_otel: bool = False
+    otel_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+
 class ChannelRegistry:
     """Registry for channel-exposed agents and request processors."""
 
@@ -39,6 +53,23 @@ class ChannelRegistry:
         self._agents: Dict[str, Any] = {}
         self._pre_processors: Dict[str, List[Processor]] = {}
         self._post_processors: Dict[str, List[Processor]] = {}
+        self._settings = ChannelSettings()
+        self._auth_handler: Optional[Processor] = None
+        self._authorizers: Dict[str, List[Processor]] = {}
+        self._error_handlers: List[tuple[type[BaseException], Processor]] = []
+        self._startup_hooks: List[Processor] = []
+        self._shutdown_hooks: List[Processor] = []
+        self._hooks: Dict[str, List[Processor]] = {}
+
+    def settings(self, **updates: Any) -> ChannelSettings:
+        if not updates:
+            return self._settings
+
+        for key, value in updates.items():
+            if not hasattr(self._settings, key):
+                raise TypeError(f"Unknown channel setting `{key}`")
+            setattr(self._settings, key, value)
+        return self._settings
 
     def _resolve_name(self, obj: Any, name: Optional[str] = None) -> str:
         if name:
@@ -142,6 +173,121 @@ class ChannelRegistry:
 
         return decorator
 
+    def auth(
+        self,
+        handler: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        if handler is not None:
+            self._auth_handler = handler
+            return handler
+
+        def decorator(fn: Processor) -> Processor:
+            self._auth_handler = fn
+            return fn
+
+        return decorator
+
+    def authorize(
+        self,
+        target: str | Processor | None = None,
+        *,
+        agent: str = DEFAULT_PROCESSOR_KEY,
+    ) -> Processor | Callable[[Processor], Processor]:
+        if callable(target) and not isinstance(target, str):
+            processor = cast(Processor, target)
+            self._authorizers.setdefault(DEFAULT_PROCESSOR_KEY, []).append(processor)
+            return processor
+
+        key = target if isinstance(target, str) else agent
+
+        def decorator(processor: Processor) -> Processor:
+            self._authorizers.setdefault(key, []).append(processor)
+            return processor
+
+        return decorator
+
+    def error_handler(
+        self,
+        target: type[BaseException] | Processor | None = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        if callable(target) and not inspect.isclass(target):
+            handler = cast(Processor, target)
+            self._error_handlers.append((Exception, handler))
+            return handler
+
+        exc_type = Exception
+        if target is not None:
+            if not inspect.isclass(target) or not issubclass(target, BaseException):
+                raise TypeError("error_handler expects an exception type or callable")
+            exc_type = target
+
+        def decorator(handler: Processor) -> Processor:
+            self._error_handlers.append((exc_type, handler))
+            return handler
+
+        return decorator
+
+    def startup(
+        self,
+        hook: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        if hook is not None:
+            self._startup_hooks.append(hook)
+            return hook
+
+        def decorator(fn: Processor) -> Processor:
+            self._startup_hooks.append(fn)
+            return fn
+
+        return decorator
+
+    def shutdown(
+        self,
+        hook: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        if hook is not None:
+            self._shutdown_hooks.append(hook)
+            return hook
+
+        def decorator(fn: Processor) -> Processor:
+            self._shutdown_hooks.append(fn)
+            return fn
+
+        return decorator
+
+    def hook(
+        self,
+        event: str,
+        handler: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        if handler is not None:
+            self._hooks.setdefault(event, []).append(handler)
+            return handler
+
+        def decorator(fn: Processor) -> Processor:
+            self._hooks.setdefault(event, []).append(fn)
+            return fn
+
+        return decorator
+
+    def on_request_start(
+        self,
+        handler: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        return self.hook("request_start", handler)
+
+    def on_request_end(
+        self,
+        handler: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        return self.hook("request_end", handler)
+
+    def on_stream_chunk(
+        self,
+        handler: Optional[Processor] = None,
+    ) -> Processor | Callable[[Processor], Processor]:
+        return self.hook("stream_chunk", handler)
+
     def get_agent(self, name: str) -> Any:
         try:
             return self._agents[name]
@@ -162,6 +308,40 @@ class ChannelRegistry:
             *self._post_processors.get(DEFAULT_PROCESSOR_KEY, []),
             *self._post_processors.get(agent_name, []),
         ]
+
+    def auth_handler(self) -> Optional[Processor]:
+        return self._auth_handler
+
+    def authorizers(self, agent_name: str) -> List[Processor]:
+        return [
+            *self._authorizers.get(DEFAULT_PROCESSOR_KEY, []),
+            *self._authorizers.get(agent_name, []),
+        ]
+
+    def error_handlers(
+        self,
+        exc: BaseException,
+    ) -> List[tuple[type[BaseException], Processor]]:
+        return [
+            (exc_type, handler)
+            for exc_type, handler in self._error_handlers
+            if isinstance(exc, exc_type)
+        ]
+
+    def has_lifespan_hooks(self) -> bool:
+        return bool(self._startup_hooks or self._shutdown_hooks)
+
+    async def run_startup_hooks(self, *args: Any) -> None:
+        for hook in self._startup_hooks:
+            await call_processor(hook, *args)
+
+    async def run_shutdown_hooks(self, *args: Any) -> None:
+        for hook in self._shutdown_hooks:
+            await call_processor(hook, *args)
+
+    async def run_hooks(self, event: str, *args: Any) -> None:
+        for hook in self._hooks.get(event, []):
+            await call_processor(hook, *args)
 
     def __contains__(self, name: str) -> bool:
         return name in self._agents

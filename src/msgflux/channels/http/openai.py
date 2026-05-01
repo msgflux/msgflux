@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Dict, Mapping, Optional
 
 import msgspec
 
-from msgflux.channels.exceptions import ChannelError
+from msgflux.channels.exceptions import ChannelError, ForbiddenError, UnauthorizedError
 from msgflux.channels.http.schemas import (
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -71,8 +71,9 @@ def encode_error(
 async def create_chat_completion(
     registry: ChannelRegistry,
     request: ChatCompletionRequest,
+    *,
+    http_request: Any = None,
 ) -> ChatCompletionResponse:
-    agent = registry.get_agent(request.model)
     request_id = _make_completion_id()
     context = ChannelContext(
         channel="http",
@@ -80,44 +81,67 @@ async def create_chat_completion(
         request_id=request_id,
         request=request,
     )
-    run = await prepare_agent_run(registry, request, context)
-    run.stream = False
+    if http_request is not None:
+        context.state["http_request"] = http_request
 
-    output = await agent.acall(
-        messages=run.messages,
-        vars=run.vars,
-        model_preference=run.model_preference,
-        tool_filter=run.tool_filter,
-        stream=False,
-        **run.kwargs,
-    )
-    output = await apply_post_processors(registry, request.model, output, context, run)
-    content, reasoning_content = _extract_message_content(output)
+    run = None
+    try:
+        await registry.run_hooks("request_start", request, context)
+        await authenticate_request(registry, request, context, http_request)
+        agent = registry.get_agent(request.model)
+        run = await prepare_agent_run(registry, request, context)
+        run.stream = False
 
-    return ChatCompletionResponse(
-        id=request_id,
-        object="chat.completion",
-        created=int(time.time()),
-        model=request.model,
-        choices=[
-            ChatCompletionChoice(
-                index=0,
-                message=ChatCompletionMessage(
-                    content=content,
-                    reasoning_content=reasoning_content,
-                ),
-                finish_reason="stop",
-            )
-        ],
-        usage=None,
-    )
+        output = await agent.acall(
+            messages=run.messages,
+            vars=run.vars,
+            model_preference=run.model_preference,
+            tool_filter=run.tool_filter,
+            stream=False,
+            **run.kwargs,
+        )
+        output = await apply_post_processors(
+            registry,
+            request.model,
+            output,
+            context,
+            run,
+        )
+        content, reasoning_content = _extract_message_content(output)
+
+        response = ChatCompletionResponse(
+            id=request_id,
+            object="chat.completion",
+            created=int(time.time()),
+            model=request.model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        content=content,
+                        reasoning_content=reasoning_content,
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+        await registry.run_hooks("request_end", request, context, run, response, None)
+        return response
+    except asyncio.CancelledError as e:
+        await registry.run_hooks("request_end", request, context, run, None, e)
+        raise
+    except Exception as e:
+        await registry.run_hooks("request_end", request, context, run, None, e)
+        raise
 
 
 async def create_chat_completion_stream(
     registry: ChannelRegistry,
     request: ChatCompletionRequest,
+    *,
+    http_request: Any = None,
 ) -> AsyncIterator[bytes]:
-    agent = registry.get_agent(request.model)
     request_id = _make_completion_id()
     created = int(time.time())
     context = ChannelContext(
@@ -126,69 +150,135 @@ async def create_chat_completion_stream(
         request_id=request_id,
         request=request,
     )
-    run = await prepare_agent_run(registry, request, context)
-    run.stream = True
+    if http_request is not None:
+        context.state["http_request"] = http_request
 
-    output = await agent.acall(
-        messages=run.messages,
-        vars=run.vars,
-        model_preference=run.model_preference,
-        tool_filter=run.tool_filter,
-        stream=True,
-        **run.kwargs,
-    )
-    output = await apply_post_processors(registry, request.model, output, context, run)
+    run = None
+    try:
+        await registry.run_hooks("request_start", request, context)
+        await authenticate_request(registry, request, context, http_request)
+        agent = registry.get_agent(request.model)
+        run = await prepare_agent_run(registry, request, context)
+        run.stream = True
 
-    yield _sse_chunk(
-        _stream_chunk(
-            request_id,
-            created,
-            request.model,
-            delta=ChatCompletionStreamDelta(role="assistant"),
+        output = await agent.acall(
+            messages=run.messages,
+            vars=run.vars,
+            model_preference=run.model_preference,
+            tool_filter=run.tool_filter,
+            stream=True,
+            **run.kwargs,
         )
-    )
-
-    if isinstance(output, ModelStreamResponse):
-        async for chunk in _stream_response_chunks(
+        output = await apply_post_processors(
+            registry,
+            request.model,
             output,
-            request_id=request_id,
-            created=created,
-            model=request.model,
-        ):
-            yield chunk
-    else:
-        content, reasoning_content = _extract_message_content(output)
-        if reasoning_content:
-            yield _sse_chunk(
-                _stream_chunk(
-                    request_id,
-                    created,
-                    request.model,
-                    delta=ChatCompletionStreamDelta(
-                        reasoning_content=reasoning_content,
-                    ),
-                )
-            )
-        if content:
-            yield _sse_chunk(
-                _stream_chunk(
-                    request_id,
-                    created,
-                    request.model,
-                    delta=ChatCompletionStreamDelta(content=content),
-                )
-            )
-
-    yield _sse_chunk(
-        _stream_chunk(
-            request_id,
-            created,
-            request.model,
-            delta=ChatCompletionStreamDelta(),
-            finish_reason=_finish_reason(output),
+            context,
+            run,
         )
-    )
-    yield b"data: [DONE]\n\n"
+
+        yield await _emit_sse_chunk(
+            registry,
+            _stream_chunk(
+                request_id,
+                created,
+                request.model,
+                delta=ChatCompletionStreamDelta(role="assistant"),
+            ),
+            context,
+            run,
+        )
+
+        if isinstance(output, ModelStreamResponse):
+            async for chunk in _stream_response_chunks(
+                output,
+                request_id=request_id,
+                created=created,
+                model=request.model,
+            ):
+                yield await _emit_sse_chunk(registry, chunk, context, run)
+        else:
+            content, reasoning_content = _extract_message_content(output)
+            if reasoning_content:
+                yield await _emit_sse_chunk(
+                    registry,
+                    _stream_chunk(
+                        request_id,
+                        created,
+                        request.model,
+                        delta=ChatCompletionStreamDelta(
+                            reasoning_content=reasoning_content,
+                        ),
+                    ),
+                    context,
+                    run,
+                )
+            if content:
+                yield await _emit_sse_chunk(
+                    registry,
+                    _stream_chunk(
+                        request_id,
+                        created,
+                        request.model,
+                        delta=ChatCompletionStreamDelta(content=content),
+                    ),
+                    context,
+                    run,
+                )
+
+        yield await _emit_sse_chunk(
+            registry,
+            _stream_chunk(
+                request_id,
+                created,
+                request.model,
+                delta=ChatCompletionStreamDelta(),
+                finish_reason=_finish_reason(output),
+            ),
+            context,
+            run,
+        )
+        yield b"data: [DONE]\n\n"
+        await registry.run_hooks("request_end", request, context, run, output, None)
+    except asyncio.CancelledError as e:
+        await registry.run_hooks("request_end", request, context, run, None, e)
+        raise
+    except Exception as e:
+        await registry.run_hooks("request_end", request, context, run, None, e)
+        raise
+
+
+async def authenticate_request(
+    registry: ChannelRegistry,
+    request: ChatCompletionRequest,
+    context: ChannelContext,
+    http_request: Any = None,
+) -> None:
+    principal = None
+    auth_handler = registry.auth_handler()
+    if auth_handler is not None:
+        principal = await call_processor(auth_handler, http_request, request, context)
+        if principal is False:
+            raise UnauthorizedError("Unauthorized")
+
+    context.state["principal"] = principal
+    context.state["auth"] = principal
+    for authorizer in registry.authorizers(request.model):
+        result = await call_processor(authorizer, request, context, principal)
+        if result is False:
+            raise ForbiddenError("Forbidden")
+        if isinstance(result, ABCMapping):
+            context.state.update(result)
+
+
+async def _emit_sse_chunk(
+    registry: ChannelRegistry,
+    chunk: ChatCompletionStreamChunk,
+    context: ChannelContext,
+    run: AgentRun,
+) -> bytes:
+    await registry.run_hooks("stream_chunk", chunk, context, run)
+    return _sse_chunk(chunk)
 
 
 async def prepare_agent_run(
@@ -266,7 +356,7 @@ async def _stream_response_chunks(
     request_id: str,
     created: int,
     model: str,
-) -> AsyncIterator[bytes]:
+) -> AsyncIterator[ChatCompletionStreamChunk]:
     generators = {
         "content": response.consume(),
         "reasoning": response.consume_reasoning(),
@@ -289,7 +379,7 @@ async def _stream_response_chunks(
             else:
                 delta = ChatCompletionStreamDelta(content=_stringify(chunk))
 
-            yield _sse_chunk(_stream_chunk(request_id, created, model, delta=delta))
+            yield _stream_chunk(request_id, created, model, delta=delta)
             tasks[asyncio.create_task(_read_next(generator))] = (
                 name,
                 generator,

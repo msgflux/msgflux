@@ -190,6 +190,129 @@ inputs that are not part of the OpenAI Chat Completions shape, such as `task`,
 The endpoint does not persist sessions. Each request should contain the
 messages required for that turn.
 
+### 3.1 Server Settings and Boundary Hooks
+
+Use `registry.settings(...)` for server-wide HTTP behavior instead of spreading
+these concerns across CLI flags or pre-processors:
+
+```python
+registry = mf.ChannelRegistry()
+
+registry.settings(
+    max_request_bytes=2 * 1024 * 1024,
+    request_timeout_s=30,
+    enable_docs=False,
+    cors=True,
+    allowed_origins=["https://app.example.com"],
+    enable_otel=True,
+)
+```
+
+`enable_otel=True` instruments the FastAPI app through the official
+`opentelemetry-instrumentation-fastapi` adapter. The package is included in the
+`server` extra.
+
+Authentication and authorization live on the registry and run before the agent
+is selected:
+
+```python
+@registry.auth
+def authenticate(http_request, request, context):
+    token = http_request.headers.get("authorization")
+    if token == "Bearer secret":
+        return {"tenant": "acme"}
+
+    # Optional fallback for non-OpenAI-compatible clients.
+    if http_request.headers.get("x-api-key") == "secret":
+        return {"tenant": "acme"}
+
+    return False
+```
+
+When using an OpenAI-compatible SDK, pass the key as the client `api_key`.
+The SDK sends it as `Authorization: Bearer <api_key>`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8010/v1",
+    api_key="secret",
+)
+```
+
+For raw HTTP requests, send the same header:
+
+```bash
+curl http://127.0.0.1:8010/v1/chat/completions \
+  -H "Authorization: Bearer secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "messages": [{"role": "user", "content": "hello"}]
+  }'
+```
+
+Avoid putting API keys in the JSON body. Headers preserve OpenAI compatibility
+and are easier to redact at the HTTP/logging boundary.
+
+```python
+@registry.authorize(agent="support")
+def authorize_support(request, context):
+    principal = context.state["principal"]
+    if principal["tenant"] != request.run_config.get("vars", {}).get("tenant"):
+        return False
+```
+
+Return `False` from `auth` for `401 Unauthorized` and from `authorize` for
+`403 Forbidden`. You can also raise `ChannelError` subclasses directly.
+
+Use lifecycle hooks for startup validation and resource cleanup:
+
+```python
+@registry.startup
+async def warmup(app):
+    ...
+
+
+@registry.shutdown
+async def cleanup(app):
+    ...
+```
+
+Use request hooks for boundary observability without coupling that logic to the
+agent implementation:
+
+```python
+@registry.on_request_start
+def on_start(request, context):
+    ...
+
+
+@registry.on_request_end
+def on_end(request, context, run, response, error):
+    ...
+
+
+@registry.on_stream_chunk
+def on_chunk(chunk, context, run):
+    ...
+```
+
+Error handlers let the server map domain exceptions to predictable HTTP
+payloads:
+
+```python
+@registry.error_handler(ValueError)
+def map_value_error(exc):
+    return {
+        "message": str(exc),
+        "code": "provider_error",
+        "type": "agent_error",
+        "status_code": 502,
+    }
+```
+
 ## 4. **Streaming and Tools**
 
 This is the most complete end-to-end example because it combines a real tool,

@@ -93,6 +93,63 @@ def test_channel_registry_missing_agent_raises_channel_error():
         registry.get_agent("missing")
 
 
+def test_channel_registry_settings_are_global_and_validated():
+    registry = ChannelRegistry()
+
+    settings = registry.settings(
+        max_request_bytes=1024,
+        request_timeout_s=3,
+        enable_docs=False,
+        cors=True,
+        allowed_origins=["https://app.example.com"],
+    )
+
+    assert settings is registry.settings()
+    assert settings.max_request_bytes == 1024
+    assert settings.request_timeout_s == 3
+    assert settings.enable_docs is False
+    assert settings.cors is True
+    assert settings.allowed_origins == ["https://app.example.com"]
+
+    with pytest.raises(TypeError, match="Unknown channel setting"):
+        registry.settings(unknown=True)
+
+
+def test_channel_registry_registers_auth_authorizer_and_hooks():
+    registry = ChannelRegistry()
+    calls = []
+
+    @registry.auth
+    def auth():
+        calls.append("auth")
+        return {"tenant": "acme"}
+
+    @registry.authorize(agent="support")
+    def authorize():
+        calls.append("authorize")
+
+    @registry.error_handler(ValueError)
+    def handle_error():
+        calls.append("error")
+
+    @registry.startup
+    def startup():
+        calls.append("startup")
+
+    @registry.shutdown
+    def shutdown():
+        calls.append("shutdown")
+
+    @registry.on_request_start
+    def request_start():
+        calls.append("request_start")
+
+    assert registry.auth_handler() is auth
+    assert registry.authorizers("support") == [authorize]
+    assert registry.error_handlers(ValueError("bad")) == [(ValueError, handle_error)]
+    assert registry.has_lifespan_hooks() is True
+
+
 def test_load_registry_target_from_python_file(tmp_path):
     module_path = tmp_path / "app.py"
     module_path.write_text(

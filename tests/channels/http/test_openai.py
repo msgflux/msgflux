@@ -137,6 +137,44 @@ async def test_create_chat_completion_applies_pre_and_post_processors():
 
 
 @pytest.mark.asyncio
+async def test_create_chat_completion_runs_request_hooks():
+    registry = ChannelRegistry()
+    agent = FakeAgent("hello")
+    registry.agent(agent)
+    events = []
+
+    @registry.on_request_start
+    def start(request, context):
+        events.append(("start", request.model, context.agent_name))
+        context.state["started"] = True
+
+    @registry.on_request_end
+    def end(request, context, run, response, error):
+        events.append(
+            (
+                "end",
+                context.state["started"],
+                run.stream,
+                response.model,
+                error,
+            )
+        )
+
+    request = ChatCompletionRequest(
+        model="support",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+    response = await create_chat_completion(registry, request)
+
+    assert response.model == "support"
+    assert events == [
+        ("start", "support", "support"),
+        ("end", True, False, "support", None),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_create_chat_completion_serializes_structured_answer_with_reasoning():
     registry = ChannelRegistry()
     agent = FakeAgent(
@@ -171,6 +209,13 @@ async def test_create_chat_completion_stream_yields_openai_sse_chunks():
     registry = ChannelRegistry()
     agent = FakeAgent(stream_response)
     registry.agent(agent)
+    seen_chunks = []
+
+    @registry.on_stream_chunk
+    def on_chunk(chunk):
+        delta = chunk.choices[0].delta
+        seen_chunks.append(delta.role or delta.reasoning_content or delta.content)
+
     request = ChatCompletionRequest(
         model="support",
         messages=[{"role": "user", "content": "hi"}],
@@ -188,3 +233,6 @@ async def test_create_chat_completion_stream_yields_openai_sse_chunks():
     assert any('"content":"hello"' in chunk for chunk in chunks)
     assert chunks[-1] == "data: [DONE]\n\n"
     assert agent.calls[0]["stream"] is True
+    assert "assistant" in seen_chunks
+    assert "thinking" in seen_chunks
+    assert "hello" in seen_chunks

@@ -10,3 +10,23 @@ class ChannelError(Exception):
 class AgentNotFoundError(ChannelError):
     status_code = 404
     code = "agent_not_found"
+
+
+class UnauthorizedError(ChannelError):
+    status_code = 401
+    code = "unauthorized"
+
+
+class ForbiddenError(ChannelError):
+    status_code = 403
+    code = "forbidden"
+
+
+class PayloadTooLargeError(ChannelError):
+    status_code = 413
+    code = "payload_too_large"
+
+
+class RequestTimeoutError(ChannelError):
+    status_code = 504
+    code = "request_timeout"
