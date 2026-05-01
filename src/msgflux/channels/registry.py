@@ -37,6 +37,14 @@ class AgentRun:
 
 
 @dataclass
+class AgentMetadata:
+    name: str
+    description: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    capabilities: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ChannelSettings:
     max_request_bytes: Optional[int] = None
     request_timeout_s: Optional[float] = None
@@ -65,6 +73,7 @@ class RateLimitPolicy:
     requests: int
     window_s: float = 60.0
     by: str | Processor = "api_key"
+    agent: Optional[str] = None
 
 
 class ChannelRegistry:
@@ -72,6 +81,7 @@ class ChannelRegistry:
 
     def __init__(self) -> None:
         self._agents: Dict[str, Any] = {}
+        self._agent_metadata: Dict[str, AgentMetadata] = {}
         self._pre_processors: Dict[str, List[Processor]] = {}
         self._post_processors: Dict[str, List[Processor]] = {}
         self._settings = ChannelSettings()
@@ -127,16 +137,29 @@ class ChannelRegistry:
         requests: int,
         window_s: float = 60.0,
         by: str | Processor = "api_key",
+        agent: Optional[str] = None,
     ) -> RateLimitPolicy:
         if requests < 1:
             raise ValueError("rate_limit requests must be >= 1")
         if window_s <= 0:
             raise ValueError("rate_limit window_s must be > 0")
-        if isinstance(by, str) and by not in {"api_key", "ip", "tenant"}:
+        if isinstance(by, str) and by not in {
+            "api_key",
+            "client",
+            "ip",
+            "service",
+            "tenant",
+        }:
             raise ValueError(
-                "rate_limit by must be 'api_key', 'ip', 'tenant', or a callable"
+                "rate_limit by must be 'api_key', 'client', 'ip', 'service', "
+                "'tenant', or a callable"
             )
-        policy = RateLimitPolicy(requests=requests, window_s=window_s, by=by)
+        policy = RateLimitPolicy(
+            requests=requests,
+            window_s=window_s,
+            by=by,
+            agent=agent,
+        )
         self._rate_limits.append(policy)
         return policy
 
@@ -164,21 +187,46 @@ class ChannelRegistry:
         obj: Optional[T] = None,
         *,
         name: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        capabilities: Optional[Mapping[str, Any]] = None,
     ) -> T | Callable[[T], T]:
         if obj is not None:
-            self._register_agent(obj, name=name)
+            self._register_agent(
+                obj,
+                name=name,
+                tags=tags,
+                capabilities=capabilities,
+            )
             return obj
 
         def decorator(agent_obj: T) -> T:
-            self._register_agent(agent_obj, name=name)
+            self._register_agent(
+                agent_obj,
+                name=name,
+                tags=tags,
+                capabilities=capabilities,
+            )
             return agent_obj
 
         return decorator
 
-    def _register_agent(self, obj: T, *, name: Optional[str] = None) -> Any:
+    def _register_agent(
+        self,
+        obj: T,
+        *,
+        name: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        capabilities: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
         agent = self._materialize_agent(obj)
         key = self._resolve_agent_name(obj, agent, name)
         self._agents[key] = agent
+        self._agent_metadata[key] = AgentMetadata(
+            name=key,
+            description=_resolve_agent_description(obj, agent),
+            tags=list(tags or []),
+            capabilities=dict(capabilities or {}),
+        )
         return agent
 
     def _materialize_agent(self, obj: T) -> Any:
@@ -366,6 +414,15 @@ class ChannelRegistry:
     def agents(self) -> Dict[str, Any]:
         return dict(self._agents)
 
+    def agent_metadata(self, name: str) -> AgentMetadata:
+        try:
+            return self._agent_metadata[name]
+        except KeyError as e:
+            raise AgentNotFoundError(f"Agent `{name}` is not registered") from e
+
+    def agents_metadata(self) -> Dict[str, AgentMetadata]:
+        return dict(self._agent_metadata)
+
     def pre_processors(self, agent_name: str) -> List[Processor]:
         return [
             *self._pre_processors.get(DEFAULT_PROCESSOR_KEY, []),
@@ -421,14 +478,18 @@ class ChannelRegistry:
         if not self._rate_limits:
             return
 
-        policies = list(self._rate_limits)
+        policies = [
+            (index, policy)
+            for index, policy in enumerate(self._rate_limits)
+            if policy.agent is None or policy.agent == context.agent_name
+        ]
         keys = [
             await _rate_limit_key(policy, request, context, http_request)
-            for policy in policies
+            for _, policy in policies
         ]
         now = time.monotonic()
         async with self._rate_limit_lock:
-            for index, (policy, key) in enumerate(zip(policies, keys)):
+            for (index, policy), key in zip(policies, keys):
                 counter_key = (index, str(key))
                 count, reset_at = self._rate_limit_counters.get(
                     counter_key,
@@ -482,6 +543,19 @@ def _select_supported_args(
         }
     ]
     return args[: len(positional)]
+
+
+def _resolve_agent_description(original: Any, agent: Any) -> Optional[str]:
+    for source in (agent, original):
+        description = getattr(source, "description", None)
+        if callable(description) and not isinstance(description, str):
+            description = description()
+        if isinstance(description, str) and description:
+            return description
+
+    doc_source = original if inspect.isclass(original) else agent.__class__
+    description = inspect.getdoc(doc_source)
+    return description or None
 
 
 def _merge_agent_defaults(
@@ -543,12 +617,21 @@ async def _rate_limit_key(
     by = str(policy.by)
     if by == "api_key":
         return _api_key_from_context(context, http_request) or "anonymous"
+    if by == "client":
+        return (
+            _api_key_from_context(context, http_request)
+            or _client_ip(http_request)
+            or "anonymous"
+        )
     if by == "ip":
         return _client_ip(http_request) or "unknown"
+    if by == "service":
+        return "service"
     if by == "tenant":
         return _tenant_from_context(request, context) or "unknown"
     raise ValueError(
-        "rate_limit by must be 'api_key', 'ip', 'tenant', or a callable"
+        "rate_limit by must be 'api_key', 'client', 'ip', 'service', "
+        "'tenant', or a callable"
     )
 
 

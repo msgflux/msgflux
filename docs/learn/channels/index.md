@@ -101,11 +101,19 @@ registry = mf.ChannelRegistry()
 
 @registry.agent()
 class SupportAgent(nn.Agent):
+    """Customer support agent for order and delivery questions."""
+
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "You are a concise customer support specialist."
 
-@registry.agent(name="billing")
+@registry.agent(
+    name="billing",
+    tags=["billing", "payments"],
+    capabilities={"streaming": True, "tools": True},
+)
 class BillingAgent(nn.Agent):
+    """Billing support agent for invoices and payment questions."""
+
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     system_message = "You are a concise billing support specialist."
 ```
@@ -127,6 +135,11 @@ uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py 
     via AutoParams. Pass `name="..."` only when you want to override the
     registered name.
 
+    `description` comes from the agent itself, normally from the class docstring
+    captured by AutoParams. Use the registry decorator for channel/discovery
+    metadata that does not belong inside the Agent, such as `tags` and
+    `capabilities`.
+
     The same decorator also works with instances:
 
     ```python
@@ -142,6 +155,12 @@ After registration, `/agents` returns `SupportAgent` and `billing`:
 
 ```bash
 curl -s http://127.0.0.1:8010/agents
+```
+
+Use `details=true` to include registry metadata:
+
+```bash
+curl -s 'http://127.0.0.1:8010/agents?details=true'
 ```
 
 Use `model: "billing"` for the billing agent and `model: "SupportAgent"` for
@@ -238,10 +257,24 @@ or your billing system.
 
 ```python
 registry.rate_limit(requests=60, window_s=60, by="api_key")
+registry.rate_limit(requests=300, window_s=60, by="client")
 registry.rate_limit(requests=600, window_s=60, by="tenant")
+registry.rate_limit(requests=2000, window_s=60, by="service")
+registry.rate_limit(agent="billing", requests=30, window_s=60, by="tenant")
 ```
 
-`by` accepts `"api_key"`, `"ip"`, `"tenant"`, or a callable:
+`by` accepts:
+
+| Key | Scope |
+|---|---|
+| `"api_key"` | One bucket per bearer token or `X-API-Key`. |
+| `"client"` | One bucket per API key when present, otherwise per IP. |
+| `"ip"` | One bucket per client IP. |
+| `"tenant"` | One bucket per tenant from auth principal or `run_config.vars`. |
+| `"service"` | One global bucket shared by all traffic. |
+| callable | Custom bucket key. |
+
+Use `agent="..."` to apply a policy only to one registered agent:
 
 ```python
 def key_by_model(request, context):

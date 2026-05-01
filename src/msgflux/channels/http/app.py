@@ -88,8 +88,19 @@ def _register_routes(
         return {"status": "ok"}
 
     @app.get("/agents")
-    async def agents():
-        return {"agents": sorted(registry.agents())}
+    async def agents(http_request: request_cls):
+        details = _is_truthy_query_param(http_request.query_params.get("details"))
+        if not details:
+            return {"agents": sorted(registry.agents())}
+        return {
+            "agents": [
+                _agent_metadata_payload(metadata)
+                for metadata in sorted(
+                    registry.agents_metadata().values(),
+                    key=lambda item: item.name,
+                )
+            ]
+        }
 
     @app.post("/v1/chat/completions", response_class=msgspec_json_response)
     async def chat_completions(http_request: request_cls):
@@ -190,6 +201,19 @@ def _configure_cors(app: Any, settings: Any) -> None:
         allow_methods=list(settings.cors_allowed_methods),
         allow_headers=list(settings.cors_allowed_headers),
     )
+
+
+def _agent_metadata_payload(metadata: Any) -> dict[str, Any]:
+    return {
+        "name": metadata.name,
+        "description": metadata.description,
+        "tags": list(metadata.tags),
+        "capabilities": dict(metadata.capabilities),
+    }
+
+
+def _is_truthy_query_param(value: Any) -> bool:
+    return str(value or "").lower() in {"1", "true", "yes", "on"}
 
 
 def _configure_otel(app: Any, settings: Any) -> None:

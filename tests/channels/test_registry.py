@@ -57,13 +57,42 @@ def test_channel_registry_instantiates_agent_class_with_explicit_name():
 def test_channel_registry_decorator_registers_agent_class_and_returns_class():
     registry = ChannelRegistry()
 
-    @registry.agent(name="support")
+    @registry.agent(
+        name="support",
+        tags=["support", "orders"],
+        capabilities={"streaming": True, "tools": True},
+    )
     class SupportAgent:
+        """Support agent for order questions."""
+
         pass
 
     agent = registry.get_agent("support")
+    metadata = registry.agent_metadata("support")
     assert isinstance(agent, SupportAgent)
     assert SupportAgent.__name__ == "SupportAgent"
+    assert metadata.name == "support"
+    assert metadata.description == "Support agent for order questions."
+    assert metadata.tags == ["support", "orders"]
+    assert metadata.capabilities == {"streaming": True, "tools": True}
+
+
+def test_channel_registry_agent_metadata_uses_agent_description_attr():
+    registry = ChannelRegistry()
+
+    class SupportAgent:
+        name = "support"
+        description = "Description from AutoParams-style attribute."
+
+    registry.agent(SupportAgent())
+
+    assert registry.agent_metadata("support").description == (
+        "Description from AutoParams-style attribute."
+    )
+    assert registry.agents_metadata()["support"].name == "support"
+
+    with pytest.raises(AgentNotFoundError):
+        registry.agent_metadata("missing")
 
 
 def test_channel_registry_decorator_uses_class_name_when_no_agent_name():
@@ -162,12 +191,64 @@ async def test_channel_registry_rate_limit_by_tenant():
     registry = ChannelRegistry()
     registry.rate_limit(requests=1, window_s=60, by="tenant")
     request = SimpleNamespace(run_config={"vars": {"tenant": "acme"}})
-    context = SimpleNamespace(state={})
+    context = SimpleNamespace(agent_name="support", state={})
 
     await registry.check_rate_limits(request, context)
 
     with pytest.raises(RateLimitExceededError):
         await registry.check_rate_limits(request, context)
+
+
+@pytest.mark.asyncio
+async def test_channel_registry_rate_limit_by_service():
+    registry = ChannelRegistry()
+    registry.rate_limit(requests=1, window_s=60, by="service")
+    request = SimpleNamespace(run_config={})
+    context = SimpleNamespace(agent_name="support", state={})
+
+    await registry.check_rate_limits(request, context)
+
+    with pytest.raises(RateLimitExceededError):
+        await registry.check_rate_limits(request, context)
+
+
+@pytest.mark.asyncio
+async def test_channel_registry_rate_limit_by_client_uses_key_then_ip():
+    registry = ChannelRegistry()
+    registry.rate_limit(requests=1, window_s=60, by="client")
+    request = SimpleNamespace(run_config={})
+    context = SimpleNamespace(agent_name="support", state={})
+    first_key = SimpleNamespace(
+        headers={"authorization": "Bearer key-1"},
+        client=SimpleNamespace(host="10.0.0.1"),
+    )
+    other_key = SimpleNamespace(
+        headers={"authorization": "Bearer key-2"},
+        client=SimpleNamespace(host="10.0.0.1"),
+    )
+
+    await registry.check_rate_limits(request, context, first_key)
+
+    with pytest.raises(RateLimitExceededError):
+        await registry.check_rate_limits(request, context, first_key)
+
+    await registry.check_rate_limits(request, context, other_key)
+
+
+@pytest.mark.asyncio
+async def test_channel_registry_rate_limit_can_target_agent():
+    registry = ChannelRegistry()
+    registry.rate_limit(agent="support", requests=1, window_s=60, by="service")
+    request = SimpleNamespace(run_config={})
+    support_context = SimpleNamespace(agent_name="support", state={})
+    billing_context = SimpleNamespace(agent_name="billing", state={})
+
+    await registry.check_rate_limits(request, support_context)
+
+    with pytest.raises(RateLimitExceededError):
+        await registry.check_rate_limits(request, support_context)
+
+    await registry.check_rate_limits(request, billing_context)
 
 
 def test_channel_registry_registers_auth_authorizer_and_hooks():

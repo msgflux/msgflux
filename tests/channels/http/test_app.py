@@ -17,6 +17,10 @@ class FakeAgent:
         return "msgflux server ok"
 
 
+class BillingAgent(FakeAgent):
+    name = "billing"
+
+
 def test_chat_completions_route_with_msgspec_response():
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -64,6 +68,38 @@ def test_health_and_agents_routes():
     agents_response = client.get("/agents")
     assert agents_response.status_code == 200
     assert agents_response.json() == {"agents": ["support"]}
+
+
+def test_agents_route_can_return_metadata_details():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    class MetadataAgent(FakeAgent):
+        """Support questions about orders."""
+
+        name = "support"
+
+    registry = ChannelRegistry()
+    registry.agent(
+        MetadataAgent(),
+        tags=["support", "orders"],
+        capabilities={"streaming": True, "tools": True},
+    )
+    client = TestClient(create_app(registry))
+
+    response = client.get("/agents?details=true")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "agents": [
+            {
+                "name": "support",
+                "description": "Support questions about orders.",
+                "tags": ["support", "orders"],
+                "capabilities": {"streaming": True, "tools": True},
+            }
+        ]
+    }
 
 
 def test_registry_settings_disable_docs_and_enable_cors():
@@ -208,6 +244,47 @@ def test_rate_limit_by_api_key_returns_429():
     assert second.status_code == 429
     assert second.json()["error"]["code"] == "rate_limit_exceeded"
     assert other_key.status_code == 200
+
+
+def test_rate_limit_can_target_agent():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    registry = ChannelRegistry()
+    registry.agent(FakeAgent())
+    registry.agent(BillingAgent())
+    registry.rate_limit(agent="support", requests=1, window_s=60, by="api_key")
+    client = TestClient(create_app(registry))
+    support_payload = {
+        "model": "support",
+        "messages": [{"role": "user", "content": "hi"}],
+        "run_config": {"vars": {"tenant": "acme"}},
+    }
+    billing_payload = {
+        "model": "billing",
+        "messages": [{"role": "user", "content": "hi"}],
+        "run_config": {"vars": {"tenant": "acme"}},
+    }
+
+    first_support = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-1"},
+        json=support_payload,
+    )
+    second_support = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-1"},
+        json=support_payload,
+    )
+    billing = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer key-1"},
+        json=billing_payload,
+    )
+
+    assert first_support.status_code == 200
+    assert second_support.status_code == 429
+    assert billing.status_code == 200
 
 
 def test_error_handler_maps_exception_to_http_payload():

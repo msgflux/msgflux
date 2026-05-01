@@ -9,6 +9,7 @@ from msgflux.channels.exceptions import (
 )
 from msgflux.channels.registry import (
     AgentDefaults,
+    AgentMetadata,
     AgentRun,
     ChannelContext,
     ChannelRegistry,
@@ -19,6 +20,7 @@ from msgflux.channels.registry import (
 __all__ = [
     "AgentNotFoundError",
     "AgentDefaults",
+    "AgentMetadata",
     "AgentRun",
     "ChannelContext",
     "ChannelError",
