@@ -502,8 +502,8 @@ class GroqReasoningAgent(nn.Agent):
     model = mf.Model.chat_completion(
         "groq/openai/gpt-oss-120b",
         reasoning_effort="low",
-        return_reasoning=True,
     )
+    config = {"reasoning_in_response": True}
 ```
 
 ```bash
@@ -538,6 +538,7 @@ registry = mf.ChannelRegistry()
 class CoTSolver(nn.Agent):
     model = "openai/gpt-4.1-mini"
     generation_schema = ChainOfThought
+    config = {"reasoning_in_response": True}
 ```
 
 ```bash
@@ -570,7 +571,7 @@ class OpenAIReActAgent(nn.Agent):
     model = "openai/gpt-4.1-mini"
     generation_schema = ReAct
     tools = [WebFetch]
-    config = {"stream": False}
+    config = {"reasoning_in_response": True}
 ```
 
 ```bash
