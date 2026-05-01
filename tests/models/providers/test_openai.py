@@ -379,9 +379,7 @@ class TestOpenAIChatCompletion:
         assert call_kwargs["top_logprobs"] == 2
 
     @pytest.mark.asyncio
-    async def test_acall_forwards_runtime_extra_body_kwargs(
-        self, mock_openai_client
-    ):
+    async def test_acall_forwards_runtime_extra_body_kwargs(self, mock_openai_client):
         """Test runtime provider kwargs are merged into extra_body on async calls."""
         pytest.importorskip("openai")
 

@@ -360,11 +360,7 @@ def _stringify(value: Any) -> str:
 def _finish_reason(output: Any) -> str:
     metadata = getattr(output, "metadata", None)
     if isinstance(metadata, Mapping):
-        return (
-            metadata.get("finish_reason")
-            or metadata.get("stop_reason")
-            or "stop"
-        )
+        return metadata.get("finish_reason") or metadata.get("stop_reason") or "stop"
     return "stop"
 
 
