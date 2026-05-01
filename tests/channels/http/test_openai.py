@@ -111,7 +111,6 @@ async def test_create_chat_completion_applies_global_and_agent_defaults():
         model_preference="global-fast",
         tool_filter={"block": "*"},
         kwargs={"task_context": "global context"},
-        reasoning_policy={"effort": "low"},
     )
     registry.defaults(
         "support",
@@ -120,12 +119,6 @@ async def test_create_chat_completion_applies_global_and_agent_defaults():
         tool_filter={"allow": ["search"]},
         kwargs={"task_context": "support context"},
     )
-    seen_policies = []
-
-    @registry.pre("support")
-    def collect_policies(_request, _context, run):
-        seen_policies.append(run.policies)
-
     request = ChatCompletionRequest(
         model="support",
         messages=[{"role": "user", "content": "hi"}],
@@ -144,7 +137,6 @@ async def test_create_chat_completion_applies_global_and_agent_defaults():
             "task_context": "support context",
         }
     ]
-    assert seen_policies == [{"reasoning": {"effort": "low"}}]
 
 
 @pytest.mark.asyncio

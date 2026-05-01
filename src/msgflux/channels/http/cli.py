@@ -28,7 +28,13 @@ def run_server(args: Namespace) -> int:
         trust_remote_code=bool(getattr(args, "trust_remote_code", False)),
     )
     registry = load_registry_target(target)
-    app = create_app(registry, title=args.title)
+    fastapi_kwargs = {}
+    if args.title is not None:
+        fastapi_kwargs["title"] = args.title
+    if args.description is not None:
+        fastapi_kwargs["description"] = args.description
+
+    app = create_app(registry, **fastapi_kwargs)
     uvicorn.run(
         app,
         host=args.host,

@@ -127,6 +127,8 @@ def test_channel_registry_settings_are_global_and_validated():
     registry = ChannelRegistry()
 
     settings = registry.settings(
+        title="Support Agents",
+        description="Support HTTP boundary.",
         max_request_bytes=1024,
         request_timeout_s=3,
         enable_docs=False,
@@ -135,6 +137,8 @@ def test_channel_registry_settings_are_global_and_validated():
     )
 
     assert settings is registry.settings()
+    assert settings.title == "Support Agents"
+    assert settings.description == "Support HTTP boundary."
     assert settings.max_request_bytes == 1024
     assert settings.request_timeout_s == 3
     assert settings.enable_docs is False
@@ -152,7 +156,6 @@ def test_channel_registry_defaults_are_global_and_per_agent():
         vars={"tenant": "default"},
         model_preference="fast",
         tool_filter={"block": "*"},
-        reasoning_policy={"effort": "low"},
     )
     support_defaults = registry.defaults(
         "support",
@@ -167,7 +170,6 @@ def test_channel_registry_defaults_are_global_and_per_agent():
     assert merged.vars == {"tenant": "support"}
     assert merged.model_preference == "fast"
     assert merged.tool_filter == {"allow": ["search"]}
-    assert merged.reasoning_policy == {"effort": "low"}
 
     with pytest.raises(TypeError, match="Unknown agent default"):
         registry.defaults(unknown=True)

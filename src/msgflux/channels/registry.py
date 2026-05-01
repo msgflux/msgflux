@@ -53,6 +53,8 @@ class ChannelReadiness:
 
 @dataclass
 class ChannelSettings:
+    title: str = "msgFlux Channel Server"
+    description: str = "OpenAI-compatible HTTP channel for msgFlux agents."
     max_request_bytes: Optional[int] = None
     request_timeout_s: Optional[float] = None
     enable_docs: bool = True
@@ -72,7 +74,6 @@ class AgentDefaults:
     tool_filter: Optional[Mapping[str, Any]] = None
     kwargs: Dict[str, Any] = field(default_factory=dict)
     stream_policy: Optional[Any] = None
-    reasoning_policy: Optional[Any] = None
 
 
 @dataclass
@@ -671,7 +672,6 @@ def _merge_agent_defaults(
             tool_filter=_copy_mapping(global_defaults.tool_filter),
             kwargs=dict(global_defaults.kwargs),
             stream_policy=global_defaults.stream_policy,
-            reasoning_policy=global_defaults.reasoning_policy,
         )
 
     return AgentDefaults(
@@ -691,11 +691,6 @@ def _merge_agent_defaults(
             agent_defaults.stream_policy
             if agent_defaults.stream_policy is not None
             else global_defaults.stream_policy
-        ),
-        reasoning_policy=(
-            agent_defaults.reasoning_policy
-            if agent_defaults.reasoning_policy is not None
-            else global_defaults.reasoning_policy
         ),
     )
 

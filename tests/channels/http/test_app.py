@@ -66,6 +66,9 @@ def test_health_and_agents_routes():
     assert health_response.status_code == 200
     assert health_response.json() == {"status": "ok"}
 
+    favicon_response = client.get("/favicon.ico")
+    assert favicon_response.status_code == 204
+
     agents_response = client.get("/agents")
     assert agents_response.status_code == 200
     assert agents_response.json() == {
@@ -157,6 +160,26 @@ def test_registry_settings_disable_docs_and_enable_cors():
     )
     assert cors_response.headers["access-control-allow-origin"] == (
         "https://app.example.com"
+    )
+
+
+def test_registry_settings_customize_openapi_metadata():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    registry = ChannelRegistry()
+    registry.settings(
+        title="Support Agents API",
+        description="OpenAI-compatible support agents.",
+    )
+    client = TestClient(create_app(registry))
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"]["title"] == "Support Agents API"
+    assert response.json()["info"]["description"] == (
+        "OpenAI-compatible support agents."
     )
 
 

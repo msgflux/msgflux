@@ -12,11 +12,15 @@ were regular chat models. The request `model` selects the registered agent name.
 The channel layer is the external boundary for msgFlux modules. In practice,
 it lets you:
 
-- expose agents over HTTP
-- reuse OpenAI-compatible clients
-- control execution with `run_config`
+- expose agents over HTTP through an OpenAI-compatible Chat Completions API
+- discover registered agents through `/agents`, including description, tags, and capabilities
+- control execution with `run_config`, global defaults, and per-agent defaults
 - adapt incoming requests with pre-processors
 - adapt outgoing responses with post-processors
+- protect production servers with auth, authorization, rate limits, request limits, and timeouts
+- integrate with OpenTelemetry through the official FastAPI instrumentation adapter
+- propagate `X-Request-ID`, `X-Correlation-ID`, and `traceparent` at the HTTP boundary
+- add lifecycle and observability hooks without coupling this logic to the Agent
 
 The default channel is the HTTP server, but the design is meant to support
 other external interfaces as they are added.
@@ -214,230 +218,6 @@ The HTTP boundary propagates request metadata:
 
 Responses include `X-Request-ID` and `X-Correlation-ID`. Error payloads include
 the same ids under `error.request_id` and `error.correlation_id`.
-
-### 3.1 Server Settings and Boundary Hooks
-
-Use `registry.settings(...)` for server-wide HTTP behavior instead of spreading
-these concerns across CLI flags or pre-processors:
-
-```python
-registry = mf.ChannelRegistry()
-
-registry.settings(
-    max_request_bytes=2 * 1024 * 1024,
-    request_timeout_s=30,
-    enable_docs=False,
-    cors=True,
-    allowed_origins=["https://app.example.com"],
-    enable_otel=True,
-)
-```
-
-`enable_otel=True` instruments the FastAPI app through the official
-`opentelemetry-instrumentation-fastapi` adapter. The package is included in the
-`server` extra.
-
-Defaults can be global or agent-specific. Request `run_config` still wins over
-defaults, and pre-processors continue to run last:
-
-```python
-registry.defaults(
-    vars={"tenant": "default"},
-    model_preference="fast",
-    tool_filter={"block": "*"},
-    reasoning_policy={"effort": "low"},
-)
-
-registry.defaults(
-    "support",
-    vars={"tenant": "support"},
-    tool_filter={"allow": ["search_docs"]},
-)
-```
-
-Rate limits are configured at the boundary. The default store is in-memory and
-per Python process, which is useful for local protection and single-worker
-deployments. For multi-worker or distributed deployments, plug a shared store
-such as Redis, a gateway, or your billing system.
-
-```python
-registry.rate_limit(name="api-key-minute", requests=60, window_s=60, by="api_key")
-registry.rate_limit(name="client-minute", requests=300, window_s=60, by="client")
-registry.rate_limit(name="tenant-minute", requests=600, window_s=60, by="tenant")
-registry.rate_limit(name="service-minute", requests=2000, window_s=60, by="service")
-registry.rate_limit(
-    name="billing-tenant-minute",
-    agent="billing",
-    requests=30,
-    window_s=60,
-    by="tenant",
-)
-```
-
-`by` accepts:
-
-| Key | Scope |
-|---|---|
-| `"api_key"` | One bucket per bearer token or `X-API-Key`. |
-| `"client"` | One bucket per API key when present, otherwise per IP. |
-| `"ip"` | One bucket per client IP. |
-| `"tenant"` | One bucket per tenant from auth principal or `run_config.vars`. |
-| `"service"` | One global bucket shared by all traffic. |
-| callable | Custom bucket key. |
-
-Use `agent="..."` to apply a policy only to one registered agent:
-
-```python
-def key_by_model(request, context):
-    return request.model
-
-
-registry.rate_limit(requests=20, window_s=60, by=key_by_model)
-```
-
-When using a distributed store, give every policy a stable `name`. The registry
-resolves the bucket identity from `by=...` and sends a `RateLimitBucket` to the
-store:
-
-```python
-from msgflux.channels import RateLimitDecision
-
-
-class RedisRateLimitStore:
-    def __init__(self, redis):
-        self.redis = redis
-
-    async def hit(self, bucket):
-        current = await self.redis.incr(bucket.key)
-        if current == 1:
-            await self.redis.expire(bucket.key, int(bucket.policy.window_s))
-
-        ttl = await self.redis.ttl(bucket.key)
-        retry_after_s = ttl if current > bucket.policy.requests else None
-        return RateLimitDecision(
-            allowed=current <= bucket.policy.requests,
-            remaining=max(0, bucket.policy.requests - current),
-            retry_after_s=retry_after_s,
-            reset_after_s=ttl,
-        )
-
-
-registry.rate_limit_store(RedisRateLimitStore(redis))
-registry.rate_limit(
-    name="api-key-minute",
-    requests=60,
-    window_s=60,
-    by="api_key",
-)
-```
-
-Custom stores may also be plain callables and can return `RateLimitDecision`, a
-mapping with `allowed`/`retry_after_s`, a boolean, or `None` to allow the
-request.
-
-Authentication and authorization live on the registry and run before the agent
-is selected:
-
-```python
-@registry.auth
-def authenticate(http_request, request, context):
-    token = http_request.headers.get("authorization")
-    if token == "Bearer secret":
-        return {"tenant": "acme"}
-
-    # Optional fallback for non-OpenAI-compatible clients.
-    if http_request.headers.get("x-api-key") == "secret":
-        return {"tenant": "acme"}
-
-    return False
-```
-
-When using an OpenAI-compatible SDK, pass the key as the client `api_key`.
-The SDK sends it as `Authorization: Bearer <api_key>`:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8010/v1",
-    api_key="secret",
-)
-```
-
-For raw HTTP requests, send the same header:
-
-```bash
-curl http://127.0.0.1:8010/v1/chat/completions \
-  -H "Authorization: Bearer secret" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "support",
-    "messages": [{"role": "user", "content": "hello"}]
-  }'
-```
-
-Avoid putting API keys in the JSON body. Headers preserve OpenAI compatibility
-and are easier to redact at the HTTP/logging boundary.
-
-```python
-@registry.authorize(agent="support")
-def authorize_support(request, context):
-    principal = context.state["principal"]
-    if principal["tenant"] != request.run_config.get("vars", {}).get("tenant"):
-        return False
-```
-
-Return `False` from `auth` for `401 Unauthorized` and from `authorize` for
-`403 Forbidden`. You can also raise `ChannelError` subclasses directly.
-
-Use lifecycle hooks for startup validation and resource cleanup:
-
-```python
-@registry.startup
-async def warmup(app):
-    ...
-
-
-@registry.shutdown
-async def cleanup(app):
-    ...
-```
-
-Use request hooks for boundary observability without coupling that logic to the
-agent implementation:
-
-```python
-@registry.on_request_start
-def on_start(request, context):
-    ...
-
-
-@registry.on_request_end
-def on_end(request, context, run, response, error):
-    ...
-
-
-@registry.on_stream_chunk
-def on_chunk(chunk, context, run):
-    ...
-```
-
-Error handlers let the server map domain exceptions to predictable HTTP
-payloads:
-
-```python
-@registry.error_handler(ValueError)
-def map_value_error(exc):
-    return {
-        "message": str(exc),
-        "code": "provider_error",
-        "type": "agent_error",
-        "status_code": 502,
-        "headers": {"X-Provider": "internal"},
-    }
-```
-
-Built-in rate limit errors return `429` with a `Retry-After` header.
 
 ## 4. **Streaming and Tools**
 
@@ -894,7 +674,280 @@ providers or generation schemas use different internal field names.
     Use post-processing to reshape **final** non-streaming payloads.
     For streaming requests, treat `ModelStreamResponse` as passthrough.
 
-## 9. **Serving Custom Modules**
+## 9. **Production Customization**
+
+After the basic server is running, use the registry to configure the HTTP
+boundary in one place. These features are intentionally server-level concerns:
+they should not be hidden inside an Agent implementation.
+
+### 9.1 Server Settings
+
+Use `registry.settings(...)` for server-wide HTTP behavior instead of spreading
+these concerns across CLI flags or pre-processors:
+
+```python
+registry = mf.ChannelRegistry()
+
+registry.settings(
+    title="Support Agents API",
+    description="OpenAI-compatible support and billing agents.",
+    max_request_bytes=2 * 1024 * 1024,
+    request_timeout_s=30,
+    enable_docs=False,
+    cors=True,
+    allowed_origins=["https://app.example.com"],
+    enable_otel=True,
+)
+```
+
+`title` and `description` customize the FastAPI/OpenAPI metadata. Set
+`enable_docs=False` to disable `/docs`, `/redoc`, and `/openapi.json`.
+
+`enable_otel=True` instruments the FastAPI app through the official
+`opentelemetry-instrumentation-fastapi` adapter. The package is included in the
+`server` extra.
+
+### 9.2 Defaults
+
+Defaults can be global or agent-specific. Request `run_config` still wins over
+defaults, and pre-processors continue to run last:
+
+```python
+registry.defaults(
+    vars={"tenant": "default"},
+    model_preference="fast",
+    tool_filter={"block": "*"},
+)
+
+registry.defaults(
+    "support",
+    vars={"tenant": "support"},
+    tool_filter={"allow": ["search_docs"]},
+)
+```
+
+Use defaults for policies the server owns. Use request `run_config` when the
+caller is allowed to choose the value per request.
+
+### 9.3 Authentication
+
+Use `@registry.auth` to identify the caller. It runs before authorization, rate
+limits, and agent execution.
+
+Return a mapping to store the authenticated principal in `context.state`, return
+`False` for `401 Unauthorized`, or raise a `ChannelError` subclass directly.
+
+```python
+@registry.auth
+def authenticate(http_request, request, context):
+    authorization = http_request.headers.get("authorization")
+    if authorization == "Bearer secret":
+        return {"api_key": "secret", "tenant": "acme"}
+
+    # Optional fallback for non-OpenAI-compatible clients.
+    if http_request.headers.get("x-api-key") == "secret":
+        return {"api_key": "secret", "tenant": "acme"}
+
+    return False
+```
+
+When using an OpenAI-compatible SDK, pass the key as the client `api_key`. The
+SDK sends it as `Authorization: Bearer <api_key>`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8010/v1",
+    api_key="secret",
+)
+```
+
+For raw HTTP requests, send the same header:
+
+```bash
+curl http://127.0.0.1:8010/v1/chat/completions \
+  -H "Authorization: Bearer secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "support",
+    "messages": [{"role": "user", "content": "hello"}]
+  }'
+```
+
+Avoid putting API keys in the JSON body. Headers preserve OpenAI compatibility
+and are easier to redact at the HTTP/logging boundary.
+
+### 9.4 Authorization
+
+Use `@registry.authorize` after authentication when the server needs to enforce
+ACL rules, tenant isolation, plan checks, or per-agent access.
+
+Return `False` for `403 Forbidden`. Return a mapping to add derived authorization
+state to `context.state`.
+
+```python
+@registry.authorize(agent="support")
+def authorize_support(request, context):
+    principal = context.state["principal"]
+    tenant = request.run_config.get("vars", {}).get("tenant")
+    if principal["tenant"] != tenant:
+        return False
+```
+
+Use `auth` to answer "who is calling?" and `authorize` to answer "is this caller
+allowed to do this?".
+
+### 9.5 Rate Limits
+
+Rate limits are configured at the boundary. The default store is in-memory and
+per Python process, which is useful for local protection and single-worker
+deployments. For multi-worker or distributed deployments, plug a shared store
+such as Redis, a gateway, or your billing system.
+
+```python
+registry.rate_limit(name="api-key-minute", requests=60, window_s=60, by="api_key")
+registry.rate_limit(name="client-minute", requests=300, window_s=60, by="client")
+registry.rate_limit(name="tenant-minute", requests=600, window_s=60, by="tenant")
+registry.rate_limit(name="service-minute", requests=2000, window_s=60, by="service")
+```
+
+`by` accepts:
+
+| Key | Scope |
+|---|---|
+| `"api_key"` | One bucket per authenticated principal key, `Authorization: Bearer ...`, or `X-API-Key`. |
+| `"client"` | One bucket per API key when present, otherwise per IP. |
+| `"ip"` | One bucket per client IP. |
+| `"tenant"` | One bucket per tenant from auth principal or `run_config.vars`. |
+| `"service"` | One global bucket shared by all traffic. |
+| callable | Custom bucket key. |
+
+Use `agent="..."` to apply a policy only to one registered agent:
+
+```python
+registry.rate_limit(
+    name="billing-tenant-minute",
+    agent="billing",
+    requests=30,
+    window_s=60,
+    by="tenant",
+)
+```
+
+For custom bucketing, pass a callable to `by`:
+
+```python
+def key_by_model(request, context):
+    return request.model
+
+
+registry.rate_limit(name="model-minute", requests=20, window_s=60, by=key_by_model)
+```
+
+When using a distributed store, give every policy a stable `name`. The registry
+resolves the bucket identity from `by=...` and sends a `RateLimitBucket` to the
+store:
+
+```python
+from msgflux.channels import RateLimitDecision
+
+
+class RedisRateLimitStore:
+    def __init__(self, redis):
+        self.redis = redis
+
+    async def hit(self, bucket):
+        current = await self.redis.incr(bucket.key)
+        if current == 1:
+            await self.redis.expire(bucket.key, int(bucket.policy.window_s))
+
+        ttl = await self.redis.ttl(bucket.key)
+        retry_after_s = ttl if current > bucket.policy.requests else None
+        return RateLimitDecision(
+            allowed=current <= bucket.policy.requests,
+            remaining=max(0, bucket.policy.requests - current),
+            retry_after_s=retry_after_s,
+            reset_after_s=ttl,
+        )
+
+
+registry.rate_limit_store(RedisRateLimitStore(redis))
+registry.rate_limit(
+    name="api-key-minute",
+    requests=60,
+    window_s=60,
+    by="api_key",
+)
+```
+
+Custom stores may also be plain callables and can return `RateLimitDecision`, a
+mapping with `allowed`/`retry_after_s`, a boolean, or `None` to allow the
+request.
+
+Built-in rate limit errors return `429` with a `Retry-After` header.
+
+### 9.6 Server Hooks
+
+Use lifecycle hooks for startup validation, model warmup, DB/cache setup, and
+resource cleanup. `/ready` flips to ready only after startup hooks complete.
+
+```python
+@registry.startup
+async def warmup(app):
+    ...
+
+
+@registry.shutdown
+async def cleanup(app):
+    ...
+```
+
+Use request hooks for boundary observability without coupling that logic to the
+agent implementation:
+
+```python
+@registry.on_request_start
+def on_start(request, context):
+    ...
+
+
+@registry.on_request_end
+def on_end(request, context, run, response, error):
+    ...
+
+
+@registry.on_stream_chunk
+def on_chunk(chunk, context, run):
+    ...
+```
+
+The HTTP boundary also propagates request metadata. Send `X-Correlation-ID` when
+you need one id shared across multiple services; otherwise it defaults to the
+request id.
+
+### 9.7 Error Mapping
+
+Error handlers let the server map domain exceptions to predictable HTTP
+payloads:
+
+```python
+@registry.error_handler(ValueError)
+def map_value_error(exc):
+    return {
+        "message": str(exc),
+        "code": "provider_error",
+        "type": "agent_error",
+        "status_code": 502,
+        "headers": {"X-Provider": "internal"},
+    }
+```
+
+Error payloads include `error.request_id` and `error.correlation_id`, and the
+same values are returned as response headers.
+
+
+## 10. **Serving Custom Modules**
 
 Although channels are designed for `nn.Agent`, today the registry does not
 enforce a strict concrete type. In practice, what matters is keeping the same
@@ -953,7 +1006,7 @@ curl -sS http://127.0.0.1:8010/v1/chat/completions \
     small request reshaping, not async I/O or external orchestration. For that,
     prefer a composed module with the same Agent-compatible call contract.
 
-## 10. **See Also**
+## 11. **See Also**
 
 - [Agent](../nn/agent/index.md) - Core module that channels expose over HTTP
 - [Message](../nn/message.md) - Structured message passing

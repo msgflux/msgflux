@@ -399,8 +399,6 @@ def _run_policies(defaults: Any) -> Dict[str, Any]:
     policies = {}
     if defaults.stream_policy is not None:
         policies["stream"] = defaults.stream_policy
-    if defaults.reasoning_policy is not None:
-        policies["reasoning"] = defaults.reasoning_policy
     return policies
 
 

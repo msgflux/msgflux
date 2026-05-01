@@ -26,7 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     server_parser.add_argument("--host", default="127.0.0.1")
     server_parser.add_argument("--port", default=8010, type=int)
-    server_parser.add_argument("--title", default="msgflux")
+    server_parser.add_argument("--title")
+    server_parser.add_argument("--description")
     server_parser.add_argument("--log-level", default="info")
 
     return parser

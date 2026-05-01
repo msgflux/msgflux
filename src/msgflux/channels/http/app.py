@@ -37,6 +37,8 @@ def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
         ) from e
 
     settings = registry.settings()
+    fastapi_kwargs.setdefault("title", settings.title)
+    fastapi_kwargs.setdefault("description", settings.description)
     if not settings.enable_docs:
         fastapi_kwargs.setdefault("docs_url", None)
         fastapi_kwargs.setdefault("redoc_url", None)
@@ -87,6 +89,10 @@ def _register_routes(
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return response_cls(status_code=204)
 
     @app.get("/ready")
     async def ready():
