@@ -4,7 +4,8 @@
 #
 # Start the server first:
 #
-#   uv run --with 'msgflux[server,openai]' msgflux server examples/server_streaming_agent.py:registry --host 127.0.0.1
+#   uv run --with 'msgflux[server,openai]' msgflux server \
+#     examples/server_streaming_agent.py:registry --host 127.0.0.1
 #
 # Then run this streaming client:
 #
@@ -17,7 +18,7 @@
 import asyncio
 
 import msgflux as mf
-
+from msgflux.logger import logger
 
 mf.load_dotenv()
 
@@ -40,10 +41,10 @@ async def stream_agent(model_path: str, message: str) -> None:
         stream=True,
     )
 
-    print(f"\n{model_path}: ", end="", flush=True)
+    chunks: list[str] = []
     async for chunk in response.consume():
-        print(chunk, end="", flush=True)
-    print()
+        chunks.append(str(chunk))
+    logger.info("%s: %s", model_path, "".join(chunks))
 
 
 async def main() -> None:

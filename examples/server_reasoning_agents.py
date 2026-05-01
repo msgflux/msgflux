@@ -12,7 +12,7 @@
 #   - model="openai_react"
 
 import msgflux as mf
-import msgflux.nn as nn
+from msgflux import nn
 from msgflux.generation.reasoning import ReAct
 from msgflux.tools.builtin import WebFetch
 
@@ -28,7 +28,6 @@ class GroqReasoningAgent(nn.Agent):
     model = mf.Model.chat_completion(
         "groq/openai/gpt-oss-120b",
         reasoning_effort="low",
-        return_reasoning=True,
     )
     instructions = "Solve step-by-step and keep the final answer concise."
     config = {"reasoning_in_response": True}
@@ -46,4 +45,4 @@ class OpenAIReActAgent(nn.Agent):
     Keep the final answer short and practical.
     """
     # ReAct (generation_schema) is not compatible with stream=True.
-    config = {"reasoning_in_response": True, "stream": False}
+    config = {"reasoning_in_response": True}
