@@ -963,7 +963,82 @@ Error payloads include `error.request_id` and `error.correlation_id`, and the
 same values are returned as response headers.
 
 
-## 10. **Serving Custom Modules**
+## 10. **Social Boundary: Telegram MVP**
+
+Social channels are event-driven. The webhook should acknowledge the platform
+quickly, publish an internal event, and let a background consumer call the
+selected Agent and send the outbound reply.
+
+The MVP ships with an in-memory event bus and a Telegram adapter:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.channels import TelegramAdapter
+
+registry = mf.ChannelRegistry()
+registry.social_adapter(
+    "telegram",
+    TelegramAdapter(
+        bot_token_env="TELEGRAM_BOT_TOKEN",
+        secret_token_env="TELEGRAM_WEBHOOK_SECRET",
+    ),
+)
+
+@registry.social_route(channel="telegram")
+def route_telegram(message, context):
+    return "support"
+
+@registry.agent(name="support")
+class SupportAgent(nn.Agent):
+    model = "openai/gpt-4.1-mini"
+    system_message = "You are a concise Telegram support assistant."
+```
+
+The server exposes the registered Telegram adapter at:
+
+```text
+POST /social/telegram/webhook
+```
+
+The adapter decodes Telegram updates into `SocialMessage` and sets a stable
+session id:
+
+```text
+session_id = "telegram:{chat_id}"
+```
+
+The Agent receives a normal one-turn message plus social metadata in `vars`:
+
+```python
+{
+    "session_id": "telegram:456",
+    "social_channel": "telegram",
+    "conversation_id": "456",
+    "sender_id": "123",
+}
+```
+
+When the future checkpointer lands, it should use this `session_id` to load and
+trim conversation history. The Social Boundary intentionally does not persist
+history by itself.
+
+Configure Telegram with a webhook URL like:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-domain.example/social/telegram/webhook",
+    "secret_token": "'"$TELEGRAM_WEBHOOK_SECRET"'"
+  }'
+```
+
+Telegram sends `X-Telegram-Bot-Api-Secret-Token` with each webhook request when
+`secret_token` is configured. The adapter rejects requests where that header
+does not match.
+
+## 11. **Serving Custom Modules**
 
 Although channels are designed for `nn.Agent`, today the registry does not
 enforce a strict concrete type. In practice, what matters is keeping the same
@@ -1022,7 +1097,7 @@ curl -sS http://127.0.0.1:8010/v1/chat/completions \
     small request reshaping, not async I/O or external orchestration. For that,
     prefer a composed module with the same Agent-compatible call contract.
 
-## 11. **See Also**
+## 12. **See Also**
 
 - [Agent](../nn/agent/index.md) - Core module that channels expose over HTTP
 - [Message](../nn/message.md) - Structured message passing

@@ -20,6 +20,16 @@ from msgflux.channels.registry import (
     RateLimitDecision,
     RateLimitPolicy,
 )
+from msgflux.channels.social import (
+    InMemorySocialEventBus,
+    OutboundSocialMessage,
+    SocialAttachment,
+    SocialBoundary,
+    SocialContext,
+    SocialEvent,
+    SocialMessage,
+    TelegramAdapter,
+)
 
 __all__ = [
     "AgentNotFoundError",
@@ -33,11 +43,19 @@ __all__ = [
     "ChannelSettings",
     "ForbiddenError",
     "InMemoryRateLimitStore",
+    "InMemorySocialEventBus",
+    "OutboundSocialMessage",
     "PayloadTooLargeError",
     "RateLimitBucket",
     "RateLimitDecision",
     "RateLimitExceededError",
     "RateLimitPolicy",
     "RequestTimeoutError",
+    "SocialAttachment",
+    "SocialBoundary",
+    "SocialContext",
+    "SocialEvent",
+    "SocialMessage",
+    "TelegramAdapter",
     "UnauthorizedError",
 ]

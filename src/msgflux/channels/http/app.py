@@ -78,7 +78,7 @@ def _register_routes(
 ) -> None:
     @app.get("/")
     async def home():
-        return {
+        payload = {
             "status": "ok",
             "title": settings.title,
             "subtitle": settings.subtitle,
@@ -87,6 +87,13 @@ def _register_routes(
             "ready": "/ready",
             "chat_completions": "/v1/chat/completions",
         }
+        social_routes = {
+            channel: f"/social/{channel}/webhook"
+            for channel in registry.social_boundary().adapters()
+        }
+        if social_routes:
+            payload["social"] = social_routes
+        return payload
 
     @app.get("/health")
     async def health():
@@ -132,6 +139,21 @@ def _register_routes(
             streaming_response_cls,
             settings,
         )
+
+    for social_channel in registry.social_boundary().adapters():
+
+        @app.post(f"/social/{social_channel}/webhook")
+        async def social_webhook(
+            http_request: request_cls,
+            channel: str = social_channel,
+        ):
+            return await _handle_social_webhook(
+                channel,
+                http_request,
+                registry,
+                response_cls,
+                settings,
+            )
 
 
 async def _handle_chat_completions(
@@ -221,12 +243,46 @@ async def _handle_chat_completions(
         raise
 
 
+async def _handle_social_webhook(
+    channel: str,
+    http_request: Any,
+    registry: ChannelRegistry,
+    response_cls: Any,
+    settings: Any,
+):
+    request_metadata = resolve_request_metadata(http_request)
+    try:
+        body = await _read_body(http_request, settings.max_request_bytes)
+        event_count = await registry.social_boundary().handle_webhook(
+            channel,
+            body,
+            http_request,
+        )
+        return response_cls(
+            content=encode_json({"status": "accepted", "events": event_count}),
+            media_type="application/json",
+            headers=_response_headers(request_metadata),
+        )
+    except Exception as e:
+        handled = await _exception_response(
+            registry,
+            e,
+            response_cls,
+            request_metadata,
+        )
+        if handled is not None:
+            return handled
+        raise
+
+
 def _build_lifespan(registry: ChannelRegistry, user_lifespan: Any):
     @asynccontextmanager
     async def lifespan(app: Any):
         registry.mark_starting()
+        social_boundary = registry.social_boundary()
         try:
             await registry.run_startup_hooks(app)
+            await social_boundary.start()
             if user_lifespan is None:
                 registry.mark_ready()
                 yield
@@ -242,6 +298,7 @@ def _build_lifespan(registry: ChannelRegistry, user_lifespan: Any):
             if registry.readiness().ready:
                 registry.mark_not_ready("stopping")
             try:
+                await social_boundary.stop()
                 await registry.run_shutdown_hooks(app)
             finally:
                 if registry.readiness().status != "startup_failed":

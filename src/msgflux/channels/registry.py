@@ -158,6 +158,7 @@ class ChannelRegistry:
         self._agent_defaults: Dict[str, AgentDefaults] = {}
         self._rate_limits: List[RateLimitPolicy] = []
         self._rate_limit_store: Any = InMemoryRateLimitStore()
+        self._social_boundary: Any = None
         self._readiness = ChannelReadiness()
 
     def settings(self, **updates: Any) -> ChannelSettings:
@@ -245,6 +246,25 @@ class ChannelRegistry:
             )
         self._rate_limit_store = store
         return store
+
+    def social_boundary(self) -> Any:
+        if self._social_boundary is None:
+            social_boundary_cls = importlib.import_module(
+                "msgflux.channels.social"
+            ).SocialBoundary
+            self._social_boundary = social_boundary_cls(self)
+        return self._social_boundary
+
+    def social_adapter(self, channel: str, adapter: Any) -> Any:
+        return self.social_boundary().adapter(channel, adapter)
+
+    def social_route(
+        self,
+        target: str | Processor | None = None,
+        *,
+        channel: str = "*",
+    ) -> Processor | Callable[[Processor], Processor]:
+        return self.social_boundary().route(target, channel=channel)
 
     def _resolve_name(self, obj: Any, name: Optional[str] = None) -> str:
         if name:
