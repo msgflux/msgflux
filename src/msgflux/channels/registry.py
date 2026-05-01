@@ -45,6 +45,13 @@ class AgentMetadata:
 
 
 @dataclass
+class ChannelReadiness:
+    ready: bool = False
+    status: str = "starting"
+    error: Optional[str] = None
+
+
+@dataclass
 class ChannelSettings:
     max_request_bytes: Optional[int] = None
     request_timeout_s: Optional[float] = None
@@ -96,6 +103,7 @@ class ChannelRegistry:
         self._rate_limits: List[RateLimitPolicy] = []
         self._rate_limit_counters: Dict[tuple[int, str], tuple[int, float]] = {}
         self._rate_limit_lock = asyncio.Lock()
+        self._readiness = ChannelReadiness()
 
     def settings(self, **updates: Any) -> ChannelSettings:
         if not updates:
@@ -423,6 +431,30 @@ class ChannelRegistry:
     def agents_metadata(self) -> Dict[str, AgentMetadata]:
         return dict(self._agent_metadata)
 
+    def mark_starting(self) -> None:
+        self._readiness = ChannelReadiness(
+            ready=False,
+            status="starting",
+            error=None,
+        )
+
+    def mark_ready(self) -> None:
+        self._readiness = ChannelReadiness(
+            ready=True,
+            status="ready",
+            error=None,
+        )
+
+    def mark_not_ready(self, status: str = "not_ready", error: Any = None) -> None:
+        self._readiness = ChannelReadiness(
+            ready=False,
+            status=status,
+            error=str(error) if error is not None else None,
+        )
+
+    def readiness(self) -> ChannelReadiness:
+        return self._readiness
+
     def pre_processors(self, agent_name: str) -> List[Processor]:
         return [
             *self._pre_processors.get(DEFAULT_PROCESSOR_KEY, []),
@@ -499,7 +531,10 @@ class ChannelRegistry:
                     count = 0
                     reset_at = now + policy.window_s
                 if count >= policy.requests:
-                    raise RateLimitExceededError("Rate limit exceeded")
+                    raise RateLimitExceededError(
+                        "Rate limit exceeded",
+                        retry_after_s=reset_at - now,
+                    )
                 self._rate_limit_counters[counter_key] = (count + 1, reset_at)
 
     def __contains__(self, name: str) -> bool:

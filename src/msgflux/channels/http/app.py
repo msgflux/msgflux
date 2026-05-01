@@ -18,6 +18,7 @@ from msgflux.channels.http.openai import (
     decode_chat_completion_request,
     encode_error,
     encode_json,
+    resolve_request_metadata,
 )
 from msgflux.channels.registry import ChannelRegistry, call_processor
 
@@ -40,11 +41,10 @@ def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
         fastapi_kwargs.setdefault("docs_url", None)
         fastapi_kwargs.setdefault("redoc_url", None)
         fastapi_kwargs.setdefault("openapi_url", None)
-    if registry.has_lifespan_hooks() or fastapi_kwargs.get("lifespan") is not None:
-        fastapi_kwargs["lifespan"] = _build_lifespan(
-            registry,
-            fastapi_kwargs.get("lifespan"),
-        )
+    fastapi_kwargs["lifespan"] = _build_lifespan(
+        registry,
+        fastapi_kwargs.get("lifespan"),
+    )
 
     msgspec_json_response, _, msgspec_route = make_msgspec_classes()
     fastapi_kwargs.setdefault("default_response_class", msgspec_json_response)
@@ -80,6 +80,7 @@ def _register_routes(
             "status": "ok",
             "agents": "/agents",
             "health": "/health",
+            "ready": "/ready",
             "chat_completions": "/v1/chat/completions",
         }
 
@@ -87,11 +88,23 @@ def _register_routes(
     async def health():
         return {"status": "ok"}
 
+    @app.get("/ready")
+    async def ready():
+        readiness = registry.readiness()
+        return response_cls(
+            content=encode_json(
+                {
+                    "status": readiness.status,
+                    "ready": readiness.ready,
+                    "error": readiness.error,
+                }
+            ),
+            status_code=200 if readiness.ready else 503,
+            media_type="application/json",
+        )
+
     @app.get("/agents")
-    async def agents(http_request: request_cls):
-        details = _is_truthy_query_param(http_request.query_params.get("details"))
-        if not details:
-            return {"agents": sorted(registry.agents())}
+    async def agents():
         return {
             "agents": [
                 _agent_metadata_payload(metadata)
@@ -120,17 +133,29 @@ async def _handle_chat_completions(
     streaming_response_cls: Any,
     settings: Any,
 ):
+    request_metadata = resolve_request_metadata(http_request)
     try:
         body = await _read_body(http_request, settings.max_request_bytes)
         request = decode_chat_completion_request(body)
     except msgspec.ValidationError as e:
         return response_cls(
-            content=encode_error(str(e), code="invalid_request"),
+            content=encode_error(
+                str(e),
+                code="invalid_request",
+                request_id=request_metadata["request_id"],
+                correlation_id=request_metadata["correlation_id"],
+            ),
             status_code=400,
             media_type="application/json",
+            headers=_response_headers(request_metadata),
         )
     except Exception as e:
-        handled = await _exception_response(registry, e, response_cls)
+        handled = await _exception_response(
+            registry,
+            e,
+            response_cls,
+            request_metadata,
+        )
         if handled is not None:
             return handled
         raise
@@ -141,6 +166,7 @@ async def _handle_chat_completions(
                 registry,
                 request,
                 http_request=http_request,
+                request_metadata=request_metadata,
             )
             first_chunk, chunks = await _first_stream_chunk(
                 chunks,
@@ -149,26 +175,39 @@ async def _handle_chat_completions(
             chunks = _with_stream_timeout(
                 chunks,
                 timeout_s=settings.request_timeout_s,
+                request_metadata=request_metadata,
             )
             return streaming_response_cls(
                 _prepend_stream_chunk(first_chunk, chunks),
                 media_type="text/event-stream",
                 headers={
+                    **_response_headers(request_metadata),
                     "Cache-Control": "no-cache",
                     "X-Accel-Buffering": "no",
                 },
             )
 
         response = await _with_timeout(
-            create_chat_completion(registry, request, http_request=http_request),
+            create_chat_completion(
+                registry,
+                request,
+                http_request=http_request,
+                request_metadata=request_metadata,
+            ),
             timeout_s=settings.request_timeout_s,
         )
         return response_cls(
             content=encode_json(response),
             media_type="application/json",
+            headers=_response_headers(request_metadata),
         )
     except Exception as e:
-        handled = await _exception_response(registry, e, response_cls)
+        handled = await _exception_response(
+            registry,
+            e,
+            response_cls,
+            request_metadata,
+        )
         if handled is not None:
             return handled
         raise
@@ -177,15 +216,28 @@ async def _handle_chat_completions(
 def _build_lifespan(registry: ChannelRegistry, user_lifespan: Any):
     @asynccontextmanager
     async def lifespan(app: Any):
-        await registry.run_startup_hooks(app)
+        registry.mark_starting()
         try:
+            await registry.run_startup_hooks(app)
             if user_lifespan is None:
+                registry.mark_ready()
                 yield
             else:
                 async with user_lifespan(app):
+                    registry.mark_ready()
                     yield
+        except Exception as e:
+            status = "error" if registry.readiness().ready else "startup_failed"
+            registry.mark_not_ready(status, e)
+            raise
         finally:
-            await registry.run_shutdown_hooks(app)
+            if registry.readiness().ready:
+                registry.mark_not_ready("stopping")
+            try:
+                await registry.run_shutdown_hooks(app)
+            finally:
+                if registry.readiness().status != "startup_failed":
+                    registry.mark_not_ready("stopped")
 
     return lifespan
 
@@ -210,10 +262,6 @@ def _agent_metadata_payload(metadata: Any) -> dict[str, Any]:
         "tags": list(metadata.tags),
         "capabilities": dict(metadata.capabilities),
     }
-
-
-def _is_truthy_query_param(value: Any) -> bool:
-    return str(value or "").lower() in {"1", "true", "yes", "on"}
 
 
 def _configure_otel(app: Any, settings: Any) -> None:
@@ -292,6 +340,7 @@ async def _with_stream_timeout(
     chunks: AsyncIterator[bytes],
     *,
     timeout_s: float | None,
+    request_metadata: Mapping[str, Any],
 ) -> AsyncIterator[bytes]:
     if timeout_s is None:
         async for chunk in chunks:
@@ -306,49 +355,68 @@ async def _with_stream_timeout(
             return
         except asyncio.TimeoutError:
             timeout = RequestTimeoutError(f"Request exceeded {timeout_s} seconds")
-            yield _sse_error(timeout)
+            yield _sse_error(timeout, request_metadata)
             return
         except ChannelError as e:
-            yield _sse_error(e)
+            yield _sse_error(e, request_metadata)
             return
         yield chunk
 
 
-def _sse_error(error: ChannelError) -> bytes:
-    return b"data: " + encode_error(error.message, code=error.code) + b"\n\n"
+def _sse_error(error: ChannelError, request_metadata: Mapping[str, Any]) -> bytes:
+    return (
+        b"data: "
+        + encode_error(
+            error.message,
+            code=error.code,
+            error_type=error.error_type,
+            request_id=request_metadata["request_id"],
+            correlation_id=request_metadata["correlation_id"],
+        )
+        + b"\n\n"
+    )
 
 
 async def _exception_response(
     registry: ChannelRegistry,
     exc: BaseException,
     response_cls: Any,
+    request_metadata: Mapping[str, Any],
 ):
     for _, handler in reversed(registry.error_handlers(exc)):
         mapped = await call_processor(handler, exc)
-        response = _mapped_error_response(mapped, response_cls)
+        response = _mapped_error_response(mapped, response_cls, request_metadata)
         if response is not None:
             return response
 
     if isinstance(exc, ChannelError):
-        return _channel_error_response(exc, response_cls)
+        return _channel_error_response(exc, response_cls, request_metadata)
     return None
 
 
-def _mapped_error_response(mapped: Any, response_cls: Any):
+def _mapped_error_response(
+    mapped: Any,
+    response_cls: Any,
+    request_metadata: Mapping[str, Any],
+):
     if mapped is None:
         return None
     if isinstance(mapped, ChannelError):
-        return _channel_error_response(mapped, response_cls)
+        return _channel_error_response(mapped, response_cls, request_metadata)
     if hasattr(mapped, "status_code") and hasattr(mapped, "body"):
         return mapped
 
     status_code = 500
+    headers = {}
     payload = mapped
     if isinstance(mapped, tuple) and len(mapped) == 2:
         payload, status_code = mapped
+    elif isinstance(mapped, tuple) and len(mapped) == 3:
+        payload, status_code, headers = mapped
 
     if isinstance(payload, Mapping):
         status_code = int(payload.get("status_code", status_code))
+        headers = dict(payload.get("headers") or headers)
         if "body" in payload:
             payload = payload["body"]
         elif "message" in payload:
@@ -357,25 +425,58 @@ def _mapped_error_response(mapped: Any, response_cls: Any):
                     str(payload["message"]),
                     code=str(payload.get("code") or "server_error"),
                     error_type=str(payload.get("type") or "server_error"),
+                    request_id=request_metadata["request_id"],
+                    correlation_id=request_metadata["correlation_id"],
                 ),
                 status_code=status_code,
                 media_type="application/json",
+                headers=_response_headers(request_metadata, headers),
             )
         else:
             payload = {
-                key: value for key, value in payload.items() if key != "status_code"
+                key: value
+                for key, value in payload.items()
+                if key not in {"headers", "status_code"}
             }
 
     return response_cls(
         content=encode_json(payload),
         status_code=int(status_code),
         media_type="application/json",
+        headers=_response_headers(request_metadata, headers),
     )
 
 
-def _channel_error_response(error: ChannelError, response_cls: Any):
+def _channel_error_response(
+    error: ChannelError,
+    response_cls: Any,
+    request_metadata: Mapping[str, Any],
+):
     return response_cls(
-        content=encode_error(error.message, code=error.code),
+        content=encode_error(
+            error.message,
+            code=error.code,
+            error_type=error.error_type,
+            request_id=request_metadata["request_id"],
+            correlation_id=request_metadata["correlation_id"],
+        ),
         status_code=error.status_code,
         media_type="application/json",
+        headers=_response_headers(request_metadata, error.headers),
     )
+
+
+def _response_headers(
+    request_metadata: Mapping[str, Any],
+    extra_headers: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    headers = {
+        "X-Request-ID": str(request_metadata["request_id"]),
+        "X-Correlation-ID": str(request_metadata["correlation_id"]),
+    }
+    if request_metadata.get("traceparent"):
+        headers["traceparent"] = str(request_metadata["traceparent"])
+    headers.update(
+        {str(key): str(value) for key, value in (extra_headers or {}).items()}
+    )
+    return headers

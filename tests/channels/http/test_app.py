@@ -58,6 +58,7 @@ def test_health_and_agents_routes():
         "status": "ok",
         "agents": "/agents",
         "health": "/health",
+        "ready": "/ready",
         "chat_completions": "/v1/chat/completions",
     }
 
@@ -67,10 +68,19 @@ def test_health_and_agents_routes():
 
     agents_response = client.get("/agents")
     assert agents_response.status_code == 200
-    assert agents_response.json() == {"agents": ["support"]}
+    assert agents_response.json() == {
+        "agents": [
+            {
+                "name": "support",
+                "description": None,
+                "tags": [],
+                "capabilities": {},
+            }
+        ]
+    }
 
 
-def test_agents_route_can_return_metadata_details():
+def test_agents_route_returns_metadata_details():
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -87,7 +97,7 @@ def test_agents_route_can_return_metadata_details():
     )
     client = TestClient(create_app(registry))
 
-    response = client.get("/agents?details=true")
+    response = client.get("/agents")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -100,6 +110,26 @@ def test_agents_route_can_return_metadata_details():
             }
         ]
     }
+
+
+def test_ready_route_tracks_lifespan_state():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    registry = ChannelRegistry()
+    app = create_app(registry)
+
+    assert registry.readiness().status == "starting"
+    with TestClient(app) as client:
+        response = client.get("/ready")
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "ready",
+            "ready": True,
+            "error": None,
+        }
+
+    assert registry.readiness().status == "stopped"
 
 
 def test_registry_settings_disable_docs_and_enable_cors():
@@ -243,7 +273,38 @@ def test_rate_limit_by_api_key_returns_429():
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["error"]["code"] == "rate_limit_exceeded"
+    assert int(second.headers["retry-after"]) >= 1
     assert other_key.status_code == 200
+
+
+def test_response_headers_include_request_and_correlation_ids():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    registry = ChannelRegistry()
+    registry.agent(FakeAgent())
+    client = TestClient(create_app(registry))
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={
+            "X-Request-ID": "req-test",
+            "X-Correlation-ID": "corr-test",
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+        },
+        json={
+            "model": "support",
+            "messages": [{"role": "user", "content": "hi"}],
+            "run_config": {"vars": {"tenant": "acme"}},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "req-test"
+    assert response.headers["x-correlation-id"] == "corr-test"
+    assert response.headers["traceparent"] == (
+        "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+    )
 
 
 def test_rate_limit_can_target_agent():
@@ -313,6 +374,7 @@ def test_error_handler_maps_exception_to_http_payload():
 
     response = client.post(
         "/v1/chat/completions",
+        headers={"X-Request-ID": "req-error", "X-Correlation-ID": "corr-error"},
         json={"model": "support", "messages": [{"role": "user", "content": "hi"}]},
     )
 
@@ -322,6 +384,8 @@ def test_error_handler_maps_exception_to_http_payload():
             "message": "provider down",
             "type": "agent_error",
             "code": "provider_error",
+            "request_id": "req-error",
+            "correlation_id": "corr-error",
         }
     }
 

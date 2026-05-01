@@ -56,6 +56,8 @@ def encode_error(
     *,
     code: str,
     error_type: str = "invalid_request",
+    request_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
 ) -> bytes:
     return encode_json(
         ErrorResponse(
@@ -63,9 +65,37 @@ def encode_error(
                 message=message,
                 type=error_type,
                 code=code,
+                request_id=request_id,
+                correlation_id=correlation_id,
             )
         )
     )
+
+
+def resolve_request_metadata(
+    http_request: Any = None,
+    request_metadata: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, str]:
+    metadata = dict(request_metadata or {})
+    headers = getattr(http_request, "headers", {}) if http_request is not None else {}
+    request_id = (
+        metadata.get("request_id")
+        or headers.get("x-request-id")
+        or _make_request_id()
+    )
+    correlation_id = (
+        metadata.get("correlation_id")
+        or headers.get("x-correlation-id")
+        or request_id
+    )
+    traceparent = metadata.get("traceparent") or headers.get("traceparent")
+    result = {
+        "request_id": str(request_id),
+        "correlation_id": str(correlation_id),
+    }
+    if traceparent:
+        result["traceparent"] = str(traceparent)
+    return result
 
 
 async def create_chat_completion(
@@ -73,14 +103,18 @@ async def create_chat_completion(
     request: ChatCompletionRequest,
     *,
     http_request: Any = None,
+    request_metadata: Optional[Mapping[str, Any]] = None,
 ) -> ChatCompletionResponse:
-    request_id = _make_completion_id()
+    metadata = resolve_request_metadata(http_request, request_metadata)
+    completion_id = _make_completion_id()
     context = ChannelContext(
         channel="http",
         agent_name=request.model,
-        request_id=request_id,
+        request_id=metadata["request_id"],
         request=request,
     )
+    context.state.update(metadata)
+    context.state["completion_id"] = completion_id
     if http_request is not None:
         context.state["http_request"] = http_request
 
@@ -110,7 +144,7 @@ async def create_chat_completion(
         content, reasoning_content = _extract_message_content(output)
 
         response = ChatCompletionResponse(
-            id=request_id,
+            id=completion_id,
             object="chat.completion",
             created=int(time.time()),
             model=request.model,
@@ -141,15 +175,19 @@ async def create_chat_completion_stream(
     request: ChatCompletionRequest,
     *,
     http_request: Any = None,
+    request_metadata: Optional[Mapping[str, Any]] = None,
 ) -> AsyncIterator[bytes]:
-    request_id = _make_completion_id()
+    metadata = resolve_request_metadata(http_request, request_metadata)
+    completion_id = _make_completion_id()
     created = int(time.time())
     context = ChannelContext(
         channel="http",
         agent_name=request.model,
-        request_id=request_id,
+        request_id=metadata["request_id"],
         request=request,
     )
+    context.state.update(metadata)
+    context.state["completion_id"] = completion_id
     if http_request is not None:
         context.state["http_request"] = http_request
 
@@ -180,7 +218,7 @@ async def create_chat_completion_stream(
         yield await _emit_sse_chunk(
             registry,
             _stream_chunk(
-                request_id,
+                completion_id,
                 created,
                 request.model,
                 delta=ChatCompletionStreamDelta(role="assistant"),
@@ -192,7 +230,7 @@ async def create_chat_completion_stream(
         if isinstance(output, ModelStreamResponse):
             async for chunk in _stream_response_chunks(
                 output,
-                request_id=request_id,
+                request_id=completion_id,
                 created=created,
                 model=request.model,
             ):
@@ -203,7 +241,7 @@ async def create_chat_completion_stream(
                 yield await _emit_sse_chunk(
                     registry,
                     _stream_chunk(
-                        request_id,
+                        completion_id,
                         created,
                         request.model,
                         delta=ChatCompletionStreamDelta(
@@ -217,7 +255,7 @@ async def create_chat_completion_stream(
                 yield await _emit_sse_chunk(
                     registry,
                     _stream_chunk(
-                        request_id,
+                        completion_id,
                         created,
                         request.model,
                         delta=ChatCompletionStreamDelta(content=content),
@@ -229,7 +267,7 @@ async def create_chat_completion_stream(
         yield await _emit_sse_chunk(
             registry,
             _stream_chunk(
-                request_id,
+                completion_id,
                 created,
                 request.model,
                 delta=ChatCompletionStreamDelta(),
@@ -472,3 +510,7 @@ def _finish_reason(output: Any) -> str:
 
 def _make_completion_id() -> str:
     return f"chatcmpl-{uuid.uuid4().hex}"
+
+
+def _make_request_id() -> str:
+    return f"req-{uuid.uuid4().hex}"

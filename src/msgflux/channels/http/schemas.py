@@ -96,6 +96,8 @@ class ErrorDetails(
     message: str
     type: str
     code: Optional[str] = None
+    request_id: Optional[str] = None
+    correlation_id: Optional[str] = None
 
 
 class ErrorResponse(

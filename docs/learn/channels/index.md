@@ -151,16 +151,10 @@ uv run --with 'msgflux[server,openai]' msgflux server server_streaming_agent.py 
     If your registry object has a different name, pass it explicitly as
     `module.py:object_name`.
 
-After registration, `/agents` returns `SupportAgent` and `billing`:
+After registration, `/agents` returns registered agents with metadata:
 
 ```bash
 curl -s http://127.0.0.1:8010/agents
-```
-
-Use `details=true` to include registry metadata:
-
-```bash
-curl -s 'http://127.0.0.1:8010/agents?details=true'
 ```
 
 Use `model: "billing"` for the billing agent and `model: "SupportAgent"` for
@@ -171,8 +165,9 @@ the support agent. The request examples below show each one in context.
 | Name | Method | Description |
 |---|---|---|
 | `/v1/chat/completions` | `POST` | OpenAI-compatible endpoint that runs a registered agent. |
-| `/health` | `GET` | Basic status check for the server. |
-| `/agents` | `GET` | Lists the registered agent names. |
+| `/health` | `GET` | Liveness check for the server process. |
+| `/ready` | `GET` | Readiness check that flips after startup hooks complete. |
+| `/agents` | `GET` | Lists registered agents with description, tags, and capabilities. |
 
 The supported request fields are:
 
@@ -208,6 +203,17 @@ inputs that are not part of the OpenAI Chat Completions shape, such as `task`,
 
 The endpoint does not persist sessions. Each request should contain the
 messages required for that turn.
+
+The HTTP boundary propagates request metadata:
+
+| Header | Behavior |
+|---|---|
+| `X-Request-ID` | Used as the channel request id when provided; otherwise generated. |
+| `X-Correlation-ID` | Used for cross-service correlation; defaults to request id. |
+| `traceparent` | Preserved in context and response headers for trace propagation. |
+
+Responses include `X-Request-ID` and `X-Correlation-ID`. Error payloads include
+the same ids under `error.request_id` and `error.correlation_id`.
 
 ### 3.1 Server Settings and Boundary Hooks
 
@@ -382,8 +388,11 @@ def map_value_error(exc):
         "code": "provider_error",
         "type": "agent_error",
         "status_code": 502,
+        "headers": {"X-Provider": "internal"},
     }
 ```
+
+Built-in rate limit errors return `429` with a `Retry-After` header.
 
 ## 4. **Streaming and Tools**
 
