@@ -19,6 +19,25 @@ from msgflux.tools.builtin import WebFetch
 mf.load_dotenv()
 
 registry = mf.ChannelRegistry()
+registry.settings(
+    title="msgFlux Reasoning Channel",
+    subtitle="Reasoning and ReAct agents behind one HTTP boundary",
+    description="OpenAI-compatible reasoning server with per-agent rate limits.",
+)
+registry.rate_limit(
+    name="groq-reasoning-api-key-minute",
+    agent="groq_reasoning",
+    requests=20,
+    window_s=60,
+    by="api_key",
+)
+registry.rate_limit(
+    name="openai-react-ip-minute",
+    agent="openai_react",
+    requests=10,
+    window_s=60,
+    by="ip",
+)
 
 
 @registry.agent(name="groq_reasoning")

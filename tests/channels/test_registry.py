@@ -128,6 +128,7 @@ def test_channel_registry_settings_are_global_and_validated():
 
     settings = registry.settings(
         title="Support Agents",
+        subtitle="Support and billing agents.",
         description="Support HTTP boundary.",
         max_request_bytes=1024,
         request_timeout_s=3,
@@ -138,6 +139,7 @@ def test_channel_registry_settings_are_global_and_validated():
 
     assert settings is registry.settings()
     assert settings.title == "Support Agents"
+    assert settings.subtitle == "Support and billing agents."
     assert settings.description == "Support HTTP boundary."
     assert settings.max_request_bytes == 1024
     assert settings.request_timeout_s == 3

@@ -56,6 +56,8 @@ def test_health_and_agents_routes():
     assert home_response.status_code == 200
     assert home_response.json() == {
         "status": "ok",
+        "title": "msgFlux Channel Server",
+        "subtitle": "OpenAI-compatible HTTP channel for msgFlux agents.",
         "agents": "/agents",
         "health": "/health",
         "ready": "/ready",
@@ -170,6 +172,7 @@ def test_registry_settings_customize_openapi_metadata():
     registry = ChannelRegistry()
     registry.settings(
         title="Support Agents API",
+        subtitle="Support and billing assistants.",
         description="OpenAI-compatible support agents.",
     )
     client = TestClient(create_app(registry))
@@ -181,6 +184,10 @@ def test_registry_settings_customize_openapi_metadata():
     assert response.json()["info"]["description"] == (
         "OpenAI-compatible support agents."
     )
+
+    home_response = client.get("/")
+    assert home_response.json()["title"] == "Support Agents API"
+    assert home_response.json()["subtitle"] == "Support and billing assistants."
 
 
 def test_max_request_bytes_returns_413():

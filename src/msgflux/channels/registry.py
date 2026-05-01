@@ -54,6 +54,7 @@ class ChannelReadiness:
 @dataclass
 class ChannelSettings:
     title: str = "msgFlux Channel Server"
+    subtitle: str = "OpenAI-compatible HTTP channel for msgFlux agents."
     description: str = "OpenAI-compatible HTTP channel for msgFlux agents."
     max_request_bytes: Optional[int] = None
     request_timeout_s: Optional[float] = None

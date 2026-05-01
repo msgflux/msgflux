@@ -80,6 +80,8 @@ def _register_routes(
     async def home():
         return {
             "status": "ok",
+            "title": settings.title,
+            "subtitle": settings.subtitle,
             "agents": "/agents",
             "health": "/health",
             "ready": "/ready",

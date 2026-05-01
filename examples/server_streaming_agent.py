@@ -45,6 +45,25 @@ def get_invoice_status(invoice_id: str) -> str:
 
 
 registry = mf.ChannelRegistry()
+registry.settings(
+    title="msgFlux Support Channel",
+    subtitle="Streaming order and billing agents",
+    description="OpenAI-compatible support server with per-agent rate limits.",
+)
+registry.rate_limit(
+    name="support-ip-minute",
+    agent="support",
+    requests=60,
+    window_s=60,
+    by="ip",
+)
+registry.rate_limit(
+    name="billing-api-key-minute",
+    agent="billing",
+    requests=30,
+    window_s=60,
+    by="api_key",
+)
 
 
 @registry.agent(name="support")

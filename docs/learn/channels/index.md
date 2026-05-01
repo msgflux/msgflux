@@ -102,8 +102,27 @@ import msgflux.nn as nn
 mf.load_dotenv()
 
 registry = mf.ChannelRegistry()
+registry.settings(
+    title="msgFlux Support Channel",
+    subtitle="Streaming order and billing agents.",
+    description="OpenAI-compatible support server with per-agent rate limits.",
+)
+registry.rate_limit(
+    name="support-ip-minute",
+    agent="support",
+    requests=60,
+    window_s=60,
+    by="ip",
+)
+registry.rate_limit(
+    name="billing-api-key-minute",
+    agent="billing",
+    requests=30,
+    window_s=60,
+    by="api_key",
+)
 
-@registry.agent()
+@registry.agent(name="support")
 class SupportAgent(nn.Agent):
     """Customer support agent for order and delivery questions."""
 
@@ -161,8 +180,8 @@ After registration, `/agents` returns registered agents with metadata:
 curl -s http://127.0.0.1:8010/agents
 ```
 
-Use `model: "billing"` for the billing agent and `model: "SupportAgent"` for
-the support agent. The request examples below show each one in context.
+Use `model: "billing"` for the billing agent and `model: "support"` for the
+support agent. The request examples below show each one in context.
 
 ## 3. **HTTP API**
 
@@ -677,19 +696,18 @@ providers or generation schemas use different internal field names.
 ## 9. **Production Customization**
 
 After the basic server is running, use the registry to configure the HTTP
-boundary in one place. These features are intentionally server-level concerns:
-they should not be hidden inside an Agent implementation.
+boundary in one place.
 
 ### 9.1 Server Settings
 
-Use `registry.settings(...)` for server-wide HTTP behavior instead of spreading
-these concerns across CLI flags or pre-processors:
+Use `registry.settings(...)` for server-wide HTTP behavior:
 
 ```python
 registry = mf.ChannelRegistry()
 
 registry.settings(
     title="Support Agents API",
+    subtitle="Support and billing agents.",
     description="OpenAI-compatible support and billing agents.",
     max_request_bytes=2 * 1024 * 1024,
     request_timeout_s=30,
@@ -700,8 +718,9 @@ registry.settings(
 )
 ```
 
-`title` and `description` customize the FastAPI/OpenAPI metadata. Set
-`enable_docs=False` to disable `/docs`, `/redoc`, and `/openapi.json`.
+`title` and `description` customize the FastAPI/OpenAPI metadata. `title` and
+`subtitle` are also returned by `/`. Set `enable_docs=False` to disable
+`/docs`, `/redoc`, and `/openapi.json`.
 
 `enable_otel=True` instruments the FastAPI app through the official
 `opentelemetry-instrumentation-fastapi` adapter. The package is included in the
@@ -774,9 +793,6 @@ curl http://127.0.0.1:8010/v1/chat/completions \
     "messages": [{"role": "user", "content": "hello"}]
   }'
 ```
-
-Avoid putting API keys in the JSON body. Headers preserve OpenAI compatibility
-and are easier to redact at the HTTP/logging boundary.
 
 ### 9.4 Authorization
 
