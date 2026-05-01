@@ -5,11 +5,11 @@ try:
 except ImportError:
     load_workbook = None
 
+from msgflux.core.dotdict import dotdict
 from msgflux.data.parsers.base import BaseParser
 from msgflux.data.parsers.registry import register_parser
 from msgflux.data.parsers.response import ParserResponse
 from msgflux.data.parsers.types import XlsxParser
-from msgflux.core.dotdict import dotdict
 
 
 @register_parser

@@ -81,7 +81,8 @@ def _download_remote_target(url: str) -> Path:
     filename = f"{sha256(url.encode('utf-8')).hexdigest()[:16]}.py"
     destination = _CACHE_DIR / filename
 
-    with urlopen(url, timeout=_REMOTE_TIMEOUT_SECONDS) as response:
+    # URL scheme is validated by `_split_remote_target`/`_is_http_url` before download.
+    with urlopen(url, timeout=_REMOTE_TIMEOUT_SECONDS) as response:  # noqa: S310
         status = getattr(response, "status", None)
         if status and status >= 400:
             raise RuntimeError(f"Failed to download `{url}`: HTTP {status}")
