@@ -79,14 +79,10 @@ def resolve_request_metadata(
     metadata = dict(request_metadata or {})
     headers = getattr(http_request, "headers", {}) if http_request is not None else {}
     request_id = (
-        metadata.get("request_id")
-        or headers.get("x-request-id")
-        or _make_request_id()
+        metadata.get("request_id") or headers.get("x-request-id") or _make_request_id()
     )
     correlation_id = (
-        metadata.get("correlation_id")
-        or headers.get("x-correlation-id")
-        or request_id
+        metadata.get("correlation_id") or headers.get("x-correlation-id") or request_id
     )
     traceparent = metadata.get("traceparent") or headers.get("traceparent")
     result = {
