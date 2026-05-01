@@ -682,6 +682,23 @@ class VoiceSupport(nn.Module):
         return await self.agent.acall(messages=messages, stream=stream, vars=vars, **kwargs)
 ```
 
+With this pattern, you can keep `messages` empty and pass runtime payload via
+`vars`:
+
+```bash
+curl -sS http://127.0.0.1:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "voice_support",
+    "messages": [],
+    "run_config": {
+      "vars": {
+        "audio_path": "./samples/ticket.wav"
+      }
+    }
+  }'
+```
+
 !!! info "Why not pre-processing?"
     Pre-processors are intentionally sync and lightweight. They are ideal for
     small request reshaping, not async I/O or external orchestration. For that,
