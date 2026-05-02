@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from msgflux.channels.env import load_env_file
 from msgflux.channels.http.app import create_app
 from msgflux.channels.registry import load_registry_target
 from msgflux.logger import logger
@@ -27,6 +28,7 @@ def run_server(args: Namespace) -> int:
         args.target,
         trust_remote_code=bool(getattr(args, "trust_remote_code", False)),
     )
+    load_env_file(getattr(args, "env_file", None))
     registry = load_registry_target(target)
     fastapi_kwargs = {}
     if args.title is not None:

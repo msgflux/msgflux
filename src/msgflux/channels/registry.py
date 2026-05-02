@@ -266,6 +266,15 @@ class ChannelRegistry:
     ) -> Processor | Callable[[Processor], Processor]:
         return self.social_boundary().route(target, channel=channel)
 
+    def social_command(
+        self,
+        command: str,
+        handler: Optional[Processor] = None,
+        *,
+        channel: str = "*",
+    ) -> Processor | Callable[[Processor], Processor]:
+        return self.social_boundary().command(command, handler, channel=channel)
+
     def _resolve_name(self, obj: Any, name: Optional[str] = None) -> str:
         if name:
             return name

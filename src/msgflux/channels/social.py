@@ -4,12 +4,13 @@ from collections.abc import Mapping as ABCMapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest
 from urllib.request import urlopen
 
 import msgspec
 
-from msgflux.channels.exceptions import ChannelError, ForbiddenError
+from msgflux.channels.exceptions import ChannelError, ForbiddenError, UnauthorizedError
 from msgflux.channels.registry import (
     AgentRun,
     ChannelContext,
@@ -37,6 +38,7 @@ class SocialMessage:
     conversation_id: str
     sender_id: str
     text: Optional[str] = None
+    content: Any = None
     attachments: List[SocialAttachment] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -47,6 +49,7 @@ class SocialContext:
     channel: str
     adapter: Any
     message: SocialMessage
+    boundary: Any = None
     agent_name: Optional[str] = None
     state: Dict[str, Any] = field(default_factory=dict)
 
@@ -64,6 +67,21 @@ class OutboundSocialMessage:
     conversation_id: str
     text: str
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_context(
+        cls,
+        context: "SocialContext",
+        text: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> "OutboundSocialMessage":
+        return cls(
+            channel=context.message.channel,
+            conversation_id=context.message.conversation_id,
+            text=text,
+            metadata=metadata or {},
+        )
 
 
 class InMemorySocialEventBus:
@@ -92,6 +110,8 @@ class SocialBoundary:
         self._event_bus = event_bus or InMemorySocialEventBus()
         self._adapters: Dict[str, Any] = {}
         self._routes: Dict[str, List[Processor]] = {}
+        self._commands: Dict[str, Dict[str, List[Processor]]] = {}
+        self._active_tasks: Dict[str, asyncio.Task[Any]] = {}
         self._consumer_task: Optional[asyncio.Task[Any]] = None
 
     def adapter(self, channel: str, adapter: Any) -> Any:
@@ -124,6 +144,27 @@ class SocialBoundary:
             self._routes.setdefault(key, []).append(processor)
             return processor
 
+        return decorator
+
+    def command(
+        self,
+        command: str,
+        handler: Optional[Processor] = None,
+        *,
+        channel: str = DEFAULT_SOCIAL_ROUTE,
+    ) -> Processor | Callable[[Processor], Processor]:
+        command_key = _normalize_command(command)
+        channel_key = _normalize_channel(channel)
+
+        def decorator(processor: Processor) -> Processor:
+            self._commands.setdefault(channel_key, {}).setdefault(
+                command_key,
+                [],
+            ).append(processor)
+            return processor
+
+        if handler is not None:
+            return decorator(handler)
         return decorator
 
     async def handle_webhook(
@@ -165,27 +206,77 @@ class SocialBoundary:
         await self._event_bus.close()
         with suppress(asyncio.CancelledError):
             await self._consumer_task
+        for task in list(self._active_tasks.values()):
+            task.cancel()
+        for task in list(self._active_tasks.values()):
+            with suppress(asyncio.CancelledError):
+                await task
+        self._active_tasks.clear()
         self._consumer_task = None
 
     async def drain(self) -> None:
         await self._event_bus.drain()
+        tasks = list(self._active_tasks.values())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def active_task(self, session_id: str) -> Optional[asyncio.Task[Any]]:
+        task = self._active_tasks.get(str(session_id))
+        if task is None or task.done():
+            return None
+        return task
+
+    def cancel_session(self, session_id: str) -> bool:
+        task = self.active_task(session_id)
+        if task is None:
+            return False
+        task.cancel()
+        return True
 
     async def process_event(self, event: SocialEvent) -> None:
         social_context = SocialContext(
             channel=event.channel,
             adapter=event.adapter,
             message=event.message,
+            boundary=self,
             state={
                 "session_id": event.message.session_id,
                 "conversation_id": event.message.conversation_id,
                 "sender_id": event.message.sender_id,
             },
         )
+        command_handled = await self._handle_command(event.message, social_context)
+        if command_handled:
+            return
+
         agent_name = await self._route_message(event.message, social_context)
         if not agent_name:
             return
         social_context.agent_name = str(agent_name)
 
+        active_task = self.active_task(event.message.session_id)
+        if active_task is not None:
+            await self._send_text(
+                social_context,
+                "A request is already running for this session. "
+                "Send /cancel to stop it.",
+            )
+            return
+
+        task = asyncio.create_task(self._process_agent_event(event, social_context))
+        self._active_tasks[event.message.session_id] = task
+        task.add_done_callback(
+            lambda completed, session_id=event.message.session_id: self._forget_task(
+                session_id,
+                completed,
+            )
+        )
+
+    async def _process_agent_event(
+        self,
+        event: SocialEvent,
+        social_context: SocialContext,
+    ) -> None:
         channel_context = ChannelContext(
             channel=f"social:{event.channel}",
             agent_name=social_context.agent_name,
@@ -195,6 +286,7 @@ class SocialBoundary:
                 **social_context.state,
                 "social_context": social_context,
                 "social_channel": event.channel,
+                "social_message": event.message,
                 "session_id": event.message.session_id,
                 "conversation_id": event.message.conversation_id,
                 "sender_id": event.message.sender_id,
@@ -207,6 +299,7 @@ class SocialBoundary:
                 event.message,
                 channel_context,
             )
+            await self._authenticate_event(event.message, channel_context)
             agent = self._registry.get_agent(social_context.agent_name)
             run = await self._prepare_run(event.message, channel_context)
             output = await agent.acall(
@@ -267,6 +360,34 @@ class SocialBoundary:
             )
             raise
 
+    def _forget_task(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        if self._active_tasks.get(session_id) is task:
+            self._active_tasks.pop(session_id, None)
+        with suppress(asyncio.CancelledError):
+            task.exception()
+
+    async def _authenticate_event(
+        self,
+        message: SocialMessage,
+        context: ChannelContext,
+    ) -> None:
+        principal = None
+        auth_handler = self._registry.auth_handler()
+        if auth_handler is not None:
+            principal = await call_processor(auth_handler, None, message, context)
+            if principal is False:
+                raise UnauthorizedError("Unauthorized")
+
+        context.state["principal"] = principal
+        context.state["auth"] = principal
+        for authorizer in self._registry.authorizers(context.agent_name):
+            result = await call_processor(authorizer, message, context, principal)
+            if result is False:
+                raise ForbiddenError("Forbidden")
+            if isinstance(result, ABCMapping):
+                context.state.update(result)
+        await self._registry.check_rate_limits(message, context, None)
+
     async def _consume_loop(self) -> None:
         while True:
             event = await self._event_bus.get()
@@ -294,6 +415,64 @@ class SocialBoundary:
                 return str(agent_name)
         return None
 
+    async def _handle_command(
+        self,
+        message: SocialMessage,
+        context: SocialContext,
+    ) -> bool:
+        command_name = _message_command(message)
+        if command_name is None:
+            return False
+
+        handlers = [
+            *self._commands.get(message.channel, {}).get(command_name, []),
+            *self._commands.get(DEFAULT_SOCIAL_ROUTE, {}).get(command_name, []),
+        ]
+        if not handlers:
+            return await self._handle_builtin_command(command_name, message, context)
+
+        for handler in handlers:
+            result = await call_processor(handler, message, context)
+            if isinstance(result, OutboundSocialMessage):
+                await call_processor(context.adapter.send, result, context)
+            elif isinstance(result, str):
+                await call_processor(
+                    context.adapter.send,
+                    OutboundSocialMessage.from_context(context, result),
+                    context,
+                )
+            elif result is False:
+                return False
+            elif result is not None:
+                raise ChannelError(
+                    "Social command handlers must return None, False, str, or "
+                    "OutboundSocialMessage"
+                )
+        return True
+
+    async def _handle_builtin_command(
+        self,
+        command_name: str,
+        message: SocialMessage,
+        context: SocialContext,
+    ) -> bool:
+        if command_name not in {"/cancel", "/stop"}:
+            return False
+
+        cancelled = self.cancel_session(message.session_id)
+        if cancelled:
+            await self._send_text(context, "Cancelled the active request.")
+        else:
+            await self._send_text(context, "No active request to cancel.")
+        return True
+
+    async def _send_text(self, context: SocialContext, text: str) -> None:
+        await call_processor(
+            context.adapter.send,
+            OutboundSocialMessage.from_context(context, text),
+            context,
+        )
+
     async def _prepare_run(
         self,
         message: SocialMessage,
@@ -301,14 +480,8 @@ class SocialBoundary:
     ) -> AgentRun:
         defaults = self._registry.run_defaults(context.agent_name)
         run = AgentRun(
-            messages=[{"role": "user", "content": message.text or ""}],
-            vars={
-                **defaults.vars,
-                "session_id": message.session_id,
-                "social_channel": message.channel,
-                "conversation_id": message.conversation_id,
-                "sender_id": message.sender_id,
-            },
+            messages=[{"role": "user", "content": _social_message_content(message)}],
+            vars=dict(defaults.vars),
             stream=False,
             model_preference=defaults.model_preference,
             tool_filter=defaults.tool_filter,
@@ -352,8 +525,57 @@ class TelegramAdapter:
         self.sender = sender
         self.timeout_s = timeout_s
 
+    async def set_webhook(
+        self,
+        url: str,
+        *,
+        secret_token: Optional[str] = None,
+        drop_pending_updates: Optional[bool] = None,
+        allowed_updates: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"url": url}
+        secret = secret_token if secret_token is not None else self._secret_token()
+        if secret:
+            payload["secret_token"] = secret
+        if drop_pending_updates is not None:
+            payload["drop_pending_updates"] = drop_pending_updates
+        if allowed_updates is not None:
+            payload["allowed_updates"] = allowed_updates
+        return await asyncio.to_thread(
+            _post_telegram_api,
+            self._bot_token(),
+            "setWebhook",
+            payload,
+            self.timeout_s,
+        )
+
+    async def delete_webhook(
+        self,
+        *,
+        drop_pending_updates: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if drop_pending_updates is not None:
+            payload["drop_pending_updates"] = drop_pending_updates
+        return await asyncio.to_thread(
+            _post_telegram_api,
+            self._bot_token(),
+            "deleteWebhook",
+            payload,
+            self.timeout_s,
+        )
+
+    async def get_webhook_info(self) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            _post_telegram_api,
+            self._bot_token(),
+            "getWebhookInfo",
+            {},
+            self.timeout_s,
+        )
+
     async def verify(self, http_request: Any = None, _body: bytes = b"") -> bool:
-        expected = self.secret_token or os.getenv(self.secret_token_env, "")
+        expected = self._secret_token()
         if not expected:
             return True
         headers = (
@@ -417,18 +639,23 @@ class TelegramAdapter:
             await call_processor(self.sender, outbound, _context)
             return
 
-        token = self.bot_token or os.getenv(self.bot_token_env, "")
-        if not token:
-            raise ChannelError("Telegram bot token is not configured")
-
         for chunk in _telegram_text_chunks(outbound.text):
             await asyncio.to_thread(
                 _post_telegram_message,
-                token,
+                self._bot_token(),
                 outbound.conversation_id,
                 chunk,
                 self.timeout_s,
             )
+
+    def _bot_token(self) -> str:
+        token = self.bot_token or os.getenv(self.bot_token_env, "")
+        if not token:
+            raise ChannelError("Telegram bot token is not configured")
+        return token
+
+    def _secret_token(self) -> str:
+        return self.secret_token or os.getenv(self.secret_token_env, "")
 
 
 def _normalize_channel(channel: str) -> str:
@@ -436,6 +663,22 @@ def _normalize_channel(channel: str) -> str:
     if not key:
         raise ValueError("Social channel must not be empty")
     return key
+
+
+def _normalize_command(command: str) -> str:
+    value = str(command).strip().lower()
+    if not value:
+        raise ValueError("Social command must not be empty")
+    if not value.startswith("/"):
+        value = f"/{value}"
+    return value
+
+
+def _message_command(message: SocialMessage) -> Optional[str]:
+    text = (message.text or "").strip()
+    if not text.startswith("/"):
+        return None
+    return text.split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower()
 
 
 def _run_policies(defaults: Any) -> Dict[str, Any]:
@@ -477,9 +720,18 @@ def _identity(value: Any) -> Any:
     return value
 
 
+def _social_message_content(message: SocialMessage) -> Any:
+    if message.content is not None:
+        return message.content
+    return message.text or ""
+
+
 def _social_output_text(output: Any) -> str:
     if output is None:
         return ""
+    consume = getattr(output, "consume", None)
+    if callable(consume):
+        output = consume()
     if isinstance(output, ABCMapping):
         for key in ("answer", "response", "content", "text"):
             value = output.get(key)
@@ -509,13 +761,42 @@ def _post_telegram_message(
     text: str,
     timeout_s: float,
 ) -> None:
-    encoder = msgspec.json.Encoder()
-    data = encoder.encode({"chat_id": chat_id, "text": text})
+    _post_telegram_api(
+        token,
+        "sendMessage",
+        {"chat_id": chat_id, "text": text},
+        timeout_s,
+    )
+
+
+def _post_telegram_api(
+    token: str,
+    method: str,
+    payload: Dict[str, Any],
+    timeout_s: float,
+) -> Dict[str, Any]:
+    data = msgspec.json.encode(payload)
     request = URLRequest(
-        f"https://api.telegram.org/bot{token}/sendMessage",
+        f"https://api.telegram.org/bot{token}/{method}",
         data=data,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(request, timeout=timeout_s) as response:  # noqa: S310
-        response.read()
+    try:
+        with urlopen(request, timeout=timeout_s) as response:  # noqa: S310
+            body = response.read()
+    except HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise ChannelError(
+            f"Telegram API `{method}` failed with HTTP {e.code}: {detail}"
+        ) from e
+    except URLError as e:
+        raise ChannelError(f"Telegram API `{method}` failed: {e.reason}") from e
+
+    result = msgspec.json.decode(body) if body else {}
+    if not isinstance(result, ABCMapping):
+        raise ChannelError(f"Telegram API `{method}` returned an invalid response")
+    if result.get("ok") is False:
+        description = result.get("description") or "unknown error"
+        raise ChannelError(f"Telegram API `{method}` failed: {description}")
+    return dict(result)

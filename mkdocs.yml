@@ -179,6 +179,7 @@ nav:
       - Predictor: learn/nn/predictor.md
     - ⇄ Channels:
       - learn/channels/index.md
+      - Telegram: learn/channels/telegram.md
     - ◎ Telemetry: learn/telemetry.md
     - API Reference:
       - Models:

@@ -21,6 +21,7 @@ def test_server_cli_parses_registry_target():
     assert args.port == 9000
     assert args.title is None
     assert args.description is None
+    assert args.env_file == ".env"
 
 
 def test_server_cli_default_port_avoids_common_dev_ports():
@@ -47,3 +48,28 @@ def test_server_cli_parses_openapi_metadata_overrides():
 
     assert args.title == "Support Agents"
     assert args.description == "Support server"
+
+
+def test_telegram_cli_parses_set_webhook():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "telegram",
+            "--env-file",
+            ".env.local",
+            "set-webhook",
+            "https://example.com/social/telegram/webhook",
+            "--drop-pending-updates",
+            "--allowed-updates",
+            "message",
+            "edited_message",
+        ]
+    )
+
+    assert args.command == "telegram"
+    assert args.telegram_action == "set-webhook"
+    assert args.env_file == ".env.local"
+    assert args.url == "https://example.com/social/telegram/webhook"
+    assert args.drop_pending_updates is True
+    assert args.allowed_updates == ["message", "edited_message"]
