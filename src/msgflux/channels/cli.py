@@ -2,7 +2,7 @@ import argparse
 from typing import Optional, Sequence
 
 from msgflux.channels.http.cli import run_server
-from msgflux.channels.telegram_cli import run_telegram
+from msgflux.channels.social.telegram.cli import run_telegram
 
 
 def build_parser() -> argparse.ArgumentParser:

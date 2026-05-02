@@ -7,7 +7,7 @@ import pytest
 
 from msgflux.channels import ChannelRegistry, OutboundSocialMessage, TelegramAdapter
 from msgflux.channels.http.app import create_app
-from msgflux.channels import social as social_module
+from msgflux.channels.social.telegram import adapter as telegram_adapter_module
 
 
 class EchoAgent:
@@ -510,7 +510,7 @@ async def test_telegram_adapter_sets_webhook_with_secret_env(monkeypatch):
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "bot-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
-    monkeypatch.setattr(social_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(telegram_adapter_module, "urlopen", fake_urlopen)
 
     result = await TelegramAdapter(timeout_s=3).set_webhook(
         "https://example.com/social/telegram/webhook"

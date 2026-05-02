@@ -5,7 +5,7 @@ from argparse import Namespace
 from typing import Any, Dict
 
 from msgflux.channels.env import load_env_file
-from msgflux.channels.social import TelegramAdapter
+from msgflux.channels.social.telegram import TelegramAdapter
 
 
 def run_telegram(args: Namespace) -> int:
