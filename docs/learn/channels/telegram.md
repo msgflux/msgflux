@@ -205,6 +205,31 @@ TELEGRAM_ALLOWED_SENDER_IDS=949670859
 The webhook secret proves the request came through Telegram. The `sender_id`
 then identifies which Telegram user sent the message.
 
+For groups, keep the decision in `social_route`. Telegram will still deliver
+group messages to the webhook; the route should return `None` unless the bot was
+explicitly addressed:
+
+```python
+BOT_USERNAME = "my_bot"
+
+@registry.social_route(channel="telegram")
+def route_telegram(message, context):
+    chat_type = message.metadata.get("chat_type")
+    text = message.text or ""
+
+    if chat_type in {"group", "supergroup"}:
+        mentioned = f"@{BOT_USERNAME}" in text
+        command_to_bot = text.startswith(f"/support@{BOT_USERNAME}")
+        if not mentioned and not command_to_bot:
+            return None
+
+    return "support"
+```
+
+Use `sender_id` for user allowlists and `conversation_id` for group/chat
+allowlists. The mention check prevents ordinary group conversation from becoming
+agent work.
+
 If you want to know your id before talking to your own bot, use a helper bot
 such as `@userinfobot` or `@RawDataBot`. That gives you a value to put in
 `TELEGRAM_ALLOWED_SENDER_IDS` before exposing your webhook. Your own bot still
