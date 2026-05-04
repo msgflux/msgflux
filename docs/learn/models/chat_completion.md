@@ -87,6 +87,20 @@ Use `extra_body` for provider-specific request body fields supported by
 OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
 forwarded to the underlying OpenAI SDK client.
 
+You can also pass provider-specific fields directly as keyword arguments
+in the model constructor. msgFlux merges these kwargs into `extra_body`.
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "brave/brave",
+    extra_body={"enable_citations": True},
+    enable_entities=True,    # merged into extra_body
+    enable_research=False,   # merged into extra_body
+)
+```
+
 ## 2. **System Prompt**
 
 The `system_prompt` parameter sets the model's overarching behavior and role before any user messages. It is a convenience shorthand: when provided, msgFlux automatically inserts a `system` message at the beginning of the conversation, so you don't have to do it manually in the messages list.
@@ -1392,6 +1406,41 @@ Reasoning models pair well with `generation_schema` — the model uses its think
     # distance = 120 km, time = 1.5 h, so speed = 120 / 1.5 = 80 km/h.
     ```
 
+Built-in reasoning schemas also use the same split. `ChainOfThought`,
+`ReAct`, and `SelfConsistency` declare which schema field is reasoning, so the
+provider moves that field to `response.reasoning` and removes it from
+`response.consume()`:
+
+| Schema | Reasoning field | Content returned by `consume()` |
+|---|---|---|
+| `ChainOfThought` | `reasoning` | `{"final_answer": ...}` |
+| `ReAct` | `thought` | `{"actions": ..., "final_answer": ...}` |
+| `SelfConsistency` | `paths` | `{"final_answer": ...}` |
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from msgflux.generation.reasoning import ChainOfThought
+
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+    response = model(
+        messages="Solve: 8x + 7 = -23",
+        generation_schema=ChainOfThought,
+    )
+
+    print(response.consume())
+    # {"final_answer": "x = -3.75"}
+
+    print(response.reasoning)
+    # Step 1: subtract 7 from both sides...
+    ```
+
+Custom schemas are not inferred by field name. A field named `reasoning` stays
+in the structured data unless the schema explicitly opts in with
+`extract_reasoning = True` and `reasoning_field = "..."`.
+
 ### 12.10 **Choosing the Right Effort Level**
 
 | Task | Recommended effort |
@@ -1428,12 +1477,19 @@ model("prompt")
   │
   └── _process_completion_model_output(model_output)
         ├── reasoning = _extract_reasoning(message)
+        ├── schema_reasoning = _extract_generation_schema_reasoning(...)
+        ├── reasoning = _merge_reasoning(reasoning, schema_reasoning)
         ├── response.reasoning = reasoning       # ← set directly on response
         ├── response.add(content)                # ← data is pure content
         └── response.set_response_type("text_generation")
 ```
 
-The `_extract_reasoning()` method checks for provider-specific reasoning fields in the API response (e.g., `message.reasoning_content` for Groq/OpenAI-compatible providers). If `return_reasoning=False`, it skips extraction entirely.
+The `_extract_reasoning()` method checks for provider-specific reasoning fields
+in the API response (e.g., `message.reasoning_content` for Groq/OpenAI-compatible
+providers). Structured outputs can also expose schema-level reasoning by setting
+`extract_reasoning=True` and `reasoning_field="field_name"` on the
+`generation_schema`. Built-in reasoning schemas use that contract:
+`ChainOfThought.reasoning`, `ReAct.thought`, and `SelfConsistency.paths`.
 
 #### Provider flow (streaming)
 

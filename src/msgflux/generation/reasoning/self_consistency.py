@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 
 from msgspec import Meta, Struct
 from typing_extensions import Annotated
@@ -10,6 +10,9 @@ class ReasoningPath(Struct):
 
 
 class SelfConsistency(Struct):
+    extract_reasoning: ClassVar[bool] = True
+    reasoning_field: ClassVar[str] = "paths"
+
     paths: Annotated[
         List[ReasoningPath], Meta(description="Set of multiple reasoning paths")
     ]

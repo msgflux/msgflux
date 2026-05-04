@@ -655,6 +655,61 @@ A composition of modules is a **program** — each module handles one responsibi
 
 ---
 
+## **Channel**
+
+`Channel` is the bridge from local agent development to production-style access.
+Today, msgFlux provides an HTTP channel with an OpenAI-compatible
+`/v1/chat/completions` endpoint, so you can expose one or many agents and call
+them with standard clients.
+
+This keeps iteration fast: adjust an `nn.Agent`, restart the server, and test
+the behavior immediately with the same API shape commonly used in production.
+
+!!! info "Expose agents over HTTP in minutes"
+
+    ```python linenums="1"
+    import msgflux as mf
+    import msgflux.nn as nn
+    from msgflux.tools.builtin import WebFetch
+
+    registry = mf.ChannelRegistry()
+
+    @registry.agent(name="support")
+    class SupportAgent(nn.Agent):
+        model = "openai/gpt-4.1-mini"
+        system_message = "You are a concise support specialist."
+
+    @registry.agent(name="research")
+    class ResearchAgent(nn.Agent):
+        model = "openai/gpt-4.1-mini"
+        tools = [WebFetch]
+        system_message = "Use web sources when needed and cite URLs."
+    ```
+
+    ```bash
+    uv run --with 'msgflux[server,openai]' msgflux server server.py --host 127.0.0.1 --port 8010
+    ```
+
+    ```bash
+    curl -sS http://127.0.0.1:8010/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "support",
+        "messages": [{"role":"user","content":"Reset my account access"}]
+      }'
+    ```
+
+    ```bash
+    curl -sS http://127.0.0.1:8010/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "research",
+        "messages": [{"role":"user","content":"Fetch and summarize the Python homepage release highlights."}]
+      }'
+    ```
+
+Learn more in [Channels](./learn/channels/index.md).
+
 ## **Inline**
 
 `Inline` is a lightweight DSL for declaring entire pipelines as a single expression. Sequential steps (`->`), parallel branches (`[a, b]`), conditionals (`{cond ? a, b}`), and loops (`@{cond}: a;`) — all in one readable string. Every module reads from and writes to a shared `dotdict` message. This is the *flux* — the dynamic flow that gives the library its name.

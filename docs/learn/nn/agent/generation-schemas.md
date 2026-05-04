@@ -37,6 +37,27 @@ msgFlux provides built-in generation schemas that implement common reasoning str
 
 All reasoning schemas produce a `final_answer: str` field containing the model's concluded response.
 
+Built-in reasoning schemas also declare which field should be treated as a
+reasoning trace. The OpenAI-compatible provider extracts that field into
+`ModelResponse.reasoning` and removes it from the structured content before the
+Agent returns the answer.
+
+| Schema | Extracted reasoning field | Answer content |
+|---|---|---|
+| `ChainOfThought` | `reasoning` | `final_answer` |
+| `ReAct` | `thought` | `actions` and `final_answer` |
+| `SelfConsistency` | `paths` | `final_answer` |
+
+For plain Agent calls, this means the returned value contains only the answer
+content. If you want the reasoning in the Agent return value, enable
+`config = {"reasoning_in_response": True}`. The Agent will return
+`dotdict(answer=..., reasoning=...)`.
+
+Custom schemas are not inspected by field name. A custom field called
+`reasoning`, `thought`, or `rationale` stays in the normal output unless the
+schema explicitly opts in with `extract_reasoning = True` and
+`reasoning_field = "field_name"`.
+
 ---
 
 ### Chain of Thought
@@ -80,13 +101,13 @@ from msgflux.generation.reasoning import ChainOfThought
 class Solver(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     generation_schema = ChainOfThought
-    config = {"verbose": True}
+    config = {"verbose": True, "reasoning_in_response": True}
 
 agent = Solver()
 result = agent("Solve: 8x + 7 = -23")
 
-print(result.reasoning)    # "Step 1: Subtract 7... Step 2: Divide by 8..."
-print(result.final_answer) # "x = -3.75"
+print(result.reasoning)             # "Step 1: Subtract 7... Step 2: Divide by 8..."
+print(result.answer.final_answer)   # "x = -3.75"
 ```
 
 !!! tip "When to use"
@@ -165,13 +186,13 @@ class WebResearcher(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     generation_schema = ReAct
     tools = [WebFetch]
-    config = {"verbose": True}
+    config = {"verbose": True, "reasoning_in_response": True}
 
 agent = WebResearcher()
 result = agent("What is the latest Python version from python.org?")
 
-print(result.thought)       # "I need to fetch python.org to get the version..."
-print(result.final_answer)  # "Python 3.14.x"
+print(result.reasoning)             # "I need to fetch python.org to get the version..."
+print(result.answer.final_answer)   # "Python 3.14.x"
 ```
 
 !!! tip "Default system_message"
@@ -230,15 +251,15 @@ from msgflux.generation.reasoning import SelfConsistency
 class Solver(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     generation_schema = SelfConsistency
-    config = {"verbose": True}
+    config = {"verbose": True, "reasoning_in_response": True}
 
 agent = Solver()
 result = agent("If a train travels 120km in 2 hours, what is its speed?")
 
-for i, path in enumerate(result.paths, 1):
+for i, path in enumerate(result.reasoning, 1):
     print(f"Path {i}: {path.reasoning!r} → {path.answer!r}")
 
-print(result.final_answer)  # "60 km/h"
+print(result.answer.final_answer)  # "60 km/h"
 ```
 
 !!! tip "When to use"

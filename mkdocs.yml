@@ -177,6 +177,8 @@ nav:
       - Speaker: learn/nn/speaker.md
       - MediaMaker: learn/nn/mediamaker.md
       - Predictor: learn/nn/predictor.md
+    - ⇄ Channels:
+      - learn/channels/index.md
     - ◎ Telemetry: learn/telemetry.md
     - API Reference:
       - Models:

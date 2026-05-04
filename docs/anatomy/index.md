@@ -28,6 +28,9 @@ Use this section when you need to answer questions like:
 - [OpenAI Chat Completion](openai-chat-completion.md): the provider adapter that
   translates msgFlux chat contracts into OpenAI request, schema, and decoding
   rules.
+- [HTTP Chat Completions Channel](channel-http-chat-completions.md): how the
+  FastAPI/OpenAI-compatible server boundary turns external requests into
+  registered Agent runs.
 - [Chat Schema Utils](chat-schema-utils.md): schema-envelope helpers for
   `response_format`, tool JSON schema generation, and shared ChatML blocks.
 - [msgspec Transport Lowering](msgspec-transport-lowering.md): the type

@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
+from msgflux.generation.reasoning import ReAct
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse
@@ -30,6 +31,7 @@ class TestAgentReservedKwargs:
         assert "task_multimodal" in _RESERVED_KWARGS
         assert "task_context" in _RESERVED_KWARGS
         assert "model_preference" in _RESERVED_KWARGS
+        assert "stream" in _RESERVED_KWARGS
 
     @pytest.mark.parametrize("name", sorted(_RESERVED_KWARGS))
     def test_signature_rejects_reserved_input_names(self, name):
@@ -370,6 +372,62 @@ class TestAgentForward:
 
         assert result is not None
 
+    def test_agent_forward_with_stream_runtime_override(self):
+        """Runtime stream override should be passed to the model call."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+
+        agent = Agent(name="agent", model=mock_model)
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        result = agent("Test", stream=True)
+
+        assert result == "Response"
+        assert agent.config.get("stream", False) is False
+        assert agent.generator.forward.call_args.kwargs["stream"] is True
+
+    def test_agent_forward_stream_runtime_override_disables_config_stream(self):
+        """Runtime stream=False should override config stream=True for one call."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            config={"stream": True},
+        )
+        agent.generator.forward = Mock(return_value=mock_response)
+
+        result = agent("Test", stream=False)
+
+        assert result == "Response"
+        assert agent.config["stream"] is True
+        assert agent.generator.forward.call_args.kwargs["stream"] is False
+
+    @pytest.mark.asyncio
+    async def test_agent_acall_with_stream_runtime_override(self):
+        """Async runtime stream override should be passed to the model call."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        mock_response = ModelResponse()
+        mock_response.data = "Response"
+        mock_response.response_type = "text_generation"
+
+        agent = Agent(name="agent", model=mock_model)
+        agent.generator.acall = AsyncMock(return_value=mock_response)
+
+        result = await agent.acall("Test", stream=True)
+
+        assert result == "Response"
+        assert agent.config.get("stream", False) is False
+        assert agent.generator.acall.call_args.kwargs["stream"] is True
+
     @pytest.mark.asyncio
     async def test_agent_aforward_raises_explicit_stream_error(self):
         """Async stream failures should surface as explicit agent errors."""
@@ -379,7 +437,6 @@ class TestAgentForward:
         agent = Agent(
             name="agent",
             model=mock_model,
-            signature="query -> response",
             config={"stream": True},
         )
 
@@ -391,7 +448,7 @@ class TestAgentForward:
             RuntimeError,
             match="Model stream failed before producing a response: backend blew up",
         ):
-            await agent.aforward(query="Test input")
+            await agent.aforward("Test input")
 
 
 class TestAgentInspect:
@@ -623,6 +680,32 @@ class TestAgentGenerationSchema:
 
         assert hasattr(agent, "generation_schema")
         assert agent.generation_schema is not None
+
+    def test_tool_flow_reasoning_restoration_does_not_leak_to_final_response(self):
+        """Provider-extracted ReAct reasoning is available to flow control only."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            generation_schema=ReAct,
+            config={"reasoning_in_response": True},
+        )
+        model_response = ModelResponse()
+        model_response.set_response_type("structured")
+        model_response.reasoning = "I have enough information"
+        model_response.add({"actions": None, "final_answer": "Done"})
+
+        response = agent._process_model_response(
+            "question",
+            model_response,
+            [],
+            {},
+        )
+
+        assert response.reasoning == "I have enough information"
+        assert response.answer == {"final_answer": "Done"}
+        assert "thought" not in response.answer
 
 
 class TestAgentTemplates:

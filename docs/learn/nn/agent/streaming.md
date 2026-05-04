@@ -4,6 +4,8 @@ Streaming lets the agent emit tokens as they are generated instead of waiting fo
 
 Enable streaming with `config={"stream": True}`. The agent returns a `ModelStreamResponse` object whose `consume()` method is an async generator that yields chunks.
 
+You can also override streaming per call with `stream=True` or `stream=False`. This does not mutate `agent.config`, which makes it safe for HTTP endpoints or other concurrent runtimes where each request may choose streaming independently.
+
 ## Basic Usage
 
 ???+ example
@@ -82,6 +84,42 @@ Enable streaming with `config={"stream": True}`. The agent returns a `ModelStrea
                 media_type="text/plain",
             )
         ```
+
+## Runtime Override
+
+Use the runtime `stream` argument when the same agent needs to serve both streaming and non-streaming requests:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+
+class Assistant(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+agent = Assistant()
+
+# Non-streaming by default
+answer = await agent.acall("Summarize the request")
+
+# Streaming for this call only
+stream = await agent.acall("Write the final answer", stream=True)
+async for chunk in stream.consume():
+    print(chunk, end="", flush=True)
+```
+
+The reverse also works. If an agent is configured to stream by default, pass `stream=False` for a one-off non-streaming call:
+
+```python
+class StreamingAssistant(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    config = {"stream": True}
+
+agent = StreamingAssistant()
+
+answer = await agent.acall("Return a complete answer", stream=False)
+```
+
+The same compatibility rules apply to both `config={"stream": True}` and the runtime `stream=True` override. Streaming is not compatible with structured generation schemas, `typed_parser`, response templates, or post hooks, because those features require the completed response before returning.
 
 ## Response Object
 

@@ -354,4 +354,4 @@ handle = module.register_forward_hook(my_post_hook)
 ```
 
 !!! warning "Streaming Limitation"
-    Guards with `on="post"` are **not compatible** with `stream=True`, since the full response is needed for validation. Using both raises a `ValueError` at initialization.
+    Guards with `on="post"` are **not compatible** with `stream=True`, since the full response is needed for validation. This applies to both `config={"stream": True}` and runtime calls such as `agent.acall(..., stream=True)`. Using both raises a `ValueError`.
