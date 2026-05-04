@@ -28,6 +28,8 @@ Use this section when you need to answer questions like:
 - [OpenAI Chat Completion](openai-chat-completion.md): the provider adapter that
   translates msgFlux chat contracts into OpenAI request, schema, and decoding
   rules.
+- [Social Boundary And Telegram](social-boundary-telegram.md): how social
+  webhooks become routed Agent runs and how Telegram maps into that contract.
 - [Chat Schema Utils](chat-schema-utils.md): schema-envelope helpers for
   `response_format`, tool JSON schema generation, and shared ChatML blocks.
 - [msgspec Transport Lowering](msgspec-transport-lowering.md): the type
