@@ -322,9 +322,10 @@ senders from calling `/cancel` or custom command handlers.
 
 Use `@registry.social_command` for command-specific behavior. Commands can be
 scoped by social channel. Returning a string sends that text back to the same
-conversation and does not call the Agent. Returning `None` consumes the command
-without a reply. Returning `False` lets the message fall through to
-`social_route`.
+conversation and does not call the Agent. Returning a list of strings or
+`OutboundSocialMessage` objects sends multiple messages. Returning `None`
+consumes the command without a reply. Returning `False` lets the message fall
+through to `social_route`.
 
 ```python
 @registry.social_command("/start", channel="telegram")
@@ -357,6 +358,17 @@ def help_command(message, context):
         "Use /support for support or /sales for sales.",
         metadata={"command": "/help"},
     )
+```
+
+For intermediate progress messages from hooks or processors, use
+`SocialContext.send(...)`:
+
+```python
+@registry.post("support")
+async def notify_progress(output, context, run):
+    social_context = context.state["social_context"]
+    await social_context.send("Formatting the answer...")
+    return output
 ```
 
 If no custom handler is registered, `/cancel` and `/stop` are built in. They

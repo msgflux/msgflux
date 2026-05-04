@@ -190,6 +190,16 @@ class SocialBoundary:
             cancelled = True
         return cancelled
 
+    async def send(
+        self,
+        context: SocialContext,
+        message: str | OutboundSocialMessage,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        outbound = self._outbound_from_context(context, message, metadata=metadata)
+        await call_processor(context.adapter.send, outbound, context)
+
     async def process_event(self, event: SocialEvent) -> None:
         social_context = SocialContext(
             channel=event.channel,
@@ -527,20 +537,17 @@ class SocialBoundary:
         await self._check_command_rate_limits(message, context)
         for handler in handlers:
             result = await call_processor(handler, message, context)
-            if isinstance(result, OutboundSocialMessage):
-                await call_processor(context.adapter.send, result, context)
-            elif isinstance(result, str):
-                await call_processor(
-                    context.adapter.send,
-                    OutboundSocialMessage.from_context(context, result),
-                    context,
-                )
+            if isinstance(result, OutboundSocialMessage | str):
+                await self.send(context, result)
+            elif _is_outbound_sequence(result):
+                for item in result:
+                    await self.send(context, item)
             elif result is False:
                 return False
             elif result is not None:
                 raise ChannelError(
-                    "Social command handlers must return None, False, str, or "
-                    "OutboundSocialMessage"
+                    "Social command handlers must return None, False, str, "
+                    "OutboundSocialMessage, or a sequence of str/OutboundSocialMessage"
                 )
         return True
 
@@ -584,11 +591,26 @@ class SocialBoundary:
         await self._registry.check_rate_limits(message, context, None)
 
     async def _send_text(self, context: SocialContext, text: str) -> None:
-        await call_processor(
-            context.adapter.send,
-            OutboundSocialMessage.from_context(context, text),
-            context,
-        )
+        await self.send(context, text)
+
+    def _outbound_from_context(
+        self,
+        context: SocialContext,
+        message: str | OutboundSocialMessage,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> OutboundSocialMessage:
+        if isinstance(message, OutboundSocialMessage):
+            if metadata:
+                message.metadata.update(metadata)
+            return message
+        if isinstance(message, str):
+            return OutboundSocialMessage.from_context(
+                context,
+                message,
+                metadata=metadata,
+            )
+        raise ChannelError("Social send expects str or OutboundSocialMessage")
 
     async def _prepare_run(
         self,
@@ -647,6 +669,12 @@ def _normalize_commands(command: str | List[str]) -> List[str]:
     if not commands:
         raise ValueError("Social command list must not be empty")
     return commands
+
+
+def _is_outbound_sequence(value: Any) -> bool:
+    if not isinstance(value, list | tuple):
+        return False
+    return all(isinstance(item, str | OutboundSocialMessage) for item in value)
 
 
 def _message_command(message: SocialMessage) -> Optional[str]:

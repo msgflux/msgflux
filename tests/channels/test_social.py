@@ -397,6 +397,46 @@ def test_telegram_social_command_can_return_outbound_from_context():
     assert sent[0].metadata == {"command": "/help"}
 
 
+def test_telegram_social_command_can_send_multiple_messages():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    registry = ChannelRegistry()
+    registry.agent(EchoAgent())
+    registry.social_adapter(
+        "telegram",
+        TelegramAdapter(
+            secret_token="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.social_command("help", channel="telegram")
+    def help_command(message, context):
+        return [
+            "First help message.",
+            OutboundSocialMessage.from_context(context, "Second help message."),
+        ]
+
+    with TestClient(create_app(registry)) as client:
+        response = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=_telegram_payload("/help"),
+        )
+        assert response.status_code == 200
+
+        deadline = time.time() + 2
+        while len(sent) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert [message.text for message in sent] == [
+        "First help message.",
+        "Second help message.",
+    ]
+
+
 def test_telegram_social_command_accepts_command_aliases():
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -575,6 +615,49 @@ def test_telegram_webhook_acknowledges_and_processes_message():
     assert agent.calls[0]["vars"] == {"tenant": "default"}
     assert route_contexts[0].message.session_id == "telegram:456"
     assert route_contexts[0].state["conversation_id"] == "456"
+
+
+def test_telegram_post_processor_can_send_intermediate_message():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.agent(agent)
+    registry.social_adapter(
+        "telegram",
+        TelegramAdapter(
+            secret_token="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.post("support")
+    async def send_progress(output, context, run):
+        await context.state["social_context"].send("Working with the result...")
+        return output
+
+    @registry.social_route(channel="telegram")
+    def route_telegram(message, context):
+        return "support"
+
+    with TestClient(create_app(registry)) as client:
+        response = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=_telegram_payload("hello"),
+        )
+        assert response.status_code == 200
+
+        deadline = time.time() + 2
+        while len(sent) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert [message.text for message in sent] == [
+        "Working with the result...",
+        "echo: hello",
+    ]
 
 
 def test_telegram_webhook_debounces_messages_by_session():

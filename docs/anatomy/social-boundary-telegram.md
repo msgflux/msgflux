@@ -67,6 +67,18 @@ HTTP route has acknowledged the platform.
 `OutboundSocialMessage` is the normalized reply contract. Adapters decide how to
 turn it into platform API calls.
 
+`SocialContext.send(...)` is the shared multi-message primitive:
+
+```python
+await context.send("Working...")
+await context.send(OutboundSocialMessage.from_context(context, "Still running..."))
+```
+
+Commands, hooks, and processors can use it to emit progress or intermediate
+messages before the final Agent response. Future streaming/event features should
+publish through this same primitive instead of calling platform adapters
+directly.
+
 ## Adapter Contract
 
 A social adapter is intentionally small. The boundary expects these methods:
@@ -206,6 +218,7 @@ Command return values are part of the boundary contract:
 
 - `str` sends a text response and consumes the command.
 - `OutboundSocialMessage` sends a custom outbound payload and consumes it.
+- `list[str | OutboundSocialMessage]` sends multiple responses and consumes it.
 - `None` consumes the command without a response.
 - `False` lets the message fall through to `social_route`.
 
@@ -280,6 +293,35 @@ A request is already running for this session. Send /cancel to stop it.
 - any active agent task
 
 This gives `/cancel` useful behavior even before the run has started.
+
+## Multiple Outbound Messages
+
+The boundary does not require one inbound message to produce only one outbound
+message. Application code can send more than once through `SocialContext.send`.
+
+Examples:
+
+```python
+@registry.social_command("/help", channel="telegram")
+def help_command(message, context):
+    return [
+        "First, send me your question.",
+        "Then I will route it to the right agent.",
+    ]
+```
+
+```python
+@registry.post("support")
+async def progress_after_model(output, context, run):
+    social_context = context.state["social_context"]
+    await social_context.send("I have a result. Formatting the answer...")
+    return output
+```
+
+Adapters must treat repeated `send(...)` calls as valid. Telegram sends multiple
+Bot API messages. Slack posts multiple `chat.postMessage` messages. Discord
+Interactions can map the same primitive to deferred responses and followup
+messages.
 
 ## Social Auth And Rate Limits
 

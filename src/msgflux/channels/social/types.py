@@ -31,6 +31,16 @@ class SocialContext:
     agent_name: Optional[str] = None
     state: Dict[str, Any] = field(default_factory=dict)
 
+    async def send(
+        self,
+        message: Any,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.boundary is None:
+            raise RuntimeError("SocialContext.send requires an attached boundary")
+        await self.boundary.send(self, message, metadata=metadata)
+
 
 @dataclass
 class SocialEvent:
