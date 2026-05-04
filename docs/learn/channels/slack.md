@@ -205,6 +205,30 @@ The signing secret proves the request came through Slack. The `sender_id`,
 `conversation_id`, and `team_id` metadata identify who sent the message and where
 it came from.
 
+For shared channels, keep the decision in `social_route`. Slack may deliver
+channel messages where the bot is a member; the route should return `None` unless
+the bot was explicitly mentioned:
+
+```python
+SLACK_BOT_USER_ID = "U012ABCDEF"
+
+@registry.social_route(channel="slack")
+def route_slack(message, context):
+    text = message.text or ""
+    channel_id = message.metadata.get("channel_id", "")
+
+    if not channel_id.startswith("D"):
+        mentioned = f"<@{SLACK_BOT_USER_ID}>" in text
+        if not mentioned:
+            return None
+
+    return "support"
+```
+
+Use `sender_id` for user allowlists, `conversation_id` for channel allowlists,
+and `team_id` for workspace/tenant allowlists. The mention check prevents normal
+channel traffic from becoming agent work.
+
 ## 8. **Rate Limits**
 
 Registry rate limits also apply to Slack social channels. Prefer stable Slack
