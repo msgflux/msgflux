@@ -22,6 +22,7 @@ from msgflux.channels.social.types import (
     SocialContext,
     SocialEvent,
     SocialMessage,
+    SocialWebhookResponse,
 )
 from msgflux.logger import logger
 
@@ -99,7 +100,7 @@ class SocialBoundary:
         channel: str,
         body: bytes,
         http_request: Any = None,
-    ) -> int:
+    ) -> SocialWebhookResponse:
         channel_key = _normalize_channel(channel)
         adapter = self._adapters.get(channel_key)
         if adapter is None:
@@ -113,6 +114,10 @@ class SocialBoundary:
         if is_verified is False:
             raise ForbiddenError("Invalid social webhook signature")
 
+        webhook_response = await self._webhook_response(adapter, body, http_request)
+        if webhook_response is not None:
+            return webhook_response
+
         messages = await call_processor(adapter.decode, body, http_request)
         count = 0
         for message in messages or []:
@@ -122,7 +127,31 @@ class SocialBoundary:
                 SocialEvent(channel=channel_key, adapter=adapter, message=message)
             )
             count += 1
-        return count
+        return SocialWebhookResponse(
+            payload={"status": "accepted", "events": count},
+            events=count,
+        )
+
+    async def _webhook_response(
+        self,
+        adapter: Any,
+        body: bytes,
+        http_request: Any = None,
+    ) -> Optional[SocialWebhookResponse]:
+        handler = getattr(adapter, "webhook_response", None)
+        if handler is None:
+            return None
+        response = await call_processor(handler, body, http_request)
+        if response is None:
+            return None
+        if isinstance(response, SocialWebhookResponse):
+            return response
+        if isinstance(response, ABCMapping):
+            return SocialWebhookResponse(payload=dict(response))
+        raise ChannelError(
+            "Social webhook_response must return None, SocialWebhookResponse, "
+            "or a mapping"
+        )
 
     async def _message_seen(self, message: SocialMessage) -> bool:
         ttl_s = getattr(self._registry.settings(), "social_dedup_ttl_s", None)

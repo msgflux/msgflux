@@ -278,13 +278,14 @@ async def _handle_social_webhook(
     request_metadata = resolve_request_metadata(http_request)
     try:
         body = await _read_body(http_request, settings.max_request_bytes)
-        event_count = await registry.social_boundary().handle_webhook(
+        social_response = await registry.social_boundary().handle_webhook(
             channel,
             body,
             http_request,
         )
         return response_cls(
-            content=encode_json({"status": "accepted", "events": event_count}),
+            content=encode_json(social_response.payload),
+            status_code=social_response.status_code,
             media_type="application/json",
             headers=_response_headers(request_metadata),
         )

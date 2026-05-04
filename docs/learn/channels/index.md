@@ -21,6 +21,7 @@ it lets you:
 - integrate with OpenTelemetry through the official FastAPI instrumentation adapter
 - propagate `X-Request-ID`, `X-Correlation-ID`, and `traceparent` at the HTTP boundary
 - add lifecycle and observability hooks without coupling this logic to the Agent
+- receive social webhooks through Telegram and Slack adapters
 
 The default channel is the HTTP server, but the design is meant to support
 other external interfaces as they are added.

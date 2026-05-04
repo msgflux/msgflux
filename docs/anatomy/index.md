@@ -30,6 +30,9 @@ Use this section when you need to answer questions like:
   rules.
 - [Social Boundary And Telegram](social-boundary-telegram.md): how social
   webhooks become routed Agent runs and how Telegram maps into that contract.
+- [Social Boundary And Slack](social-boundary-slack.md): how Slack Events
+  API verification, URL challenges, and threaded messages map into the social
+  boundary.
 - [Chat Schema Utils](chat-schema-utils.md): schema-envelope helpers for
   `response_format`, tool JSON schema generation, and shared ChatML blocks.
 - [msgspec Transport Lowering](msgspec-transport-lowering.md): the type
