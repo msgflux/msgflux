@@ -377,10 +377,6 @@ Messages with the same `session_id` are buffered before the Agent run starts.
 Each new message renews the timer. When the timer expires, msgFlux merges the
 message text with newlines and runs the Agent once.
 
-This does not conflict with future notifications. Debounce happens before a run
-starts; notifications are for messages that arrive while a run is already
-working.
-
 ## 11. **Multimodal Input**
 
 The default Telegram adapter keeps raw Telegram media metadata in

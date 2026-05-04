@@ -199,10 +199,6 @@ The merge strategy is intentionally simple:
 - metadata receives `batched`, `batch_size`, and `batch_message_ids`
 - `raw` stores the list of original raw payloads
 
-Debounce does not conflict with future notifications. Debounce is pre-run
-coalescing. Notifications are for messages that arrive while an agent is already
-working.
-
 ## Active Session And Cancellation
 
 Only one active agent task is allowed per `session_id`.
