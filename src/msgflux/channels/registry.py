@@ -66,6 +66,8 @@ class ChannelSettings:
     cors_allowed_headers: List[str] = field(default_factory=lambda: ["*"])
     enable_otel: bool = False
     otel_kwargs: Dict[str, Any] = field(default_factory=dict)
+    disable_chat_completions: bool = False
+    social_debounce_s: Optional[float] = None
 
 
 @dataclass
@@ -268,7 +270,7 @@ class ChannelRegistry:
 
     def social_command(
         self,
-        command: str,
+        command: str | List[str],
         handler: Optional[Processor] = None,
         *,
         channel: str = "*",

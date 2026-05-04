@@ -54,6 +54,7 @@ def create_app(registry: ChannelRegistry, **fastapi_kwargs: Any):
     app.router.route_class = msgspec_route
     _configure_cors(app, settings)
     _configure_otel(app, settings)
+    _validate_routes(registry, settings)
 
     _register_routes(
         app,
@@ -85,8 +86,9 @@ def _register_routes(
             "agents": "/agents",
             "health": "/health",
             "ready": "/ready",
-            "chat_completions": "/v1/chat/completions",
         }
+        if not settings.disable_chat_completions:
+            payload["chat_completions"] = "/v1/chat/completions"
         social_routes = {
             channel: f"/social/{channel}/webhook"
             for channel in registry.social_boundary().adapters()
@@ -130,15 +132,15 @@ def _register_routes(
             ]
         }
 
-    @app.post("/v1/chat/completions", response_class=msgspec_json_response)
-    async def chat_completions(http_request: request_cls):
-        return await _handle_chat_completions(
-            http_request,
-            registry,
-            response_cls,
-            streaming_response_cls,
-            settings,
-        )
+    _register_chat_completion_route(
+        app,
+        registry,
+        request_cls,
+        response_cls,
+        streaming_response_cls,
+        msgspec_json_response,
+        settings,
+    )
 
     for social_channel in registry.social_boundary().adapters():
 
@@ -243,6 +245,29 @@ async def _handle_chat_completions(
         raise
 
 
+def _register_chat_completion_route(
+    app: Any,
+    registry: ChannelRegistry,
+    request_cls: Any,
+    response_cls: Any,
+    streaming_response_cls: Any,
+    msgspec_json_response: Any,
+    settings: Any,
+) -> None:
+    if settings.disable_chat_completions:
+        return
+
+    @app.post("/v1/chat/completions", response_class=msgspec_json_response)
+    async def chat_completions(http_request: request_cls):
+        return await _handle_chat_completions(
+            http_request,
+            registry,
+            response_cls,
+            streaming_response_cls,
+            settings,
+        )
+
+
 async def _handle_social_webhook(
     channel: str,
     http_request: Any,
@@ -318,6 +343,19 @@ def _configure_cors(app: Any, settings: Any) -> None:
         allow_methods=list(settings.cors_allowed_methods),
         allow_headers=list(settings.cors_allowed_headers),
     )
+
+
+def _validate_routes(registry: ChannelRegistry, settings: Any) -> None:
+    if settings.social_debounce_s is not None and settings.social_debounce_s < 0:
+        raise ValueError("social_debounce_s must be >= 0")
+    chat_disabled_without_social = (
+        settings.disable_chat_completions
+        and not registry.social_boundary().has_adapters()
+    )
+    if chat_disabled_without_social:
+        raise ChannelError(
+            "disable_chat_completions=True requires at least one social adapter"
+        )
 
 
 def _agent_metadata_payload(metadata: Any) -> dict[str, Any]:

@@ -85,6 +85,38 @@ def test_health_and_agents_routes():
     }
 
 
+def test_disable_chat_completions_requires_social_adapter():
+    registry = ChannelRegistry()
+    registry.settings(disable_chat_completions=True)
+
+    with pytest.raises(
+        app_module.ChannelError,
+        match="requires at least one social adapter",
+    ):
+        create_app(registry)
+
+
+def test_disable_chat_completions_hides_http_completion_route():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    registry = ChannelRegistry()
+    registry.social_adapter("telegram", SimpleNamespace())
+    registry.settings(disable_chat_completions=True)
+    client = TestClient(create_app(registry))
+
+    home_response = client.get("/")
+    assert home_response.status_code == 200
+    assert "chat_completions" not in home_response.json()
+    assert home_response.json()["social"] == {"telegram": "/social/telegram/webhook"}
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "support", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert response.status_code == 404
+
+
 def test_agents_route_returns_metadata_details():
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient

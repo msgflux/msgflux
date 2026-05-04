@@ -711,7 +711,9 @@ registry.settings(
     description="OpenAI-compatible support and billing agents.",
     max_request_bytes=2 * 1024 * 1024,
     request_timeout_s=30,
+    social_debounce_s=0.5,
     enable_docs=False,
+    disable_chat_completions=False,
     cors=True,
     allowed_origins=["https://app.example.com"],
     enable_otel=True,
@@ -721,6 +723,15 @@ registry.settings(
 `title` and `description` customize the FastAPI/OpenAPI metadata. `title` and
 `subtitle` are also returned by `/`. Set `enable_docs=False` to disable
 `/docs`, `/redoc`, and `/openapi.json`.
+
+Set `disable_chat_completions=True` when the server should expose only social
+webhook routes and not `/v1/chat/completions`. At least one social adapter must
+be registered when this is enabled.
+
+`social_debounce_s` buffers multiple social messages for the same `session_id`
+for a short window before starting the Agent run. Each new message renews the
+timer. This is useful for chat apps where users often send a thought across
+multiple short messages.
 
 `enable_otel=True` instruments the FastAPI app through the official
 `opentelemetry-instrumentation-fastapi` adapter. The package is included in the

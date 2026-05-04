@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Mapping as ABCMapping
 from contextlib import suppress
+from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional
 
 from msgflux.channels.exceptions import ChannelError, ForbiddenError, UnauthorizedError
@@ -30,6 +31,8 @@ class SocialBoundary:
         self._routes: Dict[str, List[Processor]] = {}
         self._commands: Dict[str, Dict[str, List[Processor]]] = {}
         self._active_tasks: Dict[str, asyncio.Task[Any]] = {}
+        self._pending_events: Dict[str, List[SocialEvent]] = {}
+        self._pending_tasks: Dict[str, asyncio.Task[Any]] = {}
         self._consumer_task: Optional[asyncio.Task[Any]] = None
 
     def adapter(self, channel: str, adapter: Any) -> Any:
@@ -66,19 +69,20 @@ class SocialBoundary:
 
     def command(
         self,
-        command: str,
+        command: str | List[str],
         handler: Optional[Processor] = None,
         *,
         channel: str = DEFAULT_SOCIAL_ROUTE,
     ) -> Processor | Callable[[Processor], Processor]:
-        command_key = _normalize_command(command)
+        command_keys = _normalize_commands(command)
         channel_key = _normalize_channel(channel)
 
         def decorator(processor: Processor) -> Processor:
-            self._commands.setdefault(channel_key, {}).setdefault(
-                command_key,
-                [],
-            ).append(processor)
+            for command_key in command_keys:
+                self._commands.setdefault(channel_key, {}).setdefault(
+                    command_key,
+                    [],
+                ).append(processor)
             return processor
 
         if handler is not None:
@@ -126,14 +130,24 @@ class SocialBoundary:
             await self._consumer_task
         for task in list(self._active_tasks.values()):
             task.cancel()
+        for task in list(self._pending_tasks.values()):
+            task.cancel()
         for task in list(self._active_tasks.values()):
             with suppress(asyncio.CancelledError):
                 await task
+        for task in list(self._pending_tasks.values()):
+            with suppress(asyncio.CancelledError):
+                await task
         self._active_tasks.clear()
+        self._pending_events.clear()
+        self._pending_tasks.clear()
         self._consumer_task = None
 
     async def drain(self) -> None:
         await self._event_bus.drain()
+        pending_tasks = list(self._pending_tasks.values())
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
         tasks = list(self._active_tasks.values())
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -145,11 +159,18 @@ class SocialBoundary:
         return task
 
     def cancel_session(self, session_id: str) -> bool:
+        cancelled = False
+        pending_task = self._pending_tasks.pop(str(session_id), None)
+        if pending_task is not None:
+            pending_task.cancel()
+            self._pending_events.pop(str(session_id), None)
+            cancelled = True
+
         task = self.active_task(session_id)
-        if task is None:
-            return False
-        task.cancel()
-        return True
+        if task is not None:
+            task.cancel()
+            cancelled = True
+        return cancelled
 
     async def process_event(self, event: SocialEvent) -> None:
         social_context = SocialContext(
@@ -167,6 +188,33 @@ class SocialBoundary:
         if command_handled:
             return
 
+        active_task = self.active_task(event.message.session_id)
+        if active_task is not None:
+            await self._send_text(
+                social_context,
+                "A request is already running for this session. "
+                "Send /cancel to stop it.",
+            )
+            return
+
+        if self._social_debounce_s() > 0:
+            self._schedule_debounced_event(event)
+            return
+
+        await self._start_agent_event(event)
+
+    async def _start_agent_event(self, event: SocialEvent) -> None:
+        social_context = SocialContext(
+            channel=event.channel,
+            adapter=event.adapter,
+            message=event.message,
+            boundary=self,
+            state={
+                "session_id": event.message.session_id,
+                "conversation_id": event.message.conversation_id,
+                "sender_id": event.message.sender_id,
+            },
+        )
         agent_name = await self._route_message(event.message, social_context)
         if not agent_name:
             return
@@ -189,6 +237,38 @@ class SocialBoundary:
                 completed,
             )
         )
+
+    def _schedule_debounced_event(self, event: SocialEvent) -> None:
+        session_id = event.message.session_id
+        self._pending_events.setdefault(session_id, []).append(event)
+
+        task = self._pending_tasks.pop(session_id, None)
+        if task is not None:
+            task.cancel()
+
+        self._pending_tasks[session_id] = asyncio.create_task(
+            self._process_debounced_session(session_id)
+        )
+
+    async def _process_debounced_session(self, session_id: str) -> None:
+        try:
+            await asyncio.sleep(self._social_debounce_s())
+            events = self._pending_events.pop(session_id, [])
+            if not events:
+                return
+            await self._start_agent_event(_merge_social_events(events))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Debounced social event processing failed")
+        finally:
+            task = self._pending_tasks.get(session_id)
+            if task is asyncio.current_task():
+                self._pending_tasks.pop(session_id, None)
+
+    def _social_debounce_s(self) -> float:
+        value = getattr(self._registry.settings(), "social_debounce_s", None)
+        return float(value or 0)
 
     async def _process_agent_event(
         self,
@@ -441,11 +521,47 @@ def _normalize_command(command: str) -> str:
     return value
 
 
+def _normalize_commands(command: str | List[str]) -> List[str]:
+    if isinstance(command, str):
+        return [_normalize_command(command)]
+    commands = [_normalize_command(item) for item in command]
+    if not commands:
+        raise ValueError("Social command list must not be empty")
+    return commands
+
+
 def _message_command(message: SocialMessage) -> Optional[str]:
     text = (message.text or "").strip()
     if not text.startswith("/"):
         return None
     return text.split(maxsplit=1)[0].split("@", maxsplit=1)[0].lower()
+
+
+def _merge_social_events(events: List[SocialEvent]) -> SocialEvent:
+    if len(events) == 1:
+        return events[0]
+
+    first = events[0]
+    messages = [event.message for event in events]
+    last_message = messages[-1]
+    text_parts = [message.text for message in messages if message.text]
+    attachments = [
+        attachment for message in messages for attachment in message.attachments
+    ]
+    message = replace(
+        last_message,
+        text="\n".join(text_parts) if text_parts else last_message.text,
+        content=None,
+        attachments=attachments,
+        metadata={
+            **last_message.metadata,
+            "batched": True,
+            "batch_size": len(messages),
+            "batch_message_ids": [message.id for message in messages],
+        },
+        raw={"messages": [message.raw for message in messages]},
+    )
+    return SocialEvent(channel=first.channel, adapter=first.adapter, message=message)
 
 
 def _run_policies(defaults: Any) -> Dict[str, Any]:

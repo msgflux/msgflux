@@ -299,7 +299,7 @@ def start_command(message, context):
     # Store sender/chat metadata if this is an onboarding flow.
     return "Send a support question and I will route it to an agent."
 
-@registry.social_command("/cancel", channel="telegram")
+@registry.social_command(["/cancel", "/stop"], channel="telegram")
 def cancel_command(message, context):
     # Override the built-in cancellation response if you need custom behavior.
     cancelled = context.boundary.cancel_session(message.session_id)
@@ -331,12 +331,32 @@ cancel the active Agent task for `message.session_id`. For Telegram private
 chats, this is the private conversation with the bot. For groups, this is the
 group conversation, so `/cancel` stops the active request for that group.
 
+Pass a list when several commands should share the same handler, such as
+`@registry.social_command(["/cancel", "/stop"], channel="telegram")`.
+
 `session_id` is the user-facing conversation/thread identity. Future
 checkpointing can use the same value to load message history. A `run_id`, when
 present, remains an internal durability/retry identifier and is not required for
 basic cancellation.
 
-## 10. **Multimodal Input**
+## 10. **Message Debounce**
+
+If users often split one thought across multiple short messages, configure a
+small debounce window:
+
+```python
+registry.settings(social_debounce_s=0.5)
+```
+
+Messages with the same `session_id` are buffered before the Agent run starts.
+Each new message renews the timer. When the timer expires, msgFlux merges the
+message text with newlines and runs the Agent once.
+
+This does not conflict with future notifications. Debounce happens before a run
+starts; notifications are for messages that arrive while a run is already
+working.
+
+## 11. **Multimodal Input**
 
 The default Telegram adapter keeps raw Telegram media metadata in
 `message.attachments`. Applications can decide how and when to download files.
@@ -354,7 +374,7 @@ message.content = [
 The Social Boundary forwards `message.content` directly as the user message
 content when it is present.
 
-## 11. **Responses**
+## 12. **Responses**
 
 By default, social replies send only the final response text. Reasoning remains
 internal unless your Agent or post-processor explicitly maps it into the

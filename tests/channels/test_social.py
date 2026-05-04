@@ -172,6 +172,47 @@ def test_telegram_social_command_can_return_outbound_from_context():
     assert sent[0].metadata == {"command": "/help"}
 
 
+def test_telegram_social_command_accepts_command_aliases():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.agent(agent)
+    registry.social_adapter(
+        "telegram",
+        TelegramAdapter(
+            secret_token="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.social_command(["/cancel", "/stop"], channel="telegram")
+    def stop_command(message, context):
+        return "stopped"
+
+    @registry.social_route(channel="telegram")
+    def route_telegram(message, context):
+        return "support"
+
+    with TestClient(create_app(registry)) as client:
+        response = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=_telegram_payload("/stop"),
+        )
+        assert response.status_code == 200
+
+        deadline = time.time() + 2
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert len(sent) == 1
+    assert sent[0].text == "stopped"
+    assert agent.calls == []
+
+
 def test_telegram_social_command_can_fall_through_to_route():
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -309,6 +350,102 @@ def test_telegram_webhook_acknowledges_and_processes_message():
     assert agent.calls[0]["vars"] == {"tenant": "default"}
     assert route_contexts[0].message.session_id == "telegram:456"
     assert route_contexts[0].state["conversation_id"] == "456"
+
+
+def test_telegram_webhook_debounces_messages_by_session():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.settings(social_debounce_s=0.05)
+    registry.agent(agent)
+    registry.social_adapter(
+        "telegram",
+        TelegramAdapter(
+            secret_token="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.social_route(channel="telegram")
+    def route_telegram(message, context):
+        return "support"
+
+    second_payload = _telegram_payload("second")
+    second_payload["update_id"] = 1002
+    second_payload["message"]["message_id"] = 43
+
+    with TestClient(create_app(registry)) as client:
+        first = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=_telegram_payload("first"),
+        )
+        second = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=second_payload,
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+        deadline = time.time() + 2
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert len(sent) == 1
+    assert sent[0].text == "echo: first\nsecond"
+    assert len(agent.calls) == 1
+    assert agent.calls[0]["messages"] == [{"role": "user", "content": "first\nsecond"}]
+
+
+def test_telegram_cancel_stops_pending_debounced_message():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.settings(social_debounce_s=0.2)
+    registry.agent(agent)
+    registry.social_adapter(
+        "telegram",
+        TelegramAdapter(
+            secret_token="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.social_route(channel="telegram")
+    def route_telegram(message, context):
+        return "support"
+
+    cancel_payload = _telegram_payload("/cancel")
+    cancel_payload["update_id"] = 1002
+    cancel_payload["message"]["message_id"] = 43
+
+    with TestClient(create_app(registry)) as client:
+        first = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=_telegram_payload("pending"),
+        )
+        cancel = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=cancel_payload,
+        )
+        assert first.status_code == 200
+        assert cancel.status_code == 200
+
+        deadline = time.time() + 2
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert [message.text for message in sent] == ["Cancelled the active request."]
+    assert agent.calls == []
 
 
 def test_telegram_webhook_rejects_invalid_secret():

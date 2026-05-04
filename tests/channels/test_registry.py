@@ -133,6 +133,8 @@ def test_channel_registry_settings_are_global_and_validated():
         max_request_bytes=1024,
         request_timeout_s=3,
         enable_docs=False,
+        disable_chat_completions=True,
+        social_debounce_s=0.5,
         cors=True,
         allowed_origins=["https://app.example.com"],
     )
@@ -144,6 +146,8 @@ def test_channel_registry_settings_are_global_and_validated():
     assert settings.max_request_bytes == 1024
     assert settings.request_timeout_s == 3
     assert settings.enable_docs is False
+    assert settings.disable_chat_completions is True
+    assert settings.social_debounce_s == 0.5
     assert settings.cors is True
     assert settings.allowed_origins == ["https://app.example.com"]
 
