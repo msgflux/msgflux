@@ -393,3 +393,35 @@ outbound text.
 
 The adapter posts responses to `conversation_id` and preserves the inbound
 `thread_ts`, so threaded messages receive threaded replies.
+
+## 12. **Multimodal Input**
+
+Slack message events may include `files`. The adapter preserves those file
+objects as `message.attachments` and does not download them automatically.
+
+For images/files sent by the user, resolve media in a pre-processor and replace
+`run.messages` with the multimodal message you want the Agent to receive:
+
+```python
+@registry.pre("support")
+def slack_files_to_messages(message, context, run):
+    image_urls = [
+        resolve_slack_file_url(attachment.payload)
+        for attachment in message.attachments
+        if attachment.type == "image"
+    ]
+
+    if image_urls:
+        content = [{"type": "text", "text": message.text or "Analyze the image."}]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in image_urls
+        )
+        run.messages = [{"role": "user", "content": content}]
+
+    return run
+```
+
+Slack file URLs are commonly private. Your resolver should enforce size limits,
+MIME allowlists, tenant access, token handling, and retention policy before
+passing media to a model.

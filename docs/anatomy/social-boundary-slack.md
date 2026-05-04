@@ -131,19 +131,17 @@ It ignores:
 - `bot_message` and `message_deleted` subtypes
 - events with `bot_id`
 - events without a user id
-- messages without text
 
 Ignoring bot messages is important because the adapter sends responses with
 `chat.postMessage`. Without this guard the bot could consume its own replies.
 
-The current Slack adapter is text-first. It does not yet map Slack `files`,
-image shares, audio, or other rich message blocks into `SocialAttachment` or
-`SocialMessage.content`. If a Slack event has no `text`, it is ignored. If it has
-text plus files, only the text is currently preserved.
+The adapter preserves Slack message `files` as `SocialAttachment` records. It
+does not download private file URLs. If a Slack event has no `text` but includes
+files, the event is still decoded and routed with `message.text=None`.
 
-Adding Slack multimodal input should happen in the adapter by decoding file
-metadata into `SocialAttachment` and, only when application policy permits,
-resolving media into chat-completion content blocks before the Agent run.
+Resolving media into model input should happen in application code, usually in a
+pre-processor, because downloads require policy for file size, MIME type,
+retention, tenant access, and bot token usage.
 
 ## Slack Identity Mapping
 
@@ -181,6 +179,7 @@ user_id
 ts
 thread_ts
 event_type
+file_ids
 ```
 
 The Social Boundary copies the generic social fields into `ChannelContext.state`.
@@ -194,20 +193,44 @@ that explicitly in a pre-processor.
 
 ## Multimodal Status
 
-The shared Social Boundary can pass multimodal user content when
-`SocialMessage.content` is set. The Slack adapter does not currently set it.
+Slack multimodal inbound is metadata-first:
 
 Current behavior:
 
 - plain Slack text messages are routed to the Agent
-- Slack messages without text are ignored
-- Slack file/image metadata is not yet exposed as `SocialAttachment`
+- Slack messages without text are routed when they include files
+- Slack file/image/audio/video metadata is exposed as `SocialAttachment`
+- file payloads are not downloaded automatically
 - outbound responses are text-only through `chat.postMessage`
 
-This keeps the MVP safe because file download, file size limits, content type
-allowlists, temporary URL handling, and retention rules need explicit application
-policy. The next Slack multimodal step is to preserve inbound Slack file metadata
-without downloading it automatically.
+Use a pre-processor to resolve Slack files and replace `run.messages` with a
+multimodal message:
+
+```python
+@registry.pre("support")
+def slack_files_to_messages(message, context, run):
+    image_urls = []
+
+    for attachment in message.attachments:
+        if attachment.type == "image":
+            # Slack file URLs are usually private. Resolve or proxy them here
+            # with your own size/type/access policy.
+            image_urls.append(resolve_slack_file_url(attachment.payload))
+
+    if image_urls:
+        content = [{"type": "text", "text": message.text or "Analyze the image."}]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in image_urls
+        )
+        run.messages = [{"role": "user", "content": content}]
+
+    return run
+```
+
+This matches the shared Social Boundary rule: social multimodal should converge
+into `run.messages`. `task_multimodal` remains an Agent-level option, but avoid
+mixing it with `messages` unless you also control the full Agent call shape.
 
 ## Sending Responses
 

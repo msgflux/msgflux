@@ -15,6 +15,7 @@ from msgflux.channels.exceptions import ChannelError
 from msgflux.channels.registry import Processor, call_processor
 from msgflux.channels.social.types import (
     OutboundSocialMessage,
+    SocialAttachment,
     SocialMessage,
     SocialWebhookResponse,
 )
@@ -98,7 +99,8 @@ class SlackAdapter:
             return []
 
         text = event.get("text")
-        if text is None:
+        attachments = _slack_attachments(event)
+        if text is None and not attachments:
             return []
 
         team_id = str(payload.get("team_id") or event.get("team") or "unknown")
@@ -115,7 +117,8 @@ class SlackAdapter:
                 session_id=f"slack:{team_id}:{channel_id}:{thread_ts}",
                 conversation_id=channel_id,
                 sender_id=user_id,
-                text=str(text),
+                text=str(text) if text is not None else None,
+                attachments=attachments,
                 metadata={
                     "team_id": team_id,
                     "channel_id": channel_id,
@@ -123,6 +126,11 @@ class SlackAdapter:
                     "ts": ts,
                     "thread_ts": thread_ts,
                     "event_type": event.get("type"),
+                    "file_ids": [
+                        attachment.payload.get("id")
+                        for attachment in attachments
+                        if isinstance(attachment.payload, ABCMapping)
+                    ],
                 },
                 raw=dict(payload),
             )
@@ -164,6 +172,35 @@ def _decode_slack_payload(body: bytes) -> Dict[str, Any]:
     if not isinstance(payload, ABCMapping):
         raise ChannelError("Slack webhook payload must be a JSON object")
     return dict(payload)
+
+
+def _slack_attachments(event: ABCMapping) -> List[SocialAttachment]:
+    files = event.get("files")
+    if not isinstance(files, list):
+        return []
+
+    attachments = []
+    for file_payload in files:
+        if not isinstance(file_payload, ABCMapping):
+            continue
+        attachments.append(
+            SocialAttachment(
+                type=_slack_file_type(file_payload),
+                payload=dict(file_payload),
+            )
+        )
+    return attachments
+
+
+def _slack_file_type(file_payload: ABCMapping) -> str:
+    mimetype = str(file_payload.get("mimetype") or "").lower()
+    if mimetype.startswith("image/"):
+        return "image"
+    if mimetype.startswith("audio/"):
+        return "audio"
+    if mimetype.startswith("video/"):
+        return "video"
+    return "file"
 
 
 def _thread_ts(outbound: OutboundSocialMessage, context: Any = None) -> str:

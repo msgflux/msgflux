@@ -22,7 +22,14 @@ class EchoAgent:
         return {"answer": f"echo: {content}"}
 
 
-def _slack_event(text="hello", *, thread_ts=None, subtype=None, bot_id=None):
+def _slack_event(
+    text="hello",
+    *,
+    thread_ts=None,
+    subtype=None,
+    bot_id=None,
+    files=None,
+):
     event = {
         "type": "message",
         "user": "U123",
@@ -30,12 +37,16 @@ def _slack_event(text="hello", *, thread_ts=None, subtype=None, bot_id=None):
         "channel": "C123",
         "ts": "1710000000.000100",
     }
+    if text is None:
+        event.pop("text")
     if thread_ts is not None:
         event["thread_ts"] = thread_ts
     if subtype is not None:
         event["subtype"] = subtype
     if bot_id is not None:
         event["bot_id"] = bot_id
+    if files is not None:
+        event["files"] = files
     return {
         "token": "deprecated",
         "team_id": "T123",
@@ -110,6 +121,30 @@ async def test_slack_adapter_decodes_message_event():
     assert message.sender_id == "U123"
     assert message.text == "hello"
     assert message.metadata["thread_ts"] == "1710000000.000100"
+
+
+@pytest.mark.asyncio
+async def test_slack_adapter_preserves_files_as_attachments():
+    adapter = SlackAdapter()
+    file_payload = {
+        "id": "F123",
+        "name": "photo.png",
+        "title": "photo.png",
+        "mimetype": "image/png",
+        "url_private": "https://files.slack.com/files-pri/T123-F123/photo.png",
+    }
+
+    messages = await adapter.decode(
+        json.dumps(_slack_event(text=None, files=[file_payload])).encode()
+    )
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.text is None
+    assert len(message.attachments) == 1
+    assert message.attachments[0].type == "image"
+    assert message.attachments[0].payload["id"] == "F123"
+    assert message.metadata["file_ids"] == ["F123"]
 
 
 @pytest.mark.asyncio
