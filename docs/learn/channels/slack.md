@@ -31,6 +31,44 @@ as `chat.postMessage`.
 The adapter checks `X-Slack-Request-Timestamp` and `X-Slack-Signature` before it
 decodes the event.
 
+??? example "Slack app setup walkthrough"
+
+    Slack's app UI changes over time. Treat this as a practical walkthrough and
+    use the official Slack documentation as the source of truth if labels move.
+
+    1. Open [Slack API Apps](https://api.slack.com/apps).
+    2. Click **Create New App**.
+    3. Choose **From scratch**.
+    4. Pick a name, such as `msgFlux Dev Bot`, and choose the workspace.
+    5. Open **OAuth & Permissions**.
+    6. Under **Bot Token Scopes**, add `chat:write`.
+    7. Add the message-read scopes you need:
+
+    | Scope | Use case |
+    | --- | --- |
+    | `im:history` | Direct messages with the bot. |
+    | `channels:history` | Public channels where the bot is a member. |
+    | `groups:history` | Private channels where the bot is a member. |
+    | `mpim:history` | Multi-person direct messages. |
+
+    For a minimal local test, start with `chat:write` and `im:history`.
+
+    1. Click **Install to Workspace**.
+    2. Copy **Bot User OAuth Token** into `SLACK_BOT_TOKEN`.
+    3. Open **Basic Information**.
+    4. Copy **Signing Secret** into `SLACK_SIGNING_SECRET`.
+    5. Start the msgFlux server locally.
+    6. Expose it with a tunnel.
+    7. Open **Event Subscriptions**.
+    8. Enable events and set the Request URL to
+       `https://your-public-url.example/social/slack/webhook`.
+    9. Under **Subscribe to bot events**, add `message.im` for direct messages.
+    10. Save changes and reinstall the app if Slack asks.
+
+    Slack verifies the Request URL by sending `url_verification`. The msgFlux
+    Slack adapter responds with the challenge automatically through
+    `SocialWebhookResponse`.
+
 ## 2. **Register the Adapter**
 
 ```python
