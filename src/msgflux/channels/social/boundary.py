@@ -4,7 +4,12 @@ from contextlib import suppress
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional
 
-from msgflux.channels.exceptions import ChannelError, ForbiddenError, UnauthorizedError
+from msgflux.channels.exceptions import (
+    ChannelError,
+    ForbiddenError,
+    RateLimitExceededError,
+    UnauthorizedError,
+)
 from msgflux.channels.registry import (
     AgentRun,
     ChannelContext,
@@ -111,11 +116,24 @@ class SocialBoundary:
         messages = await call_processor(adapter.decode, body, http_request)
         count = 0
         for message in messages or []:
+            if await self._message_seen(message):
+                continue
             await self._event_bus.publish(
                 SocialEvent(channel=channel_key, adapter=adapter, message=message)
             )
             count += 1
         return count
+
+    async def _message_seen(self, message: SocialMessage) -> bool:
+        ttl_s = getattr(self._registry.settings(), "social_dedup_ttl_s", None)
+        if ttl_s is None or ttl_s <= 0:
+            return False
+        key = f"{message.channel}:{message.id}"
+        store = self._registry.social_dedup_store()
+        seen_or_mark = getattr(store, "seen_or_mark", None)
+        handler = seen_or_mark if callable(seen_or_mark) else store
+        result = await call_processor(handler, key, float(ttl_s))
+        return bool(result)
 
     async def start(self) -> None:
         if not self._adapters or self._consumer_task is not None:
@@ -184,7 +202,17 @@ class SocialBoundary:
                 "sender_id": event.message.sender_id,
             },
         )
-        command_handled = await self._handle_command(event.message, social_context)
+        try:
+            await self._authenticate_message(event.message, social_context)
+        except ChannelError as e:
+            await self._send_configured_error(social_context, e)
+            return
+
+        try:
+            command_handled = await self._handle_command(event.message, social_context)
+        except ChannelError as e:
+            await self._send_configured_error(social_context, e)
+            return
         if command_handled:
             return
 
@@ -201,20 +229,31 @@ class SocialBoundary:
             self._schedule_debounced_event(event)
             return
 
-        await self._start_agent_event(event)
+        await self._start_agent_event(event, social_context)
 
-    async def _start_agent_event(self, event: SocialEvent) -> None:
-        social_context = SocialContext(
-            channel=event.channel,
-            adapter=event.adapter,
-            message=event.message,
-            boundary=self,
-            state={
-                "session_id": event.message.session_id,
-                "conversation_id": event.message.conversation_id,
-                "sender_id": event.message.sender_id,
-            },
-        )
+    async def _start_agent_event(
+        self,
+        event: SocialEvent,
+        social_context: Optional[SocialContext] = None,
+    ) -> None:
+        if social_context is None:
+            social_context = SocialContext(
+                channel=event.channel,
+                adapter=event.adapter,
+                message=event.message,
+                boundary=self,
+                state={
+                    "session_id": event.message.session_id,
+                    "conversation_id": event.message.conversation_id,
+                    "sender_id": event.message.sender_id,
+                },
+            )
+            try:
+                await self._authenticate_message(event.message, social_context)
+            except ChannelError as e:
+                await self._send_configured_error(social_context, e)
+                return
+
         agent_name = await self._route_message(event.message, social_context)
         if not agent_name:
             return
@@ -297,8 +336,9 @@ class SocialBoundary:
                 event.message,
                 channel_context,
             )
-            await self._authenticate_event(event.message, channel_context)
             agent = self._registry.get_agent(social_context.agent_name)
+            await self._authorize_event(event.message, channel_context)
+            await self._check_rate_limits(event.message, channel_context)
             run = await self._prepare_run(event.message, channel_context)
             output = await agent.acall(
                 messages=run.messages,
@@ -347,6 +387,16 @@ class SocialBoundary:
                 e,
             )
             raise
+        except ChannelError as e:
+            await self._send_configured_error(social_context, e)
+            await self._registry.run_hooks(
+                "request_end",
+                event.message,
+                channel_context,
+                run,
+                None,
+                e,
+            )
         except Exception as e:
             await self._registry.run_hooks(
                 "request_end",
@@ -364,11 +414,26 @@ class SocialBoundary:
         with suppress(asyncio.CancelledError):
             task.exception()
 
-    async def _authenticate_event(
+    async def _authenticate_message(
         self,
         message: SocialMessage,
-        context: ChannelContext,
+        social_context: SocialContext,
     ) -> None:
+        context = ChannelContext(
+            channel=f"social:{message.channel}",
+            agent_name="",
+            request_id=message.id,
+            request=message,
+            state={
+                **social_context.state,
+                "social_context": social_context,
+                "social_channel": message.channel,
+                "social_message": message,
+                "session_id": message.session_id,
+                "conversation_id": message.conversation_id,
+                "sender_id": message.sender_id,
+            },
+        )
         principal = None
         auth_handler = self._registry.auth_handler()
         if auth_handler is not None:
@@ -378,13 +443,43 @@ class SocialBoundary:
 
         context.state["principal"] = principal
         context.state["auth"] = principal
+        social_context.state.update(context.state)
+
+    async def _authorize_event(
+        self,
+        message: SocialMessage,
+        context: ChannelContext,
+    ) -> None:
+        principal = context.state.get("principal")
         for authorizer in self._registry.authorizers(context.agent_name):
             result = await call_processor(authorizer, message, context, principal)
             if result is False:
                 raise ForbiddenError("Forbidden")
             if isinstance(result, ABCMapping):
                 context.state.update(result)
+
+    async def _check_rate_limits(
+        self,
+        message: SocialMessage,
+        context: ChannelContext,
+    ) -> None:
         await self._registry.check_rate_limits(message, context, None)
+
+    async def _send_configured_error(
+        self,
+        context: SocialContext,
+        exc: ChannelError,
+    ) -> None:
+        message = None
+        if isinstance(exc, UnauthorizedError):
+            message = self._registry.settings().social_unauthorized_message
+        elif isinstance(exc, ForbiddenError):
+            message = self._registry.settings().social_forbidden_message
+        elif isinstance(exc, RateLimitExceededError):
+            message = self._registry.settings().social_rate_limit_message
+
+        if message:
+            await self._send_text(context, message)
 
     async def _consume_loop(self) -> None:
         while True:
@@ -429,6 +524,7 @@ class SocialBoundary:
         if not handlers:
             return await self._handle_builtin_command(command_name, message, context)
 
+        await self._check_command_rate_limits(message, context)
         for handler in handlers:
             result = await call_processor(handler, message, context)
             if isinstance(result, OutboundSocialMessage):
@@ -457,12 +553,35 @@ class SocialBoundary:
         if command_name not in {"/cancel", "/stop"}:
             return False
 
+        await self._check_command_rate_limits(message, context)
         cancelled = self.cancel_session(message.session_id)
         if cancelled:
             await self._send_text(context, "Cancelled the active request.")
         else:
             await self._send_text(context, "No active request to cancel.")
         return True
+
+    async def _check_command_rate_limits(
+        self,
+        message: SocialMessage,
+        social_context: SocialContext,
+    ) -> None:
+        context = ChannelContext(
+            channel=f"social:{message.channel}",
+            agent_name="",
+            request_id=message.id,
+            request=message,
+            state={
+                **social_context.state,
+                "social_context": social_context,
+                "social_channel": message.channel,
+                "social_message": message,
+                "session_id": message.session_id,
+                "conversation_id": message.conversation_id,
+                "sender_id": message.sender_id,
+            },
+        )
+        await self._registry.check_rate_limits(message, context, None)
 
     async def _send_text(self, context: SocialContext, text: str) -> None:
         await call_processor(

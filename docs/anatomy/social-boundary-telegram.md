@@ -21,7 +21,9 @@ platform webhook
   -> adapter.decode(...)
   -> SocialMessage
   -> SocialBoundary event queue
+  -> registry.auth
   -> registry.social_command / registry.social_route
+  -> registry.authorize / registry.rate_limit
   -> Agent.acall(...)
   -> adapter.send(...)
 ```
@@ -93,7 +95,9 @@ The flow is:
 normalize channel
   -> find adapter
   -> adapter.verify(...)
+  -> adapter.webhook_response(...) when available
   -> adapter.decode(...)
+  -> dedupe each SocialMessage by "{channel}:{message.id}"
   -> publish SocialEvent for each decoded SocialMessage
   -> return accepted event count
 ```
@@ -101,6 +105,12 @@ normalize channel
 The webhook route returns quickly. Actual agent work happens in the boundary
 consumer task. This matters because social platforms generally expect a fast HTTP
 acknowledgement and may retry when webhook responses are slow.
+
+`registry.settings(social_dedup_ttl_s=...)` controls the dedupe window. The
+default is `300` seconds. Set it to `0` or `None` to disable dedupe. The default
+store is `InMemorySocialDedupStore`, which is suitable for one Python process.
+Production deployments with multiple workers should inject a shared store through
+`registry.social_dedup_store(...)`.
 
 ## Event Consumer
 
@@ -112,20 +122,75 @@ run:
 
 ```text
 build SocialContext
+  -> registry.auth
   -> handle command
   -> reject if a run is already active for session_id
   -> optional debounce
   -> route to agent
+  -> registry.authorize(agent_name)
+  -> registry.check_rate_limits(...)
   -> create active task for the session
 ```
 
 The active task map is keyed by `message.session_id`. This is the unit of
 cancellation and concurrency protection.
 
+## Security Pipeline
+
+Social channels have two different authentication layers:
+
+- `adapter.verify(...)` proves that the webhook came from the platform.
+- `registry.auth` decides whether the platform sender/chat/team/tenant may use
+  this application.
+
+The security order is:
+
+```text
+adapter.verify(...)
+  -> adapter.decode(...)
+  -> social dedupe
+  -> registry.auth
+  -> registry.social_command(...)
+  -> registry.social_route(...)
+  -> registry.authorize(agent_name)
+  -> registry.check_rate_limits(...)
+  -> Agent.acall(...)
+```
+
+This order is intentional:
+
+- commands cannot bypass auth
+- `/cancel` cannot be executed by an unauthenticated sender
+- route runs only after the sender is identified
+- agent-specific authorization and rate limits run only after `agent_name` is
+  known
+
+Command handlers are checked against global rate-limit policies
+(`agent=None`). Agent-specific rate limits apply after routing. For social
+channels, prefer buckets based on stable social identity rather than IP address,
+because webhook requests originate from platform infrastructure.
+
+Social error responses are configurable:
+
+```python
+registry.settings(
+    social_unauthorized_message=None,
+    social_forbidden_message=None,
+    social_rate_limit_message="Too many requests. Try again later.",
+)
+```
+
+The default keeps unauthorized and forbidden events silent. Rate-limited events
+send a short user-facing message by default because the sender has already been
+identified.
+
 ## Commands Before Agents
 
 Commands are deliberately handled before routing. The model should not decide
 what `/start`, `/cancel`, or `/stop` means.
+
+Commands still run after `registry.auth`. They are "before agents", not before
+the security boundary.
 
 `registry.social_command(...)` registers handlers per channel or globally. A
 command may be a single string or a list of aliases:
@@ -227,14 +292,6 @@ request = SocialMessage
 context.state["social_message"] = message
 ```
 
-The boundary runs:
-
-```text
-registry.auth_handler()
-  -> registry.authorizers(agent_name)
-  -> registry.check_rate_limits(...)
-```
-
 The adapter-level webhook secret proves the request came through Telegram. The
 registry auth handler decides whether this sender/chat/tenant may use the
 application.
@@ -261,12 +318,103 @@ Pre-processors can mutate this run. That is the intended place for application
 specific transformations such as:
 
 - mapping social metadata into `vars` when the application wants that
-- converting Telegram attachments into chat-completion multimodal content
+- converting Telegram attachments into `task_multimodal`
 - applying per-tenant tool filters or model preferences
 
 The boundary itself does not persist history and does not load previous messages.
 Future checkpointing should use `session_id` to decide which conversation/thread
 history belongs to the run.
+
+## Multimodal Input Boundary
+
+The social boundary uses `run.messages` as the canonical inbound shape. That is
+the same shape checkpointing will eventually persist and replay.
+
+For text-only social messages, the default run is:
+
+```python
+run.messages = [{"role": "user", "content": message.text or ""}]
+```
+
+For user-originated multimodal input, adapters should first preserve platform
+media metadata in `message.attachments`. Application code can then resolve those
+attachments in a pre-processor and replace `run.messages` with a multimodal
+ChatML message:
+
+```python
+@registry.pre("support")
+def telegram_media_to_messages(message, context, run):
+    image_urls = []
+    file_urls = []
+
+    for attachment in message.attachments:
+        if attachment.type == "photo":
+            image_urls.append(resolve_telegram_file_url(attachment.payload))
+        elif attachment.type == "document":
+            file_urls.append(resolve_telegram_file_url(attachment.payload))
+
+    if image_urls or file_urls:
+        content = [{"type": "text", "text": message.text or "Analyze the media."}]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in image_urls
+        )
+        # Add file blocks here when the target provider supports them.
+        run.messages = [{"role": "user", "content": content}]
+
+    return run
+```
+
+This produces an Agent call shaped like:
+
+```python
+await agent.acall(
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Analyze the media."},
+                {"type": "image_url", "image_url": {"url": "https://..."}},
+            ],
+        }
+    ],
+)
+```
+
+`task` and `task_multimodal` are still valid Agent-level inputs, but they should
+not be mixed accidentally with `messages`. If application code chooses that path,
+it must clear `run.messages`, extract the text/caption into `run.kwargs["task"]`,
+and set `run.kwargs["task_multimodal"]`.
+
+The important invariant is: each social run should use either `messages` or
+`task` plus `task_multimodal`, not `messages` plus `task_multimodal` without
+`task`.
+
+`SocialMessage.content` remains an adapter escape hatch for already-normalized
+content blocks. When it is present, the boundary prepares the default user
+message with:
+
+```text
+content = message.content if present else message.text or ""
+```
+
+The boundary will pass that list directly as the user message content:
+
+```python
+{"role": "user", "content": message.content}
+```
+
+The current Telegram adapter does not download media. It preserves Telegram
+`photo`, `document`, `audio`, `voice`, `video`, and `sticker` payloads as
+`SocialAttachment` records. Application code can inspect those attachments in a
+pre-processor, download or resolve the file through the platform API, and set
+`run.kwargs["task_multimodal"]`.
+
+For media-only messages, if no pre-processor converts attachments into
+`task_multimodal`, `message.content`, or `run.messages`, the Agent receives an
+empty user content string. This is deliberate: downloading files requires
+application policy for size limits, storage, allowed media types, retention, and
+credentials.
 
 ## Telegram Adapter
 

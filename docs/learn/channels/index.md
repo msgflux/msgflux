@@ -712,6 +712,10 @@ registry.settings(
     max_request_bytes=2 * 1024 * 1024,
     request_timeout_s=30,
     social_debounce_s=0.5,
+    social_dedup_ttl_s=300,
+    social_rate_limit_message="Too many requests. Try again later.",
+    social_unauthorized_message=None,
+    social_forbidden_message=None,
     enable_docs=False,
     disable_chat_completions=False,
     cors=True,
@@ -732,6 +736,15 @@ be registered when this is enabled.
 for a short window before starting the Agent run. Each new message renews the
 timer. This is useful for chat apps where users often send a thought across
 multiple short messages.
+
+`social_dedup_ttl_s` keeps recently seen social message ids in a dedupe store.
+This protects Slack, Telegram, and future social adapters from platform retries
+that resend the same event. Set it to `0` or `None` to disable dedupe.
+
+`social_rate_limit_message`, `social_unauthorized_message`, and
+`social_forbidden_message` control optional user-facing social error responses.
+By default, rate limits send a short retry-later message, while unauthorized and
+forbidden events are dropped silently.
 
 `enable_otel=True` instruments the FastAPI app through the official
 `opentelemetry-instrumentation-fastapi` adapter. The package is included in the

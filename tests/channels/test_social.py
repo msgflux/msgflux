@@ -5,7 +5,13 @@ import time
 
 import pytest
 
-from msgflux.channels import ChannelRegistry, OutboundSocialMessage, TelegramAdapter
+from msgflux.channels import (
+    ChannelRegistry,
+    OutboundSocialMessage,
+    SocialAttachment,
+    SocialMessage,
+    TelegramAdapter,
+)
 from msgflux.channels.http.app import create_app
 from msgflux.channels.social.telegram import adapter as telegram_adapter_module
 
@@ -39,6 +45,17 @@ class SlowAgent:
         return {"answer": "finished"}
 
 
+class RecordingAgent:
+    name = "support"
+
+    def __init__(self):
+        self.calls = []
+
+    async def acall(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"answer": "recorded"}
+
+
 def _telegram_payload(text="hello"):
     return {
         "update_id": 1001,
@@ -57,6 +74,21 @@ def _telegram_payload(text="hello"):
     }
 
 
+def _telegram_photo_payload():
+    payload = _telegram_payload("")
+    payload["message"].pop("text")
+    payload["message"]["photo"] = [
+        {
+            "file_id": "photo-file-id",
+            "file_unique_id": "unique-photo-id",
+            "width": 640,
+            "height": 480,
+            "file_size": 12345,
+        }
+    ]
+    return payload
+
+
 @pytest.mark.asyncio
 async def test_telegram_adapter_decodes_text_message():
     adapter = TelegramAdapter(secret_token="secret")
@@ -72,6 +104,154 @@ async def test_telegram_adapter_decodes_text_message():
     assert message.sender_id == "123"
     assert message.text == "hello"
     assert message.metadata["chat_type"] == "private"
+
+
+@pytest.mark.asyncio
+async def test_telegram_adapter_preserves_media_as_attachments():
+    adapter = TelegramAdapter(secret_token="secret")
+
+    messages = await adapter.decode(json.dumps(_telegram_photo_payload()).encode())
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.text is None
+    assert len(message.attachments) == 1
+    assert message.attachments[0].type == "photo"
+    assert message.attachments[0].payload[0]["file_id"] == "photo-file-id"
+
+
+def test_social_pre_processor_can_map_attachments_to_multimodal_messages():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = RecordingAgent()
+    registry = ChannelRegistry()
+    registry.agent(agent)
+
+    class AttachmentAdapter:
+        async def verify(self, http_request, body):
+            return True
+
+        async def decode(self, body, http_request):
+            return [
+                SocialMessage(
+                    id="custom:1",
+                    channel="custom",
+                    session_id="custom:session",
+                    conversation_id="custom:conversation",
+                    sender_id="custom:sender",
+                    text="caption",
+                    attachments=[
+                        SocialAttachment(
+                            type="image",
+                            payload={"url": "https://example.com/image.png"},
+                        )
+                    ],
+                )
+            ]
+
+        async def send(self, outbound, context):
+            sent.append(outbound)
+
+    registry.social_adapter("custom", AttachmentAdapter())
+
+    @registry.pre("support")
+    def attachments_to_multimodal_messages(message, context, run):
+        image_urls = [
+            attachment.payload["url"]
+            for attachment in message.attachments
+            if attachment.type == "image"
+        ]
+        content = [{"type": "text", "text": message.text or "Analyze the image."}]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": image_url}}
+            for image_url in image_urls
+        )
+        run.messages = [{"role": "user", "content": content}]
+        return run
+
+    @registry.social_route(channel="custom")
+    def route_custom(message, context):
+        return "support"
+
+    with TestClient(create_app(registry)) as client:
+        response = client.post("/social/custom/webhook", json={"ok": True})
+        assert response.status_code == 200
+
+        deadline = time.time() + 2
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert agent.calls[0]["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "caption"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/image.png"},
+                },
+            ],
+        }
+    ]
+
+
+def test_social_boundary_still_forwards_message_content_when_present():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.agent(agent)
+
+    class ContentAdapter:
+        async def verify(self, http_request, body):
+            return True
+
+        async def decode(self, body, http_request):
+            return [
+                SocialMessage(
+                    id="custom:1",
+                    channel="custom",
+                    session_id="custom:session",
+                    conversation_id="custom:conversation",
+                    sender_id="custom:sender",
+                    text="caption",
+                    content=[
+                        {"type": "text", "text": "caption"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.com/image.png"},
+                        },
+                    ],
+                )
+            ]
+
+        async def send(self, outbound, context):
+            return None
+
+    registry.social_adapter("custom", ContentAdapter())
+
+    @registry.social_route(channel="custom")
+    def route_custom(message, context):
+        return "support"
+
+    with TestClient(create_app(registry)) as client:
+        response = client.post("/social/custom/webhook", json={"ok": True})
+        assert response.status_code == 200
+
+        deadline = time.time() + 2
+        while not agent.calls and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert agent.calls[0]["messages"][0]["content"] == [
+        {"type": "text", "text": "caption"},
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/image.png"},
+        },
+    ]
 
 
 def test_registry_social_route_registers_adapter_and_route():
@@ -128,6 +308,51 @@ def test_telegram_social_command_responds_without_agent_call():
     assert sent[0].channel == "telegram"
     assert sent[0].conversation_id == "456"
     assert sent[0].text == "authenticated"
+    assert agent.calls == []
+
+
+def test_telegram_social_command_requires_auth_first():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.settings(social_unauthorized_message="Access denied.")
+    registry.agent(agent)
+    registry.social_adapter(
+        "telegram",
+        TelegramAdapter(
+            secret_token="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.auth
+    def auth(http_request, message, context):
+        return False
+
+    @registry.social_command("/start", channel="telegram")
+    def start_command(message, context):
+        return "authenticated"
+
+    @registry.social_route(channel="telegram")
+    def route_telegram(message, context):
+        return "support"
+
+    with TestClient(create_app(registry)) as client:
+        response = client.post(
+            "/social/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            json=_telegram_payload("/start"),
+        )
+        assert response.status_code == 200
+
+        deadline = time.time() + 2
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert [message.text for message in sent] == ["Access denied."]
     assert agent.calls == []
 
 
@@ -621,9 +846,14 @@ def test_telegram_webhook_applies_social_rate_limits():
         )
         assert second.status_code == 200
 
-        time.sleep(0.05)
+        deadline = time.time() + 2
+        while len(sent) < 2 and time.time() < deadline:
+            time.sleep(0.01)
 
-    assert [message.text for message in sent] == ["echo: first"]
+    assert [message.text for message in sent] == [
+        "echo: first",
+        "Too many requests. Try again later.",
+    ]
     assert [call["messages"][0]["content"] for call in agent.calls] == ["first"]
 
 

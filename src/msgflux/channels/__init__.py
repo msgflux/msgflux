@@ -21,6 +21,7 @@ from msgflux.channels.registry import (
     RateLimitPolicy,
 )
 from msgflux.channels.social import (
+    InMemorySocialDedupStore,
     InMemorySocialEventBus,
     OutboundSocialMessage,
     SocialAttachment,
@@ -43,6 +44,7 @@ __all__ = [
     "ChannelSettings",
     "ForbiddenError",
     "InMemoryRateLimitStore",
+    "InMemorySocialDedupStore",
     "InMemorySocialEventBus",
     "OutboundSocialMessage",
     "PayloadTooLargeError",

@@ -135,6 +135,10 @@ def test_channel_registry_settings_are_global_and_validated():
         enable_docs=False,
         disable_chat_completions=True,
         social_debounce_s=0.5,
+        social_dedup_ttl_s=120,
+        social_rate_limit_message="Slow down.",
+        social_unauthorized_message="Unauthorized.",
+        social_forbidden_message="Forbidden.",
         cors=True,
         allowed_origins=["https://app.example.com"],
     )
@@ -148,6 +152,10 @@ def test_channel_registry_settings_are_global_and_validated():
     assert settings.enable_docs is False
     assert settings.disable_chat_completions is True
     assert settings.social_debounce_s == 0.5
+    assert settings.social_dedup_ttl_s == 120
+    assert settings.social_rate_limit_message == "Slow down."
+    assert settings.social_unauthorized_message == "Unauthorized."
+    assert settings.social_forbidden_message == "Forbidden."
     assert settings.cors is True
     assert settings.allowed_origins == ["https://app.example.com"]
 
@@ -203,6 +211,9 @@ def test_channel_registry_rate_limit_validates_policy():
 
     with pytest.raises(TypeError, match="rate_limit_store"):
         registry.rate_limit_store(object())
+
+    with pytest.raises(TypeError, match="social_dedup_store"):
+        registry.social_dedup_store(object())
 
 
 @pytest.mark.asyncio

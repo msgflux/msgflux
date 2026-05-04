@@ -307,10 +307,18 @@ registry.rate_limit(
 Use `"service"` for a global bot-wide cap and `"tenant"` when your auth handler
 maps Telegram users or chats to tenants.
 
+When a social rate limit rejects a message, msgFlux sends
+`social_rate_limit_message` if configured. The default is
+`"Too many requests. Try again later."`. Set it to `None` to drop rate-limited
+social events silently.
+
 ## 9. **Commands**
 
 Handle strong commands before the Agent. The model should not decide what
 `/start`, `/stop`, or `/cancel` means.
+
+Commands run after social auth and before route. This prevents unauthenticated
+senders from calling `/cancel` or custom command handlers.
 
 Use `@registry.social_command` for command-specific behavior. Commands can be
 scoped by social channel. Returning a string sends that text back to the same
@@ -382,18 +390,36 @@ message text with newlines and runs the Agent once.
 The default Telegram adapter keeps raw Telegram media metadata in
 `message.attachments`. Applications can decide how and when to download files.
 
-If an adapter downloads or resolves media, it can set `SocialMessage.content`
-to a chat-completion content list:
+Prefer converting resolved media into `task_multimodal` in a pre-processor:
 
 ```python
-message.content = [
-    {"type": "text", "text": message.text or ""},
-    {"type": "image_url", "image_url": {"url": image_url}},
-]
+@registry.pre("support")
+def telegram_media_to_task_multimodal(message, context, run):
+    image_urls = [
+        resolve_telegram_file_url(attachment.payload)
+        for attachment in message.attachments
+        if attachment.type == "photo"
+    ]
+
+    if image_urls:
+        run.messages = None
+        run.kwargs["task"] = message.text or "Analyze the attached image."
+        run.kwargs["task_multimodal"] = {"image": image_urls}
+
+    return run
 ```
 
-The Social Boundary forwards `message.content` directly as the user message
-content when it is present.
+`Agent` accepts `task_multimodal={"image": ..., "audio": ..., "video": ...,
+"file": ...}` and converts those inputs into provider-specific multimodal
+content.
+
+When using `task_multimodal`, also set `task` and clear `messages`. In other
+words, use either plain `messages` or `task` plus `task_multimodal`; do not mix
+`messages` with `task_multimodal` and no `task`.
+
+`SocialMessage.content` can still be used as an escape hatch for adapters that
+already produce chat-completion content blocks. The Social Boundary forwards it
+directly as the user message content when present.
 
 ## 12. **Responses**
 

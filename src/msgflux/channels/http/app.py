@@ -348,6 +348,8 @@ def _configure_cors(app: Any, settings: Any) -> None:
 def _validate_routes(registry: ChannelRegistry, settings: Any) -> None:
     if settings.social_debounce_s is not None and settings.social_debounce_s < 0:
         raise ValueError("social_debounce_s must be >= 0")
+    if settings.social_dedup_ttl_s is not None and settings.social_dedup_ttl_s < 0:
+        raise ValueError("social_dedup_ttl_s must be >= 0")
     chat_disabled_without_social = (
         settings.disable_chat_completions
         and not registry.social_boundary().has_adapters()

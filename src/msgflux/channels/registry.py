@@ -68,6 +68,10 @@ class ChannelSettings:
     otel_kwargs: Dict[str, Any] = field(default_factory=dict)
     disable_chat_completions: bool = False
     social_debounce_s: Optional[float] = None
+    social_dedup_ttl_s: Optional[float] = 300.0
+    social_unauthorized_message: Optional[str] = None
+    social_forbidden_message: Optional[str] = None
+    social_rate_limit_message: Optional[str] = "Too many requests. Try again later."
 
 
 @dataclass
@@ -160,6 +164,7 @@ class ChannelRegistry:
         self._agent_defaults: Dict[str, AgentDefaults] = {}
         self._rate_limits: List[RateLimitPolicy] = []
         self._rate_limit_store: Any = InMemoryRateLimitStore()
+        self._social_dedup_store: Any = None
         self._social_boundary: Any = None
         self._readiness = ChannelReadiness()
 
@@ -247,6 +252,24 @@ class ChannelRegistry:
                 "rate_limit_store expects a callable or an object with hit(...)"
             )
         self._rate_limit_store = store
+        return store
+
+    def social_dedup_store(self, store: Any = None) -> Any:
+        if store is None:
+            if self._social_dedup_store is None:
+                dedup_store_cls = importlib.import_module(
+                    "msgflux.channels.social"
+                ).InMemorySocialDedupStore
+                self._social_dedup_store = dedup_store_cls()
+            return self._social_dedup_store
+
+        seen_or_mark = getattr(store, "seen_or_mark", None)
+        if not callable(store) and not callable(seen_or_mark):
+            raise TypeError(
+                "social_dedup_store expects a callable or an object with "
+                "seen_or_mark(...)"
+            )
+        self._social_dedup_store = store
         return store
 
     def social_boundary(self) -> Any:
