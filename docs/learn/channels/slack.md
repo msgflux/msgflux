@@ -63,17 +63,20 @@ decodes the event.
     8. Enable events and set the Request URL to
        `https://your-public-url.example/social/slack/webhook`.
     9. Under **Subscribe to bot events**, add `message.im` for direct messages.
-    10. Save changes and reinstall the app if Slack asks.
+    10. Open **App Home**.
+    11. In **Show Tabs**, enable the **Messages Tab**.
+    12. Check **Allow users to send Slash commands and messages from the messages tab**.
+    13. Save changes and reinstall the app if Slack asks.
 
     Slack verifies the Request URL by sending `url_verification`. The msgFlux
     Slack adapter responds with the challenge automatically through
     `SocialWebhookResponse`.
 
     If the Slack client shows `Sending messages to this app has been turned off`,
-    open **App Home** in the Slack app settings. In **Show Tabs**, enable the
-    **Messages Tab** and check **Allow users to send Slash commands and messages
-    from the messages tab**. Save changes, reinstall the app to the workspace if
-    Slack asks, then refresh the Slack client.
+    `This is still a work in progress`, or the app conversation cannot accept
+    input, verify **App Home** again: **Messages Tab** must be enabled and
+    **Allow users to send Slash commands and messages from the messages tab**
+    must be checked. Refresh or reopen the Slack client after saving changes.
 
     To find the bot user id used for channel mention routing, run:
 
@@ -190,33 +193,7 @@ Subscribe the bot to message events that match your use case, for example:
 Grant the bot a send-message scope such as `chat:write`, then reinstall the app
 if Slack asks you to apply scope changes.
 
-## 6. **Enable Direct Messages**
-
-Slack separates event delivery from the app conversation UI. A valid Request URL
-and valid OAuth scopes are not enough to make the app DM surface writable.
-
-In the Slack app settings, open **App Home** and confirm:
-
-| Setting | Required value |
-| --- | --- |
-| **Home Tab** | Optional for message handling. |
-| **Messages Tab** | Enabled. |
-| **Allow users to send Slash commands and messages from the messages tab** | Checked. |
-
-After changing these settings, save and reinstall the app to the workspace if
-Slack prompts you. If the Slack client still shows the old state, refresh the
-client or reopen the app conversation.
-
-If Slack shows `This is still a work in progress` or `Sending messages to this
-app has been turned off`, verify these items first:
-
-1. The **Messages Tab** is enabled in **App Home**.
-2. The checkbox **Allow users to send Slash commands and messages from the messages tab** is checked.
-3. The app was reinstalled after changing OAuth scopes or App Home settings.
-4. `message.im` is subscribed under **Event Subscriptions** for direct messages.
-5. `chat:write` and `im:history` are present under **OAuth & Permissions** for a minimal DM test.
-
-## 7. **Runtime Metadata**
+## 6. **Runtime Metadata**
 
 The Slack adapter decodes message events into `SocialMessage` and sets:
 
@@ -238,7 +215,7 @@ Route functions and hooks can read `message.session_id`,
 `message.conversation_id`, `message.sender_id`, and the same values in
 `context.state`.
 
-## 8. **Restrict Access**
+## 7. **Restrict Access**
 
 For internal bots, restrict access by Slack `sender_id`, channel, or team:
 
@@ -311,7 +288,7 @@ Use `sender_id` for user allowlists, `conversation_id` for channel allowlists,
 and `team_id` for workspace/tenant allowlists. The mention check prevents normal
 channel traffic from becoming agent work.
 
-## 9. **Rate Limits**
+## 8. **Rate Limits**
 
 Registry rate limits also apply to Slack social channels. Prefer stable Slack
 identities over IP-based buckets: webhook requests come from Slack, not from the
@@ -355,7 +332,7 @@ When a social rate limit rejects a message, msgFlux sends
 `"Too many requests. Try again later."`. Set it to `None` to drop rate-limited
 social events silently.
 
-## 10. **Commands**
+## 9. **Commands**
 
 Handle strong commands before the Agent. The model should not decide what
 `/start`, `/stop`, or `/cancel` means.
@@ -385,7 +362,7 @@ If no custom handler is registered, `/cancel` and `/stop` are built in. They
 cancel the active Agent task for `message.session_id`. For Slack, this means the
 active request for the current Slack thread.
 
-## 11. **Responses**
+## 10. **Responses**
 
 By default, Slack replies send only the final response text. Reasoning remains
 internal unless your Agent or post-processor explicitly maps it into the
@@ -394,7 +371,33 @@ outbound text.
 The adapter posts responses to `conversation_id` and preserves the inbound
 `thread_ts`, so threaded messages receive threaded replies.
 
-## 12. **Multimodal Input**
+The social boundary supports multiple outbound messages. Commands may return a
+list, and hooks/processors can call `SocialContext.send(...)`:
+
+```python
+@registry.social_command("/help", channel="slack")
+def help_command(message, context):
+    return [
+        "First, send me your question.",
+        "Then I will route it to the right agent.",
+    ]
+```
+
+```python
+@registry.post("support")
+async def notify_progress(output, context, run):
+    social_context = context.state["social_context"]
+    await social_context.send("Formatting the answer...")
+    return output
+```
+
+Any callable that receives the channel `context` can access
+`context.state["social_context"]` and send social messages. That includes hooks,
+auth handlers, authorizers, rate-limit bucket callables, pre-processors, and
+post-processors. Use this sparingly in auth/rate-limit paths; for those cases,
+prefer the configured social error messages unless you need custom behavior.
+
+## 11. **Multimodal Input**
 
 Slack message events may include `files`. The adapter preserves those file
 objects as `message.attachments` and does not download them automatically.

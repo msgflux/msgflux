@@ -974,6 +974,39 @@ def on_chunk(chunk, context, run):
     ...
 ```
 
+Hook usage by boundary:
+
+| Hook | Best use |
+| --- | --- |
+| `startup` | Validate env, warm model clients, open DB/cache connections. |
+| `shutdown` | Flush telemetry, close DB/cache clients, stop background work. |
+| `on_request_start` | Start traces, log sanitized request metadata, initialize per-run state. |
+| `on_request_end` | Emit success/error metrics, persist audit records, inspect final `run` and `error`. |
+| `on_stream_chunk` | Observe HTTP streaming chunks without coupling to the Agent. |
+
+For social channels, `context.channel` is `social:{name}` and
+`context.state["social_context"]` contains the `SocialContext`. Any callable that
+receives the channel `context` can send intermediate social messages:
+
+```python
+@registry.on_request_start
+async def social_start(request, context):
+    if context.channel.startswith("social:"):
+        await context.state["social_context"].send("Working...")
+
+
+@registry.post("support")
+async def progress_after_model(output, context, run):
+    if context.channel == "social:slack":
+        await context.state["social_context"].send("Formatting the answer...")
+    return output
+```
+
+Prefer hooks for observability and coarse progress signals. Prefer
+pre-processors for input shaping, such as converting social attachments into
+multimodal `messages`. Prefer post-processors for final response formatting or
+last-mile notifications.
+
 The HTTP boundary also propagates request metadata. Send `X-Correlation-ID` when
 you need one id shared across multiple services; otherwise it defaults to the
 request id.
