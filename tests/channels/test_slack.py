@@ -198,6 +198,52 @@ def test_slack_webhook_acknowledges_and_processes_message():
     ]
 
 
+def test_slack_webhook_deduplicates_retried_event():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    sent = []
+    agent = EchoAgent()
+    registry = ChannelRegistry()
+    registry.agent(agent)
+    registry.social_adapter(
+        "slack",
+        SlackAdapter(
+            signing_secret="secret",
+            sender=lambda outbound, _context: sent.append(outbound),
+        ),
+    )
+
+    @registry.social_route(channel="slack")
+    def route_slack(message, context):
+        return "support"
+
+    body = json.dumps(_slack_event("retry me")).encode()
+    headers = _signed_headers(body)
+    with TestClient(create_app(registry)) as client:
+        first = client.post(
+            "/social/slack/webhook",
+            headers={**headers, "Content-Type": "application/json"},
+            content=body,
+        )
+        second = client.post(
+            "/social/slack/webhook",
+            headers={**headers, "Content-Type": "application/json"},
+            content=body,
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == {"status": "accepted", "events": 1}
+        assert second.json() == {"status": "accepted", "events": 0}
+
+        deadline = time.time() + 2
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+
+    assert [message.text for message in sent] == ["echo: retry me"]
+    assert len(agent.calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_slack_adapter_send_posts_threaded_message(monkeypatch):
     requests = []

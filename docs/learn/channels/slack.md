@@ -70,9 +70,10 @@ decodes the event.
     `SocialWebhookResponse`.
 
     If the Slack client shows `Sending messages to this app has been turned off`,
-    open **App Home** in the Slack app settings and enable the **Messages** tab.
-    Slack requires that surface to be enabled before users can DM the app from
-    its app conversation.
+    open **App Home** in the Slack app settings. In **Show Tabs**, enable the
+    **Messages Tab** and check **Allow users to send Slash commands and messages
+    from the messages tab**. Save changes, reinstall the app to the workspace if
+    Slack asks, then refresh the Slack client.
 
     To find the bot user id used for channel mention routing, run:
 
@@ -189,7 +190,33 @@ Subscribe the bot to message events that match your use case, for example:
 Grant the bot a send-message scope such as `chat:write`, then reinstall the app
 if Slack asks you to apply scope changes.
 
-## 6. **Runtime Metadata**
+## 6. **Enable Direct Messages**
+
+Slack separates event delivery from the app conversation UI. A valid Request URL
+and valid OAuth scopes are not enough to make the app DM surface writable.
+
+In the Slack app settings, open **App Home** and confirm:
+
+| Setting | Required value |
+| --- | --- |
+| **Home Tab** | Optional for message handling. |
+| **Messages Tab** | Enabled. |
+| **Allow users to send Slash commands and messages from the messages tab** | Checked. |
+
+After changing these settings, save and reinstall the app to the workspace if
+Slack prompts you. If the Slack client still shows the old state, refresh the
+client or reopen the app conversation.
+
+If Slack shows `This is still a work in progress` or `Sending messages to this
+app has been turned off`, verify these items first:
+
+1. The **Messages Tab** is enabled in **App Home**.
+2. The checkbox **Allow users to send Slash commands and messages from the messages tab** is checked.
+3. The app was reinstalled after changing OAuth scopes or App Home settings.
+4. `message.im` is subscribed under **Event Subscriptions** for direct messages.
+5. `chat:write` and `im:history` are present under **OAuth & Permissions** for a minimal DM test.
+
+## 7. **Runtime Metadata**
 
 The Slack adapter decodes message events into `SocialMessage` and sets:
 
@@ -211,7 +238,7 @@ Route functions and hooks can read `message.session_id`,
 `message.conversation_id`, `message.sender_id`, and the same values in
 `context.state`.
 
-## 7. **Restrict Access**
+## 8. **Restrict Access**
 
 For internal bots, restrict access by Slack `sender_id`, channel, or team:
 
@@ -284,7 +311,7 @@ Use `sender_id` for user allowlists, `conversation_id` for channel allowlists,
 and `team_id` for workspace/tenant allowlists. The mention check prevents normal
 channel traffic from becoming agent work.
 
-## 8. **Rate Limits**
+## 9. **Rate Limits**
 
 Registry rate limits also apply to Slack social channels. Prefer stable Slack
 identities over IP-based buckets: webhook requests come from Slack, not from the
@@ -323,10 +350,18 @@ registry.rate_limit(
 Use `"service"` for a global bot-wide cap and `"tenant"` when your auth handler
 maps Slack users, channels, or teams to tenants.
 
-## 9. **Commands**
+When a social rate limit rejects a message, msgFlux sends
+`social_rate_limit_message` if configured. The default is
+`"Too many requests. Try again later."`. Set it to `None` to drop rate-limited
+social events silently.
+
+## 10. **Commands**
 
 Handle strong commands before the Agent. The model should not decide what
 `/start`, `/stop`, or `/cancel` means.
+
+Commands run after social auth and before route. This prevents unauthenticated
+senders from calling `/cancel` or custom command handlers.
 
 Use `@registry.social_command` for command-specific behavior. Commands can be
 scoped by social channel:
@@ -350,7 +385,7 @@ If no custom handler is registered, `/cancel` and `/stop` are built in. They
 cancel the active Agent task for `message.session_id`. For Slack, this means the
 active request for the current Slack thread.
 
-## 10. **Responses**
+## 11. **Responses**
 
 By default, Slack replies send only the final response text. Reasoning remains
 internal unless your Agent or post-processor explicitly maps it into the

@@ -77,6 +77,29 @@ webhooks while allowing modest clock skew.
 Skipping the signing secret is useful for local experiments but should not be
 used for production Slack apps.
 
+## Slack App Surface Requirements
+
+Slack Events API delivery and Slack's app conversation UI are configured in
+different places.
+
+The webhook can be valid, signed, and subscribed to `message.im`, while the Slack
+client still refuses direct messages with errors such as `Sending messages to
+this app has been turned off` or `This is still a work in progress`.
+
+For direct messages from the app conversation, the Slack app must also have:
+
+- **App Home** enabled as needed for the app.
+- **Messages Tab** enabled.
+- **Allow users to send Slash commands and messages from the messages tab**
+  checked.
+
+After changing these settings or OAuth scopes, the app may need to be reinstalled
+to the workspace and the Slack client refreshed.
+
+This is intentionally not represented in `SlackAdapter`. The adapter receives
+only webhooks that Slack decides to deliver; app-surface availability remains an
+external Slack app configuration prerequisite.
+
 ## Webhook Response Path
 
 `SlackAdapter.webhook_response(...)` decodes the JSON body and handles only
@@ -112,6 +135,15 @@ It ignores:
 
 Ignoring bot messages is important because the adapter sends responses with
 `chat.postMessage`. Without this guard the bot could consume its own replies.
+
+The current Slack adapter is text-first. It does not yet map Slack `files`,
+image shares, audio, or other rich message blocks into `SocialAttachment` or
+`SocialMessage.content`. If a Slack event has no `text`, it is ignored. If it has
+text plus files, only the text is currently preserved.
+
+Adding Slack multimodal input should happen in the adapter by decoding file
+metadata into `SocialAttachment` and, only when application policy permits,
+resolving media into chat-completion content blocks before the Agent run.
 
 ## Slack Identity Mapping
 
@@ -159,6 +191,23 @@ pre-processors, and rate-limit bucket callables.
 The adapter does not inject Slack metadata into `vars`. If an application wants
 Slack team/channel/user data inside the Agent's runtime variables, it should do
 that explicitly in a pre-processor.
+
+## Multimodal Status
+
+The shared Social Boundary can pass multimodal user content when
+`SocialMessage.content` is set. The Slack adapter does not currently set it.
+
+Current behavior:
+
+- plain Slack text messages are routed to the Agent
+- Slack messages without text are ignored
+- Slack file/image metadata is not yet exposed as `SocialAttachment`
+- outbound responses are text-only through `chat.postMessage`
+
+This keeps the MVP safe because file download, file size limits, content type
+allowlists, temporary URL handling, and retention rules need explicit application
+policy. The next Slack multimodal step is to preserve inbound Slack file metadata
+without downloading it automatically.
 
 ## Sending Responses
 
@@ -217,8 +266,9 @@ Slack Events API
   -> SlackAdapter.webhook_response(...)
      -> url_verification returns challenge immediately
   -> SlackAdapter.decode(...)
+  -> social dedupe by message id
   -> SocialEvent(channel="slack", message=SocialMessage(...))
-  -> SocialBoundary command/route/debounce/auth/rate-limit/run
+  -> SocialBoundary auth/command/route/debounce/authorize/rate-limit/run
   -> SlackAdapter.send(...)
   -> Slack chat.postMessage
 ```
