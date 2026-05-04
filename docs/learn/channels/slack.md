@@ -69,6 +69,23 @@ decodes the event.
     Slack adapter responds with the challenge automatically through
     `SocialWebhookResponse`.
 
+    If the Slack client shows `Sending messages to this app has been turned off`,
+    open **App Home** in the Slack app settings and enable the **Messages** tab.
+    Slack requires that surface to be enabled before users can DM the app from
+    its app conversation.
+
+    To find the bot user id used for channel mention routing, run:
+
+    ```bash
+    uv run --with 'msgflux[server]' msgflux slack auth-info
+    ```
+
+    Use the returned `user_id` as `SLACK_BOT_USER_ID`.
+
+    ```bash
+    SLACK_BOT_USER_ID=U012ABCDEF
+    ```
+
 ## 2. **Register the Adapter**
 
 ```python

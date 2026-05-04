@@ -2,6 +2,7 @@ import argparse
 from typing import Optional, Sequence
 
 from msgflux.channels.http.cli import run_server
+from msgflux.channels.social.slack.cli import run_slack
 from msgflux.channels.social.telegram.cli import run_telegram
 
 
@@ -90,6 +91,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show Telegram webhook status",
     )
 
+    slack_parser = subparsers.add_parser(
+        "slack",
+        help="Inspect Slack social channel configuration",
+    )
+    slack_parser.add_argument(
+        "--env-file",
+        default=".env",
+        help="Load SLACK_BOT_TOKEN from this file.",
+    )
+    slack_parser.add_argument("--bot-token")
+    slack_parser.add_argument("--bot-token-env", default="SLACK_BOT_TOKEN")
+    slack_parser.add_argument("--timeout-s", default=10.0, type=float)
+    slack_subparsers = slack_parser.add_subparsers(
+        dest="slack_action",
+        required=True,
+    )
+    slack_subparsers.add_parser(
+        "auth-info",
+        help="Show Slack auth.test details, including the bot user id",
+    )
+
     return parser
 
 
@@ -101,6 +123,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_server(args)
     if args.command == "telegram":
         return run_telegram(args)
+    if args.command == "slack":
+        return run_slack(args)
 
     parser.error("Unsupported command")
     return 2
