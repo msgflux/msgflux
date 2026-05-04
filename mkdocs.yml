@@ -180,6 +180,7 @@ nav:
     - ⇄ Channels:
       - learn/channels/index.md
       - Telegram: learn/channels/telegram.md
+      - Slack: learn/channels/slack.md
     - ◎ Telemetry: learn/telemetry.md
     - API Reference:
       - Models:

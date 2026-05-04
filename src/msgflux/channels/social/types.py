@@ -50,6 +50,13 @@ class SocialEvent:
 
 
 @dataclass
+class SocialWebhookResponse:
+    status_code: int = 200
+    payload: Dict[str, Any] = field(default_factory=dict)
+    events: int = 0
+
+
+@dataclass
 class OutboundSocialMessage:
     channel: str
     conversation_id: str
