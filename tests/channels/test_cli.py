@@ -73,3 +73,23 @@ def test_telegram_cli_parses_set_webhook():
     assert args.url == "https://example.com/social/telegram/webhook"
     assert args.drop_pending_updates is True
     assert args.allowed_updates == ["message", "edited_message"]
+
+
+def test_slack_cli_parses_auth_info():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "slack",
+            "--env-file",
+            ".env.local",
+            "--bot-token-env",
+            "CUSTOM_SLACK_TOKEN",
+            "auth-info",
+        ]
+    )
+
+    assert args.command == "slack"
+    assert args.slack_action == "auth-info"
+    assert args.env_file == ".env.local"
+    assert args.bot_token_env == "CUSTOM_SLACK_TOKEN"
