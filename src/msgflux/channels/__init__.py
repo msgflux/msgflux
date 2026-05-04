@@ -21,6 +21,7 @@ from msgflux.channels.registry import (
     RateLimitPolicy,
 )
 from msgflux.channels.social import (
+    DiscordInteractionsAdapter,
     InMemorySocialDedupStore,
     InMemorySocialEventBus,
     OutboundSocialMessage,
@@ -45,6 +46,7 @@ __all__ = [
     "ChannelRegistry",
     "ChannelSettings",
     "ForbiddenError",
+    "DiscordInteractionsAdapter",
     "InMemoryRateLimitStore",
     "InMemorySocialDedupStore",
     "InMemorySocialEventBus",

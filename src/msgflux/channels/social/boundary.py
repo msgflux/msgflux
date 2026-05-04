@@ -115,7 +115,7 @@ class SocialBoundary:
             raise ForbiddenError("Invalid social webhook signature")
 
         webhook_response = await self._webhook_response(adapter, body, http_request)
-        if webhook_response is not None:
+        if webhook_response is not None and not webhook_response.continue_processing:
             return webhook_response
 
         messages = await call_processor(adapter.decode, body, http_request)
@@ -127,10 +127,14 @@ class SocialBoundary:
                 SocialEvent(channel=channel_key, adapter=adapter, message=message)
             )
             count += 1
-        return SocialWebhookResponse(
+        accepted_response = SocialWebhookResponse(
             payload={"status": "accepted", "events": count},
             events=count,
         )
+        if webhook_response is not None:
+            webhook_response.events = count
+            return webhook_response
+        return accepted_response
 
     async def _webhook_response(
         self,

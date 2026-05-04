@@ -33,6 +33,9 @@ Use this section when you need to answer questions like:
 - [Social Boundary And Slack](social-boundary-slack.md): how Slack Events
   API verification, URL challenges, and threaded messages map into the social
   boundary.
+- [Social Boundary And Discord](social-boundary-discord.md): how Discord
+  Interactions verification, PING handshakes, deferred responses, and follow-up
+  messages map into the social boundary.
 - [Chat Schema Utils](chat-schema-utils.md): schema-envelope helpers for
   `response_format`, tool JSON schema generation, and shared ChatML blocks.
 - [msgspec Transport Lowering](msgspec-transport-lowering.md): the type

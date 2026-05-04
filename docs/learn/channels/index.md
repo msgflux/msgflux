@@ -1035,9 +1035,9 @@ same values are returned as response headers.
 ## 10. **Social Channels**
 
 Social channels use webhook adapters to convert platform events into normal
-agent calls. The first supported adapter is Telegram. See
-[Telegram Social Channel](telegram.md) for local tunneling, webhook setup,
-routing, and runtime metadata.
+agent calls. See [Telegram Social Channel](telegram.md),
+[Slack Social Channel](slack.md), and [Discord Social Channel](discord.md) for
+local tunneling, webhook setup, routing, and runtime metadata.
 
 ## 11. **Serving Custom Modules**
 

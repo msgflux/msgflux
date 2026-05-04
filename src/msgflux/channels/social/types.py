@@ -54,6 +54,7 @@ class SocialWebhookResponse:
     status_code: int = 200
     payload: Dict[str, Any] = field(default_factory=dict)
     events: int = 0
+    continue_processing: bool = False
 
 
 @dataclass
