@@ -528,8 +528,6 @@ class Agent(Module, metaclass=AutoParams):
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
     ) -> Mapping[str, Any]:
-        system_prompt = self.get_system_prompt(vars)
-
         tool_schemas = self.tool_library.get_tool_json_schemas()
 
         tool_choice = self.config.get("tool_choice")
@@ -538,6 +536,12 @@ class Agent(Module, metaclass=AutoParams):
             tool_schemas = self._apply_tool_filter(tool_schemas, tool_filter)
 
         tool_choice = self._resolve_tool_choice(tool_choice, tool_schemas)
+        tool_names = {
+            schema["function"]["name"]
+            for schema in tool_schemas or []
+            if schema.get("function", {}).get("name")
+        }
+        system_prompt = self.get_system_prompt(vars, tool_names=tool_names)
 
         if not tool_schemas:
             tool_schemas = None
@@ -2203,7 +2207,11 @@ class Agent(Module, metaclass=AutoParams):
 
     # --- System Prompt ---
 
-    def get_system_prompt(self, vars: Optional[Mapping[str, Any]] = None) -> str:
+    def get_system_prompt(
+        self,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_names: Optional[set[str]] = None,
+    ) -> str:
         """Render the system prompt using the Jinja template.
         Returns an empty string if no segments are provided.
         """
@@ -2213,6 +2221,7 @@ class Agent(Module, metaclass=AutoParams):
             expected_output=self.expected_output.data,
             examples=self.examples.data,
             system_extra_message=self.system_extra_message,
+            tool_usage_guidance=self.tool_library.get_tool_usage_guidance(tool_names),
         )
 
         if self.config.get("include_date", False):

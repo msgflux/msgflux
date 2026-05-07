@@ -12,6 +12,7 @@ class WebFetch:
     """Fetches web pages as Markdown via a remote parser endpoint."""
 
     name = "web_fetch"
+    display_name = "Web Fetch"
 
     def __init__(
         self,

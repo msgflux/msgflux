@@ -116,6 +116,14 @@ class MCPTool(Tool):
         # Set full tool name with namespace
         full_name = f"{namespace}__{name}"
         self.set_name(full_name)
+        self.register_buffer(
+            "display_name",
+            config.get("display_name", full_name) if config else full_name,
+        )
+        self.register_buffer(
+            "usage_guidance",
+            config.get("usage_guidance") if config else None,
+        )
 
         # Store MCP-specific data
         self._mcp_client = mcp_client
@@ -184,10 +192,14 @@ class LocalTool(Tool):
         tool_config: Dict[str, Any],
         impl: Callable,
         transport_params: Optional[Dict[str, Any]] = None,
+        display_name: Optional[str] = None,
+        usage_guidance: Optional[str] = None,
     ):
         super().__init__()
         self.set_name(name)
         self.set_description(description)
+        self.register_buffer("display_name", display_name or name)
+        self.register_buffer("usage_guidance", usage_guidance)
         self.set_annotations(annotations)
         self.register_buffer("tool_config", tool_config)
         self.register_buffer("transport_params", transport_params or {})
@@ -264,6 +276,8 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
     tool_config = getattr(impl, "tool_config", dotdict())
 
     name_overridden = tool_config.pop("name_overridden", None)
+    configured_display_name = tool_config.get("display_name")
+    configured_usage_guidance = tool_config.get("usage_guidance")
 
     # Case 1: Uninitialized or initialized class
     if inspect.isclass(impl) or callable(impl):
@@ -291,10 +305,16 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
             or getattr(impl, "name", None)
             or getattr(impl, "__name__", None)
         )
+        display_name = configured_display_name or getattr(impl, "display_name", None)
+        usage_guidance = configured_usage_guidance or getattr(
+            impl, "usage_guidance", None
+        )
 
         # Instantiate class first if needed, so we can get instance attributes
         if inspect.isclass(impl):
             impl = impl()  # Initialized
+            display_name = display_name or getattr(impl, "display_name", None)
+            usage_guidance = usage_guidance or getattr(impl, "usage_guidance", None)
 
         # Now extract annotations (after instantiation for classes)
         annotations = (
@@ -333,6 +353,10 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
             annotations = {}
 
         name = name_overridden or impl.__name__
+        display_name = configured_display_name or getattr(impl, "display_name", None)
+        usage_guidance = configured_usage_guidance or getattr(
+            impl, "usage_guidance", None
+        )
 
     else:
         raise ValueError(
@@ -354,6 +378,8 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
         annotations=annotations,
         tool_config=tool_config,
         impl=impl,
+        display_name=display_name or name,
+        usage_guidance=usage_guidance,
     )
 
 
@@ -527,6 +553,62 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def get_tool_names(self) -> List[str]:
         """Get names of all tools."""
         return list(self.library.keys())
+
+    def get_tool_display_names(self) -> Dict[str, str]:
+        """Return human-readable display names keyed by tool name."""
+        display_names = {}
+        for tool_name, tool in self.library.items():
+            display_names[tool_name] = getattr(tool, "display_name", tool_name)
+
+        if self.mcp_clients:
+            for namespace, mcp_data in self.mcp_clients.items():
+                tool_configs = mcp_data.get("tool_config", {})
+                for mcp_tool in mcp_data["tools"]:
+                    tool_name = f"{namespace}__{mcp_tool.name}"
+                    config = tool_configs.get(mcp_tool.name, {})
+                    display_names[tool_name] = config.get("display_name", tool_name)
+
+        return display_names
+
+    def get_tool_usage_guidance(
+        self, tool_names: Optional[set[str]] = None
+    ) -> List[Dict[str, str]]:
+        """Return usage guidance metadata for tools that define it."""
+        guidance = []
+        display_names = self.get_tool_display_names()
+
+        for tool_name, tool in self.library.items():
+            if tool_names is not None and tool_name not in tool_names:
+                continue
+            usage_guidance = getattr(tool, "usage_guidance", None)
+            if usage_guidance:
+                guidance.append(
+                    {
+                        "name": tool_name,
+                        "display_name": display_names.get(tool_name, tool_name),
+                        "guidance": usage_guidance,
+                    }
+                )
+
+        if self.mcp_clients:
+            for namespace, mcp_data in self.mcp_clients.items():
+                tool_configs = mcp_data.get("tool_config", {})
+                for mcp_tool in mcp_data["tools"]:
+                    tool_name = f"{namespace}__{mcp_tool.name}"
+                    if tool_names is not None and tool_name not in tool_names:
+                        continue
+                    config = tool_configs.get(mcp_tool.name, {})
+                    usage_guidance = config.get("usage_guidance")
+                    if usage_guidance:
+                        guidance.append(
+                            {
+                                "name": tool_name,
+                                "display_name": display_names.get(tool_name, tool_name),
+                                "guidance": usage_guidance,
+                            }
+                        )
+
+        return guidance
 
     def get_mcp_tool_names(self) -> List[str]:
         """Get names of all MCP tools (with namespace)."""

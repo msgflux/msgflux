@@ -5,6 +5,7 @@ import pytest
 
 import msgflux.tools.builtin.web_fetch as web_fetch_module
 from msgflux.tools.builtin.web_fetch import WebFetch
+from msgflux.nn.modules.tool import ToolLibrary
 
 
 class TestWebFetchInit:
@@ -12,6 +13,7 @@ class TestWebFetchInit:
 
     def test_name_attribute(self):
         assert WebFetch.name == "web_fetch"
+        assert WebFetch.display_name == "Web Fetch"
 
     def test_defaults(self):
         tool = WebFetch()
@@ -39,6 +41,11 @@ class TestWebFetchInit:
     def test_custom_timeout(self):
         tool = WebFetch(timeout=5)
         assert tool.timeout == 5
+
+    def test_tool_library_uses_builtin_display_name(self):
+        library = ToolLibrary(name="web", tools=[WebFetch])
+
+        assert library.get_tool_display_names()["web_fetch"] == "Web Fetch"
 
 
 class TestBuildUrl:
@@ -159,7 +166,7 @@ class TestWebFetchCall:
         )
 
         tool = WebFetch()
-        with pytest.raises(RuntimeError, match="https://example.com"):
+        with pytest.raises(RuntimeError, match=r"https://example\.com"):
             tool("https://example.com")
 
     def test_raises_import_error_when_httpx_unavailable(self, mocker):

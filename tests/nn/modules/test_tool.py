@@ -619,6 +619,79 @@ class TestToolLibrary:
         assert "tool1" in names
         assert "tool2" in names
 
+    def test_tool_library_get_tool_display_names(self):
+        """Test getting human-readable tool display names."""
+
+        def plain_tool(x: int) -> int:
+            """Plain tool."""
+            return x
+
+        def configured_tool(x: int) -> int:
+            """Configured tool."""
+            return x
+
+        configured_tool.tool_config = dotdict({"display_name": "Configured Tool"})
+        library = ToolLibrary(name="lib", tools=[plain_tool, configured_tool])
+
+        display_names = library.get_tool_display_names()
+
+        assert display_names["plain_tool"] == "plain_tool"
+        assert display_names["configured_tool"] == "Configured Tool"
+
+    def test_tool_library_get_tool_usage_guidance(self):
+        """Test getting tool usage guidance metadata."""
+
+        def search_orders(order_id: str) -> str:
+            """Search orders."""
+            return order_id
+
+        search_orders.tool_config = dotdict(
+            {
+                "display_name": "Order Search",
+                "usage_guidance": "Use when the user asks about an order.",
+            }
+        )
+        library = ToolLibrary(name="lib", tools=[search_orders])
+
+        guidance = library.get_tool_usage_guidance()
+
+        assert guidance == [
+            {
+                "name": "search_orders",
+                "display_name": "Order Search",
+                "guidance": "Use when the user asks about an order.",
+            }
+        ]
+
+    def test_tool_library_filters_tool_usage_guidance(self):
+        """Test usage guidance can be filtered by exposed tool names."""
+
+        def search_orders(order_id: str) -> str:
+            """Search orders."""
+            return order_id
+
+        def cancel_order(order_id: str) -> str:
+            """Cancel orders."""
+            return order_id
+
+        search_orders.tool_config = dotdict(
+            {"usage_guidance": "Use for order status questions."}
+        )
+        cancel_order.tool_config = dotdict(
+            {"usage_guidance": "Use for order cancellation requests."}
+        )
+        library = ToolLibrary(name="lib", tools=[search_orders, cancel_order])
+
+        guidance = library.get_tool_usage_guidance(tool_names={"search_orders"})
+
+        assert guidance == [
+            {
+                "name": "search_orders",
+                "display_name": "search_orders",
+                "guidance": "Use for order status questions.",
+            }
+        ]
+
     def test_tool_library_get_tool_json_schemas(self):
         """Test getting tool JSON schemas."""
 
