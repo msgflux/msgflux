@@ -1,4 +1,5 @@
 """Unit tests for msgflux.tools.builtin.web_search."""
+
 from unittest.mock import MagicMock
 
 import pytest
