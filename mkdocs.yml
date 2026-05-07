@@ -140,6 +140,7 @@ nav:
       - learn/retrievers/lexical.md
       - learn/retrievers/fuzzy.md
       - learn/retrievers/web.md
+      - learn/retrievers/weather.md
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md

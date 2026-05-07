@@ -278,6 +278,58 @@ export MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS='{"include_text": true}'
 export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS='{"top_k": 5}'
 ```
 
+#### Weather
+
+`Weather` gets current, forecast, or historical weather data for a location:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import Weather
+
+weather = Weather()
+
+class WeatherAssistant(nn.Agent):
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    system_message = "You help users understand weather conditions."
+    tools = [weather]
+    config = {"verbose": True}
+
+agent = WeatherAssistant()
+result = agent("Is it raining in Fortaleza right now?")
+```
+
+The public tool call accepts:
+
+- **`location`**: A simple city/place name such as `"Fortaleza"`. Coordinates like `"-3.71722,-38.54306"` are also accepted when the user provides them.
+
+- **`when`**: `"now"`, a relative time like `"+6h"` or `"-3d"`, or an ISO datetime.
+
+```python
+weather = Weather(
+    engine="open_meteo",
+    max_future_days=7,
+    max_past_days=90,
+    forecast_hours_when_now=6,
+)
+
+current = weather("Fortaleza")
+forecast = weather("Fortaleza", when="+6h")
+historical = weather("-3.71722,-38.54306", when="-3d")
+```
+
+If `engine` is not passed, `Weather` reads `MSGFLUX_TOOL_WEATHER_ENGINE`. When
+neither is set, it defaults to `open_meteo`.
+
+The tool returns a structured `dotdict` with:
+
+- `location`: resolved name, coordinates, and resolution source
+- `when`: requested target time, kind (`now`, `future`, or `past`), and whether it was clamped
+- `weather`: temperature, apparent temperature, humidity, condition, rain, cloud cover, and wind data
+- `forecast`: next hourly items when available
+- `source`: provider and endpoint metadata
+- `units`: units reported by the weather provider
+
 ---
 
 ???+ example
@@ -358,6 +410,48 @@ export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS='{"top_k": 5}'
         explicitly, `WebSearch` reads the JSON objects from
         `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
         `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
+
+    === "Weather"
+
+        Get current, forecast, or historical weather data:
+
+        ```python
+        # pip install msgflux[openai] httpx
+        import msgflux as mf
+        import msgflux.nn as nn
+        from msgflux.tools.builtin import Weather
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        weather = Weather(
+            engine="open_meteo",
+            max_future_days=7,
+            max_past_days=90,
+            forecast_hours_when_now=6,
+        )
+
+        class WeatherAssistant(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            system_message = "You help users understand weather conditions."
+            tools = [weather]
+            config = {"verbose": True}
+
+        agent = WeatherAssistant()
+
+        response = agent("Will it rain in Fortaleza in the next few hours?")
+        ```
+
+        You can also call the tool directly:
+
+        ```python
+        current = weather("Fortaleza")
+        forecast = weather("Fortaleza", when="+6h")
+        historical = weather("-3.71722,-38.54306", when="-3d")
+        ```
+
+        The tool returns structured weather data instead of prose, so the agent
+        can decide how to summarize current conditions, forecasts, and
+        historical observations.
 
     === "Wikipedia Search"
 
