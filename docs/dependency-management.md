@@ -149,6 +149,7 @@ hide:
 |-------------|----------------------------------|-----------------------------------|
 | Trafilatura | `httpx`, `trafilatura`           |                                   |
 | SerpApi     | `httpx`                          | `SERPAPI_KEY`                     |
+| Ceramic     | `httpx`                          | `CERAMIC_API_KEY`                 |
 | Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
 | Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
 | Exa         | `exa-py`                         | `EXA_API_KEY`                     |
