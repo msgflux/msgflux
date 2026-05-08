@@ -59,8 +59,7 @@ class CeramicWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             return api_key
 
         raise ValueError(
-            "The Ceramic API key is not available. "
-            f"Please set `{API_KEY_ENV_NAME}`"
+            f"The Ceramic API key is not available. Please set `{API_KEY_ENV_NAME}`"
         )
 
     def _build_headers(self) -> dict:
