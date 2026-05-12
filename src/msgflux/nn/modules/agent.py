@@ -2230,9 +2230,12 @@ class Agent(Module, metaclass=AutoParams):
             expected_output=self.expected_output.data,
             examples=self.examples.data,
             system_extra_message=self.system_extra_message,
-            agent_skills=self.agent_skill_manager.render_catalog()
+            agent_skills=self.agent_skill_manager.catalog()
             if self.agent_skill_manager.has_skills()
             else None,
+            agent_skill_search_enabled=self.agent_skill_manager.has_hidden_discoverable_skills()
+            if self.agent_skill_manager.has_skills()
+            else False,
         )
 
         if self.config.get("include_date", False):

@@ -6,7 +6,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import msgflux as mf
 from msgflux import nn
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
@@ -51,7 +50,7 @@ class ScriptedModel:
             text_response("I loaded the code-review skill and will use its checklist."),
         ]
 
-    def __call__(self, **kwargs):
+    def __call__(self, **_kwargs):
         if not self.responses:
             raise RuntimeError("Scripted model exhausted.")
         return self.responses.pop(0)
@@ -60,16 +59,24 @@ class ScriptedModel:
         return self(**kwargs)
 
 
-def write_skill(root: Path, name: str, description: str, body: str) -> None:
+def write_skill(
+    root: Path,
+    name: str,
+    description: str,
+    body: str,
+    *,
+    discoverable: bool = False,
+) -> None:
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
+    discoverable_line = ["discoverable: true"] if discoverable else []
     (skill_dir / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
                 f"name: {name}",
                 f"description: {description}",
-                "discoverable: true",
+                *discoverable_line,
                 "---",
                 body,
             ]
@@ -94,6 +101,7 @@ def main() -> None:
             "release-notes",
             "Write concise release notes from merged changes.",
             "# Release Notes\n\nGroup changes by user-visible impact.",
+            discoverable=True,
         )
 
         agent = nn.Agent(
