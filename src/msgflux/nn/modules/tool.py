@@ -183,12 +183,14 @@ class LocalTool(Tool):
         annotations: Dict[str, Any],
         tool_config: Dict[str, Any],
         impl: Callable,
+        display_name: Optional[str] = None,
         transport_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.set_name(name)
         self.set_description(description)
         self.set_annotations(annotations)
+        self.register_buffer("display_name", display_name)
         self.register_buffer("tool_config", tool_config)
         self.register_buffer("transport_params", transport_params or {})
         self.impl = impl  # Not a buffer for now
@@ -296,6 +298,8 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
         if inspect.isclass(impl):
             impl = impl()  # Initialized
 
+        display_name = getattr(impl, "display_name", None)
+
         # Now extract annotations (after instantiation for classes)
         annotations = (
             getattr(impl, "annotations", None)
@@ -333,6 +337,7 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
             annotations = {}
 
         name = name_overridden or impl.__name__
+        display_name = getattr(impl, "display_name", None)
 
     else:
         raise ValueError(
@@ -354,6 +359,7 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
         annotations=annotations,
         tool_config=tool_config,
         impl=impl,
+        display_name=display_name,
     )
 
 
