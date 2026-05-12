@@ -36,7 +36,6 @@ class AgentSkill:
     compatibility: Optional[str] = None
     allowed_tools: Optional[str] = None
     discoverable: bool = False
-    catalog: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     @property
@@ -149,7 +148,6 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
         if isinstance(metadata.get("allowed-tools"), str)
         else None,
         discoverable=_parse_bool(metadata.get("discoverable"), default=False),
-        catalog=_parse_bool(metadata.get("catalog"), default=True),
         metadata={str(k): str(v) for k, v in skill_metadata.items()},
     )
 
@@ -315,48 +313,21 @@ class AgentSkillManager:
         skills = [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if skill.catalog
+            if not skill.discoverable
         ]
         if self.catalog_limit is None:
             return skills
         return skills[: max(int(self.catalog_limit), 0)]
 
-    def render_catalog(self) -> str:
-        skills = self.catalog_skills()
-        if not skills:
-            return ""
-
-        entries = []
-        for skill in skills:
-            entries.append(
-                "\n".join(
-                    [
-                        "  <skill>",
-                        f"    <name>{skill.name}</name>",
-                        f"    <description>{skill.description}</description>",
-                        f"    <location>{skill.path}</location>",
-                        "  </skill>",
-                    ]
-                )
-            )
-        hidden_count = len(self.skills) - len(skills)
-        search_hint = (
-            "\nMore skills are available. Use `skill_search` to find hidden "
-            "discoverable skills."
-            if hidden_count > 0 and self.has_hidden_discoverable_skills()
-            else ""
-        )
-        return (
-            "The following Agent Skills are available. Use them when the task "
-            "matches a skill description. To activate a skill, call "
-            "`activate_skill` with the skill name before following that skill's "
-            "workflow. When a skill references relative paths, resolve them "
-            "against the skill directory returned by `activate_skill`.\n"
-            "<available_skills>\n"
-            + "\n".join(entries)
-            + "\n</available_skills>"
-            + search_hint
-        )
+    def catalog(self) -> list[dict[str, str]]:
+        return [
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "location": str(skill.path),
+            }
+            for skill in self.catalog_skills()
+        ]
 
     def search(self, query: str, *, top_k: Optional[int] = None) -> str:
         results = self.search_results(query, top_k=top_k)

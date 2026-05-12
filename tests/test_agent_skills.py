@@ -15,7 +15,6 @@ def _write_skill(
     body=None,
     *,
     discoverable=None,
-    catalog=None,
 ):
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
@@ -27,8 +26,6 @@ def _write_skill(
     ]
     if discoverable is not None:
         lines.append(f"discoverable: {str(discoverable).lower()}")
-    if catalog is not None:
-        lines.append(f"catalog: {str(catalog).lower()}")
     lines.extend(
         [
             "metadata:",
@@ -90,7 +87,6 @@ def test_parse_skill_file_reads_frontmatter_and_body(tmp_path):
     assert skill.description.startswith("Extract PDF")
     assert skill.metadata == {"owner": "docs-team"}
     assert skill.discoverable is False
-    assert skill.catalog is True
     assert "Follow the PDF workflow" in skill.body
 
 
@@ -140,7 +136,6 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
         name="release-notes",
         description="Write release notes",
         discoverable=True,
-        catalog=False,
     )
     agent_with_skills = Agent(
         name="agent", model=_ScriptedModel([]), skills=skills_root
@@ -211,7 +206,6 @@ def test_agent_can_search_hidden_discoverable_skills(tmp_path):
         name="hidden-release-notes",
         description="Write concise release notes from merged changes.",
         discoverable=True,
-        catalog=False,
     )
     model = _ScriptedModel(
         [
@@ -236,15 +230,15 @@ def test_agent_can_search_hidden_discoverable_skills(tmp_path):
     )
 
 
-def test_catalog_limit_hides_extra_discoverable_skills_and_enables_search(tmp_path):
+def test_discoverable_skills_are_hidden_from_catalog_and_enable_search(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
-    _write_skill(skills_root, name="alpha", discoverable=True)
+    _write_skill(skills_root, name="alpha")
     _write_skill(skills_root, name="beta", discoverable=True)
 
     agent = Agent(
         name="agent",
         model=_ScriptedModel([]),
-        skills={"paths": skills_root, "catalog_limit": 1},
+        skills=skills_root,
     )
     system_prompt = agent.get_system_prompt()
 

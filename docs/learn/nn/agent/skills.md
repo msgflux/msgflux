@@ -45,12 +45,10 @@ The required fields are:
 Optional fields such as `license`, `compatibility`, `metadata`, and
 `allowed-tools` are parsed and stored by the runtime.
 
-Skill visibility fields:
+Skill visibility field:
 
-- `catalog`: include the skill in the initial system prompt catalog. Defaults
-  to `true`.
-- `discoverable`: include the skill in `skill_search` results. Defaults to
-  `false`.
+- `discoverable`: keep the skill out of the initial system prompt catalog and
+  make it available through `skill_search`. Defaults to `false`.
 
 ## Passing Skill Directories
 
@@ -132,13 +130,14 @@ agent = nn.Agent(
 Config keys:
 
 - `paths`: directory, `SKILL.md` file, glob pattern, or list of those.
-- `catalog_limit`: maximum number of catalog-visible skills included in the
+- `catalog_limit`: maximum number of non-discoverable skills included in the
   system prompt. Use `0` to keep the initial catalog empty.
 - `search_top_k`: default number of results returned by `skill_search`.
 
 ## System Prompt Field
 
-Skills are rendered through the `agent_skills` system prompt template field.
+Skills are rendered by the system prompt template from the `agent_skills`
+structured field.
 
 The default template emits:
 
@@ -155,8 +154,8 @@ The following Agent Skills are available...
 </agent_skills>
 ```
 
-If you override `templates["system_prompt"]`, include `agent_skills` where you
-want the catalog to appear:
+If you override `templates["system_prompt"]`, render `agent_skills` with Jinja
+where you want the catalog to appear:
 
 ```python
 agent = nn.Agent(
@@ -169,7 +168,13 @@ agent = nn.Agent(
         {{ instructions }}
         {% if agent_skills %}
         <agent_skills>
-        {{ agent_skills }}
+        {% for skill in agent_skills %}
+        <skill>
+          <name>{{ skill.name }}</name>
+          <description>{{ skill.description }}</description>
+          <location>{{ skill.location }}</location>
+        </skill>
+        {% endfor %}
         </agent_skills>
         {% endif %}
         </system_note>
@@ -215,15 +220,13 @@ internal tool:
 skill_search(query: str, top_k: int | None = None) -> str
 ```
 
-A hidden discoverable skill is one that is not in the initial catalog, either
-because `catalog: false` is set or because `catalog_limit` cut it from the
-prompt, and has `discoverable: true`.
+A discoverable skill is intentionally omitted from the initial catalog and can
+be found through `skill_search`.
 
 ```markdown
 ---
 name: release-notes
 description: Write concise release notes from merged changes.
-catalog: false
 discoverable: true
 ---
 
