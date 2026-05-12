@@ -3,6 +3,7 @@ from msgflux.runtime.skills import (
     AgentSkillManager,
     SkillPath,
     SkillPaths,
+    SkillsConfig,
     default_skill_paths,
     parse_skill_file,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "AgentSkillManager",
     "SkillPath",
     "SkillPaths",
+    "SkillsConfig",
     "default_skill_paths",
     "parse_skill_file",
 ]

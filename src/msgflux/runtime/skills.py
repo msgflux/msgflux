@@ -1,9 +1,14 @@
+import math
+import re
+from collections import Counter
 from dataclasses import dataclass, field
+from glob import glob
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
 SkillPath = Union[str, Path]
 SkillPaths = Union[SkillPath, Sequence[SkillPath]]
+SkillsConfig = Union[SkillPaths, Mapping[str, Any]]
 
 
 def default_skill_paths() -> list[Path]:
@@ -30,6 +35,8 @@ class AgentSkill:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[str] = None
+    discoverable: bool = False
+    catalog: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     @property
@@ -78,6 +85,24 @@ def _parse_frontmatter(frontmatter: str) -> dict[str, Any]:
     return data
 
 
+def _parse_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1", "on"}:
+            return True
+        if normalized in {"false", "no", "0", "off"}:
+            return False
+    return default
+
+
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9_:-]+", text.lower())
+
+
 def parse_skill_file(path: SkillPath) -> AgentSkill:
     """Parse a SKILL.md file using the Agent Skills frontmatter format."""
     skill_path = Path(path).expanduser().resolve()
@@ -123,6 +148,8 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
         allowed_tools=metadata.get("allowed-tools")
         if isinstance(metadata.get("allowed-tools"), str)
         else None,
+        discoverable=_parse_bool(metadata.get("discoverable"), default=False),
+        catalog=_parse_bool(metadata.get("catalog"), default=True),
         metadata={str(k): str(v) for k, v in skill_metadata.items()},
     )
 
@@ -132,12 +159,66 @@ class AgentSkillManager:
 
     def __init__(
         self,
-        paths: Optional[SkillPaths] = None,
+        paths: Optional[SkillsConfig] = None,
     ) -> None:
-        self.paths = self._normalize_paths(paths)
+        config = self._normalize_config(paths)
+        self.paths = self._normalize_paths(config.get("paths"))
+        self.catalog_limit = config["catalog_limit"]
+        self.search_top_k = config["search_top_k"]
         self.skills: dict[str, AgentSkill] = {}
         self.diagnostics: list[str] = []
         self.discover()
+
+    def _normalize_config(self, config: Optional[SkillsConfig]) -> dict[str, Any]:
+        if config is None:
+            return {"paths": None, "catalog_limit": None, "search_top_k": 5}
+        if isinstance(config, Mapping):
+            allowed_keys = {"paths", "catalog_limit", "search_top_k"}
+            invalid_keys = set(config) - allowed_keys
+            if invalid_keys:
+                raise ValueError(
+                    f"Invalid skills config keys: {invalid_keys}. "
+                    f"Valid keys are: {allowed_keys}"
+                )
+            catalog_limit = self._normalize_optional_int(
+                config.get("catalog_limit"),
+                name="catalog_limit",
+                minimum=0,
+            )
+            search_top_k = self._normalize_optional_int(
+                config.get("search_top_k", 5),
+                name="search_top_k",
+                minimum=1,
+            )
+            return {
+                "paths": config.get("paths"),
+                "catalog_limit": catalog_limit,
+                "search_top_k": search_top_k,
+            }
+        return {"paths": config, "catalog_limit": None, "search_top_k": 5}
+
+    def _normalize_optional_int(
+        self,
+        value: Any,
+        *,
+        name: str,
+        minimum: int,
+    ) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise TypeError(
+                f"`{name}` must be an integer greater than or equal to {minimum}."
+            )
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"`{name}` must be an integer greater than or equal to {minimum}."
+            ) from exc
+        if normalized < minimum:
+            raise ValueError(f"`{name}` must be greater than or equal to {minimum}.")
+        return normalized
 
     def _normalize_paths(
         self,
@@ -152,7 +233,24 @@ class AgentSkillManager:
             )
         if isinstance(paths, (str, Path)):
             paths = [paths]
-        return [Path(path).expanduser().resolve() for path in paths]
+        resolved_paths = []
+        seen = set()
+        for path in paths:
+            expanded = self._expand_path(path)
+            for candidate in expanded:
+                resolved = candidate.expanduser().resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                resolved_paths.append(resolved)
+        return resolved_paths
+
+    def _expand_path(self, path: SkillPath) -> list[Path]:
+        path_str = str(Path(path).expanduser())
+        if not any(char in path_str for char in "*?[]"):
+            return [Path(path)]
+        matches = glob(path_str, recursive=True)
+        return [Path(match) for match in sorted(matches)]
 
     def discover(self) -> None:
         """Discover skills under configured paths."""
@@ -194,6 +292,13 @@ class AgentSkillManager:
     def has_skills(self) -> bool:
         return bool(self.skills)
 
+    def has_hidden_discoverable_skills(self) -> bool:
+        cataloged = {skill.name for skill in self.catalog_skills()}
+        return any(
+            skill.discoverable and skill.name not in cataloged
+            for skill in self.skills.values()
+        )
+
     def names(self) -> list[str]:
         return sorted(self.skills)
 
@@ -206,12 +311,23 @@ class AgentSkillManager:
                 f"Unknown skill `{name}`. Available skills: {available}."
             ) from exc
 
+    def catalog_skills(self) -> list[AgentSkill]:
+        skills = [
+            skill
+            for skill in sorted(self.skills.values(), key=lambda item: item.name)
+            if skill.catalog
+        ]
+        if self.catalog_limit is None:
+            return skills
+        return skills[: max(int(self.catalog_limit), 0)]
+
     def render_catalog(self) -> str:
-        if not self.skills:
+        skills = self.catalog_skills()
+        if not skills:
             return ""
 
         entries = []
-        for skill in sorted(self.skills.values(), key=lambda item: item.name):
+        for skill in skills:
             entries.append(
                 "\n".join(
                     [
@@ -223,14 +339,89 @@ class AgentSkillManager:
                     ]
                 )
             )
+        hidden_count = len(self.skills) - len(skills)
+        search_hint = (
+            "\nMore skills are available. Use `skill_search` to find hidden "
+            "discoverable skills."
+            if hidden_count > 0 and self.has_hidden_discoverable_skills()
+            else ""
+        )
         return (
             "The following Agent Skills are available. Use them when the task "
             "matches a skill description. To activate a skill, call "
             "`activate_skill` with the skill name before following that skill's "
             "workflow. When a skill references relative paths, resolve them "
             "against the skill directory returned by `activate_skill`.\n"
-            "<available_skills>\n" + "\n".join(entries) + "\n</available_skills>"
+            "<available_skills>\n"
+            + "\n".join(entries)
+            + "\n</available_skills>"
+            + search_hint
         )
+
+    def search(self, query: str, *, top_k: Optional[int] = None) -> str:
+        results = self.search_results(query, top_k=top_k)
+        if not results:
+            return "No matching discoverable skills found."
+        lines = ["<skill_search_results>"]
+        for skill, score in results:
+            lines.extend(
+                [
+                    "  <skill>",
+                    f"    <name>{skill.name}</name>",
+                    f"    <description>{skill.description}</description>",
+                    f"    <score>{score:.4f}</score>",
+                    "  </skill>",
+                ]
+            )
+        lines.append("</skill_search_results>")
+        return "\n".join(lines)
+
+    def search_results(
+        self,
+        query: str,
+        *,
+        top_k: Optional[int] = None,
+    ) -> list[tuple[AgentSkill, float]]:
+        candidates = [skill for skill in self.skills.values() if skill.discoverable]
+        if not candidates:
+            return []
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return []
+
+        documents = [
+            " ".join([skill.name, skill.description, " ".join(skill.metadata.values())])
+            for skill in candidates
+        ]
+        tokenized_docs = [_tokenize(document) for document in documents]
+        avg_doc_len = sum(len(tokens) for tokens in tokenized_docs) / len(
+            tokenized_docs
+        )
+        if avg_doc_len == 0:
+            return []
+        doc_freq = Counter(token for tokens in tokenized_docs for token in set(tokens))
+        scored = []
+        for skill, tokens in zip(candidates, tokenized_docs):
+            token_counts = Counter(tokens)
+            score = 0.0
+            for token in set(query_tokens):
+                if token not in token_counts:
+                    continue
+                freq = token_counts[token]
+                idf = math.log(
+                    1
+                    + (len(candidates) - doc_freq[token] + 0.5)
+                    / (doc_freq[token] + 0.5)
+                )
+                denominator = freq + 1.5 * (
+                    1 - 0.75 + 0.75 * (len(tokens) / avg_doc_len)
+                )
+                score += idf * ((freq * 2.5) / denominator)
+            if score > 0:
+                scored.append((skill, score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[: top_k or self.search_top_k]
 
     def activate(self, name: str) -> str:
         skill = self.get(name)

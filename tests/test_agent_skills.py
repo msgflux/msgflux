@@ -8,25 +8,37 @@ from msgflux.runtime.skills import AgentSkillManager, parse_skill_file
 from msgflux.utils.msgspec import msgspec_dumps
 
 
-def _write_skill(root, name="pdf-processing", description=None, body=None):
+def _write_skill(
+    root,
+    name="pdf-processing",
+    description=None,
+    body=None,
+    *,
+    discoverable=None,
+    catalog=None,
+):
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
+    lines = [
+        "---",
+        f"name: {name}",
+        "description: "
+        + (description or "Extract PDF text and tables. Use when handling PDF files."),
+    ]
+    if discoverable is not None:
+        lines.append(f"discoverable: {str(discoverable).lower()}")
+    if catalog is not None:
+        lines.append(f"catalog: {str(catalog).lower()}")
+    lines.extend(
+        [
+            "metadata:",
+            "  owner: docs-team",
+            "---",
+            body or "# PDF Processing\n\nFollow the PDF workflow.",
+        ]
+    )
     (skill_dir / "SKILL.md").write_text(
-        "\n".join(
-            [
-                "---",
-                f"name: {name}",
-                "description: "
-                + (
-                    description
-                    or "Extract PDF text and tables. Use when handling PDF files."
-                ),
-                "metadata:",
-                "  owner: docs-team",
-                "---",
-                body or "# PDF Processing\n\nFollow the PDF workflow.",
-            ]
-        ),
+        "\n".join(lines),
         encoding="utf-8",
     )
     return skill_dir
@@ -77,6 +89,8 @@ def test_parse_skill_file_reads_frontmatter_and_body(tmp_path):
     assert skill.name == "pdf-processing"
     assert skill.description.startswith("Extract PDF")
     assert skill.metadata == {"owner": "docs-team"}
+    assert skill.discoverable is False
+    assert skill.catalog is True
     assert "Follow the PDF workflow" in skill.body
 
 
@@ -89,6 +103,17 @@ def test_agent_skill_manager_accepts_multiple_directories(tmp_path):
     manager = AgentSkillManager([project_skills, codex_skills])
 
     assert manager.names() == ["code-review", "slides"]
+
+
+def test_agent_skill_manager_expands_globs(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    _write_skill(project / "pkg_a" / "skills", name="alpha")
+    _write_skill(project / "pkg_b" / "skills", name="beta")
+    monkeypatch.chdir(project)
+
+    manager = AgentSkillManager("*/skills")
+
+    assert manager.names() == ["alpha", "beta"]
 
 
 def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
@@ -104,17 +129,34 @@ def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
     assert "activate_skill" in system_prompt
 
 
-def test_agent_registers_activate_skill_tool_only_when_skills_exist(tmp_path):
+def test_agent_registers_builtin_skill_tools(tmp_path):
     agent_without_skills = Agent(name="agent", model=_ScriptedModel([]))
     assert "activate_skill" not in agent_without_skills.tool_library.library
 
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="code-review")
+    _write_skill(
+        skills_root,
+        name="release-notes",
+        description="Write release notes",
+        discoverable=True,
+        catalog=False,
+    )
     agent_with_skills = Agent(
         name="agent", model=_ScriptedModel([]), skills=skills_root
     )
 
     assert "activate_skill" in agent_with_skills.tool_library.library
+    assert "skill_search" in agent_with_skills.tool_library.library
+
+
+def test_skill_search_is_not_registered_without_hidden_discoverable_skills(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="code-review")
+    agent = Agent(name="agent", model=_ScriptedModel([]), skills=skills_root)
+
+    assert "activate_skill" in agent.tool_library.library
+    assert "skill_search" not in agent.tool_library.library
 
 
 def test_activate_skill_returns_wrapped_content_and_resources(tmp_path):
@@ -161,9 +203,68 @@ def test_agent_can_activate_skill_through_tool_call(tmp_path):
     )
 
 
+def test_agent_can_search_hidden_discoverable_skills(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="visible-review")
+    _write_skill(
+        skills_root,
+        name="hidden-release-notes",
+        description="Write concise release notes from merged changes.",
+        discoverable=True,
+        catalog=False,
+    )
+    model = _ScriptedModel(
+        [
+            _tool_call_response(
+                "skill_search",
+                {"query": "release notes"},
+                call_id="call_1",
+            ),
+            _text_response("Found skill."),
+        ]
+    )
+    agent = Agent(name="agent", model=model, skills=skills_root)
+
+    result = agent("Find a skill for release notes.")
+
+    assert result == "Found skill."
+    messages = model.calls[1]["messages"]
+    assert any(
+        message.get("role") == "tool"
+        and "hidden-release-notes" in message.get("content", "")
+        for message in messages
+    )
+
+
+def test_catalog_limit_hides_extra_discoverable_skills_and_enables_search(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="alpha", discoverable=True)
+    _write_skill(skills_root, name="beta", discoverable=True)
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        skills={"paths": skills_root, "catalog_limit": 1},
+    )
+    system_prompt = agent.get_system_prompt()
+
+    assert "<name>alpha</name>" in system_prompt
+    assert "<name>beta</name>" not in system_prompt
+    assert "skill_search" in system_prompt
+    assert "skill_search" in agent.tool_library.library
+
+
 def test_skills_true_requires_explicit_default_skill_paths():
     with pytest.raises(TypeError, match="default_skill_paths"):
         AgentSkillManager(True)
+
+
+def test_skills_config_validates_limits(tmp_path):
+    with pytest.raises(ValueError, match="catalog_limit"):
+        AgentSkillManager({"paths": tmp_path, "catalog_limit": -1})
+
+    with pytest.raises(ValueError, match="search_top_k"):
+        AgentSkillManager({"paths": tmp_path, "search_top_k": 0})
 
 
 def test_default_skill_paths_helper_returns_common_locations():
