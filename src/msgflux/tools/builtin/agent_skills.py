@@ -7,6 +7,7 @@ class ActivateSkill:
     """Activate an Agent Skill and return its full instructions."""
 
     name = "activate_skill"
+    display_name = "Skill"
 
     def __init__(self, manager: AgentSkillManager):
         self.manager = manager
@@ -27,6 +28,7 @@ class SkillSearch:
     """Search discoverable Agent Skills by name and description."""
 
     name = "skill_search"
+    display_name = "Skill Search"
 
     def __init__(self, manager: AgentSkillManager):
         self.manager = manager
