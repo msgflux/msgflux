@@ -43,7 +43,8 @@ from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
-from msgflux.runtime.skills import AgentSkillManager, SkillPaths
+from msgflux.runtime.skills import AgentSkillManager, SkillsConfig
+from msgflux.tools.builtin import ActivateSkill, SkillSearch
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.common import has_format_placeholder, is_jinja_template
@@ -133,7 +134,7 @@ class Agent(Module, metaclass=AutoParams):
         typed_parser: Optional[str] = None,
         response_mode: Optional[str] = None,
         tools: Optional[List[Callable]] = None,
-        skills: Optional[SkillPaths] = None,
+        skills: Optional[SkillsConfig] = None,
         mcp_servers: Optional[List[Mapping[str, Any]]] = None,
         signature: Optional[Union[str, Signature]] = None,
         description: Optional[str] = None,
@@ -252,10 +253,9 @@ class Agent(Module, metaclass=AutoParams):
         tools:
             A list of callable objects.
         skills:
-            Agent Skill directory or list of directories. Use
-            `msgflux.default_skill_paths()` when you want common local paths
-            such as `.agents/skills`, `.codex/skills`, `~/.agents/skills`,
-            and `~/.codex/skills`.
+            Agent Skill directory, list of directories, glob pattern, or a dict
+            with `paths`, `catalog_limit`, and `search_top_k`. Use
+            `msgflux.default_skill_paths()` when you want common local paths.
         mcp_servers:
             List of MCP (Model Context Protocol) server configurations.
             Each config should contain:
@@ -1808,27 +1808,16 @@ class Agent(Module, metaclass=AutoParams):
     ):
         tools = list(tools or [])
         if self.agent_skill_manager.has_skills():
-            tools.append(self._build_activate_skill_tool())
+            tools.append(ActivateSkill(self.agent_skill_manager))
+            if self.agent_skill_manager.has_hidden_discoverable_skills():
+                tools.append(SkillSearch(self.agent_skill_manager))
         self.tool_library = ToolLibrary(
             self.get_module_name(), tools, mcp_servers=mcp_servers
         )
 
-    def _set_skills(self, skills: Optional[SkillPaths] = None):
+    def _set_skills(self, skills: Optional[SkillsConfig] = None):
         manager = AgentSkillManager(skills)
         self.register_buffer("agent_skill_manager", manager)
-
-    def _build_activate_skill_tool(self) -> Callable[[str], str]:
-        manager = self.agent_skill_manager
-
-        def activate_skill(name: str) -> str:
-            """Activate an Agent Skill and return its full instructions.
-
-            Args:
-                name: Name of the skill to activate.
-            """
-            return manager.activate(name)
-
-        return activate_skill
 
     def _set_generation_schema(
         self, generation_schema: Optional[msgspec.Struct] = None

@@ -39,6 +39,11 @@ class ScriptedModel:
     def __init__(self):
         self.responses = [
             tool_call_response(
+                "skill_search",
+                {"query": "release notes"},
+                call_id="call_skill_search",
+            ),
+            tool_call_response(
                 "activate_skill",
                 {"name": "code-review"},
                 call_id="call_activate_skill",
@@ -64,6 +69,7 @@ def write_skill(root: Path, name: str, description: str, body: str) -> None:
                 "---",
                 f"name: {name}",
                 f"description: {description}",
+                "discoverable: true",
                 "---",
                 body,
             ]
@@ -93,7 +99,11 @@ def main() -> None:
         agent = nn.Agent(
             name="developer_agent",
             model=ScriptedModel(),
-            skills=[project_skills, codex_skills],
+            skills={
+                "paths": [project_skills, codex_skills],
+                "catalog_limit": 1,
+                "search_top_k": 3,
+            },
             instructions="Use Agent Skills when they match the user's request.",
         )
 

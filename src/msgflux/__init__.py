@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from msgflux.runtime import (
         AgentSkill,
         AgentSkillManager,
+        SkillsConfig,
         default_skill_paths,
         parse_skill_file,
     )
@@ -53,6 +54,7 @@ __all__ = [
     "Retriever",
     "Signature",
     "Spans",
+    "SkillsConfig",
     "TaskError",
     "Video",
     "cprint",
@@ -89,6 +91,7 @@ _LAZY_IMPORTS = {
     "Registry": ("msgflux.core.registry", "Registry"),
     "Retriever": ("msgflux.data.retrievers", "Retriever"),
     "Signature": ("msgflux.dsl.signature", "Signature"),
+    "SkillsConfig": ("msgflux.runtime", "SkillsConfig"),
     "Spans": ("msgflux.telemetry", "Spans"),
     "TaskError": ("msgflux.exceptions", "TaskError"),
     "Video": ("msgflux.data.types", "Video"),

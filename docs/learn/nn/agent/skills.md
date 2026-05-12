@@ -45,6 +45,13 @@ The required fields are:
 Optional fields such as `license`, `compatibility`, `metadata`, and
 `allowed-tools` are parsed and stored by the runtime.
 
+Skill visibility fields:
+
+- `catalog`: include the skill in the initial system prompt catalog. Defaults
+  to `true`.
+- `discoverable`: include the skill in `skill_search` results. Defaults to
+  `false`.
+
 ## Passing Skill Directories
 
 Pass one directory:
@@ -75,6 +82,20 @@ agent = nn.Agent(
 )
 ```
 
+Pass glob patterns explicitly:
+
+```python
+agent = nn.Agent(
+    name="developer_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    skills=[
+        ".agents/skills",
+        ".codex/skills",
+        "*/skills",
+    ],
+)
+```
+
 Use the helper when you want common local locations explicitly:
 
 ```python
@@ -87,6 +108,33 @@ agent = nn.Agent(
 
 msgFlux does not scan default skill paths implicitly. This avoids silently
 loading instructions from a project or user directory. Pass the paths you want.
+
+## Skill Config
+
+For larger skill sets, pass a dict:
+
+```python
+agent = nn.Agent(
+    name="developer_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    skills={
+        "paths": [
+            ".agents/skills",
+            ".codex/skills",
+            "*/skills",
+        ],
+        "catalog_limit": 20,
+        "search_top_k": 5,
+    },
+)
+```
+
+Config keys:
+
+- `paths`: directory, `SKILL.md` file, glob pattern, or list of those.
+- `catalog_limit`: maximum number of catalog-visible skills included in the
+  system prompt. Use `0` to keep the initial catalog empty.
+- `search_top_k`: default number of results returned by `skill_search`.
 
 ## System Prompt Field
 
@@ -157,6 +205,37 @@ Relative paths in this skill are relative to the skill directory.
 
 Bundled resources are listed, not eagerly loaded. The skill instructions can
 tell the agent when to read or execute those files with normal tools.
+
+## Searching Skills
+
+When at least one hidden discoverable skill exists, msgFlux registers another
+internal tool:
+
+```python
+skill_search(query: str, top_k: int | None = None) -> str
+```
+
+A hidden discoverable skill is one that is not in the initial catalog, either
+because `catalog: false` is set or because `catalog_limit` cut it from the
+prompt, and has `discoverable: true`.
+
+```markdown
+---
+name: release-notes
+description: Write concise release notes from merged changes.
+catalog: false
+discoverable: true
+---
+
+# Release Notes
+
+Group changes by user-visible impact.
+```
+
+Search uses a small in-memory BM25 implementation over skill name, description,
+and metadata. No external dependency is required.
+
+If no hidden discoverable skill exists, `skill_search` is not registered.
 
 ## Runnable Example
 
