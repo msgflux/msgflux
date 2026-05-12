@@ -19,6 +19,12 @@ if TYPE_CHECKING:
     from msgflux.exceptions import TaskError
     from msgflux.models import Model
     from msgflux.models.gateway import ModelGateway
+    from msgflux.runtime import (
+        AgentSkill,
+        AgentSkillManager,
+        default_skill_paths,
+        parse_skill_file,
+    )
     from msgflux.telemetry import Spans
     from msgflux.tools.config import tool_config
     from msgflux.utils.chat import ChatBlock, ChatML
@@ -29,6 +35,8 @@ if TYPE_CHECKING:
 __all__ = [
     "DB",
     "Audio",
+    "AgentSkill",
+    "AgentSkillManager",
     "ChatBlock",
     "ChatML",
     "Example",
@@ -48,11 +56,13 @@ __all__ = [
     "TaskError",
     "Video",
     "cprint",
+    "default_skill_paths",
     "dotdict",
     "get_fn_name",
     "load",
     "load_dotenv",
     "msgspec_dumps",
+    "parse_skill_file",
     "response_cache",
     "save",
     "set_envs",
@@ -61,6 +71,8 @@ __all__ = [
 
 _LAZY_IMPORTS = {
     "Audio": ("msgflux.data.types", "Audio"),
+    "AgentSkill": ("msgflux.runtime", "AgentSkill"),
+    "AgentSkillManager": ("msgflux.runtime", "AgentSkillManager"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),
     "DB": ("msgflux.data.dbs", "DB"),
@@ -81,11 +93,13 @@ _LAZY_IMPORTS = {
     "TaskError": ("msgflux.exceptions", "TaskError"),
     "Video": ("msgflux.data.types", "Video"),
     "cprint": ("msgflux.utils.console", "cprint"),
+    "default_skill_paths": ("msgflux.runtime", "default_skill_paths"),
     "dotdict": ("msgflux.core.dotdict", "dotdict"),
     "get_fn_name": ("msgflux.utils.inspect", "get_fn_name"),
     "load": ("msgflux.utils.msgspec", "load"),
     "load_dotenv": ("msgspec_ext", "load_dotenv"),
     "msgspec_dumps": ("msgflux.utils.msgspec", "msgspec_dumps"),
+    "parse_skill_file": ("msgflux.runtime", "parse_skill_file"),
     "response_cache": ("msgflux.cache", "response_cache"),
     "save": ("msgflux.utils.msgspec", "save"),
     "set_envs": ("msgflux.envs", "set_envs"),

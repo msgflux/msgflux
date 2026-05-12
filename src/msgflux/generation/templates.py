@@ -3,11 +3,12 @@ class PromptSpec:
     INSTRUCTIONS = "How you should do"
     EXAMPLES = "Samples of what to do"
     EXPECTED_OUTPUT = "Describes what the response should be like"
+    AGENT_SKILLS = "Available Agent Skills"
     # TASK_TEMPLATE = ""
 
 
 SYSTEM_PROMPT_TEMPLATE = """
-{% if system_message or instructions or expected_output or examples or system_extra_message %}
+{% if system_message or instructions or expected_output or examples or system_extra_message or agent_skills %}
 <system_note>
 {% if system_message %}<system_message>
 {{ system_message }}
@@ -27,6 +28,10 @@ SYSTEM_PROMPT_TEMPLATE = """
 {% endif %}
 {% if system_extra_message %}
 {{ system_extra_message }}
+{% endif %}
+{% if agent_skills %}<agent_skills>
+{{ agent_skills }}
+</agent_skills>
 {% endif %}
 {% if current_date %}
 The current date is: {{ current_date }}
