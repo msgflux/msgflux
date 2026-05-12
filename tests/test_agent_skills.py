@@ -150,6 +150,14 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
         agent_with_skills.tool_library.library["skill_search"].display_name
         == "Skill Search"
     )
+    assert (
+        agent_with_skills.tool_library.library["activate_skill"].description
+        == "Activate an Agent Skill and return its full instructions."
+    )
+    assert (
+        agent_with_skills.tool_library.library["skill_search"].description
+        == "Search discoverable Agent Skills by name and description."
+    )
 
 
 def test_skill_search_is_not_registered_without_hidden_discoverable_skills(tmp_path):
