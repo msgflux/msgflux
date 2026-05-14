@@ -219,6 +219,7 @@ class LocalTool(Tool):
             restored[param_name] = restore_transport_value(
                 restored[param_name],
                 type_hint,
+                restore_structs=True,
             )
         return restored
 
