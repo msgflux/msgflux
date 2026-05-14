@@ -354,6 +354,8 @@ def hint_to_schema(type_hint) -> dict:  # noqa: C901
     origin = get_origin(type_hint)
 
     if origin is None:
+        if isinstance(type_hint, type) and issubclass(type_hint, msgspec.Struct):
+            return schema_fragment_from_msgspec_type(type_hint)
         if type_hint is str:
             return {"type": "string"}
         if type_hint is int:

@@ -720,6 +720,54 @@ Control how the model selects tools.
     - If `tool_filter` removes a specific tool configured in `tool_choice`, the Agent falls back to `"auto"` for that request
     - If `tool_filter` removes all tools, tool usage is disabled for that request
 
+### Structured Tool Parameters
+
+Use `msgspec.Struct` when a tool parameter needs a complex object shape. This
+gives the model a strict object schema and lets the tool receive typed Python
+objects instead of loose dictionaries.
+
+```python
+from typing import Literal
+
+import msgspec
+
+
+class TodoItem(msgspec.Struct):
+    content: str
+    active_form: str
+    status: Literal["pending", "in_progress", "completed"]
+
+
+def write_todos(todos: list[TodoItem]) -> str:
+    """Persist the current task checklist.
+
+    Args:
+        todos: Complete todo list for the current session.
+    """
+    first = todos[0]
+    assert isinstance(first, TodoItem)
+    return f"Saved {len(todos)} todos."
+```
+
+When the model calls `write_todos`, msgFlux restores each item in `todos` to a
+`TodoItem` instance before executing the tool. This is preferable to
+`list[dict[str, str]]` for complex inputs because the generated tool schema
+spells out the allowed fields and status values.
+
+This works with OpenAI-compatible strict tool schemas:
+
+```python
+agent = nn.Agent(
+    name="developer_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=[write_todos],
+)
+```
+
+Use this pattern for stable contracts. Avoid adding fields that only save a few
+runtime conveniences if they cost prompt/tool-call tokens, such as an `id` field
+that the runtime can derive internally.
+
 ### Runtime Tool Filtering
 
 Use `tool_filter` when you need to change which tools are exposed on a **per-request** basis, without rebuilding the agent.
