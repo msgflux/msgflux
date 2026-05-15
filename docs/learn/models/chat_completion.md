@@ -222,6 +222,23 @@ The cache is sensitive to:
 
 Changing any of these creates a new cache entry.
 
+### 3.2 **Prompt Cache Warmup**
+
+Some providers cache long prompt prefixes server-side. For agent-level warmup, use `Agent.warmup_system_prompt()`. It sends the rendered system prompt and tool schemas without task messages, chat history, or checkpointer state.
+
+See [Agent — Prompt Cache Warmup](../nn/agent/prompt-cache.md) for the recommended usage.
+
+OpenAI-compatible chat providers use `warmup_max_tokens=1` by default:
+
+```python
+model = mf.Model.chat_completion(
+    "openai/gpt-4.1-mini",
+    warmup_max_tokens=1,
+)
+```
+
+This is separate from `enable_cache`: response caching is local/in-process, while prompt cache warmup targets the provider's prompt cache.
+
 ## 4. **Message Formats**
 
 ???+ example
