@@ -156,6 +156,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         enable_cache: Optional[bool] = False,
         cache_size: Optional[int] = 128,
         retry: Optional[Any] = None,
+        warmup_max_tokens: Optional[int] = None,
     ):
         """Args:
         model_id:
@@ -234,6 +235,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             If True, enable response caching to avoid redundant API calls.
         cache_size:
             Maximum number of cached responses (default: 128).
+        warmup_max_tokens:
+            Maximum generated tokens used by prompt warmup requests. Defaults
+            to 1 for OpenAI-compatible chat completions.
         """
         super().__init__()
         self.model_id = model_id
@@ -282,6 +286,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         self.return_reasoning = return_reasoning
         self.verbose = verbose
         self.retry = retry
+        self.warmup_max_tokens = warmup_max_tokens or 1
         self._initialize()
         self._get_api_key()
 
@@ -433,6 +438,49 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         model_output = await self.aclient.chat.completions.create(**adapted_params)
 
         return model_output
+
+    def _build_warmup_params(
+        self,
+        *,
+        system_prompt: Optional[str],
+        tool_definitions: Optional[ToolDefinitions],
+    ) -> Dict[str, Any]:
+        generation_params = self._build_generation_params(
+            [],
+            system_prompt,
+            None,
+            tool_definitions,
+        )
+        generation_params["max_tokens"] = self.warmup_max_tokens
+        generation_params.pop("prefilling", None)
+        # Warmup intentionally bypasses typed parsers, checkpointers, chat history
+        # and response caching. The request only contains the stable system prompt
+        # plus tool schemas so provider-side prompt caches can prefill that prefix.
+        return self._adapt_params({**self.sampling_run_params, **generation_params})
+
+    def warmup_system_prompt(
+        self,
+        *,
+        system_prompt: Optional[str],
+        tool_definitions: Optional[ToolDefinitions] = None,
+    ):
+        params = self._build_warmup_params(
+            system_prompt=system_prompt,
+            tool_definitions=tool_definitions,
+        )
+        return self.client.chat.completions.create(**params)
+
+    async def awarmup_system_prompt(
+        self,
+        *,
+        system_prompt: Optional[str],
+        tool_definitions: Optional[ToolDefinitions] = None,
+    ):
+        params = self._build_warmup_params(
+            system_prompt=system_prompt,
+            tool_definitions=tool_definitions,
+        )
+        return await self.aclient.chat.completions.create(**params)
 
     def _process_completion_model_output(  # noqa: C901
         self,
