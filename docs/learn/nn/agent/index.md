@@ -25,6 +25,7 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [Quick Start](quickstart.md) | Get started with a minimal agent, class-based definition (AutoParams) |
 | [Async](async.md) | Asynchronous agent execution |
 | [Streaming](streaming.md) | Real-time response streaming |
+| [Prompt Cache Warmup](prompt-cache.md) | Warm provider prompt caches with the system prompt and tool schemas |
 | [Reasoning](reasoning.md) | Model-level reasoning, `reasoning_in_response`, dual-queue streaming |
 | [How to Debug an Agent](debug.md) | Inspection and debugging tools |
 | [System Prompt Components](system-prompt.md) | Compose system prompts from components |
