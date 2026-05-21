@@ -858,7 +858,7 @@ def lower_msgspec_struct_for_openai(  # noqa: C901
                     lowered = Tuple[
                         self.lower_type(
                             tuple_args[0], f"{name_hint}_item", f"{path}[]"
-                        ),  # noqa: E501
+                        ),
                         ...,
                     ]
                 else:

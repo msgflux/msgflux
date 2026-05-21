@@ -1984,20 +1984,20 @@ class Agent(Module, metaclass=AutoParams):
                 f"Invalid config keys: {invalid_keys}. Valid keys are: {valid_keys}"
             )
 
-        if "image_block_kwargs" in config:
-            if not isinstance(config["image_block_kwargs"], dict):
+        self._validate_config_blocks(config)
+        self._validate_config_limits(config)
+        self._validate_config_flags(config)
+
+        self.register_buffer("config", config.copy())
+
+    def _validate_config_blocks(self, config: Dict[str, Any]):
+        for key in ("image_block_kwargs", "video_block_kwargs"):
+            if key in config and not isinstance(config[key], dict):
                 raise TypeError(
-                    f"`image_block_kwargs` must be a dict, "
-                    f"given `{type(config['image_block_kwargs'])}`"
+                    f"`{key}` must be a dict, given `{type(config[key])}`"
                 )
 
-        if "video_block_kwargs" in config:
-            if not isinstance(config["video_block_kwargs"], dict):
-                raise TypeError(
-                    f"`video_block_kwargs` must be a dict, "
-                    f"given `{type(config['video_block_kwargs'])}`"
-                )
-
+    def _validate_config_limits(self, config: Dict[str, Any]):
         if "max_tool_turns" in config:
             max_turns = config["max_tool_turns"]
             if not isinstance(max_turns, int) or max_turns < 1:
@@ -2006,6 +2006,7 @@ class Agent(Module, metaclass=AutoParams):
                     f"given `{config['max_tool_turns']}`"
                 )
 
+    def _validate_config_flags(self, config: Dict[str, Any]):
         if "validate_inputs" in config and not isinstance(
             config["validate_inputs"], bool
         ):
@@ -2013,8 +2014,6 @@ class Agent(Module, metaclass=AutoParams):
                 f"`validate_inputs` must be a bool, "
                 f"given `{type(config['validate_inputs'])}`"
             )
-
-        self.register_buffer("config", config.copy())
 
     def _set_system_extra_message(self, system_extra_message: Optional[str] = None):
         if isinstance(system_extra_message, str) or system_extra_message is None:
