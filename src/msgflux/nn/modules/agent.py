@@ -1993,9 +1993,7 @@ class Agent(Module, metaclass=AutoParams):
     def _validate_config_blocks(self, config: Dict[str, Any]):
         for key in ("image_block_kwargs", "video_block_kwargs"):
             if key in config and not isinstance(config[key], dict):
-                raise TypeError(
-                    f"`{key}` must be a dict, given `{type(config[key])}`"
-                )
+                raise TypeError(f"`{key}` must be a dict, given `{type(config[key])}`")
 
     def _validate_config_limits(self, config: Dict[str, Any]):
         if "max_tool_turns" in config:
@@ -2254,6 +2252,11 @@ class Agent(Module, metaclass=AutoParams):
             return validation_inputs
         if task is None and vars:
             return vars
+        schema_fields = getattr(self._input_schema, "__struct_fields__", ())
+        if len(schema_fields) == 1 and task is not None:
+            validation_inputs = {schema_fields[0]: task}
+            validation_inputs.update(vars)
+            return validation_inputs
         return None
 
     def _validate_inputs(self, inputs: Mapping[str, Any]) -> None:

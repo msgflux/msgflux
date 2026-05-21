@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from types import UnionType
 from typing import (
     Any,
     Dict,
@@ -244,6 +245,11 @@ class Signature(metaclass=_SignatureMeta):
 
 
 class SignatureFactory:
+    @staticmethod
+    def _is_optional_type(dtype: Any) -> bool:
+        origin = get_origin(dtype)
+        return origin in (Union, UnionType) and type(None) in get_args(dtype)
+
     @classmethod
     def get_examples_from_signature(
         cls,
@@ -315,8 +321,7 @@ class SignatureFactory:
             else:
                 parsed_type = StructFactory._parse_type_string(input_info.dtype)
 
-            is_optional = input_info.dtype.startswith("Optional[")
-            if is_optional:
+            if cls._is_optional_type(parsed_type):
                 struct_fields.append((input_info.name, parsed_type, None))
             else:
                 struct_fields.append((input_info.name, parsed_type))

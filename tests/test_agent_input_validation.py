@@ -58,6 +58,37 @@ def test_validate_inputs_allows_missing_optional_field():
     agent._prepare_inputs(question="What is Python?", context=None)
 
 
+def test_validate_inputs_allows_missing_pep604_optional_field():
+    class QA(Signature):
+        question: str = mf.InputField()
+        context: str | None = mf.InputField()
+        answer: str = mf.OutputField()
+
+    agent = Agent(
+        name="test",
+        model=create_mock_model(),
+        signature=QA,
+        config={"validate_inputs": True},
+    )
+
+    agent._prepare_inputs(question="What is Python?")
+    agent._prepare_inputs(question="What is Python?", context=None)
+
+
+def test_validate_inputs_rejects_invalid_single_scalar_task():
+    agent = Agent(
+        name="test",
+        model=create_mock_model(),
+        signature="count: int -> answer: str",
+        config={"validate_inputs": True},
+    )
+
+    agent._prepare_inputs(3)
+
+    with pytest.raises(ValueError, match="count"):
+        agent._prepare_inputs("many")
+
+
 def test_validate_inputs_uses_task_extracted_from_message_fields():
     agent = Agent(
         name="test",
