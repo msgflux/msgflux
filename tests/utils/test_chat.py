@@ -167,6 +167,14 @@ def test_hint_to_schema_supports_list_of_msgspec_struct():
     assert schema["items"]["properties"]["active_form"]["type"] == "string"
 
 
+def test_hint_to_schema_rejects_msgspec_struct_renamed_fields():
+    class RenamedTodoItem(msgspec.Struct, rename="camel"):
+        active_form: str
+
+    with pytest.raises(TypeError, match="renamed fields"):
+        hint_to_schema(RenamedTodoItem)
+
+
 DOCSTRING = """
 My function.
 

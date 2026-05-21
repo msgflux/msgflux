@@ -294,6 +294,19 @@ def inline_msgspec_json_schema(msgspec_schema: Dict[str, Any]) -> Dict[str, Any]
 
 def schema_fragment_from_msgspec_type(type_hint: Any) -> Dict[str, Any]:
     """Build a strict JSON Schema fragment for a single msgspec-supported type."""
+    if isinstance(type_hint, type) and issubclass(type_hint, msgspec.Struct):
+        renamed_fields = [
+            field.name
+            for field in msgspec.structs.fields(type_hint)
+            if field.encode_name != field.name
+        ]
+        if renamed_fields:
+            joined_fields = ", ".join(renamed_fields)
+            raise TypeError(
+                "msgspec.Struct tool parameters with renamed fields are not "
+                f"supported: {type_hint.__name__}.{joined_fields}"
+            )
+
     wrapper_struct = type(
         "_SchemaFieldWrapper",
         (msgspec.Struct,),
