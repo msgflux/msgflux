@@ -88,7 +88,8 @@ OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
 forwarded to the underlying OpenAI SDK client.
 
 You can also pass provider-specific fields directly as keyword arguments
-in the model constructor. msgFlux merges these kwargs into `extra_body`.
+in the model constructor, or per request with `model(...)` / `model.acall(...)`.
+msgFlux merges these kwargs into `extra_body`.
 
 ```python
 import msgflux as mf
@@ -98,6 +99,13 @@ model = mf.Model.chat_completion(
     extra_body={"enable_citations": True},
     enable_entities=True,    # merged into extra_body
     enable_research=False,   # merged into extra_body
+)
+
+# Per-request extensions are merged with constructor defaults.
+response = model(
+    "Search the latest release notes.",
+    extra_body={"country": "US"},
+    enable_citations=True,
 )
 ```
 
