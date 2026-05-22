@@ -66,24 +66,24 @@ class Guard(Hook):
     def __call__(
         self,
         module: Any,  # noqa: ARG002
-        args: tuple,  # noqa: ARG002
+        args: tuple,
         kwargs: dict,
         output: Any = None,
     ) -> None:
         """Sync validation — called by ``_call_impl``."""
-        data = self._apply_processor(kwargs if self.on == "pre" else output)
+        data = self._apply_processor(self._guard_data(args, kwargs, output))
         result = self.validator(data)
         self._check_result(result, data)
 
     async def acall(
         self,
         module: Any,  # noqa: ARG002
-        args: tuple,  # noqa: ARG002
+        args: tuple,
         kwargs: dict,
         output: Any = None,
     ) -> None:
         """Async validation — called by ``_acall_impl``."""
-        data = self._apply_processor(kwargs if self.on == "pre" else output)
+        data = self._apply_processor(self._guard_data(args, kwargs, output))
         if self._has_async_validator:
             result = await self._acall_validator(data)
         else:
@@ -113,6 +113,16 @@ class Guard(Hook):
         if self.processor is not None:
             return self.processor(data)
         return data
+
+    def _guard_data(self, args: tuple, kwargs: dict, output: Any) -> Any:
+        if self.on != "pre":
+            return output
+        if self.method is not None and args:
+            raise TypeError(
+                "Method pre-guards only validate keyword arguments. "
+                "Call the guarded method with keyword arguments."
+            )
+        return kwargs
 
     async def _acall_validator(self, data: Any) -> Any:
         if hasattr(self.validator, "acall"):
