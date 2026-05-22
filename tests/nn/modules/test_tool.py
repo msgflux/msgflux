@@ -1403,6 +1403,46 @@ class TestMCPTool:
 
         assert tool.tool_config["timeout"] == 30
 
+    def test_mcp_tool_display_name_and_usage_guidance_are_not_duplicated(self):
+        """Test MCP metadata is read from library tools without duplicate entries."""
+        mock_client = Mock()
+        mock_info = Mock()
+        mock_info.name = "search"
+        mock_info.description = "Search docs"
+        mock_info.inputSchema = {"type": "object", "properties": {}}
+
+        tool = MCPTool(
+            name="search",
+            mcp_client=mock_client,
+            mcp_tool_info=mock_info,
+            namespace="docs",
+            config={
+                "display_name": "Docs Search",
+                "usage_guidance": "Use for documentation questions.",
+            },
+        )
+        library = ToolLibrary(name="lib", tools=[])
+        library.library[tool.name] = tool
+        library.mcp_clients["docs"] = {
+            "client": mock_client,
+            "tools": [mock_info],
+            "tool_config": {
+                "search": {
+                    "display_name": "Docs Search",
+                    "usage_guidance": "Use for documentation questions.",
+                }
+            },
+        }
+
+        assert library.get_tool_display_names() == {"docs__search": "Docs Search"}
+        assert library.get_tool_usage_guidance() == [
+            {
+                "name": "docs__search",
+                "display_name": "Docs Search",
+                "guidance": "Use for documentation questions.",
+            }
+        ]
+
     def test_mcp_tool_forward_success(self):
         """Test MCPTool forward execution with success."""
         with (

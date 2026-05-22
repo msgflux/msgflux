@@ -560,14 +560,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         for tool_name, tool in self.library.items():
             display_names[tool_name] = getattr(tool, "display_name", tool_name)
 
-        if self.mcp_clients:
-            for namespace, mcp_data in self.mcp_clients.items():
-                tool_configs = mcp_data.get("tool_config", {})
-                for mcp_tool in mcp_data["tools"]:
-                    tool_name = f"{namespace}__{mcp_tool.name}"
-                    config = tool_configs.get(mcp_tool.name, {})
-                    display_names[tool_name] = config.get("display_name", tool_name)
-
         return display_names
 
     def get_tool_usage_guidance(
@@ -589,24 +581,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
                         "guidance": usage_guidance,
                     }
                 )
-
-        if self.mcp_clients:
-            for namespace, mcp_data in self.mcp_clients.items():
-                tool_configs = mcp_data.get("tool_config", {})
-                for mcp_tool in mcp_data["tools"]:
-                    tool_name = f"{namespace}__{mcp_tool.name}"
-                    if tool_names is not None and tool_name not in tool_names:
-                        continue
-                    config = tool_configs.get(mcp_tool.name, {})
-                    usage_guidance = config.get("usage_guidance")
-                    if usage_guidance:
-                        guidance.append(
-                            {
-                                "name": tool_name,
-                                "display_name": display_names.get(tool_name, tool_name),
-                                "guidance": usage_guidance,
-                            }
-                        )
 
         return guidance
 
