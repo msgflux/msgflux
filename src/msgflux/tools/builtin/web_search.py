@@ -25,7 +25,7 @@ class WebSearch:
 
     The public tool schema is configured dynamically from the selected engine.
     Retriever-backed tools expose ``query`` only. Model-backed tools expose an
-    optional ``objetive`` parameter so the caller can steer the underlying model.
+    optional ``goal`` parameter so the caller can steer the underlying model.
 
     Returns:
         A dict with:
@@ -76,7 +76,7 @@ class WebSearch:
                     "`call_params` is only supported for retriever engines."
                 )
             self.model = Model.chat_completion(self.engine_target, **self.init_params)
-            self.annotations = {"query": str, "objetive": Optional[str], "return": str}
+            self.annotations = {"query": str, "goal": Optional[str], "return": str}
 
         self.description = self._build_description()
 
@@ -152,7 +152,7 @@ class WebSearch:
             answer grounded in web results.
 
             Use this when the answer should combine web lookup with concise
-            reasoning or summarization. Pass `objetive` only when the response
+            reasoning or summarization. Pass `goal` only when the response
             needs a specific style, scope, or success criterion.
             """
         )
@@ -179,8 +179,8 @@ class WebSearch:
     def _consume_response(response: Any) -> Any:
         return response.consume() if hasattr(response, "consume") else response
 
-    def _model_prompt(self, objetive: Optional[str]) -> str:
-        return objetive if objetive is not None else self._default_model_prompt()
+    def _model_prompt(self, goal: Optional[str]) -> str:
+        return goal if goal is not None else self._default_model_prompt()
 
     def _run_retriever(
         self,
@@ -195,11 +195,11 @@ class WebSearch:
     def _run_model(
         self,
         query: str,
-        objetive: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         response = self.model(
             messages=query,
-            system_prompt=self._model_prompt(objetive),
+            system_prompt=self._model_prompt(goal),
         )
         return {
             "data": self._consume_response(response),
@@ -219,11 +219,11 @@ class WebSearch:
     async def _arun_model(
         self,
         query: str,
-        objetive: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         response = await self.model.acall(
             messages=query,
-            system_prompt=self._model_prompt(objetive),
+            system_prompt=self._model_prompt(goal),
         )
         return {
             "data": self._consume_response(response),
@@ -233,27 +233,27 @@ class WebSearch:
     def __call__(
         self,
         query: str,
-        objetive: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Search the web with the configured backend."""
         if self.engine_kind == "retriever":
-            if objetive is not None:
+            if goal is not None:
                 raise ValueError(
-                    "The `objetive` argument is only supported for model engines."
+                    "The `goal` argument is only supported for model engines."
                 )
             return self._run_retriever(query)
-        return self._run_model(query, objetive=objetive)
+        return self._run_model(query, goal=goal)
 
     async def acall(
         self,
         query: str,
-        objetive: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async version of ``__call__``."""
         if self.engine_kind == "retriever":
-            if objetive is not None:
+            if goal is not None:
                 raise ValueError(
-                    "The `objetive` argument is only supported for model engines."
+                    "The `goal` argument is only supported for model engines."
                 )
             return await self._arun_retriever(query)
-        return await self._arun_model(query, objetive=objetive)
+        return await self._arun_model(query, goal=goal)
