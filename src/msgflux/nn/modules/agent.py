@@ -253,9 +253,9 @@ class Agent(Module, metaclass=AutoParams):
         tools:
             A list of callable objects.
         skills:
-            Agent Skill directory, list of directories, glob pattern, or a dict
-            with `paths`, `catalog_limit`, and `search_top_k`. Use
-            `msgflux.default_skill_paths()` when you want common local paths.
+            Agent Skills config dict with `paths`, `catalog_limit`, and
+            `search_top_k`. Use `msgflux.default_skill_paths()` when you want
+            common local paths.
         mcp_servers:
             List of MCP (Model Context Protocol) server configurations.
             Each config should contain:
@@ -1809,15 +1809,14 @@ class Agent(Module, metaclass=AutoParams):
         tools = list(tools or [])
         if self.agent_skill_manager.has_skills():
             tools.append(ActivateSkill(self.agent_skill_manager))
-            if self.agent_skill_manager.has_hidden_discoverable_skills():
+            if self.agent_skill_manager.has_searchable_skills():
                 tools.append(SkillSearch(self.agent_skill_manager))
         self.tool_library = ToolLibrary(
             self.get_module_name(), tools, mcp_servers=mcp_servers
         )
 
     def _set_skills(self, skills: Optional[SkillsConfig] = None):
-        manager = AgentSkillManager(skills)
-        self.register_buffer("agent_skill_manager", manager)
+        self.agent_skill_manager = AgentSkillManager(skills)
 
     def _set_generation_schema(
         self, generation_schema: Optional[msgspec.Struct] = None
@@ -2233,9 +2232,10 @@ class Agent(Module, metaclass=AutoParams):
             agent_skills=self.agent_skill_manager.catalog()
             if self.agent_skill_manager.has_skills()
             else None,
-            agent_skill_search_enabled=self.agent_skill_manager.has_hidden_discoverable_skills()
+            agent_skill_search_enabled=self.agent_skill_manager.has_searchable_skills()
             if self.agent_skill_manager.has_skills()
             else False,
+            agent_skills_enabled=self.agent_skill_manager.has_skills(),
         )
 
         if self.config.get("include_date", False):

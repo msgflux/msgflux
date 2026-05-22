@@ -6,9 +6,11 @@ from glob import glob
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
+import yaml
+
 SkillPath = Union[str, Path]
 SkillPaths = Union[SkillPath, Sequence[SkillPath]]
-SkillsConfig = Union[SkillPaths, Mapping[str, Any]]
+SkillsConfig = Mapping[str, Any]
 
 
 def default_skill_paths() -> list[Path]:
@@ -41,47 +43,6 @@ class AgentSkill:
     @property
     def directory(self) -> Path:
         return self.path.parent
-
-
-def _strip_scalar(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
-def _parse_frontmatter(frontmatter: str) -> dict[str, Any]:
-    """Parse the small YAML subset used by SKILL.md frontmatter."""
-    data: dict[str, Any] = {}
-    current_map_key: str | None = None
-
-    for raw_line in frontmatter.splitlines():
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-
-        if raw_line.startswith((" ", "\t")):
-            if current_map_key is None or ":" not in raw_line:
-                continue
-            key, value = raw_line.strip().split(":", 1)
-            nested = data.setdefault(current_map_key, {})
-            if isinstance(nested, dict):
-                nested[key.strip()] = _strip_scalar(value)
-            continue
-
-        current_map_key = None
-        if ":" not in raw_line:
-            continue
-
-        key, value = raw_line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if not value:
-            data[key] = {}
-            current_map_key = key
-        else:
-            data[key] = _strip_scalar(value)
-
-    return data
 
 
 def _parse_bool(value: Any, *, default: bool = False) -> bool:
@@ -120,7 +81,9 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
 
     frontmatter = "\n".join(lines[1:end_index])
     body = "\n".join(lines[end_index + 1 :]).strip()
-    metadata = _parse_frontmatter(frontmatter)
+    metadata = yaml.safe_load(frontmatter) or {}
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"`{skill_path}` frontmatter must be a YAML mapping.")
 
     name = metadata.get("name")
     description = metadata.get("description")
@@ -157,9 +120,9 @@ class AgentSkillManager:
 
     def __init__(
         self,
-        paths: Optional[SkillsConfig] = None,
+        config: Optional[SkillsConfig] = None,
     ) -> None:
-        config = self._normalize_config(paths)
+        config = self._normalize_config(config)
         self.paths = self._normalize_paths(config.get("paths"))
         self.catalog_limit = config["catalog_limit"]
         self.search_top_k = config["search_top_k"]
@@ -170,30 +133,33 @@ class AgentSkillManager:
     def _normalize_config(self, config: Optional[SkillsConfig]) -> dict[str, Any]:
         if config is None:
             return {"paths": None, "catalog_limit": None, "search_top_k": 5}
-        if isinstance(config, Mapping):
-            allowed_keys = {"paths", "catalog_limit", "search_top_k"}
-            invalid_keys = set(config) - allowed_keys
-            if invalid_keys:
-                raise ValueError(
-                    f"Invalid skills config keys: {invalid_keys}. "
-                    f"Valid keys are: {allowed_keys}"
-                )
-            catalog_limit = self._normalize_optional_int(
-                config.get("catalog_limit"),
-                name="catalog_limit",
-                minimum=0,
+        if not isinstance(config, Mapping):
+            raise TypeError(
+                "`skills` must be a dict with `paths`, `catalog_limit`, "
+                "and `search_top_k` keys."
             )
-            search_top_k = self._normalize_optional_int(
-                config.get("search_top_k", 5),
-                name="search_top_k",
-                minimum=1,
+        allowed_keys = {"paths", "catalog_limit", "search_top_k"}
+        invalid_keys = set(config) - allowed_keys
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid skills config keys: {invalid_keys}. "
+                f"Valid keys are: {allowed_keys}"
             )
-            return {
-                "paths": config.get("paths"),
-                "catalog_limit": catalog_limit,
-                "search_top_k": search_top_k,
-            }
-        return {"paths": config, "catalog_limit": None, "search_top_k": 5}
+        catalog_limit = self._normalize_optional_int(
+            config.get("catalog_limit"),
+            name="catalog_limit",
+            minimum=0,
+        )
+        search_top_k = self._normalize_optional_int(
+            config.get("search_top_k", 5),
+            name="search_top_k",
+            minimum=1,
+        )
+        return {
+            "paths": config.get("paths"),
+            "catalog_limit": catalog_limit,
+            "search_top_k": search_top_k,
+        }
 
     def _normalize_optional_int(
         self,
@@ -226,7 +192,7 @@ class AgentSkillManager:
             return []
         if isinstance(paths, bool):
             raise TypeError(
-                "`skills` must be a path or list of paths. Use "
+                "`skills['paths']` must be a path or list of paths. Use "
                 "`msgflux.default_skill_paths()` to opt into conventional paths."
             )
         if isinstance(paths, (str, Path)):
@@ -291,11 +257,11 @@ class AgentSkillManager:
         return bool(self.skills)
 
     def has_hidden_discoverable_skills(self) -> bool:
+        return self.has_searchable_skills()
+
+    def has_searchable_skills(self) -> bool:
         cataloged = {skill.name for skill in self.catalog_skills()}
-        return any(
-            skill.discoverable and skill.name not in cataloged
-            for skill in self.skills.values()
-        )
+        return any(skill.name not in cataloged for skill in self.searchable_skills())
 
     def names(self) -> list[str]:
         return sorted(self.skills)
@@ -318,6 +284,15 @@ class AgentSkillManager:
         if self.catalog_limit is None:
             return skills
         return skills[: max(int(self.catalog_limit), 0)]
+
+    def searchable_skills(self) -> list[AgentSkill]:
+        if self.catalog_limit == 0:
+            return sorted(self.skills.values(), key=lambda item: item.name)
+        return [
+            skill
+            for skill in sorted(self.skills.values(), key=lambda item: item.name)
+            if skill.discoverable
+        ]
 
     def catalog(self) -> list[dict[str, str]]:
         return [
@@ -353,7 +328,7 @@ class AgentSkillManager:
         *,
         top_k: Optional[int] = None,
     ) -> list[tuple[AgentSkill, float]]:
-        candidates = [skill for skill in self.skills.values() if skill.discoverable]
+        candidates = self.searchable_skills()
         if not candidates:
             return []
         query_tokens = _tokenize(query)

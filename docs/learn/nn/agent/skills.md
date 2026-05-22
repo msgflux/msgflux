@@ -50,9 +50,9 @@ Skill visibility field:
 - `discoverable`: keep the skill out of the initial system prompt catalog and
   make it available through `skill_search`. Defaults to `false`.
 
-## Passing Skill Directories
+## Skill Config
 
-Pass one directory:
+Pass skill configuration as a dict:
 
 ```python
 import msgflux as mf
@@ -61,36 +61,25 @@ import msgflux.nn as nn
 agent = nn.Agent(
     name="developer_agent",
     model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills=".agents/skills",
+    skills={"paths": ".agents/skills"},
 )
 ```
 
-Pass multiple directories:
+Pass multiple directories or glob patterns through `paths`:
 
 ```python
 agent = nn.Agent(
     name="developer_agent",
     model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills=[
-        ".agents/skills",
-        ".codex/skills",
-        "~/.agents/skills",
-        "~/.codex/skills",
-    ],
-)
-```
-
-Pass glob patterns explicitly:
-
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills=[
-        ".agents/skills",
-        ".codex/skills",
-        "*/skills",
-    ],
+    skills={
+        "paths": [
+            ".agents/skills",
+            ".codex/skills",
+            "~/.agents/skills",
+            "~/.codex/skills",
+            "*/skills",
+        ],
+    },
 )
 ```
 
@@ -100,16 +89,14 @@ Use the helper when you want common local locations explicitly:
 agent = nn.Agent(
     name="developer_agent",
     model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills=mf.default_skill_paths(),
+    skills={"paths": mf.default_skill_paths()},
 )
 ```
 
 msgFlux does not scan default skill paths implicitly. This avoids silently
 loading instructions from a project or user directory. Pass the paths you want.
 
-## Skill Config
-
-For larger skill sets, pass a dict:
+For larger skill sets, add catalog and search controls:
 
 ```python
 agent = nn.Agent(
@@ -131,7 +118,8 @@ Config keys:
 
 - `paths`: directory, `SKILL.md` file, glob pattern, or list of those.
 - `catalog_limit`: maximum number of non-discoverable skills included in the
-  system prompt. Use `0` to keep the initial catalog empty.
+  system prompt. Use `0` to keep the initial catalog empty and make all skills
+  discoverable through `skill_search`.
 - `search_top_k`: default number of results returned by `skill_search`.
 
 ## System Prompt Field
@@ -143,13 +131,13 @@ The default template emits:
 
 ```xml
 <agent_skills>
-The following Agent Skills are available...
+Skills are reusable local instructions...
 <available_skills>
-  <skill>
-    <name>code-review</name>
-    <description>Review code changes...</description>
-    <location>/repo/.agents/skills/code-review/SKILL.md</location>
-  </skill>
+<skill>
+name: code-review
+description: Review code changes...
+location: /repo/.agents/skills/code-review/SKILL.md
+</skill>
 </available_skills>
 </agent_skills>
 ```
@@ -161,20 +149,25 @@ where you want the catalog to appear:
 agent = nn.Agent(
     name="developer_agent",
     model=model,
-    skills=".agents/skills",
+    skills={"paths": ".agents/skills"},
     templates={
         "system_prompt": """
         <system_note>
         {{ instructions }}
-        {% if agent_skills %}
+        {% if agent_skills_enabled %}
         <agent_skills>
+        Skills are reusable local instructions. Use activate_skill before following one.
+        {% if agent_skills %}
+        <available_skills>
         {% for skill in agent_skills %}
         <skill>
-          <name>{{ skill.name }}</name>
-          <description>{{ skill.description }}</description>
-          <location>{{ skill.location }}</location>
+        name: {{ skill.name }}
+        description: {{ skill.description }}
+        location: {{ skill.location }}
         </skill>
         {% endfor %}
+        </available_skills>
+        {% endif %}
         </agent_skills>
         {% endif %}
         </system_note>
@@ -209,12 +202,13 @@ Relative paths in this skill are relative to the skill directory.
 ```
 
 Bundled resources are listed, not eagerly loaded. The skill instructions can
-tell the agent when to read or execute those files with normal tools.
+tell the agent when to read or execute those files with normal tools. The
+loaded skill content is inserted into the conversation as a tool result message,
+so the model should treat it as task-relevant instructions for the current run.
 
 ## Searching Skills
 
-When at least one hidden discoverable skill exists, msgFlux registers another
-internal tool:
+When at least one skill is searchable, msgFlux registers another internal tool:
 
 ```python
 skill_search(query: str, top_k: int | None = None) -> str
@@ -238,7 +232,10 @@ Group changes by user-visible impact.
 Search uses a small in-memory BM25 implementation over skill name, description,
 and metadata. No external dependency is required.
 
-If no hidden discoverable skill exists, `skill_search` is not registered.
+If `catalog_limit=0`, all configured skills are searchable because none are
+listed in the initial prompt. Otherwise, only skills marked with
+`discoverable: true` are searchable. If no searchable skill exists,
+`skill_search` is not registered.
 
 ## Runnable Example
 
