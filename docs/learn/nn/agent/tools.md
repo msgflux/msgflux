@@ -1618,6 +1618,41 @@ def search_repos(query: str) -> str:
     ...
 ```
 
+#### Builtin usage guidance
+
+msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
+tool implementations neutral while letting applications such as a CLI attach
+ready-to-use instructions when composing an agent.
+
+Use `apply_tool_guidance()` to fill `usage_guidance` only when a tool does not
+already define one:
+
+```python
+import msgflux as mf
+from msgflux.tools import apply_tool_guidance
+from msgflux.tools.builtin import WebFetch, WebSearch
+
+tools = apply_tool_guidance([WebSearch(), WebFetch()])
+
+agent = mf.nn.Agent(
+    name="assistant",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=tools,
+)
+```
+
+Explicit guidance always wins:
+
+```python
+@mf.tool_config(usage_guidance="Use only for internal repository search.")
+def web_search(query: str) -> str:
+    """Search internal repositories."""
+    ...
+
+tools = apply_tool_guidance([web_search])
+# Keeps "Use only for internal repository search."
+```
+
 #### retry
 
 Control retry behavior per tool. Accepts a [tenacity](https://tenacity.readthedocs.io/) decorator, `False` to disable, or `None` (default) to use env-based retry.
