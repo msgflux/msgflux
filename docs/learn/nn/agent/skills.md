@@ -9,7 +9,7 @@ msgFlux follows the Agent Skills progressive disclosure model:
 2. The system prompt receives a compact skill catalog through the `agent_skills`
    template field.
 3. When the model decides a skill is relevant, it calls `activate_skill(name)`
-   to load the full `SKILL.md` body and resource list.
+   to load the full `SKILL.md` body.
 
 ## Skill Directory
 
@@ -195,17 +195,14 @@ Inspect correctness first, then tests and edge cases.
 
 Skill directory: /repo/.agents/skills/code-review
 Relative paths in this skill are relative to the skill directory.
-<skill_resources>
-  <file>references/checklist.md</file>
-  <file>scripts/inspect.py</file>
-</skill_resources>
 </skill_content>
 ```
 
-Bundled resources are listed, not eagerly loaded. The skill instructions can
-tell the agent when to read or execute those files with normal tools. The
-loaded skill content is inserted into the conversation as a tool result message,
-so the model should treat it as task-relevant instructions for the current run.
+Bundled resources are not listed automatically. The `SKILL.md` instructions
+should tell the agent when to read or execute relative files with normal tools.
+The loaded skill content is inserted into the conversation as a tool result
+message, so the model should treat it as task-relevant instructions for the
+current run.
 
 ## Searching Skills
 

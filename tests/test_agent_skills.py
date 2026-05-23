@@ -201,7 +201,7 @@ def test_skill_search_is_not_registered_when_all_skills_are_cataloged(tmp_path):
     assert "skill_search" not in agent.tool_library.library
 
 
-def test_activate_skill_returns_wrapped_content_and_resources(tmp_path):
+def test_activate_skill_returns_wrapped_content_without_resource_listing(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     skill_dir = _write_skill(skills_root, name="code-review")
     (skill_dir / "references").mkdir()
@@ -216,7 +216,11 @@ def test_activate_skill_returns_wrapped_content_and_resources(tmp_path):
     assert '<skill_content name="code-review">' in content
     assert "Follow the PDF workflow" in content
     assert "Skill directory:" in content
-    assert "<file>references/checklist.md</file>" in content
+    assert (
+        "Relative paths in this skill are relative to the skill directory." in content
+    )
+    assert "<skill_resources>" not in content
+    assert "<file>references/checklist.md</file>" not in content
 
 
 def test_agent_can_activate_skill_through_tool_call(tmp_path):

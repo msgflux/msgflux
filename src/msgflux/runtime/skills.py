@@ -369,29 +369,11 @@ class AgentSkillManager:
 
     def activate(self, name: str) -> str:
         skill = self.get(name)
-        resource_lines = self._resource_lines(skill)
-        resources = (
-            "\n<skill_resources>\n" + "\n".join(resource_lines) + "\n</skill_resources>"
-            if resource_lines
-            else ""
-        )
         return (
             f'<skill_content name="{skill.name}">\n'
             f"{skill.body}\n\n"
             f"Skill directory: {skill.directory}\n"
             "Relative paths in this skill are relative to the skill directory."
-            f"{resources}\n"
+            "\n"
             "</skill_content>"
         )
-
-    def _resource_lines(self, skill: AgentSkill, *, limit: int = 50) -> list[str]:
-        lines = []
-        for path in sorted(skill.directory.rglob("*")):
-            if not path.is_file() or path.name == "SKILL.md":
-                continue
-            relative = path.relative_to(skill.directory)
-            lines.append(f"  <file>{relative}</file>")
-            if len(lines) >= limit:
-                lines.append("  <file>...</file>")
-                break
-        return lines
