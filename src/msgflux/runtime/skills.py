@@ -37,7 +37,7 @@ class AgentSkill:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[str] = None
-    discoverable: bool = False
+    catalog: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     @property
@@ -96,6 +96,9 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
     if not isinstance(skill_metadata, Mapping):
         skill_metadata = {}
 
+    catalog = metadata.get("catalog")
+    catalog = _parse_bool(catalog, default=True)
+
     return AgentSkill(
         name=name.strip(),
         description=description.strip(),
@@ -110,7 +113,7 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
         allowed_tools=metadata.get("allowed-tools")
         if isinstance(metadata.get("allowed-tools"), str)
         else None,
-        discoverable=_parse_bool(metadata.get("discoverable"), default=False),
+        catalog=catalog,
         metadata={str(k): str(v) for k, v in skill_metadata.items()},
     )
 
@@ -256,12 +259,8 @@ class AgentSkillManager:
     def has_skills(self) -> bool:
         return bool(self.skills)
 
-    def has_hidden_discoverable_skills(self) -> bool:
-        return self.has_searchable_skills()
-
     def has_searchable_skills(self) -> bool:
-        cataloged = {skill.name for skill in self.catalog_skills()}
-        return any(skill.name not in cataloged for skill in self.searchable_skills())
+        return bool(self.searchable_skills())
 
     def names(self) -> list[str]:
         return sorted(self.skills)
@@ -279,19 +278,18 @@ class AgentSkillManager:
         skills = [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if not skill.discoverable
+            if skill.catalog
         ]
         if self.catalog_limit is None:
             return skills
         return skills[: max(int(self.catalog_limit), 0)]
 
     def searchable_skills(self) -> list[AgentSkill]:
-        if self.catalog_limit == 0:
-            return sorted(self.skills.values(), key=lambda item: item.name)
+        cataloged = {skill.name for skill in self.catalog_skills()}
         return [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if skill.discoverable
+            if skill.name not in cataloged
         ]
 
     def catalog(self) -> list[dict[str, str]]:
@@ -307,7 +305,7 @@ class AgentSkillManager:
     def search(self, query: str, *, top_k: Optional[int] = None) -> str:
         results = self.search_results(query, top_k=top_k)
         if not results:
-            return "No matching discoverable skills found."
+            return "No matching skills found."
         lines = ["<skill_search_results>"]
         for skill, score in results:
             lines.extend(

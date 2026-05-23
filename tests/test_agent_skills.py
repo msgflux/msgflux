@@ -14,7 +14,7 @@ def _write_skill(
     description=None,
     body=None,
     *,
-    discoverable=None,
+    catalog=None,
 ):
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
@@ -24,8 +24,8 @@ def _write_skill(
         "description: "
         + (description or "Extract PDF text and tables. Use when handling PDF files."),
     ]
-    if discoverable is not None:
-        lines.append(f"discoverable: {str(discoverable).lower()}")
+    if catalog is not None:
+        lines.append(f"catalog: {str(catalog).lower()}")
     lines.extend(
         [
             "metadata:",
@@ -86,7 +86,7 @@ def test_parse_skill_file_reads_frontmatter_and_body(tmp_path):
     assert skill.name == "pdf-processing"
     assert skill.description.startswith("Extract PDF")
     assert skill.metadata == {"owner": "docs-team"}
-    assert skill.discoverable is False
+    assert skill.catalog is True
     assert "Follow the PDF workflow" in skill.body
 
 
@@ -167,7 +167,7 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
         skills_root,
         name="release-notes",
         description="Write release notes",
-        discoverable=True,
+        catalog=False,
     )
     agent_with_skills = Agent(
         name="agent", model=_ScriptedModel([]), skills={"paths": skills_root}
@@ -188,11 +188,11 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
     )
     assert (
         agent_with_skills.tool_library.library["skill_search"].description
-        == "Search discoverable Agent Skills by name and description."
+        == "Search Agent Skills that are not listed in the initial catalog."
     )
 
 
-def test_skill_search_is_not_registered_without_hidden_discoverable_skills(tmp_path):
+def test_skill_search_is_not_registered_when_all_skills_are_cataloged(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="code-review")
     agent = Agent(name="agent", model=_ScriptedModel([]), skills={"paths": skills_root})
@@ -245,14 +245,14 @@ def test_agent_can_activate_skill_through_tool_call(tmp_path):
     )
 
 
-def test_agent_can_search_hidden_discoverable_skills(tmp_path):
+def test_agent_can_search_uncataloged_skills(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="visible-review")
     _write_skill(
         skills_root,
         name="hidden-release-notes",
         description="Write concise release notes from merged changes.",
-        discoverable=True,
+        catalog=False,
     )
     model = _ScriptedModel(
         [
@@ -277,10 +277,10 @@ def test_agent_can_search_hidden_discoverable_skills(tmp_path):
     )
 
 
-def test_discoverable_skills_are_hidden_from_catalog_and_enable_search(tmp_path):
+def test_uncataloged_skills_are_hidden_from_catalog_and_enable_search(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="alpha")
-    _write_skill(skills_root, name="beta", discoverable=True)
+    _write_skill(skills_root, name="beta", catalog=False)
 
     agent = Agent(
         name="agent",
@@ -293,6 +293,24 @@ def test_discoverable_skills_are_hidden_from_catalog_and_enable_search(tmp_path)
     assert "name: beta" not in system_prompt
     assert "skill_search" in system_prompt
     assert "skill_search" in agent.tool_library.library
+
+
+def test_catalog_limit_makes_uncataloged_skills_searchable(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="alpha", description="Review Python code.")
+    _write_skill(skills_root, name="beta", description="Write release notes.")
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        skills={"paths": skills_root, "catalog_limit": 1},
+    )
+    system_prompt = agent.get_system_prompt()
+
+    assert "name: alpha" in system_prompt
+    assert "name: beta" not in system_prompt
+    assert "skill_search" in agent.tool_library.library
+    assert "beta" in agent.tool_library.library["skill_search"](query="release")
 
 
 def test_skills_requires_dict_config():

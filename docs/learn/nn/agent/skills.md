@@ -45,10 +45,11 @@ The required fields are:
 Optional fields such as `license`, `compatibility`, `metadata`, and
 `allowed-tools` are parsed and stored by the runtime.
 
-Skill visibility field:
+Skill catalog field:
 
-- `discoverable`: keep the skill out of the initial system prompt catalog and
-  make it available through `skill_search`. Defaults to `false`.
+- `catalog`: include the skill in the initial system prompt catalog. Defaults
+  to `true`. Set `catalog: false` to keep it out of the prompt and make it
+  available through `skill_search`.
 
 ## Skill Config
 
@@ -117,9 +118,9 @@ agent = nn.Agent(
 Config keys:
 
 - `paths`: directory, `SKILL.md` file, glob pattern, or list of those.
-- `catalog_limit`: maximum number of non-discoverable skills included in the
-  system prompt. Use `0` to keep the initial catalog empty and make all skills
-  discoverable through `skill_search`.
+- `catalog_limit`: maximum number of cataloged skills included in the system
+  prompt. Use `0` to keep the initial catalog empty and make all skills
+  searchable through `skill_search`.
 - `search_top_k`: default number of results returned by `skill_search`.
 
 ## System Prompt Field
@@ -214,14 +215,14 @@ When at least one skill is searchable, msgFlux registers another internal tool:
 skill_search(query: str, top_k: int | None = None) -> str
 ```
 
-A discoverable skill is intentionally omitted from the initial catalog and can
+An uncataloged skill is intentionally omitted from the initial catalog and can
 be found through `skill_search`.
 
 ```markdown
 ---
 name: release-notes
 description: Write concise release notes from merged changes.
-discoverable: true
+catalog: false
 ---
 
 # Release Notes
@@ -234,8 +235,8 @@ and metadata. No external dependency is required.
 
 If `catalog_limit=0`, all configured skills are searchable because none are
 listed in the initial prompt. Otherwise, only skills marked with
-`discoverable: true` are searchable. If no searchable skill exists,
-`skill_search` is not registered.
+`catalog: false` or left out by `catalog_limit` are searchable. If no searchable
+skill exists, `skill_search` is not registered.
 
 ## Runnable Example
 

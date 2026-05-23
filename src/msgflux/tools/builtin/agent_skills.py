@@ -26,17 +26,17 @@ class ActivateSkill:
 
 
 class SkillSearch:
-    """Search discoverable Agent Skills by name and description."""
+    """Search Agent Skills that are not listed in the initial catalog."""
 
     name = "skill_search"
     display_name = "Skill Search"
-    description = "Search discoverable Agent Skills by name and description."
+    description = "Search Agent Skills that are not listed in the initial catalog."
 
     def __init__(self, manager: AgentSkillManager):
         self.manager = manager
 
     def __call__(self, query: str, top_k: Optional[int] = None) -> str:
-        """Search discoverable Agent Skills.
+        """Search Agent Skills that are not listed in the initial catalog.
 
         Args:
             query: Search query describing the needed skill.

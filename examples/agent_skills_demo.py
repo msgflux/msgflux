@@ -65,18 +65,18 @@ def write_skill(
     description: str,
     body: str,
     *,
-    discoverable: bool = False,
+    catalog: bool = True,
 ) -> None:
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
-    discoverable_line = ["discoverable: true"] if discoverable else []
+    catalog_line = ["catalog: false"] if not catalog else []
     (skill_dir / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
                 f"name: {name}",
                 f"description: {description}",
-                *discoverable_line,
+                *catalog_line,
                 "---",
                 body,
             ]
@@ -101,7 +101,7 @@ def main() -> None:
             "release-notes",
             "Write concise release notes from merged changes.",
             "# Release Notes\n\nGroup changes by user-visible impact.",
-            discoverable=True,
+            catalog=False,
         )
 
         agent = nn.Agent(
