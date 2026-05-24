@@ -1055,11 +1055,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+hf-hub = [
+    { name = "huggingface-hub" },
+]
 httpx = [
     { name = "httpx" },
-]
-hub = [
-    { name = "huggingface-hub" },
 ]
 openai = [
     { name = "openai" },
@@ -1101,7 +1101,7 @@ doc = [
 requires-dist = [
     { name = "code2mermaid", marker = "extra == 'plot'", specifier = ">=0.3.0" },
     { name = "httpx", marker = "extra == 'httpx'", specifier = ">=0.28.1" },
-    { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.36.0" },
+    { name = "huggingface-hub", marker = "extra == 'hf-hub'", specifier = ">=0.36.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "mermaid-py", marker = "extra == 'plot'", specifier = ">=0.8.0" },
     { name = "msgspec-ext", specifier = ">=0.5.1" },
@@ -1112,7 +1112,7 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.14.1" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.21.0" },
 ]
-provides-extras = ["httpx", "hub", "openai", "plot"]
+provides-extras = ["hf-hub", "httpx", "openai", "plot"]
 
 [package.metadata.requires-dev]
 dev = [

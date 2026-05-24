@@ -84,7 +84,7 @@ openai = [
 httpx = [
     "httpx>=0.28.1",
 ]
-hub = [
+hf_hub = [
     "huggingface-hub>=0.36.0",
 ]
 plot = [
