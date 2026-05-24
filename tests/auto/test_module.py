@@ -207,6 +207,75 @@ def create(config=None, module_path=None):
     assert result == {"marker": "from-helper"}
 
 
+def test_auto_module_check_requirements_does_not_download_declared_files(tmp_path):
+    module_root = _github_cache_path(tmp_path, "owner/repo")
+    _write_auto_module(
+        module_root,
+        manifest={
+            "schema_version": 1,
+            "msgflux_version": ">=0.0.0",
+            "factory": "module.py:create",
+            "files": ["missing-helper.py"],
+        },
+        state=None,
+        module_source="""
+def create():
+    return None
+""",
+    )
+    ref = AutoModule("owner/repo", cache_dir=tmp_path, local_files_only=True)
+
+    info = ref.check_requirements()
+
+    assert info["config"].files == ["missing-helper.py"]
+
+
+def test_auto_module_factory_type_error_is_not_retried(tmp_path):
+    module_root = _github_cache_path(tmp_path, "owner/repo")
+    _write_auto_module(
+        module_root,
+        state=None,
+        module_source="""
+def create(config=None, module_path=None):
+    calls_path = module_path / "calls.txt"
+    calls = int(calls_path.read_text()) if calls_path.exists() else 0
+    calls_path.write_text(str(calls + 1))
+    raise TypeError("unexpected keyword argument raised inside factory")
+""",
+    )
+
+    with pytest.raises(
+        TypeError, match="unexpected keyword argument raised inside factory"
+    ):
+        AutoModule.create(
+            "owner/repo",
+            cache_dir=tmp_path,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+
+    assert (module_root / "calls.txt").read_text() == "1"
+
+
+def test_auto_module_import_failure_cleans_sys_modules(tmp_path):
+    module_root = _github_cache_path(tmp_path, "owner/repo")
+    _write_auto_module(
+        module_root,
+        state=None,
+        module_source='raise RuntimeError("boom")',
+    )
+
+    with pytest.raises(AutoModuleConfigurationError, match="boom"):
+        AutoModule.create(
+            "owner/repo",
+            cache_dir=tmp_path,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+
+    assert "msgflux_auto_owner_repo_main_module" not in sys.modules
+
+
 def test_auto_module_supports_huggingface_source(monkeypatch, tmp_path):
     remote_root = tmp_path / "remote"
     _write_auto_module(remote_root, state=_agent_state())

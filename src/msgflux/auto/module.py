@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -89,13 +90,13 @@ class AutoModule:
         return self._module_root
 
     def check_requirements(self) -> dict[str, Any]:
-        config = self._ensure_config()
+        config = self._load_config(download_declared_files=False)
         return {
             "config": config,
             "repo_id": self.repo_id,
             "source": self.source_name,
             "revision": self.revision,
-            "path": self.path,
+            "path": self._module_root,
         }
 
     def _get_class(self, *, trust_remote_code: bool = False) -> type[Any]:
@@ -159,14 +160,23 @@ class AutoModule:
         return module
 
     def _ensure_config(self) -> AutoModuleConfig:
+        return self._load_config(download_declared_files=True)
+
+    def _load_config(self, *, download_declared_files: bool) -> AutoModuleConfig:
         if self._config is not None:
+            if download_declared_files:
+                self._download_declared_files(self._config)
             return self._config
         config_path = self._download("module.json")
         self._module_root = config_path.parent
         self._config = AutoModuleConfig.from_file(config_path, repo_id=self.repo_id)
-        for filename in self._config.files:
-            self._download(filename)
+        if download_declared_files:
+            self._download_declared_files(self._config)
         return self._config
+
+    def _download_declared_files(self, config: AutoModuleConfig) -> None:
+        for filename in config.files:
+            self._download(filename)
 
     def _download(self, filename: str) -> Path:
         source = self._create_source()
@@ -224,6 +234,7 @@ class AutoModule:
         try:
             spec.loader.exec_module(module)
         except Exception as exc:
+            sys.modules.pop(module_name, None)
             raise AutoModuleConfigurationError(
                 self.repo_id,
                 f"Failed to execute `{filename}`: {exc}",
@@ -251,16 +262,37 @@ class AutoModule:
         module_root = str(self.path)
         sys.path.insert(0, module_root)
         try:
-            return factory(config=config, module_path=self.path, **kwargs)
-        except TypeError as exc:
-            if "unexpected keyword argument" not in str(exc):
-                raise
-            return factory(**kwargs)
+            call_kwargs = self._factory_kwargs(factory, config=config, **kwargs)
+            return factory(**call_kwargs)
         finally:
             try:
                 sys.path.remove(module_root)
             except ValueError:
                 pass
+
+    def _factory_kwargs(
+        self,
+        factory: Callable[..., Any],
+        *,
+        config: AutoModuleConfig,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        try:
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return {"config": config, "module_path": self.path, **kwargs}
+        parameters = signature.parameters
+        has_var_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        injected = {"config": config, "module_path": self.path}
+        if has_var_kwargs:
+            return {**injected, **kwargs}
+        return {
+            **{name: value for name, value in injected.items() if name in parameters},
+            **kwargs,
+        }
 
     def _apply_model_overrides(
         self,
