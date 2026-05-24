@@ -1,9 +1,9 @@
-import re
 from dataclasses import dataclass, field
 from glob import glob
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence, Union
+from typing import Annotated, Any, Iterable, Mapping, Optional, Sequence, Union
 
+import msgspec
 import yaml
 
 from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
@@ -11,7 +11,16 @@ from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
 SkillPath = Union[str, Path]
 SkillPaths = Union[SkillPath, Sequence[SkillPath]]
 SkillsConfig = Mapping[str, Any]
-_SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+SkillName = Annotated[
+    str,
+    msgspec.Meta(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+    ),
+]
+SkillDescription = Annotated[str, msgspec.Meta(min_length=1, max_length=1024)]
+SkillCompatibility = Annotated[str, msgspec.Meta(max_length=500)]
 
 
 def default_skill_paths() -> list[Path]:
@@ -37,7 +46,6 @@ class AgentSkill:
     body: str
     license: Optional[str] = None
     compatibility: Optional[str] = None
-    allowed_tools: Optional[str] = None
     catalog: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
 
@@ -46,29 +54,78 @@ class AgentSkill:
         return self.path.parent
 
 
-def _parse_bool(value: Any, *, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "yes", "1", "on"}:
-            return True
-        if normalized in {"false", "no", "0", "off"}:
-            return False
-    return default
+class SkillFrontmatter(msgspec.Struct, forbid_unknown_fields=True):
+    """Validated SKILL.md frontmatter."""
+
+    name: SkillName
+    description: SkillDescription
+    license: Optional[str] = None
+    compatibility: Optional[SkillCompatibility] = None
+    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
+    catalog: bool = True
 
 
-def _validate_skill_name(name: str, path: Path) -> str:
-    normalized = name.strip()
-    if not _SKILL_NAME_RE.fullmatch(normalized):
+def _frontmatter_error_message(path: Path, error: msgspec.ValidationError) -> str:
+    detail = str(error)
+    rules = (
+        (
+            ("missing required field `name`",),
+            "missing required field `name`.",
+        ),
+        (
+            ("missing required field `description`",),
+            "missing required field `description`.",
+        ),
+        (
+            ("at `$.name`", "length <= 64"),
+            "field `name` must be at most 64 characters.",
+        ),
+        (
+            ("at `$.name`", "matching regex"),
+            "field `name` must use lowercase letters, numbers, and single hyphens, "
+            "and must not start or end with a hyphen.",
+        ),
+        (
+            ("at `$.description`", "length <= 1024"),
+            "field `description` must be at most 1024 characters.",
+        ),
+        (
+            ("at `$.description`",),
+            "field `description` must be a non-empty string.",
+        ),
+        (
+            ("at `$.compatibility`",),
+            "field `compatibility` must be a string with at most 500 characters.",
+        ),
+        (
+            ("at `$.license`",),
+            "field `license` must be a string.",
+        ),
+        (
+            ("at `$.metadata`",),
+            "field `metadata` must be a mapping.",
+        ),
+        (
+            ("at `$.catalog`",),
+            "field `catalog` must be a boolean.",
+        ),
+    )
+    for patterns, message in rules:
+        if all(pattern in detail for pattern in patterns):
+            return f"`{path}` has invalid skill frontmatter: {message}"
+    return f"`{path}` has invalid skill frontmatter: {detail}"
+
+
+def _convert_frontmatter(metadata: Mapping[str, Any], path: Path) -> SkillFrontmatter:
+    try:
+        frontmatter = msgspec.convert(metadata, type=SkillFrontmatter)
+    except msgspec.ValidationError as exc:
+        raise ValueError(_frontmatter_error_message(path, exc)) from exc
+    if not frontmatter.description.strip():
         raise ValueError(
-            f"`{path}` has invalid skill `name` {name!r}. "
-            "Use lowercase letters, numbers, and single hyphens "
-            "(example: `code-review`)."
+            f"`{path}` has invalid skill frontmatter: `description` must be non-empty."
         )
-    return normalized
+    return frontmatter
 
 
 def parse_skill_file(path: SkillPath) -> AgentSkill:
@@ -93,38 +150,21 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"`{skill_path}` frontmatter must be a YAML mapping.")
 
-    name = metadata.get("name")
-    description = metadata.get("description")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError(f"`{skill_path}` is missing required `name`.")
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError(f"`{skill_path}` is missing required `description`.")
-
-    skill_metadata = metadata.get("metadata", {})
-    if not isinstance(skill_metadata, Mapping):
-        skill_metadata = {}
-
-    catalog = metadata.get("catalog")
-    catalog = _parse_bool(catalog, default=True)
-
-    name = _validate_skill_name(name, skill_path)
+    frontmatter_data = _convert_frontmatter(metadata, skill_path)
 
     return AgentSkill(
-        name=name,
-        description=description.strip(),
+        name=frontmatter_data.name,
+        description=frontmatter_data.description.strip(),
         path=skill_path,
         body=body,
-        license=metadata.get("license")
-        if isinstance(metadata.get("license"), str)
+        license=frontmatter_data.license.strip()
+        if frontmatter_data.license is not None
         else None,
-        compatibility=metadata.get("compatibility")
-        if isinstance(metadata.get("compatibility"), str)
+        compatibility=frontmatter_data.compatibility.strip()
+        if frontmatter_data.compatibility is not None
         else None,
-        allowed_tools=metadata.get("allowed-tools")
-        if isinstance(metadata.get("allowed-tools"), str)
-        else None,
-        catalog=catalog,
-        metadata={str(k): str(v) for k, v in skill_metadata.items()},
+        catalog=frontmatter_data.catalog,
+        metadata={str(k): str(v) for k, v in frontmatter_data.metadata.items()},
     )
 
 

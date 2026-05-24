@@ -151,7 +151,201 @@ def test_parse_skill_file_accepts_valid_skill_names(tmp_path, name):
 def test_parse_skill_file_rejects_invalid_skill_names(tmp_path, name):
     skill_dir = _write_skill(tmp_path, name=name)
 
-    with pytest.raises(ValueError, match="invalid skill `name`"):
+    with pytest.raises(ValueError, match="field `name`"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_skill_name_over_64_chars(tmp_path):
+    skill_dir = _write_skill(tmp_path, name="a" * 65)
+
+    with pytest.raises(ValueError, match=r"field `name`.*64 characters"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_missing_required_frontmatter_fields(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing required field `description`"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_accepts_description_at_1024_chars(tmp_path):
+    skill_dir = _write_skill(tmp_path, description="a" * 1024)
+
+    skill = parse_skill_file(skill_dir / "SKILL.md")
+
+    assert skill.description == "a" * 1024
+
+
+def test_parse_skill_file_rejects_description_over_1024_chars(tmp_path):
+    skill_dir = _write_skill(tmp_path, description="a" * 1025)
+
+    with pytest.raises(ValueError, match="description"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_blank_description(tmp_path):
+    skill_dir = _write_skill(tmp_path, description="   ")
+
+    with pytest.raises(ValueError, match=r"description.*non-empty"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_error_includes_file_path_and_field(tmp_path):
+    skill_dir = _write_skill(tmp_path, name="CodeReview")
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_skill_file(skill_dir / "SKILL.md")
+
+    message = str(exc_info.value)
+    assert str(skill_dir / "SKILL.md") in message
+    assert "field `name`" in message
+
+
+def test_parse_skill_file_validates_optional_frontmatter_fields(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code.",
+                "license: MIT",
+                f"compatibility: {'a' * 500}",
+                "metadata:",
+                "  owner: docs-team",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    skill = parse_skill_file(skill_dir / "SKILL.md")
+
+    assert skill.license == "MIT"
+    assert skill.compatibility == "a" * 500
+    assert skill.metadata == {"owner": "docs-team"}
+
+
+def test_parse_skill_file_rejects_invalid_optional_frontmatter_fields(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code.",
+                "license:",
+                "  - MIT",
+                "compatibility: ok",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="license"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_invalid_catalog_field(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code.",
+                "catalog: maybe",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"field `catalog`.*boolean"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_compatibility_over_500_chars(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code.",
+                f"compatibility: {'a' * 501}",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="compatibility"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_non_mapping_metadata(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code.",
+                "metadata:",
+                "  - owner",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="metadata"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
+def test_parse_skill_file_rejects_unknown_frontmatter_fields(tmp_path):
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code.",
+                "allowed-tools: Read Grep",
+                "---",
+                "# Code Review",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown field `allowed-tools`"):
         parse_skill_file(skill_dir / "SKILL.md")
 
 

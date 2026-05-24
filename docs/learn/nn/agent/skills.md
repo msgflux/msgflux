@@ -39,11 +39,20 @@ Inspect correctness first, then tests and edge cases.
 
 The required fields are:
 
-- `name`: stable skill name.
-- `description`: what the skill does and when to use it.
+- `name`: stable skill name. Maximum 64 characters. Use lowercase letters,
+  numbers, and single hyphens. It cannot start or end with a hyphen.
+- `description`: what the skill does and when to use it. Required, non-empty,
+  maximum 1024 characters.
 
-Optional fields such as `license`, `compatibility`, `metadata`, and
-`allowed-tools` are parsed and stored by the runtime.
+Optional fields such as `license`, `compatibility`, and `metadata` are parsed
+and stored by the runtime.
+
+Optional frontmatter fields:
+
+- `license`: license name or reference to a bundled license file.
+- `compatibility`: environment requirements such as intended product, system
+  packages, or network access. Maximum 500 characters.
+- `metadata`: arbitrary key-value mapping for additional metadata.
 
 Skill catalog field:
 
