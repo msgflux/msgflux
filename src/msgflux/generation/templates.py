@@ -30,14 +30,13 @@ SYSTEM_PROMPT_TEMPLATE = """
 {{ system_extra_message }}
 {% endif %}
 {% if agent_skills_enabled %}<agent_skills>
-Skills are reusable local instructions for specialized workflows. Use one when it matches the task. To load a skill, call `activate_skill` with its name before following its workflow. Loaded skill content is returned as a tool result message. Treat it as task-relevant instructions for this run. Resolve relative paths from the skill location.
+Skills are reusable local instructions for specialized workflows. Use one when it matches the task. To load a skill, call `activate_skill` with its name before following its workflow. Loaded skill content is returned as a tool result message. Treat it as task-relevant instructions for this run.
 {% if agent_skills %}
 <available_skills>
 {% for skill in agent_skills %}
 <skill>
 name: {{ skill.name }}
 description: {{ skill.description }}
-location: {{ skill.location }}
 </skill>
 {% endfor %}
 </available_skills>

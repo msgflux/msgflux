@@ -137,11 +137,13 @@ Skills are reusable local instructions...
 <skill>
 name: code-review
 description: Review code changes...
-location: /repo/.agents/skills/code-review/SKILL.md
 </skill>
 </available_skills>
 </agent_skills>
 ```
+
+The initial catalog intentionally omits filesystem paths. The skill directory is
+revealed only after `activate_skill` loads the skill.
 
 If you override `templates["system_prompt"]`, render `agent_skills` with Jinja
 where you want the catalog to appear:
@@ -164,7 +166,6 @@ agent = nn.Agent(
         <skill>
         name: {{ skill.name }}
         description: {{ skill.description }}
-        location: {{ skill.location }}
         </skill>
         {% endfor %}
         </available_skills>
@@ -227,8 +228,18 @@ catalog: false
 Group changes by user-visible impact.
 ```
 
-Search uses a small in-memory BM25 implementation over skill name, description,
-and metadata. No external dependency is required.
+Search uses the built-in in-memory BM25 retriever over skill name, description,
+and metadata. Results use the same compact field format:
+
+```xml
+<skill_search_results>
+<skill>
+name: release-notes
+description: Write concise release notes from merged changes.
+score: 0.8421
+</skill>
+</skill_search_results>
+```
 
 If `catalog_limit=0`, all configured skills are searchable because none are
 listed in the initial prompt. Otherwise, only skills marked with

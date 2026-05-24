@@ -153,6 +153,8 @@ def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
     assert "<available_skills>" in system_prompt
     assert "name: code-review" in system_prompt
     assert "<name>code-review</name>" not in system_prompt
+    assert "location:" not in system_prompt
+    assert "SKILL.md" not in system_prompt
     assert "activate_skill" in system_prompt
     assert "tool result message" in system_prompt
 
@@ -279,6 +281,18 @@ def test_agent_can_search_uncataloged_skills(tmp_path):
         and "hidden-release-notes" in message.get("content", "")
         for message in messages
     )
+    search_result_message = next(
+        message
+        for message in messages
+        if message.get("role") == "tool"
+        and "hidden-release-notes" in message.get("content", "")
+    )
+    assert "name: hidden-release-notes" in search_result_message["content"]
+    assert (
+        "description: Write concise release notes" in search_result_message["content"]
+    )
+    assert "<name>" not in search_result_message["content"]
+    assert "<description>" not in search_result_message["content"]
 
 
 def test_uncataloged_skills_are_hidden_from_catalog_and_enable_search(tmp_path):

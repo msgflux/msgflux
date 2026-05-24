@@ -1,12 +1,11 @@
-import math
-import re
-from collections import Counter
 from dataclasses import dataclass, field
 from glob import glob
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
 import yaml
+
+from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
 
 SkillPath = Union[str, Path]
 SkillPaths = Union[SkillPath, Sequence[SkillPath]]
@@ -57,10 +56,6 @@ def _parse_bool(value: Any, *, default: bool = False) -> bool:
         if normalized in {"false", "no", "0", "off"}:
             return False
     return default
-
-
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9_:-]+", text.lower())
 
 
 def parse_skill_file(path: SkillPath) -> AgentSkill:
@@ -297,7 +292,6 @@ class AgentSkillManager:
             {
                 "name": skill.name,
                 "description": skill.description,
-                "location": str(skill.path),
             }
             for skill in self.catalog_skills()
         ]
@@ -310,11 +304,11 @@ class AgentSkillManager:
         for skill, score in results:
             lines.extend(
                 [
-                    "  <skill>",
-                    f"    <name>{skill.name}</name>",
-                    f"    <description>{skill.description}</description>",
-                    f"    <score>{score:.4f}</score>",
-                    "  </skill>",
+                    "<skill>",
+                    f"name: {skill.name}",
+                    f"description: {skill.description}",
+                    f"score: {score:.4f}",
+                    "</skill>",
                 ]
             )
         lines.append("</skill_search_results>")
@@ -329,43 +323,32 @@ class AgentSkillManager:
         candidates = self.searchable_skills()
         if not candidates:
             return []
-        query_tokens = _tokenize(query)
-        if not query_tokens:
+        if not query.strip():
             return []
 
         documents = [
             " ".join([skill.name, skill.description, " ".join(skill.metadata.values())])
             for skill in candidates
         ]
-        tokenized_docs = [_tokenize(document) for document in documents]
-        avg_doc_len = sum(len(tokens) for tokens in tokenized_docs) / len(
-            tokenized_docs
-        )
-        if avg_doc_len == 0:
+        if not any(document.strip() for document in documents):
             return []
-        doc_freq = Counter(token for tokens in tokenized_docs for token in set(tokens))
-        scored = []
-        for skill, tokens in zip(candidates, tokenized_docs):
-            token_counts = Counter(tokens)
-            score = 0.0
-            for token in set(query_tokens):
-                if token not in token_counts:
-                    continue
-                freq = token_counts[token]
-                idf = math.log(
-                    1
-                    + (len(candidates) - doc_freq[token] + 0.5)
-                    / (doc_freq[token] + 0.5)
-                )
-                denominator = freq + 1.5 * (
-                    1 - 0.75 + 0.75 * (len(tokens) / avg_doc_len)
-                )
-                score += idf * ((freq * 2.5) / denominator)
-            if score > 0:
-                scored.append((skill, score))
 
-        scored.sort(key=lambda item: item[1], reverse=True)
-        return scored[: top_k or self.search_top_k]
+        skills_by_document = dict(zip(documents, candidates))
+        retriever = BM25LexicalRetriever()
+        retriever.add(documents)
+        response = retriever(
+            query,
+            top_k=top_k or self.search_top_k,
+            threshold=0.0,
+            return_score=True,
+        )
+        scored = []
+        for result in response.data[0].results:
+            skill = skills_by_document.get(result.data)
+            if skill is None or result.score <= 0:
+                continue
+            scored.append((skill, result.score))
+        return scored
 
     def activate(self, name: str) -> str:
         skill = self.get(name)
