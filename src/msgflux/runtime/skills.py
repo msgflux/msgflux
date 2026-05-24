@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from glob import glob
 from pathlib import Path
@@ -10,6 +11,7 @@ from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
 SkillPath = Union[str, Path]
 SkillPaths = Union[SkillPath, Sequence[SkillPath]]
 SkillsConfig = Mapping[str, Any]
+_SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 
 
 def default_skill_paths() -> list[Path]:
@@ -58,6 +60,17 @@ def _parse_bool(value: Any, *, default: bool = False) -> bool:
     return default
 
 
+def _validate_skill_name(name: str, path: Path) -> str:
+    normalized = name.strip()
+    if not _SKILL_NAME_RE.fullmatch(normalized):
+        raise ValueError(
+            f"`{path}` has invalid skill `name` {name!r}. "
+            "Use lowercase letters, numbers, and single hyphens "
+            "(example: `code-review`)."
+        )
+    return normalized
+
+
 def parse_skill_file(path: SkillPath) -> AgentSkill:
     """Parse a SKILL.md file using the Agent Skills frontmatter format."""
     skill_path = Path(path).expanduser().resolve()
@@ -94,8 +107,10 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
     catalog = metadata.get("catalog")
     catalog = _parse_bool(catalog, default=True)
 
+    name = _validate_skill_name(name, skill_path)
+
     return AgentSkill(
-        name=name.strip(),
+        name=name,
         description=description.strip(),
         path=skill_path,
         body=body,

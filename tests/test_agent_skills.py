@@ -118,6 +118,43 @@ def test_parse_skill_file_supports_yaml_frontmatter(tmp_path):
     assert skill.metadata == {"tags": "['search', 'citations']"}
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "pdf",
+        "code-review",
+        "web-search-v2",
+        "skill2",
+    ],
+)
+def test_parse_skill_file_accepts_valid_skill_names(tmp_path, name):
+    skill_dir = _write_skill(tmp_path, name=name)
+
+    skill = parse_skill_file(skill_dir / "SKILL.md")
+
+    assert skill.name == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "CodeReview",
+        "code_review",
+        "code review",
+        "-code-review",
+        "code-review-",
+        "code--review",
+        "review.pr",
+        "review/pr",
+    ],
+)
+def test_parse_skill_file_rejects_invalid_skill_names(tmp_path, name):
+    skill_dir = _write_skill(tmp_path, name=name)
+
+    with pytest.raises(ValueError, match="invalid skill `name`"):
+        parse_skill_file(skill_dir / "SKILL.md")
+
+
 def test_agent_skill_manager_accepts_multiple_directories(tmp_path):
     project_skills = tmp_path / "project" / ".agents" / "skills"
     codex_skills = tmp_path / "project" / ".codex" / "skills"
