@@ -1,4 +1,3 @@
-from dataclasses import dataclass, field
 from glob import glob
 from pathlib import Path
 from typing import Annotated, Any, Iterable, Mapping, Optional, Sequence, Union
@@ -36,33 +35,54 @@ def default_skill_paths() -> list[Path]:
     ]
 
 
-@dataclass(frozen=True)
-class AgentSkill:
-    """Discovered Agent Skill metadata and activation payload."""
-
-    name: str
-    description: str
-    path: Path
-    body: str
-    license: Optional[str] = None
-    compatibility: Optional[str] = None
-    catalog: bool = True
-    metadata: Mapping[str, str] = field(default_factory=dict)
-
-    @property
-    def directory(self) -> Path:
-        return self.path.parent
-
-
-class SkillFrontmatter(msgspec.Struct, forbid_unknown_fields=True):
+class AgentSkill(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Validated SKILL.md frontmatter."""
 
     name: SkillName
     description: SkillDescription
+    path: Path
+    body: str
     license: Optional[str] = None
     compatibility: Optional[SkillCompatibility] = None
-    metadata: dict[str, Any] = msgspec.field(default_factory=dict)
     catalog: bool = True
+    metadata: dict[str, str] = msgspec.field(default_factory=dict)
+
+    @classmethod
+    def from_frontmatter(
+        cls,
+        metadata: Mapping[str, Any],
+        *,
+        path: Path,
+        body: str,
+    ) -> "AgentSkill":
+        """Build a validated skill from YAML frontmatter plus runtime payload."""
+        payload = dict(metadata)
+        payload["path"] = path
+        payload["body"] = body
+        if isinstance(payload.get("description"), str):
+            payload["description"] = payload["description"].strip()
+        if isinstance(payload.get("license"), str):
+            payload["license"] = payload["license"].strip()
+        if isinstance(payload.get("compatibility"), str):
+            payload["compatibility"] = payload["compatibility"].strip()
+        if isinstance(payload.get("metadata"), Mapping):
+            payload["metadata"] = {
+                str(key): str(value) for key, value in payload["metadata"].items()
+            }
+        try:
+            skill = msgspec.convert(payload, type=cls)
+        except msgspec.ValidationError as exc:
+            raise ValueError(_frontmatter_error_message(path, exc)) from exc
+        if not skill.description:
+            raise ValueError(
+                f"`{path}` has invalid skill frontmatter: "
+                "`description` must be non-empty."
+            )
+        return skill
+
+    @property
+    def directory(self) -> Path:
+        return self.path.parent
 
 
 def _frontmatter_error_message(path: Path, error: msgspec.ValidationError) -> str:
@@ -116,18 +136,6 @@ def _frontmatter_error_message(path: Path, error: msgspec.ValidationError) -> st
     return f"`{path}` has invalid skill frontmatter: {detail}"
 
 
-def _convert_frontmatter(metadata: Mapping[str, Any], path: Path) -> SkillFrontmatter:
-    try:
-        frontmatter = msgspec.convert(metadata, type=SkillFrontmatter)
-    except msgspec.ValidationError as exc:
-        raise ValueError(_frontmatter_error_message(path, exc)) from exc
-    if not frontmatter.description.strip():
-        raise ValueError(
-            f"`{path}` has invalid skill frontmatter: `description` must be non-empty."
-        )
-    return frontmatter
-
-
 def parse_skill_file(path: SkillPath) -> AgentSkill:
     """Parse a SKILL.md file using the Agent Skills frontmatter format."""
     skill_path = Path(path).expanduser().resolve()
@@ -150,21 +158,10 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"`{skill_path}` frontmatter must be a YAML mapping.")
 
-    frontmatter_data = _convert_frontmatter(metadata, skill_path)
-
-    return AgentSkill(
-        name=frontmatter_data.name,
-        description=frontmatter_data.description.strip(),
+    return AgentSkill.from_frontmatter(
+        metadata,
         path=skill_path,
         body=body,
-        license=frontmatter_data.license.strip()
-        if frontmatter_data.license is not None
-        else None,
-        compatibility=frontmatter_data.compatibility.strip()
-        if frontmatter_data.compatibility is not None
-        else None,
-        catalog=frontmatter_data.catalog,
-        metadata={str(k): str(v) for k, v in frontmatter_data.metadata.items()},
     )
 
 
