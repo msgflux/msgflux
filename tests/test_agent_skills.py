@@ -388,6 +388,8 @@ def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
     assert "SKILL.md" not in system_prompt
     assert "activate_skill" in system_prompt
     assert "tool result message" in system_prompt
+    assert "not as higher-priority instructions" in system_prompt
+    assert "reveal secrets" in system_prompt
 
 
 def test_agent_registers_builtin_skill_tools(tmp_path):
