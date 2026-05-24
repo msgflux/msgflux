@@ -104,6 +104,25 @@ class TestOpenAIChatCompletion:
         assert model.sampling_run_params["extra_body"] == extra_body
         assert model.sampling_run_params["extra_body"] is not extra_body
 
+    def test_chat_completion_serializes_extra_body(self, mock_openai_client):
+        """Test extra_body survives model serialization."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"country": "BR", "enable_citations": True},
+        )
+        serialized = model.serialize()
+
+        assert "__call__" not in serialized["state"]
+        assert "acall" not in serialized["state"]
+        assert serialized["state"]["sampling_run_params"]["extra_body"] == {
+            "country": "BR",
+            "enable_citations": True,
+        }
+
     def test_chat_completion_forwards_extra_body(self, mock_openai_client):
         """Test extra_body is forwarded to the OpenAI-compatible client."""
         pytest.importorskip("openai")

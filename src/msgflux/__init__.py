@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from msgspec_ext import load_dotenv
 
+    from msgflux.auto import AutoModule
     from msgflux.cache import response_cache
     from msgflux.core.dotdict import dotdict
     from msgflux.core.examples import Example
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from msgflux.utils.msgspec import load, msgspec_dumps, save
 
 __all__ = [
+    "AutoModule",
     "DB",
     "Audio",
     "ChatBlock",
@@ -60,6 +62,7 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "AutoModule": ("msgflux.auto", "AutoModule"),
     "Audio": ("msgflux.data.types", "Audio"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),

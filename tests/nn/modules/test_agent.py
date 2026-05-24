@@ -8,6 +8,27 @@ from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses, ToolCall
 from msgflux.core.examples import Example
+from msgflux.models.base import BaseModel
+from msgflux.models.registry import model_registry
+
+
+class SerializableChatModel(BaseModel):
+    model_type = "chat_completion"
+    provider = "serializable_test"
+
+    def __init__(self, model_id: str = "test-model", **kwargs):
+        self.model_id = model_id
+        self.custom_param = kwargs.get("custom_param")
+        self._api_key = kwargs.get("api_key")
+        self.model = None
+        self.processor = None
+        self.client = None
+
+    def _initialize(self):
+        self.client = "initialized_client"
+
+    def __call__(self, *args, **kwargs):
+        return ModelResponse(output="ok")
 
 
 @pytest.fixture
@@ -87,6 +108,44 @@ class TestAgentInitialization:
 
         assert agent.name == "test_agent"
         assert agent.generator.model == mock_model
+
+    def test_agent_state_dict_restores_serialized_model(self):
+        """Agent state dict should round-trip the serialized generator model."""
+        original_chat_completion = model_registry.get("chat_completion")
+        model_registry["chat_completion"] = dict(original_chat_completion or {})
+        model_registry["chat_completion"]["serializable_test"] = SerializableChatModel
+        try:
+            source = Agent(
+                name="source",
+                model=SerializableChatModel(
+                    model_id="source-model",
+                    custom_param="source-param",
+                    api_key="secret",
+                ),
+                instructions="Persist this instruction.",
+            )
+            state = source.state_dict()
+
+            assert state["generator.model"]["msgflux_type"] == "model"
+            assert state["generator.model"]["provider"] == "serializable_test"
+            assert state["generator.model"]["model_type"] == "chat_completion"
+            assert state["generator.model"]["state"]["model_id"] == "source-model"
+            assert "_api_key" not in state["generator.model"]["state"]
+
+            target = Agent(name="target", model=SerializableChatModel())
+            target.load_state_dict(state)
+
+            assert target.name == "source"
+            assert str(target.instructions) == "Persist this instruction."
+            assert isinstance(target.model, SerializableChatModel)
+            assert target.model.model_id == "source-model"
+            assert target.model.custom_param == "source-param"
+            assert target.model.client == "initialized_client"
+        finally:
+            if original_chat_completion is None:
+                model_registry.pop("chat_completion", None)
+            else:
+                model_registry["chat_completion"] = original_chat_completion
 
     def test_agent_with_system_message(self):
         """Test Agent with system message."""

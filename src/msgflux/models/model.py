@@ -74,7 +74,9 @@ class Model:
         # Create instance without calling __init__
         instance = object.__new__(model_cls)
         # Restore the instance state
-        instance.from_serialized(state)
+        instance.__setstate__(state)
+        if hasattr(instance, "_initialize"):
+            instance._initialize()
         return instance
 
     @classmethod

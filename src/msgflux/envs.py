@@ -96,5 +96,8 @@ class EnvironmentVariables(BaseSettings):
     # Model profiles cache TTL in seconds (24 hours default)
     profile_cache_ttl: int = 86400
 
+    # AutoModule cache directory.
+    auto_cache_dir: str = None
+
 
 envs = EnvironmentVariables()

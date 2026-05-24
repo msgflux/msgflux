@@ -68,8 +68,8 @@ class TestModel:
     @patch("msgflux.models.model.model_registry")
     def test_get_model_class_invalid_provider(self, mock_registry):
         """Test error when provider is not registered."""
-        mock_registry.__getitem__ = (
-            lambda self, key: {} if key == "chat_completion" else {}
+        mock_registry.__getitem__ = lambda self, key: (
+            {} if key == "chat_completion" else {}
         )
         mock_registry.__contains__ = lambda self, key: key == "chat_completion"
 
@@ -95,9 +95,6 @@ class TestModel:
         assert model.model_id == "test-model"
         assert model.custom_param == "test_value"
 
-    @pytest.mark.skip(
-        reason="from_serialized requires complex __setstate__/__getstate__ implementation"
-    )
     @patch("msgflux.models.model.model_registry")
     def test_from_serialized(self, mock_registry):
         """Test deserializing a model from state."""

@@ -7,6 +7,8 @@ from msgflux._private.client import BaseClient
 class BaseModel(BaseClient):
     msgflux_type = "model"
     to_ignore = [
+        "__call__",
+        "acall",
         "_api_key",
         "model",
         "processor",
