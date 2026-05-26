@@ -80,18 +80,27 @@ class Hook:
     in an executor.
 
     Args:
-        on: ``"pre"`` (before forward) or ``"post"`` (after forward).
+        on: ``"pre"`` (before execution) or ``"post"`` (after execution).
         target: Submodule attribute name to register the hook on.
             ``None`` registers on the module itself.
+        method: Optional method name to register on. ``None`` targets the
+            module execution boundary (`forward`).
     """
 
     _VALID_ON = {"pre", "post"}
 
-    def __init__(self, *, on: str, target: Optional[str] = None):
+    def __init__(
+        self,
+        *,
+        on: str,
+        target: Optional[str] = None,
+        method: Optional[str] = None,
+    ):
         if on not in self._VALID_ON:
             raise ValueError(f"`on` must be one of {self._VALID_ON}, given `{on!r}`")
         self.on = on
         self.target = target
+        self.method = method
 
     def __call__(self, module: Any, args: tuple, kwargs: dict, output: Any = None):
         """Sync hook — called by ``_call_impl``. Subclasses must override."""
@@ -113,6 +122,10 @@ class Hook:
 
     def register(self, module: Any) -> "RemovableHandle":
         """Register this hook on *module*."""
+        if self.method is not None:
+            if self.on == "pre":
+                return module.register_method_pre_hook(self.method, self)
+            return module.register_method_hook(self.method, self)
         if self.on == "pre":
             return module.register_forward_pre_hook(self)
         return module.register_forward_hook(self)
