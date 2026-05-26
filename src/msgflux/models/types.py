@@ -1,5 +1,7 @@
 import msgspec
 
+from msgflux.tools.definitions import ToolDefinitions
+
 
 class ChatCompletionModel:
     model_type = "chat_completion"
@@ -14,6 +16,28 @@ class ChatCompletionModel:
             decoder = msgspec.json.Decoder(schema)
             self._decoders[schema] = decoder
         return decoder
+
+    def warmup_system_prompt(
+        self,
+        *,
+        system_prompt: str | None,
+        tool_definitions: ToolDefinitions | None = None,
+    ):
+        """Warm provider prompt/tool-schema caches without producing useful output."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support prompt warmup."
+        )
+
+    async def awarmup_system_prompt(
+        self,
+        *,
+        system_prompt: str | None,
+        tool_definitions: ToolDefinitions | None = None,
+    ):
+        """Async prompt warmup counterpart."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support prompt warmup."
+        )
 
 
 class BatchedChatCompletionModel:
