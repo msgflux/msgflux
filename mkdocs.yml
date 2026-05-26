@@ -140,6 +140,7 @@ nav:
       - learn/retrievers/lexical.md
       - learn/retrievers/fuzzy.md
       - learn/retrievers/web.md
+      - learn/retrievers/weather.md
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
@@ -160,6 +161,7 @@ nav:
         - learn/nn/agent/quickstart.md
         - learn/nn/agent/async.md
         - learn/nn/agent/streaming.md
+        - learn/nn/agent/prompt-cache.md
         - learn/nn/agent/reasoning.md
         - learn/nn/agent/debug.md
         - learn/nn/agent/system-prompt.md

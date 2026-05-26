@@ -98,11 +98,63 @@ class TestOpenAIChatCompletion:
 
         from msgflux.models.providers.openai import OpenAIChatCompletion
 
-        extra_body = {"country": "BR", "enable_citations": True}
+        extra_body = {"enable_citations": True, "enable_entities": True}
         model = OpenAIChatCompletion(model_id="gpt-4", extra_body=extra_body)
 
         assert model.sampling_run_params["extra_body"] == extra_body
         assert model.sampling_run_params["extra_body"] is not extra_body
+
+    def test_chat_completion_with_extra_body_kwargs(self, mock_openai_client):
+        """Test provider-specific fields passed directly as kwargs."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            enable_entities=True,
+            enable_citations=True,
+        )
+
+        assert model.sampling_run_params["extra_body"] == {
+            "enable_entities": True,
+            "enable_citations": True,
+        }
+
+    def test_chat_completion_merges_extra_body_and_kwargs(self, mock_openai_client):
+        """Test init merges extra_body dict with direct provider kwargs."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"enable_citations": True},
+            enable_entities=True,
+        )
+
+        assert model.sampling_run_params["extra_body"] == {
+            "enable_citations": True,
+            "enable_entities": True,
+        }
+
+    def test_chat_completion_rejects_duplicated_extra_body_keys(
+        self, mock_openai_client
+    ):
+        """Test duplicated keys between extra_body and kwargs raise error."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        with pytest.raises(
+            ValueError,
+            match="Duplicate provider extra-body keys",
+        ):
+            OpenAIChatCompletion(
+                model_id="gpt-4",
+                extra_body={"enable_citations": True},
+                enable_citations=False,
+            )
 
     def test_chat_completion_forwards_extra_body(self, mock_openai_client):
         """Test extra_body is forwarded to the OpenAI-compatible client."""
@@ -127,15 +179,107 @@ class TestOpenAIChatCompletion:
         )
         model = OpenAIChatCompletion(
             model_id="gpt-4",
-            extra_body={"country": "BR", "enable_citations": True},
+            extra_body={"enable_citations": True, "enable_entities": True},
         )
         model("Hello")
 
         call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
         assert call_kwargs["extra_body"] == {
-            "country": "BR",
+            "enable_citations": True,
+            "enable_entities": True,
+        }
+
+    def test_chat_completion_forwards_extra_body_kwargs(self, mock_openai_client):
+        """Test direct provider kwargs are forwarded through extra_body."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            enable_entities=True,
+            enable_citations=True,
+        )
+        model("Hello")
+
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["extra_body"] == {
+            "enable_entities": True,
             "enable_citations": True,
         }
+
+    def test_chat_completion_call_merges_extra_body_kwargs(self, mock_openai_client):
+        """Test runtime provider kwargs merge with init extra_body."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _ = mock_openai_client
+        mock_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="done",
+                        tool_calls=None,
+                        audio=None,
+                        annotations=None,
+                    ),
+                )
+            ],
+        )
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"enable_citations": True, "country": "BR"},
+        )
+        model(
+            "Hello",
+            extra_body={"country": "US"},
+            enable_entities=True,
+        )
+
+        call_kwargs = mock_client.return_value.chat.completions.create.call_args.kwargs
+        assert call_kwargs["extra_body"] == {
+            "enable_citations": True,
+            "country": "US",
+            "enable_entities": True,
+        }
+
+    def test_chat_completion_call_rejects_duplicated_extra_body_keys(
+        self, mock_openai_client
+    ):
+        """Test runtime extra_body and direct provider kwargs cannot duplicate keys."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-4")
+
+        with pytest.raises(
+            ValueError,
+            match="Duplicate provider extra-body keys",
+        ):
+            model(
+                "Hello",
+                extra_body={"enable_citations": True},
+                enable_citations=False,
+            )
 
     def test_chat_completion_missing_api_key(self, monkeypatch):
         """Test that missing API key raises ValueError."""
@@ -254,6 +398,44 @@ class TestOpenAIChatCompletion:
         )
         assert call_kwargs["logprobs"] is True
         assert call_kwargs["top_logprobs"] == 2
+
+    @pytest.mark.asyncio
+    async def test_acall_forwards_extra_body_kwargs(self, mock_openai_client):
+        """Test runtime provider kwargs are forwarded on async calls."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        _, mock_async_client = mock_openai_client
+        mock_async_client.return_value.chat.completions.create = AsyncMock(
+            return_value=SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content="done",
+                            tool_calls=None,
+                            audio=None,
+                            annotations=None,
+                        ),
+                    )
+                ],
+            )
+        )
+        model = OpenAIChatCompletion(
+            model_id="gpt-4",
+            extra_body={"enable_citations": True},
+        )
+        await model.acall("Hello", enable_entities=True)
+
+        call_kwargs = (
+            mock_async_client.return_value.chat.completions.create.await_args.kwargs
+        )
+        assert call_kwargs["extra_body"] == {
+            "enable_citations": True,
+            "enable_entities": True,
+        }
 
     def test_chat_completion_adapt_params(self, mock_openai_client):
         """Test parameter adaptation for OpenAI."""

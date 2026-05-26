@@ -155,6 +155,63 @@ class TestGuardRegistration:
         handle.remove()
         assert len(gen._forward_hooks) == 0
 
+    def test_register_method_pre_hook(self):
+        from msgflux.nn.modules.module import Module
+
+        class GuardedModule(Module):
+            def forward(self, x):
+                return x
+
+            def validate(self, *, data):
+                return data
+
+        module = GuardedModule()
+        guard = Guard(
+            validator=lambda data: {"safe": True}, on="pre", method="validate"
+        )
+        handle = guard.register(module)
+
+        assert len(module._method_pre_hooks["validate"]) == 1
+        handle.remove()
+        assert len(module._method_pre_hooks["validate"]) == 0
+
+    def test_method_pre_guard_rejects_positional_args(self):
+        from msgflux.nn.modules.module import Module
+
+        class GuardedModule(Module):
+            def forward(self, data):
+                return self.validate(data)
+
+            def validate(self, data):
+                return data
+
+        module = GuardedModule()
+        Guard(
+            validator=lambda data: {"safe": True}, on="pre", method="validate"
+        ).register(module)
+
+        with pytest.raises(TypeError, match="keyword arguments"):
+            module("safe")
+
+    @pytest.mark.asyncio
+    async def test_async_method_pre_guard_rejects_positional_args(self):
+        from msgflux.nn.modules.module import Module
+
+        class GuardedModule(Module):
+            async def aforward(self, data):
+                return await self.validate(data)
+
+            async def validate(self, data):
+                return data
+
+        module = GuardedModule()
+        Guard(
+            validator=lambda data: {"safe": True}, on="pre", method="validate"
+        ).register(module)
+
+        with pytest.raises(TypeError, match="keyword arguments"):
+            await module.acall("safe")
+
 
 # ---------------------------------------------------------------------------
 # Guard target and processor_key
@@ -172,6 +229,10 @@ class TestGuardTarget:
         )
         assert guard.target == "embedder"
 
+    def test_method_hook_default_target_is_none(self):
+        guard = Guard(validator=lambda data: {"safe": True}, on="pre", method="format")
+        assert guard.target is None
+
     def test_processor_key_pre(self):
         guard = Guard(validator=lambda data: {"safe": True}, on="pre")
         assert guard.processor_key == "guard_pre"
@@ -179,6 +240,10 @@ class TestGuardTarget:
     def test_processor_key_post(self):
         guard = Guard(validator=lambda data: {"safe": True}, on="post")
         assert guard.processor_key == "guard_post"
+
+    def test_processor_key_is_none_for_method_hooks(self):
+        guard = Guard(validator=lambda data: {"safe": True}, on="post", method="format")
+        assert guard.processor_key is None
 
     def test_hook_base_processor_key_is_none(self):
         from msgflux.nn.hooks import Hook

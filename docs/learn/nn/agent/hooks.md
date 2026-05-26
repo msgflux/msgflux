@@ -1,19 +1,21 @@
 # Hooks & Guards
 
-Hooks are the primary mechanism for intercepting and validating data flowing through Modules. The `Hook` base class provides the interface, and `Guard` is a built-in hook for input/output validation.
+Hooks are the primary mechanism for intercepting and validating data flowing through Modules. The `Hook` base class provides the interface, and `Guard` is a built-in hook for input/output validation. Hooks can target either the module execution boundary (`forward`) or a specific method on the module.
 
 ## Guard
 
 A `Guard` validates inputs and/or outputs of a Module. Each Guard wraps a **validator** callable and defines:
 
-- **`on`** — when to run: `"pre"` (before forward) or `"post"` (after forward).
+- **`on`** — when to run: `"pre"` (before execution) or `"post"` (after execution).
 - **`message`** — controls the reaction when `safe=False`:
     - **With `message`** — short-circuits the pipeline and returns the message as the response (the model is never called).
     - **Without `message`** (default) — raises `UnsafeUserInputError` (pre) or `UnsafeModelResponseError` (post).
-- **`target`** — submodule to register on. Defaults to `"generator"`.
+- **`target`** — submodule to register on. Defaults to `"generator"` for forward hooks and `None` for method hooks.
+- **`method`** — optional method name. When omitted, the guard runs around `forward`. When set, it runs around that method instead.
 - **`include_data`** — if `True`, attaches the data that triggered the guard to the raised exception via `exc.data`. Defaults to `False` for security (the data may contain unsafe content).
 
 The validator receives `data` as a positional argument and must return either a dict with `"safe"` (bool) or a `ModelResponse` (auto-consumed by Guard).
+For `Guard(..., on="pre", method=...)`, `data` is the method `kwargs` payload. If a method is intended to be guarded in pre-mode, prefer a keyword-oriented signature.
 
 ```python
 from msgflux.nn.hooks import Guard
@@ -27,7 +29,25 @@ guard = Guard(validator=my_validator, on="pre", message="Not allowed.")
 
 # Raises exception when safe=False
 guard = Guard(validator=my_validator, on="pre")
+
+# Guard a specific method on the module itself
+guard = Guard(validator=my_validator, on="post", method="_prepare_response")
 ```
+
+!!! note "Method Guard Input Shape"
+    `Guard` on a specific method is best suited for keyword-oriented extension points.
+    In `on="pre"` mode, the validator sees the method `kwargs`, not positional args.
+
+    ```python
+    class MyModule(nn.Module):
+        def forward(self, text):
+            return self.validate(data=text)
+
+        def validate(self, *, data):
+            return data
+
+    guard = Guard(validator=my_validator, on="pre", method="validate")
+    ```
 
 ???+ note "Guard Examples"
 
@@ -200,23 +220,24 @@ The `Hook` base class allows creating custom hooks beyond guards. Implement `__c
 
 | Attribute | Description |
 |---|---|
-| `on` | `"pre"` (before forward) or `"post"` (after forward) |
+| `on` | `"pre"` (before execution) or `"post"` (after execution) |
 | `target` | Submodule name to register on. `None` = the module itself |
+| `method` | Method name to register on. `None` = the module execution boundary (`forward`) |
 | `processor_key` | Key for processor matching in `_set_hooks`. `None` = no processor |
-| `__call__` | Sync hook — called by `_call_impl` |
-| `acall` | Async hook — called by `_acall_impl` |
+| `__call__` | Sync hook — called by the sync hook dispatcher |
+| `acall` | Async hook — called by the async hook dispatcher |
 
 ### Hook Signatures
 
 ```python
-# Pre hook — receives module, args and kwargs before forward
+# Pre hook — receives module, args and kwargs before execution
 def __call__(self, module, args, kwargs, output=None): ...
 
-# Post hook — receives module, args, kwargs and the forward output
+# Post hook — receives module, args, kwargs and the output
 def __call__(self, module, args, kwargs, output=None): ...
 ```
 
-Both pre and post hooks share the same signature. For pre hooks, `output` is always `None`.
+Both pre and post hooks share the same signature. For pre hooks, `output` is always `None`. The same signature is used for forward hooks and method hooks.
 
 ???+ note "Custom Hook Examples"
 
@@ -251,6 +272,22 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
             def __call__(self, module, args, kwargs, output=None):
                 elapsed = time.time() - self.start_time
                 print(f"Generator took {elapsed:.2f}s")
+        ```
+
+    === "Hooking an Internal Method"
+
+        ```python
+        from msgflux.nn.hooks import Hook
+
+        class PrepareResponseHook(Hook):
+            """Intercept Agent._prepare_response."""
+
+            def __init__(self):
+                super().__init__(on="post", method="_prepare_response")
+
+            def __call__(self, module, args, kwargs, output=None):
+                print("response_type:", kwargs["response_type"])
+                return output
         ```
 
     === "Token Counter Hook"
@@ -293,10 +330,11 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
 
 ### Hook Registration
 
-All `nn.Module` subclasses support the `hooks` class attribute. Each hook declares its own `target` — the submodule name where it registers:
+All `nn.Module` subclasses support the `hooks` class attribute. Each hook declares where it registers:
 
 - `target="generator"` (default for Guard) — registers on the internal `Generator` wrapper
 - `target=None` — registers on the module itself
+- `method="_prepare_response"` — registers on that specific method instead of `forward`
 
 ```python
 import msgflux.nn as nn
@@ -328,9 +366,27 @@ handle = guard.register(agent.generator)  # returns RemovableHandle
 handle.remove()  # unregister when done
 ```
 
+You can also register declarative hooks for a specific method via `hooks=`:
+
+```python
+from msgflux.nn.hooks import Hook
+
+class PrepareResponseHook(Hook):
+    def __init__(self):
+        super().__init__(on="post", method="_prepare_response")
+
+    def __call__(self, module, args, kwargs, output=None):
+        print("prepared response")
+        return output
+
+class Bot(nn.Agent):
+    model = model
+    hooks = [PrepareResponseHook()]
+```
+
 ### Using Hooks with `nn.Module` Directly
 
-The hook system is built into `nn.Module`. You can register hooks on any module via PyTorch-style methods:
+The hook system is built into `nn.Module`. You can register hooks on any module via PyTorch-style methods for `forward`, or via method hooks for other methods:
 
 ```python
 import msgflux.nn as nn
@@ -352,6 +408,40 @@ def my_post_hook(module, args, kwargs, output):
 
 handle = module.register_forward_hook(my_post_hook)
 ```
+
+### Registering Hooks on Arbitrary Methods
+
+Use `register_method_pre_hook()` and `register_method_hook()` when the extension point is an internal method rather than `forward`:
+
+```python
+import msgflux.nn as nn
+
+class MyModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, text):
+        return self._normalize(text)
+
+    def _normalize(self, text):
+        return text.strip().lower()
+
+module = MyModule()
+
+def normalize_pre_hook(module, args, kwargs):
+    return (args[0] + "  ",), kwargs
+
+def normalize_post_hook(module, args, kwargs, output):
+    return f"[{output}]"
+
+pre_handle = module.register_method_pre_hook("_normalize", normalize_pre_hook)
+post_handle = module.register_method_hook("_normalize", normalize_post_hook)
+
+result = module(" Hello ")
+print(result)  # "[hello]"
+```
+
+This is useful for methods such as `Agent._prepare_response`, `Agent._prepare_inputs`, or other internal extension points that do not warrant being promoted to standalone `Module` instances.
 
 !!! warning "Streaming Limitation"
     Guards with `on="post"` are **not compatible** with `stream=True`, since the full response is needed for validation. Using both raises a `ValueError` at initialization.
