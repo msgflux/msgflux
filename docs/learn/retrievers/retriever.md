@@ -2,15 +2,16 @@
 
 ## ✦₊⁺ Overview
 
-`Retriever` provides a unified interface for fetching relevant content from different sources. All retrievers return a consistent `dotdict` response and support both synchronous and async execution.
+`Retriever` provides a unified interface for fetching relevant content from different sources. Search-style retrievers return a consistent `dotdict` response, while weather retrievers return a structured `dotdict` for one place and time. All retrievers support both synchronous and async execution.
 
-There are three retriever families:
+There are four retriever families:
 
 | Family | Providers | Use Case |
 |--------|-----------|----------|
 | **Lexical** | `bm25`, `bm25s`, `rank_bm25` | Search a local document corpus by keyword relevance |
 | **Fuzzy** | `rapidfuzz` | Approximate string matching — tolerates typos and partial matches |
-| **Web** | `wikipedia` | Fetch content from external sources at query time |
+| **Web** | `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv` | Fetch content from external sources at query time |
+| **Weather** | `open_meteo` | Retrieve current, forecast, or historical weather data |
 
 ---
 
@@ -70,17 +71,43 @@ There are three retriever families:
         print(result.data.content)
     ```
 
+???+ example "Weather — Open-Meteo"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.weather("open_meteo")
+
+    current = retriever("Fortaleza")
+    forecast = retriever("Fortaleza", when="+6h")
+    historical = retriever("-3.71722,-38.54306", when="-3d")
+
+    print(current["weather"]["temperature_c"])
+    print(current["weather"]["is_raining"])
+    ```
+
 ---
 
 ## 2. **Response Format**
 
-All retrievers return a `dotdict` with a consistent top-level structure:
+Search-style retrievers return a `dotdict` with a consistent top-level structure:
 
 ```python
 response.response_type  # "lexical_search", "fuzzy_search", or "web_search"
 response.data           # list — one entry per query
 response.data[0].results        # list of results for the first query
 response.data[0].results[0].data  # the retrieved content
+```
+
+Weather retrievers return a structured `dotdict` directly because each call
+targets one place and one time:
+
+```python
+response = mf.Retriever.weather("open_meteo")("Fortaleza")
+
+response["location"]  # resolved place and coordinates
+response["when"]      # target time metadata
+response["weather"]   # temperature, rain, wind, humidity, and condition
 ```
 
 ### Lexical response
