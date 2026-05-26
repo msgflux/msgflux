@@ -24,7 +24,6 @@ from msgspec import Meta, Struct, defstruct
 from typing_extensions import Annotated
 
 from msgflux.core.dotdict import dotdict
-from msgflux.dsl.signature import FieldInfo
 from msgflux.logger import logger
 from msgflux.utils.common import type_mapping
 
@@ -425,6 +424,8 @@ class StructFactory:
 
     @classmethod
     def _parse_annotations(cls, signature: str) -> List[Any]:  # noqa: C901
+        from msgflux.dsl.signature import FieldInfo  # noqa: PLC0415
+
         fields = []
         current_pos = 0
         level = 0
@@ -857,7 +858,7 @@ def lower_msgspec_struct_for_openai(  # noqa: C901
                     lowered = Tuple[
                         self.lower_type(
                             tuple_args[0], f"{name_hint}_item", f"{path}[]"
-                        ),  # noqa: E501
+                        ),
                         ...,
                     ]
                 else:
