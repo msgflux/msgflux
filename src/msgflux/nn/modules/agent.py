@@ -253,9 +253,9 @@ class Agent(Module, metaclass=AutoParams):
         tools:
             A list of callable objects.
         skills:
-            Agent Skills config dict with `paths`, `catalog_limit`, and
-            `search_top_k`. Use `msgflux.default_skill_paths()` when you want
-            common local paths.
+            Agent Skills config dict with `paths`, `catalog_limit`, `search_top_k`,
+            `allow`, `block`, and `load`. Use `msgflux.default_skill_paths()` when
+            you want common local paths.
         mcp_servers:
             List of MCP (Model Context Protocol) server configurations.
             Each config should contain:
@@ -1807,7 +1807,7 @@ class Agent(Module, metaclass=AutoParams):
         mcp_servers: Optional[List[Mapping[str, Any]]] = None,
     ):
         tools = list(tools or [])
-        if self.agent_skill_manager.has_skills():
+        if self.agent_skill_manager.has_activatable_skills():
             tools.append(ActivateSkill(self.agent_skill_manager))
             if self.agent_skill_manager.has_searchable_skills():
                 tools.append(SkillSearch(self.agent_skill_manager))
@@ -2230,12 +2230,16 @@ class Agent(Module, metaclass=AutoParams):
             examples=self.examples.data,
             system_extra_message=self.system_extra_message,
             agent_skills=self.agent_skill_manager.catalog()
+            if self.agent_skill_manager.has_activatable_skills()
+            else None,
+            loaded_agent_skills=self.agent_skill_manager.loaded_content()
             if self.agent_skill_manager.has_skills()
             else None,
             agent_skill_search_enabled=self.agent_skill_manager.has_searchable_skills()
-            if self.agent_skill_manager.has_skills()
+            if self.agent_skill_manager.has_activatable_skills()
             else False,
             agent_skills_enabled=self.agent_skill_manager.has_skills(),
+            agent_skill_activation_enabled=self.agent_skill_manager.has_activatable_skills(),
         )
 
         if self.config.get("include_date", False):

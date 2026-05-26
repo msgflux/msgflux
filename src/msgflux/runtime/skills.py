@@ -10,6 +10,7 @@ from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
 SkillPath = Union[str, Path]
 SkillPaths = Union[SkillPath, Sequence[SkillPath]]
 SkillsConfig = Mapping[str, Any]
+SkillFilterValue = Union[str, Sequence[str]]
 SkillName = Annotated[
     str,
     msgspec.Meta(
@@ -185,25 +186,44 @@ class AgentSkillManager:
         self.paths = self._normalize_paths(config.get("paths"))
         self.catalog_limit = config["catalog_limit"]
         self.search_top_k = config["search_top_k"]
+        self.allow = config["allow"]
+        self.block = config["block"]
+        self.load = config["load"]
         self.skills: dict[str, AgentSkill] = {}
         self.diagnostics: list[str] = []
         self.discover()
 
     def _normalize_config(self, config: Optional[SkillsConfig]) -> dict[str, Any]:
         if config is None:
-            return {"paths": None, "catalog_limit": None, "search_top_k": 5}
+            return {
+                "paths": None,
+                "catalog_limit": None,
+                "search_top_k": 5,
+                "allow": None,
+                "block": None,
+                "load": set(),
+            }
         if not isinstance(config, Mapping):
             raise TypeError(
                 "`skills` must be a dict with `paths`, `catalog_limit`, "
-                "and `search_top_k` keys."
+                "`search_top_k`, `allow`, `block`, and `load` keys."
             )
-        allowed_keys = {"paths", "catalog_limit", "search_top_k"}
+        allowed_keys = {
+            "paths",
+            "catalog_limit",
+            "search_top_k",
+            "allow",
+            "block",
+            "load",
+        }
         invalid_keys = set(config) - allowed_keys
         if invalid_keys:
             raise ValueError(
                 f"Invalid skills config keys: {invalid_keys}. "
                 f"Valid keys are: {allowed_keys}"
             )
+        if config.get("allow") is not None and config.get("block") is not None:
+            raise ValueError("`skills` must contain only one of `allow` or `block`.")
         catalog_limit = self._normalize_optional_int(
             config.get("catalog_limit"),
             name="catalog_limit",
@@ -218,7 +238,34 @@ class AgentSkillManager:
             "paths": config.get("paths"),
             "catalog_limit": catalog_limit,
             "search_top_k": search_top_k,
+            "allow": self._normalize_name_filter(config.get("allow"), name="allow"),
+            "block": self._normalize_name_filter(config.get("block"), name="block"),
+            "load": self._normalize_name_filter(config.get("load"), name="load")
+            or set(),
         }
+
+    def _normalize_name_filter(
+        self,
+        values: Optional[SkillFilterValue],
+        *,
+        name: str,
+    ) -> Optional[set[str]]:
+        if values is None:
+            return None
+        if isinstance(values, str):
+            if not values:
+                raise ValueError(f"`skills['{name}']` must be non-empty.")
+            return {values}
+        if isinstance(values, Sequence):
+            if any(not isinstance(value, str) or not value for value in values):
+                raise ValueError(
+                    f"`skills['{name}']` must contain only non-empty strings."
+                )
+            return set(values)
+        raise TypeError(
+            f"`skills['{name}']` must be a string or list of strings, "
+            f"given `{type(values)}`."
+        )
 
     def _normalize_optional_int(
         self,
@@ -293,6 +340,36 @@ class AgentSkillManager:
                     )
                     continue
                 self.skills[skill.name] = skill
+        self._apply_skill_filters()
+        self._validate_loaded_skills()
+
+    def _apply_skill_filters(self) -> None:
+        if self.allow is not None:
+            missing = self.allow - set(self.skills)
+            if missing:
+                raise ValueError(
+                    "Unknown skills in `skills['allow']`: "
+                    f"{', '.join(sorted(missing))}."
+                )
+            self.skills = {
+                name: skill for name, skill in self.skills.items() if name in self.allow
+            }
+        if self.block is not None:
+            if "*" in self.block:
+                self.skills.clear()
+                return
+            self.skills = {
+                name: skill
+                for name, skill in self.skills.items()
+                if name not in self.block
+            }
+
+    def _validate_loaded_skills(self) -> None:
+        missing = self.load - set(self.skills)
+        if missing:
+            raise ValueError(
+                f"Unknown skills in `skills['load']`: {', '.join(sorted(missing))}."
+            )
 
     def _iter_skill_files(self, root: Path) -> Iterable[Path]:
         if not root.exists():
@@ -315,6 +392,9 @@ class AgentSkillManager:
     def has_skills(self) -> bool:
         return bool(self.skills)
 
+    def has_activatable_skills(self) -> bool:
+        return bool(self.activatable_skills())
+
     def has_searchable_skills(self) -> bool:
         return bool(self.searchable_skills())
 
@@ -334,18 +414,26 @@ class AgentSkillManager:
         skills = [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if skill.catalog
+            if skill.catalog and skill.name not in self.load
         ]
         if self.catalog_limit is None:
             return skills
         return skills[: max(int(self.catalog_limit), 0)]
 
-    def searchable_skills(self) -> list[AgentSkill]:
-        cataloged = {skill.name for skill in self.catalog_skills()}
+    def loaded_skills(self) -> list[AgentSkill]:
+        return [self.skills[name] for name in sorted(self.load) if name in self.skills]
+
+    def activatable_skills(self) -> list[AgentSkill]:
         return [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if skill.name not in cataloged
+            if skill.name not in self.load
+        ]
+
+    def searchable_skills(self) -> list[AgentSkill]:
+        cataloged = {skill.name for skill in self.catalog_skills()}
+        return [
+            skill for skill in self.activatable_skills() if skill.name not in cataloged
         ]
 
     def catalog(self) -> list[dict[str, str]]:
@@ -413,6 +501,14 @@ class AgentSkillManager:
 
     def activate(self, name: str) -> str:
         skill = self.get(name)
+        if skill.name in self.load:
+            raise ValueError(f"Skill `{name}` is already loaded in the system prompt.")
+        return self.render_skill_content(skill)
+
+    def loaded_content(self) -> list[str]:
+        return [self.render_skill_content(skill) for skill in self.loaded_skills()]
+
+    def render_skill_content(self, skill: AgentSkill) -> str:
         lines = [
             f'<skill_content name="{skill.name}">',
             skill.body,

@@ -427,6 +427,49 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
     )
 
 
+def test_agent_does_not_register_activate_tool_when_all_skills_are_loaded(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="code-review")
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        skills={"paths": skills_root, "load": "code-review"},
+    )
+    system_prompt = agent.get_system_prompt()
+
+    assert "activate_skill" not in agent.tool_library.library
+    assert "skill_search" not in agent.tool_library.library
+    assert '<skill_content name="code-review">' in system_prompt
+    assert "Follow the PDF workflow" in system_prompt
+    assert "To load a listed skill" not in system_prompt
+    assert "<available_skills>" not in system_prompt
+
+
+def test_loaded_skill_includes_directory_when_related_content_exists(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    skill_dir = _write_skill(skills_root, name="code-review")
+    (skill_dir / "references").mkdir()
+    (skill_dir / "references" / "checklist.md").write_text(
+        "Review checklist",
+        encoding="utf-8",
+    )
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        skills={"paths": skills_root, "load": "code-review"},
+    )
+    system_prompt = agent.get_system_prompt()
+
+    assert '<skill_content name="code-review">' in system_prompt
+    assert "Skill directory:" in system_prompt
+    assert (
+        "Relative paths in this skill are relative to the skill directory."
+        in system_prompt
+    )
+
+
 def test_skill_search_is_not_registered_when_all_skills_are_cataloged(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="code-review")
@@ -434,6 +477,43 @@ def test_skill_search_is_not_registered_when_all_skills_are_cataloged(tmp_path):
 
     assert "activate_skill" in agent.tool_library.library
     assert "skill_search" not in agent.tool_library.library
+
+
+def test_skills_allow_filters_available_skills(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="alpha")
+    _write_skill(skills_root, name="beta")
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        skills={"paths": skills_root, "allow": "alpha"},
+    )
+    system_prompt = agent.get_system_prompt()
+
+    assert "name: alpha" in system_prompt
+    assert "name: beta" not in system_prompt
+    assert "alpha" in agent.agent_skill_manager.names()
+    assert "beta" not in agent.agent_skill_manager.names()
+    with pytest.raises(ValueError, match="Unknown skill `beta`"):
+        agent.agent_skill_manager.activate("beta")
+
+
+def test_skills_block_filters_available_skills(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="alpha")
+    _write_skill(skills_root, name="beta")
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        skills={"paths": skills_root, "block": "beta"},
+    )
+    system_prompt = agent.get_system_prompt()
+
+    assert "name: alpha" in system_prompt
+    assert "name: beta" not in system_prompt
+    assert agent.agent_skill_manager.names() == ["alpha"]
 
 
 def test_activate_skill_omits_directory_when_skill_has_no_related_content(tmp_path):
@@ -598,6 +678,26 @@ def test_skills_config_validates_limits(tmp_path):
 
     with pytest.raises(ValueError, match="search_top_k"):
         AgentSkillManager({"paths": tmp_path, "search_top_k": 0})
+
+
+def test_skills_config_validates_filters(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="alpha")
+
+    with pytest.raises(ValueError, match="only one of `allow` or `block`"):
+        AgentSkillManager({"paths": skills_root, "allow": "alpha", "block": "beta"})
+
+    with pytest.raises(ValueError, match="skills\\['allow'\\]"):
+        AgentSkillManager({"paths": skills_root, "allow": ""})
+
+    with pytest.raises(TypeError, match="skills\\['load'\\]"):
+        AgentSkillManager({"paths": skills_root, "load": {"alpha"}})
+
+    with pytest.raises(ValueError, match="Unknown skills in `skills\\['allow'\\]`"):
+        AgentSkillManager({"paths": skills_root, "allow": "missing"})
+
+    with pytest.raises(ValueError, match="Unknown skills in `skills\\['load'\\]`"):
+        AgentSkillManager({"paths": skills_root, "load": "missing"})
 
 
 def test_catalog_limit_zero_enables_search_for_all_skills(tmp_path):
