@@ -43,6 +43,8 @@ from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
+from msgflux.runtime.skills import AgentSkillManager, SkillsConfig
+from msgflux.tools.builtin import ActivateSkill, SkillSearch
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.common import has_format_placeholder, is_jinja_template
@@ -132,6 +134,7 @@ class Agent(Module, metaclass=AutoParams):
         typed_parser: Optional[str] = None,
         response_mode: Optional[str] = None,
         tools: Optional[List[Callable]] = None,
+        skills: Optional[SkillsConfig] = None,
         mcp_servers: Optional[List[Mapping[str, Any]]] = None,
         signature: Optional[Union[str, Signature]] = None,
         description: Optional[str] = None,
@@ -252,6 +255,10 @@ class Agent(Module, metaclass=AutoParams):
               (``dotdict`` or ``Message`` is mutated in place).
         tools:
             A list of callable objects.
+        skills:
+            Agent Skills config dict with `paths`, `catalog_limit`, `search_top_k`,
+            `allow`, `block`, and `load`. Use `msgflux.default_skill_paths()` when
+            you want common local paths.
         mcp_servers:
             List of MCP (Model Context Protocol) server configurations.
             Each config should contain:
@@ -365,6 +372,7 @@ class Agent(Module, metaclass=AutoParams):
 
         self._set_response_mode(response_mode)
         self._set_templates(templates)
+        self._set_skills(skills)
         self._set_tools(tools, mcp_servers)
 
         if signature is not None:
@@ -1915,9 +1923,17 @@ class Agent(Module, metaclass=AutoParams):
         tools: Optional[List[Callable]] = None,
         mcp_servers: Optional[List[Mapping[str, Any]]] = None,
     ):
+        tools = list(tools or [])
+        if self.agent_skill_manager.has_activatable_skills():
+            tools.append(ActivateSkill(self.agent_skill_manager))
+            if self.agent_skill_manager.has_searchable_skills():
+                tools.append(SkillSearch(self.agent_skill_manager))
         self.tool_library = ToolLibrary(
-            self.get_module_name(), tools or [], mcp_servers=mcp_servers
+            self.get_module_name(), tools, mcp_servers=mcp_servers
         )
+
+    def _set_skills(self, skills: Optional[SkillsConfig] = None):
+        self.agent_skill_manager = AgentSkillManager(skills)
 
     def _set_generation_schema(
         self, generation_schema: Optional[msgspec.Struct] = None
@@ -2399,6 +2415,17 @@ class Agent(Module, metaclass=AutoParams):
             expected_output=self.expected_output.data,
             examples=self.examples.data,
             system_extra_message=self.system_extra_message,
+            agent_skills=self.agent_skill_manager.catalog()
+            if self.agent_skill_manager.has_activatable_skills()
+            else None,
+            loaded_agent_skills=self.agent_skill_manager.loaded_content()
+            if self.agent_skill_manager.has_skills()
+            else None,
+            agent_skill_search_enabled=self.agent_skill_manager.has_searchable_skills()
+            if self.agent_skill_manager.has_activatable_skills()
+            else False,
+            agent_skills_enabled=self.agent_skill_manager.has_skills(),
+            agent_skill_activation_enabled=self.agent_skill_manager.has_activatable_skills(),
             tool_usage_guidance=self.tool_library.get_tool_usage_guidance(tool_names),
         )
 

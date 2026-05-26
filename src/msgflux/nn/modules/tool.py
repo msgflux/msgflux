@@ -191,8 +191,8 @@ class LocalTool(Tool):
         annotations: Dict[str, Any],
         tool_config: Dict[str, Any],
         impl: Callable,
-        transport_params: Optional[Dict[str, Any]] = None,
         display_name: Optional[str] = None,
+        transport_params: Optional[Dict[str, Any]] = None,
         usage_guidance: Optional[str] = None,
     ):
         super().__init__()

@@ -169,6 +169,7 @@ nav:
         - learn/nn/agent/task-and-context.md
         - learn/nn/agent/vars.md
         - learn/nn/agent/tools.md
+        - learn/nn/agent/skills.md
         - learn/nn/agent/signatures.md
         - learn/nn/agent/hooks.md
         - learn/nn/agent/model-gateway.md
