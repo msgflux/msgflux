@@ -2192,6 +2192,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#input-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4595,6 +4606,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#input-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5299,12 +5321,107 @@ When an agent has a signature, its annotations are automatically configured base
     print(response)
     ```
 
+### Input Validation
+
+When using signatures, you can opt-in to **input validation** that checks types and required fields *before* calling the model. This catches errors early and avoids wasting tokens on malformed requests.
+
+Enable it via the `validate_inputs` config option:
+
+```python
+config = {&quot;validate_inputs&quot;: True}
+```
+
+Validation requires two conditions:
+
+1. `config[&quot;validate_inputs&quot;]` is `True`
+2. The agent has a `signature` configured (which generates the input schema)
+
+If either condition is missing, validation is silently skipped.
+
+???+ example &quot;Input Validation Examples&quot;
+
+    === &quot;Catching Type Errors&quot;
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)
+
+        class Calculator(nn.Agent):
+            model = mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;)
+            signature = &quot;expression: str, precision: int -&gt; result: float&quot;
+            config = {&quot;validate_inputs&quot;: True}
+
+        agent = Calculator()
+
+        # This works
+        agent(expression=&quot;sqrt(2)&quot;, precision=4)
+
+        # This raises ValueError before calling the model:
+        # &quot;Input validation failed: Expected `int`, got `str` - at `$.precision`&quot;
+        agent(expression=&quot;sqrt(2)&quot;, precision=&quot;high&quot;)
+        ```
+
+    === &quot;Catching Missing Fields&quot;
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)
+
+        class Translator(nn.Agent):
+            model = mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;)
+            signature = &quot;text: str, target_language: str -&gt; translation: str&quot;
+            config = {&quot;validate_inputs&quot;: True}
+
+        agent = Translator()
+
+        # Raises ValueError: missing required field `target_language`
+        agent(text=&quot;Hello world&quot;)
+        ```
+
+    === &quot;With Optional Fields&quot;
+
+        ```python
+        # pip install msgflux[openai]
+        from typing import Optional
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)
+
+        class QA(mf.Signature):
+            &quot;&quot;&quot;Answer the question based on the context.&quot;&quot;&quot;
+            question: str = mf.InputField(desc=&quot;The question to answer&quot;)
+            context: Optional[str] = mf.InputField(desc=&quot;Supporting context&quot;)
+            answer: str = mf.OutputField()
+
+        class Answerer(nn.Agent):
+            model = mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;)
+            signature = QA
+            config = {&quot;validate_inputs&quot;: True}
+
+        agent = Answerer()
+
+        # Both are valid — context is optional
+        agent(question=&quot;What is Python?&quot;)
+        agent(question=&quot;What is Python?&quot;, context=&quot;Python is a programming language.&quot;)
+        ```
+
+!!! note &quot;How It Works&quot;
+    When a signature is configured with `validate_inputs: True`, msgFlux generates a [msgspec Struct](https://jcristharif.com/msgspec/) from the input fields and creates a **cached `msgspec.json.Decoder`** at initialization time. At runtime, the Agent validates the effective task mapping — named kwargs, `task={...}`, or a task extracted via `message_fields` — against this schema, checking types, required fields, and optional defaults before rendering the prompt.
+
 !!! tip &quot;Best Practices&quot;
     - **Start simple**: Begin with inline signatures and evolve to class-based as needed
     - **Be semantic**: Choose clear, meaningful field names (e.g., `question` not `q`)
     - **Use descriptions**: Add `desc` for ambiguous fields or specific constraints
     - **Docstrings matter**: The class docstring becomes the model&#x27;s instruction
     - **Trust the system**: Avoid over-engineering prompts in descriptions
+    - **Enable validation in development**: Use `config={&quot;validate_inputs&quot;: True}` to catch input errors early
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -6015,6 +6132,94 @@ When an agent has a signature, its annotations are automatically configured base
 </span><span id="__span-18-36"><a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
+<h3 id="input-validation">Input Validation</h3>
+<p>When using signatures, you can opt-in to <strong>input validation</strong> that checks types and required fields <em>before</em> calling the model. This catches errors early and avoids wasting tokens on malformed requests.</p>
+<p>Enable it via the <code>validate_inputs</code> config option:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;validate_inputs&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span></code></pre></div>
+<p>Validation requires two conditions:</p>
+<ol>
+<li><code>config["validate_inputs"]</code> is <code>True</code></li>
+<li>The agent has a <code>signature</code> configured (which generates the input schema)</li>
+</ol>
+<p>If either condition is missing, validation is silently skipped.</p>
+<details class="example" open="open">
+<summary>Input Validation Examples</summary>
+<div class="tabbed-set tabbed-alternate" data-tabs="6:3"><input checked="checked" id="__tabbed_6_1" name="__tabbed_6" type="radio" /><input id="__tabbed_6_2" name="__tabbed_6" type="radio" /><input id="__tabbed_6_3" name="__tabbed_6" type="radio" /><div class="tabbed-labels"><label for="__tabbed_6_1">Catching Type Errors</label><label for="__tabbed_6_2">Catching Missing Fields</label><label for="__tabbed_6_3">With Optional Fields</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">Calculator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="s2">&quot;expression: str, precision: int -&gt; result: float&quot;</span>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;validate_inputs&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>
+</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">Calculator</span><span class="p">()</span>
+</span><span id="__span-20-13"><a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a>
+</span><span id="__span-20-14"><a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="c1"># This works</span>
+</span><span id="__span-20-15"><a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a><span class="n">agent</span><span class="p">(</span><span class="n">expression</span><span class="o">=</span><span class="s2">&quot;sqrt(2)&quot;</span><span class="p">,</span> <span class="n">precision</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+</span><span id="__span-20-16"><a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a>
+</span><span id="__span-20-17"><a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a><span class="c1"># This raises ValueError before calling the model:</span>
+</span><span id="__span-20-18"><a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a><span class="c1"># &quot;Input validation failed: Expected `int`, got `str` - at `$.precision`&quot;</span>
+</span><span id="__span-20-19"><a id="__codelineno-20-19" name="__codelineno-20-19" href="#__codelineno-20-19"></a><span class="n">agent</span><span class="p">(</span><span class="n">expression</span><span class="o">=</span><span class="s2">&quot;sqrt(2)&quot;</span><span class="p">,</span> <span class="n">precision</span><span class="o">=</span><span class="s2">&quot;high&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">Translator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="s2">&quot;text: str, target_language: str -&gt; translation: str&quot;</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;validate_inputs&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>
+</span><span id="__span-21-12"><a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">Translator</span><span class="p">()</span>
+</span><span id="__span-21-13"><a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a>
+</span><span id="__span-21-14"><a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="c1"># Raises ValueError: missing required field `target_language`</span>
+</span><span id="__span-21-15"><a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a><span class="n">agent</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s2">&quot;Hello world&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="k">class</span><span class="w"> </span><span class="nc">QA</span><span class="p">(</span><span class="n">mf</span><span class="o">.</span><span class="n">Signature</span><span class="p">):</span>
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Answer the question based on the context.&quot;&quot;&quot;</span>
+</span><span id="__span-22-10"><a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">InputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;The question to answer&quot;</span><span class="p">)</span>
+</span><span id="__span-22-11"><a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a>    <span class="n">context</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">InputField</span><span class="p">(</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Supporting context&quot;</span><span class="p">)</span>
+</span><span id="__span-22-12"><a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>    <span class="n">answer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">OutputField</span><span class="p">()</span>
+</span><span id="__span-22-13"><a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>
+</span><span id="__span-22-14"><a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="k">class</span><span class="w"> </span><span class="nc">Answerer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-22-15"><a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-22-16"><a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a>    <span class="n">signature</span> <span class="o">=</span> <span class="n">QA</span>
+</span><span id="__span-22-17"><a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;validate_inputs&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-22-18"><a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a>
+</span><span id="__span-22-19"><a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">Answerer</span><span class="p">()</span>
+</span><span id="__span-22-20"><a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a>
+</span><span id="__span-22-21"><a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a><span class="c1"># Both are valid — context is optional</span>
+</span><span id="__span-22-22"><a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="n">agent</span><span class="p">(</span><span class="n">question</span><span class="o">=</span><span class="s2">&quot;What is Python?&quot;</span><span class="p">)</span>
+</span><span id="__span-22-23"><a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a><span class="n">agent</span><span class="p">(</span><span class="n">question</span><span class="o">=</span><span class="s2">&quot;What is Python?&quot;</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="s2">&quot;Python is a programming language.&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+</details>
+<div class="admonition note">
+<p class="admonition-title">How It Works</p>
+<p>When a signature is configured with <code>validate_inputs: True</code>, msgFlux generates a <a href="https://jcristharif.com/msgspec/">msgspec Struct</a> from the input fields and creates a <strong>cached <code>msgspec.json.Decoder</code></strong> at initialization time. At runtime, the Agent validates the effective task mapping — named kwargs, <code>task={...}</code>, or a task extracted via <code>message_fields</code> — against this schema, checking types, required fields, and optional defaults before rendering the prompt.</p>
+</div>
 <div class="admonition tip">
 <p class="admonition-title">Best Practices</p>
 <ul>
@@ -6023,6 +6228,7 @@ When an agent has a signature, its annotations are automatically configured base
 <li><strong>Use descriptions</strong>: Add <code>desc</code> for ambiguous fields or specific constraints</li>
 <li><strong>Docstrings matter</strong>: The class docstring becomes the model's instruction</li>
 <li><strong>Trust the system</strong>: Avoid over-engineering prompts in descriptions</li>
+<li><strong>Enable validation in development</strong>: Use <code>config={"validate_inputs": True}</code> to catch input errors early</li>
 </ul>
 </div>
 
