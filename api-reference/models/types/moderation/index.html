@@ -1650,6 +1650,8 @@
       
         
       
+        
+      
     
     
     
@@ -1773,6 +1775,34 @@
     
   
     Streaming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../learn/nn/agent/prompt-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Cache Warmup
   
 
     
@@ -4522,55 +4552,7 @@
 
               <details class="quote">
                 <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1973">1973</a></span>
-<span class="normal"><a href="#__codelineno-0-1974">1974</a></span>
-<span class="normal"><a href="#__codelineno-0-1975">1975</a></span>
-<span class="normal"><a href="#__codelineno-0-1976">1976</a></span>
-<span class="normal"><a href="#__codelineno-0-1977">1977</a></span>
-<span class="normal"><a href="#__codelineno-0-1978">1978</a></span>
-<span class="normal"><a href="#__codelineno-0-1979">1979</a></span>
-<span class="normal"><a href="#__codelineno-0-1980">1980</a></span>
-<span class="normal"><a href="#__codelineno-0-1981">1981</a></span>
-<span class="normal"><a href="#__codelineno-0-1982">1982</a></span>
-<span class="normal"><a href="#__codelineno-0-1983">1983</a></span>
-<span class="normal"><a href="#__codelineno-0-1984">1984</a></span>
-<span class="normal"><a href="#__codelineno-0-1985">1985</a></span>
-<span class="normal"><a href="#__codelineno-0-1986">1986</a></span>
-<span class="normal"><a href="#__codelineno-0-1987">1987</a></span>
-<span class="normal"><a href="#__codelineno-0-1988">1988</a></span>
-<span class="normal"><a href="#__codelineno-0-1989">1989</a></span>
-<span class="normal"><a href="#__codelineno-0-1990">1990</a></span>
-<span class="normal"><a href="#__codelineno-0-1991">1991</a></span>
-<span class="normal"><a href="#__codelineno-0-1992">1992</a></span>
-<span class="normal"><a href="#__codelineno-0-1993">1993</a></span>
-<span class="normal"><a href="#__codelineno-0-1994">1994</a></span>
-<span class="normal"><a href="#__codelineno-0-1995">1995</a></span>
-<span class="normal"><a href="#__codelineno-0-1996">1996</a></span>
-<span class="normal"><a href="#__codelineno-0-1997">1997</a></span>
-<span class="normal"><a href="#__codelineno-0-1998">1998</a></span>
-<span class="normal"><a href="#__codelineno-0-1999">1999</a></span>
-<span class="normal"><a href="#__codelineno-0-2000">2000</a></span>
-<span class="normal"><a href="#__codelineno-0-2001">2001</a></span>
-<span class="normal"><a href="#__codelineno-0-2002">2002</a></span>
-<span class="normal"><a href="#__codelineno-0-2003">2003</a></span>
-<span class="normal"><a href="#__codelineno-0-2004">2004</a></span>
-<span class="normal"><a href="#__codelineno-0-2005">2005</a></span>
-<span class="normal"><a href="#__codelineno-0-2006">2006</a></span>
-<span class="normal"><a href="#__codelineno-0-2007">2007</a></span>
-<span class="normal"><a href="#__codelineno-0-2008">2008</a></span>
-<span class="normal"><a href="#__codelineno-0-2009">2009</a></span>
-<span class="normal"><a href="#__codelineno-0-2010">2010</a></span>
-<span class="normal"><a href="#__codelineno-0-2011">2011</a></span>
-<span class="normal"><a href="#__codelineno-0-2012">2012</a></span>
-<span class="normal"><a href="#__codelineno-0-2013">2013</a></span>
-<span class="normal"><a href="#__codelineno-0-2014">2014</a></span>
-<span class="normal"><a href="#__codelineno-0-2015">2015</a></span>
-<span class="normal"><a href="#__codelineno-0-2016">2016</a></span>
-<span class="normal"><a href="#__codelineno-0-2017">2017</a></span>
-<span class="normal"><a href="#__codelineno-0-2018">2018</a></span>
-<span class="normal"><a href="#__codelineno-0-2019">2019</a></span>
-<span class="normal"><a href="#__codelineno-0-2020">2020</a></span>
-<span class="normal"><a href="#__codelineno-0-2021">2021</a></span>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2021">2021</a></span>
 <span class="normal"><a href="#__codelineno-0-2022">2022</a></span>
 <span class="normal"><a href="#__codelineno-0-2023">2023</a></span>
 <span class="normal"><a href="#__codelineno-0-2024">2024</a></span>
@@ -4632,117 +4614,165 @@
 <span class="normal"><a href="#__codelineno-0-2080">2080</a></span>
 <span class="normal"><a href="#__codelineno-0-2081">2081</a></span>
 <span class="normal"><a href="#__codelineno-0-2082">2082</a></span>
-<span class="normal"><a href="#__codelineno-0-2083">2083</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1973"><a id="__codelineno-0-1973" name="__codelineno-0-1973"></a><span class="nd">@register_model</span>
-</span><span id="__span-0-1974"><a id="__codelineno-0-1974" name="__codelineno-0-1974"></a><span class="k">class</span><span class="w"> </span><span class="nc">OpenAIModeration</span><span class="p">(</span><span class="n">_BaseOpenAI</span><span class="p">,</span> <span class="n">ModerationModel</span><span class="p">):</span>
-</span><span id="__span-0-1975"><a id="__codelineno-0-1975" name="__codelineno-0-1975"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;OpenAI Moderation.&quot;&quot;&quot;</span>
-</span><span id="__span-0-1976"><a id="__codelineno-0-1976" name="__codelineno-0-1976"></a>
-</span><span id="__span-0-1977"><a id="__codelineno-0-1977" name="__codelineno-0-1977"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
-</span><span id="__span-0-1978"><a id="__codelineno-0-1978" name="__codelineno-0-1978"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-1979"><a id="__codelineno-0-1979" name="__codelineno-0-1979"></a>        <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1980"><a id="__codelineno-0-1980" name="__codelineno-0-1980"></a>        <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-1981"><a id="__codelineno-0-1981" name="__codelineno-0-1981"></a>        <span class="n">base_url</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1982"><a id="__codelineno-0-1982" name="__codelineno-0-1982"></a>        <span class="n">enable_cache</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-0-1983"><a id="__codelineno-0-1983" name="__codelineno-0-1983"></a>        <span class="n">cache_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
-</span><span id="__span-0-1984"><a id="__codelineno-0-1984" name="__codelineno-0-1984"></a>        <span class="n">retry</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1985"><a id="__codelineno-0-1985" name="__codelineno-0-1985"></a>    <span class="p">):</span>
-</span><span id="__span-0-1986"><a id="__codelineno-0-1986" name="__codelineno-0-1986"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Args:</span>
-</span><span id="__span-0-1987"><a id="__codelineno-0-1987" name="__codelineno-0-1987"></a><span class="sd">        model_id:</span>
-</span><span id="__span-0-1988"><a id="__codelineno-0-1988" name="__codelineno-0-1988"></a><span class="sd">            Model ID in provider.</span>
-</span><span id="__span-0-1989"><a id="__codelineno-0-1989" name="__codelineno-0-1989"></a><span class="sd">        base_url:</span>
-</span><span id="__span-0-1990"><a id="__codelineno-0-1990" name="__codelineno-0-1990"></a><span class="sd">            URL to model provider.</span>
-</span><span id="__span-0-1991"><a id="__codelineno-0-1991" name="__codelineno-0-1991"></a><span class="sd">        enable_cache:</span>
-</span><span id="__span-0-1992"><a id="__codelineno-0-1992" name="__codelineno-0-1992"></a><span class="sd">            If True, enables response caching to avoid redundant API calls.</span>
-</span><span id="__span-0-1993"><a id="__codelineno-0-1993" name="__codelineno-0-1993"></a><span class="sd">        cache_size:</span>
-</span><span id="__span-0-1994"><a id="__codelineno-0-1994" name="__codelineno-0-1994"></a><span class="sd">            Maximum number of responses to cache (default: 128).</span>
-</span><span id="__span-0-1995"><a id="__codelineno-0-1995" name="__codelineno-0-1995"></a><span class="sd">        retry:</span>
-</span><span id="__span-0-1996"><a id="__codelineno-0-1996" name="__codelineno-0-1996"></a><span class="sd">            Retry config. A tenacity decorator, False to disable, or None for default.</span>
-</span><span id="__span-0-1997"><a id="__codelineno-0-1997" name="__codelineno-0-1997"></a><span class="sd">        &quot;&quot;&quot;</span>
-</span><span id="__span-0-1998"><a id="__codelineno-0-1998" name="__codelineno-0-1998"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-0-1999"><a id="__codelineno-0-1999" name="__codelineno-0-1999"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">model_id</span> <span class="o">=</span> <span class="n">model_id</span>
-</span><span id="__span-0-2000"><a id="__codelineno-0-2000" name="__codelineno-0-2000"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">sampling_params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;base_url&quot;</span><span class="p">:</span> <span class="n">base_url</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_base_url</span><span class="p">()}</span>
-</span><span id="__span-0-2001"><a id="__codelineno-0-2001" name="__codelineno-0-2001"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="o">=</span> <span class="n">enable_cache</span>
-</span><span id="__span-0-2002"><a id="__codelineno-0-2002" name="__codelineno-0-2002"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">cache_size</span> <span class="o">=</span> <span class="n">cache_size</span>
-</span><span id="__span-0-2003"><a id="__codelineno-0-2003" name="__codelineno-0-2003"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">retry</span> <span class="o">=</span> <span class="n">retry</span>
-</span><span id="__span-0-2004"><a id="__codelineno-0-2004" name="__codelineno-0-2004"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_initialize</span><span class="p">()</span>
-</span><span id="__span-0-2005"><a id="__codelineno-0-2005" name="__codelineno-0-2005"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_get_api_key</span><span class="p">()</span>
-</span><span id="__span-0-2006"><a id="__codelineno-0-2006" name="__codelineno-0-2006"></a>
-</span><span id="__span-0-2007"><a id="__codelineno-0-2007" name="__codelineno-0-2007"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_execute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-2008"><a id="__codelineno-0-2008" name="__codelineno-0-2008"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">moderations</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2009"><a id="__codelineno-0-2009" name="__codelineno-0-2009"></a>        <span class="k">return</span> <span class="n">model_output</span>
-</span><span id="__span-0-2010"><a id="__codelineno-0-2010" name="__codelineno-0-2010"></a>
-</span><span id="__span-0-2011"><a id="__codelineno-0-2011" name="__codelineno-0-2011"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_aexecute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-2012"><a id="__codelineno-0-2012" name="__codelineno-0-2012"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">aclient</span><span class="o">.</span><span class="n">moderations</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2013"><a id="__codelineno-0-2013" name="__codelineno-0-2013"></a>        <span class="k">return</span> <span class="n">model_output</span>
-</span><span id="__span-0-2014"><a id="__codelineno-0-2014" name="__codelineno-0-2014"></a>
-</span><span id="__span-0-2015"><a id="__codelineno-0-2015" name="__codelineno-0-2015"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-2016"><a id="__codelineno-0-2016" name="__codelineno-0-2016"></a>        <span class="c1"># Check cache if enabled</span>
-</span><span id="__span-0-2017"><a id="__codelineno-0-2017" name="__codelineno-0-2017"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
-</span><span id="__span-0-2018"><a id="__codelineno-0-2018" name="__codelineno-0-2018"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2019"><a id="__codelineno-0-2019" name="__codelineno-0-2019"></a>            <span class="n">hit</span><span class="p">,</span> <span class="n">cached_response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cache_key</span><span class="p">)</span>
-</span><span id="__span-0-2020"><a id="__codelineno-0-2020" name="__codelineno-0-2020"></a>            <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
-</span><span id="__span-0-2021"><a id="__codelineno-0-2021" name="__codelineno-0-2021"></a>                <span class="k">return</span> <span class="n">cached_response</span>
-</span><span id="__span-0-2022"><a id="__codelineno-0-2022" name="__codelineno-0-2022"></a>
-</span><span id="__span-0-2023"><a id="__codelineno-0-2023" name="__codelineno-0-2023"></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">()</span>
-</span><span id="__span-0-2024"><a id="__codelineno-0-2024" name="__codelineno-0-2024"></a>        <span class="n">response</span><span class="o">.</span><span class="n">set_response_type</span><span class="p">(</span><span class="s2">&quot;moderation&quot;</span><span class="p">)</span>
-</span><span id="__span-0-2025"><a id="__codelineno-0-2025" name="__codelineno-0-2025"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execute_model</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2026"><a id="__codelineno-0-2026" name="__codelineno-0-2026"></a>        <span class="n">moderation</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="n">model_output</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()})</span>
-</span><span id="__span-0-2027"><a id="__codelineno-0-2027" name="__codelineno-0-2027"></a>        <span class="n">moderation</span><span class="o">.</span><span class="n">safe</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">moderation</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">flagged</span>
-</span><span id="__span-0-2028"><a id="__codelineno-0-2028" name="__codelineno-0-2028"></a>        <span class="n">response</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">moderation</span><span class="p">)</span>
-</span><span id="__span-0-2029"><a id="__codelineno-0-2029" name="__codelineno-0-2029"></a>
-</span><span id="__span-0-2030"><a id="__codelineno-0-2030" name="__codelineno-0-2030"></a>        <span class="c1"># Store in cache if enabled</span>
-</span><span id="__span-0-2031"><a id="__codelineno-0-2031" name="__codelineno-0-2031"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
-</span><span id="__span-0-2032"><a id="__codelineno-0-2032" name="__codelineno-0-2032"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2033"><a id="__codelineno-0-2033" name="__codelineno-0-2033"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">cache_key</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
-</span><span id="__span-0-2034"><a id="__codelineno-0-2034" name="__codelineno-0-2034"></a>
-</span><span id="__span-0-2035"><a id="__codelineno-0-2035" name="__codelineno-0-2035"></a>        <span class="k">return</span> <span class="n">response</span>
-</span><span id="__span-0-2036"><a id="__codelineno-0-2036" name="__codelineno-0-2036"></a>
-</span><span id="__span-0-2037"><a id="__codelineno-0-2037" name="__codelineno-0-2037"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_agenerate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-2038"><a id="__codelineno-0-2038" name="__codelineno-0-2038"></a>        <span class="c1"># Check cache if enabled</span>
-</span><span id="__span-0-2039"><a id="__codelineno-0-2039" name="__codelineno-0-2039"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
-</span><span id="__span-0-2040"><a id="__codelineno-0-2040" name="__codelineno-0-2040"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2041"><a id="__codelineno-0-2041" name="__codelineno-0-2041"></a>            <span class="n">hit</span><span class="p">,</span> <span class="n">cached_response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cache_key</span><span class="p">)</span>
-</span><span id="__span-0-2042"><a id="__codelineno-0-2042" name="__codelineno-0-2042"></a>            <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
-</span><span id="__span-0-2043"><a id="__codelineno-0-2043" name="__codelineno-0-2043"></a>                <span class="k">return</span> <span class="n">cached_response</span>
-</span><span id="__span-0-2044"><a id="__codelineno-0-2044" name="__codelineno-0-2044"></a>
-</span><span id="__span-0-2045"><a id="__codelineno-0-2045" name="__codelineno-0-2045"></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">()</span>
-</span><span id="__span-0-2046"><a id="__codelineno-0-2046" name="__codelineno-0-2046"></a>        <span class="n">response</span><span class="o">.</span><span class="n">set_response_type</span><span class="p">(</span><span class="s2">&quot;moderation&quot;</span><span class="p">)</span>
-</span><span id="__span-0-2047"><a id="__codelineno-0-2047" name="__codelineno-0-2047"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_aexecute_model</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2048"><a id="__codelineno-0-2048" name="__codelineno-0-2048"></a>        <span class="n">moderation</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="n">model_output</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()})</span>
-</span><span id="__span-0-2049"><a id="__codelineno-0-2049" name="__codelineno-0-2049"></a>        <span class="n">moderation</span><span class="o">.</span><span class="n">safe</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">moderation</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">flagged</span>
-</span><span id="__span-0-2050"><a id="__codelineno-0-2050" name="__codelineno-0-2050"></a>        <span class="n">response</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">moderation</span><span class="p">)</span>
-</span><span id="__span-0-2051"><a id="__codelineno-0-2051" name="__codelineno-0-2051"></a>
-</span><span id="__span-0-2052"><a id="__codelineno-0-2052" name="__codelineno-0-2052"></a>        <span class="c1"># Store in cache if enabled</span>
-</span><span id="__span-0-2053"><a id="__codelineno-0-2053" name="__codelineno-0-2053"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
-</span><span id="__span-0-2054"><a id="__codelineno-0-2054" name="__codelineno-0-2054"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-2055"><a id="__codelineno-0-2055" name="__codelineno-0-2055"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">cache_key</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
-</span><span id="__span-0-2056"><a id="__codelineno-0-2056" name="__codelineno-0-2056"></a>
-</span><span id="__span-0-2057"><a id="__codelineno-0-2057" name="__codelineno-0-2057"></a>        <span class="k">return</span> <span class="n">response</span>
+<span class="normal"><a href="#__codelineno-0-2083">2083</a></span>
+<span class="normal"><a href="#__codelineno-0-2084">2084</a></span>
+<span class="normal"><a href="#__codelineno-0-2085">2085</a></span>
+<span class="normal"><a href="#__codelineno-0-2086">2086</a></span>
+<span class="normal"><a href="#__codelineno-0-2087">2087</a></span>
+<span class="normal"><a href="#__codelineno-0-2088">2088</a></span>
+<span class="normal"><a href="#__codelineno-0-2089">2089</a></span>
+<span class="normal"><a href="#__codelineno-0-2090">2090</a></span>
+<span class="normal"><a href="#__codelineno-0-2091">2091</a></span>
+<span class="normal"><a href="#__codelineno-0-2092">2092</a></span>
+<span class="normal"><a href="#__codelineno-0-2093">2093</a></span>
+<span class="normal"><a href="#__codelineno-0-2094">2094</a></span>
+<span class="normal"><a href="#__codelineno-0-2095">2095</a></span>
+<span class="normal"><a href="#__codelineno-0-2096">2096</a></span>
+<span class="normal"><a href="#__codelineno-0-2097">2097</a></span>
+<span class="normal"><a href="#__codelineno-0-2098">2098</a></span>
+<span class="normal"><a href="#__codelineno-0-2099">2099</a></span>
+<span class="normal"><a href="#__codelineno-0-2100">2100</a></span>
+<span class="normal"><a href="#__codelineno-0-2101">2101</a></span>
+<span class="normal"><a href="#__codelineno-0-2102">2102</a></span>
+<span class="normal"><a href="#__codelineno-0-2103">2103</a></span>
+<span class="normal"><a href="#__codelineno-0-2104">2104</a></span>
+<span class="normal"><a href="#__codelineno-0-2105">2105</a></span>
+<span class="normal"><a href="#__codelineno-0-2106">2106</a></span>
+<span class="normal"><a href="#__codelineno-0-2107">2107</a></span>
+<span class="normal"><a href="#__codelineno-0-2108">2108</a></span>
+<span class="normal"><a href="#__codelineno-0-2109">2109</a></span>
+<span class="normal"><a href="#__codelineno-0-2110">2110</a></span>
+<span class="normal"><a href="#__codelineno-0-2111">2111</a></span>
+<span class="normal"><a href="#__codelineno-0-2112">2112</a></span>
+<span class="normal"><a href="#__codelineno-0-2113">2113</a></span>
+<span class="normal"><a href="#__codelineno-0-2114">2114</a></span>
+<span class="normal"><a href="#__codelineno-0-2115">2115</a></span>
+<span class="normal"><a href="#__codelineno-0-2116">2116</a></span>
+<span class="normal"><a href="#__codelineno-0-2117">2117</a></span>
+<span class="normal"><a href="#__codelineno-0-2118">2118</a></span>
+<span class="normal"><a href="#__codelineno-0-2119">2119</a></span>
+<span class="normal"><a href="#__codelineno-0-2120">2120</a></span>
+<span class="normal"><a href="#__codelineno-0-2121">2121</a></span>
+<span class="normal"><a href="#__codelineno-0-2122">2122</a></span>
+<span class="normal"><a href="#__codelineno-0-2123">2123</a></span>
+<span class="normal"><a href="#__codelineno-0-2124">2124</a></span>
+<span class="normal"><a href="#__codelineno-0-2125">2125</a></span>
+<span class="normal"><a href="#__codelineno-0-2126">2126</a></span>
+<span class="normal"><a href="#__codelineno-0-2127">2127</a></span>
+<span class="normal"><a href="#__codelineno-0-2128">2128</a></span>
+<span class="normal"><a href="#__codelineno-0-2129">2129</a></span>
+<span class="normal"><a href="#__codelineno-0-2130">2130</a></span>
+<span class="normal"><a href="#__codelineno-0-2131">2131</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2021"><a id="__codelineno-0-2021" name="__codelineno-0-2021"></a><span class="nd">@register_model</span>
+</span><span id="__span-0-2022"><a id="__codelineno-0-2022" name="__codelineno-0-2022"></a><span class="k">class</span><span class="w"> </span><span class="nc">OpenAIModeration</span><span class="p">(</span><span class="n">_BaseOpenAI</span><span class="p">,</span> <span class="n">ModerationModel</span><span class="p">):</span>
+</span><span id="__span-0-2023"><a id="__codelineno-0-2023" name="__codelineno-0-2023"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;OpenAI Moderation.&quot;&quot;&quot;</span>
+</span><span id="__span-0-2024"><a id="__codelineno-0-2024" name="__codelineno-0-2024"></a>
+</span><span id="__span-0-2025"><a id="__codelineno-0-2025" name="__codelineno-0-2025"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+</span><span id="__span-0-2026"><a id="__codelineno-0-2026" name="__codelineno-0-2026"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2027"><a id="__codelineno-0-2027" name="__codelineno-0-2027"></a>        <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-2028"><a id="__codelineno-0-2028" name="__codelineno-0-2028"></a>        <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-2029"><a id="__codelineno-0-2029" name="__codelineno-0-2029"></a>        <span class="n">base_url</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-2030"><a id="__codelineno-0-2030" name="__codelineno-0-2030"></a>        <span class="n">enable_cache</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-2031"><a id="__codelineno-0-2031" name="__codelineno-0-2031"></a>        <span class="n">cache_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+</span><span id="__span-0-2032"><a id="__codelineno-0-2032" name="__codelineno-0-2032"></a>        <span class="n">retry</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-2033"><a id="__codelineno-0-2033" name="__codelineno-0-2033"></a>    <span class="p">):</span>
+</span><span id="__span-0-2034"><a id="__codelineno-0-2034" name="__codelineno-0-2034"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Args:</span>
+</span><span id="__span-0-2035"><a id="__codelineno-0-2035" name="__codelineno-0-2035"></a><span class="sd">        model_id:</span>
+</span><span id="__span-0-2036"><a id="__codelineno-0-2036" name="__codelineno-0-2036"></a><span class="sd">            Model ID in provider.</span>
+</span><span id="__span-0-2037"><a id="__codelineno-0-2037" name="__codelineno-0-2037"></a><span class="sd">        base_url:</span>
+</span><span id="__span-0-2038"><a id="__codelineno-0-2038" name="__codelineno-0-2038"></a><span class="sd">            URL to model provider.</span>
+</span><span id="__span-0-2039"><a id="__codelineno-0-2039" name="__codelineno-0-2039"></a><span class="sd">        enable_cache:</span>
+</span><span id="__span-0-2040"><a id="__codelineno-0-2040" name="__codelineno-0-2040"></a><span class="sd">            If True, enables response caching to avoid redundant API calls.</span>
+</span><span id="__span-0-2041"><a id="__codelineno-0-2041" name="__codelineno-0-2041"></a><span class="sd">        cache_size:</span>
+</span><span id="__span-0-2042"><a id="__codelineno-0-2042" name="__codelineno-0-2042"></a><span class="sd">            Maximum number of responses to cache (default: 128).</span>
+</span><span id="__span-0-2043"><a id="__codelineno-0-2043" name="__codelineno-0-2043"></a><span class="sd">        retry:</span>
+</span><span id="__span-0-2044"><a id="__codelineno-0-2044" name="__codelineno-0-2044"></a><span class="sd">            Retry config. A tenacity decorator, False to disable, or None for default.</span>
+</span><span id="__span-0-2045"><a id="__codelineno-0-2045" name="__codelineno-0-2045"></a><span class="sd">        &quot;&quot;&quot;</span>
+</span><span id="__span-0-2046"><a id="__codelineno-0-2046" name="__codelineno-0-2046"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span><span id="__span-0-2047"><a id="__codelineno-0-2047" name="__codelineno-0-2047"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">model_id</span> <span class="o">=</span> <span class="n">model_id</span>
+</span><span id="__span-0-2048"><a id="__codelineno-0-2048" name="__codelineno-0-2048"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">sampling_params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;base_url&quot;</span><span class="p">:</span> <span class="n">base_url</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_base_url</span><span class="p">()}</span>
+</span><span id="__span-0-2049"><a id="__codelineno-0-2049" name="__codelineno-0-2049"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="o">=</span> <span class="n">enable_cache</span>
+</span><span id="__span-0-2050"><a id="__codelineno-0-2050" name="__codelineno-0-2050"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">cache_size</span> <span class="o">=</span> <span class="n">cache_size</span>
+</span><span id="__span-0-2051"><a id="__codelineno-0-2051" name="__codelineno-0-2051"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">retry</span> <span class="o">=</span> <span class="n">retry</span>
+</span><span id="__span-0-2052"><a id="__codelineno-0-2052" name="__codelineno-0-2052"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_initialize</span><span class="p">()</span>
+</span><span id="__span-0-2053"><a id="__codelineno-0-2053" name="__codelineno-0-2053"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_get_api_key</span><span class="p">()</span>
+</span><span id="__span-0-2054"><a id="__codelineno-0-2054" name="__codelineno-0-2054"></a>
+</span><span id="__span-0-2055"><a id="__codelineno-0-2055" name="__codelineno-0-2055"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_execute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-2056"><a id="__codelineno-0-2056" name="__codelineno-0-2056"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">moderations</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2057"><a id="__codelineno-0-2057" name="__codelineno-0-2057"></a>        <span class="k">return</span> <span class="n">model_output</span>
 </span><span id="__span-0-2058"><a id="__codelineno-0-2058" name="__codelineno-0-2058"></a>
-</span><span id="__span-0-2059"><a id="__codelineno-0-2059" name="__codelineno-0-2059"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
-</span><span id="__span-0-2060"><a id="__codelineno-0-2060" name="__codelineno-0-2060"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2061"><a id="__codelineno-0-2061" name="__codelineno-0-2061"></a>        <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
-</span><span id="__span-0-2062"><a id="__codelineno-0-2062" name="__codelineno-0-2062"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-2063"><a id="__codelineno-0-2063" name="__codelineno-0-2063"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Args:</span>
-</span><span id="__span-0-2064"><a id="__codelineno-0-2064" name="__codelineno-0-2064"></a><span class="sd">        data:</span>
-</span><span id="__span-0-2065"><a id="__codelineno-0-2065" name="__codelineno-0-2065"></a><span class="sd">            Input (or inputs) to classify. Can be a single string,</span>
-</span><span id="__span-0-2066"><a id="__codelineno-0-2066" name="__codelineno-0-2066"></a><span class="sd">            an array of strings, or an array of multi-modal input</span>
-</span><span id="__span-0-2067"><a id="__codelineno-0-2067" name="__codelineno-0-2067"></a><span class="sd">            objects similar to other models.</span>
-</span><span id="__span-0-2068"><a id="__codelineno-0-2068" name="__codelineno-0-2068"></a><span class="sd">        &quot;&quot;&quot;</span>
-</span><span id="__span-0-2069"><a id="__codelineno-0-2069" name="__codelineno-0-2069"></a>        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-2070"><a id="__codelineno-0-2070" name="__codelineno-0-2070"></a>        <span class="k">return</span> <span class="n">response</span>
-</span><span id="__span-0-2071"><a id="__codelineno-0-2071" name="__codelineno-0-2071"></a>
-</span><span id="__span-0-2072"><a id="__codelineno-0-2072" name="__codelineno-0-2072"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
-</span><span id="__span-0-2073"><a id="__codelineno-0-2073" name="__codelineno-0-2073"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2074"><a id="__codelineno-0-2074" name="__codelineno-0-2074"></a>        <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
-</span><span id="__span-0-2075"><a id="__codelineno-0-2075" name="__codelineno-0-2075"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-2076"><a id="__codelineno-0-2076" name="__codelineno-0-2076"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
-</span><span id="__span-0-2077"><a id="__codelineno-0-2077" name="__codelineno-0-2077"></a><span class="sd">        data:</span>
-</span><span id="__span-0-2078"><a id="__codelineno-0-2078" name="__codelineno-0-2078"></a><span class="sd">            Input (or inputs) to classify. Can be a single string,</span>
-</span><span id="__span-0-2079"><a id="__codelineno-0-2079" name="__codelineno-0-2079"></a><span class="sd">            an array of strings, or an array of multi-modal input</span>
-</span><span id="__span-0-2080"><a id="__codelineno-0-2080" name="__codelineno-0-2080"></a><span class="sd">            objects similar to other models.</span>
-</span><span id="__span-0-2081"><a id="__codelineno-0-2081" name="__codelineno-0-2081"></a><span class="sd">        &quot;&quot;&quot;</span>
-</span><span id="__span-0-2082"><a id="__codelineno-0-2082" name="__codelineno-0-2082"></a>        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-2059"><a id="__codelineno-0-2059" name="__codelineno-0-2059"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_aexecute_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-2060"><a id="__codelineno-0-2060" name="__codelineno-0-2060"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">aclient</span><span class="o">.</span><span class="n">moderations</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2061"><a id="__codelineno-0-2061" name="__codelineno-0-2061"></a>        <span class="k">return</span> <span class="n">model_output</span>
+</span><span id="__span-0-2062"><a id="__codelineno-0-2062" name="__codelineno-0-2062"></a>
+</span><span id="__span-0-2063"><a id="__codelineno-0-2063" name="__codelineno-0-2063"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-2064"><a id="__codelineno-0-2064" name="__codelineno-0-2064"></a>        <span class="c1"># Check cache if enabled</span>
+</span><span id="__span-0-2065"><a id="__codelineno-0-2065" name="__codelineno-0-2065"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
+</span><span id="__span-0-2066"><a id="__codelineno-0-2066" name="__codelineno-0-2066"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2067"><a id="__codelineno-0-2067" name="__codelineno-0-2067"></a>            <span class="n">hit</span><span class="p">,</span> <span class="n">cached_response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cache_key</span><span class="p">)</span>
+</span><span id="__span-0-2068"><a id="__codelineno-0-2068" name="__codelineno-0-2068"></a>            <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
+</span><span id="__span-0-2069"><a id="__codelineno-0-2069" name="__codelineno-0-2069"></a>                <span class="k">return</span> <span class="n">cached_response</span>
+</span><span id="__span-0-2070"><a id="__codelineno-0-2070" name="__codelineno-0-2070"></a>
+</span><span id="__span-0-2071"><a id="__codelineno-0-2071" name="__codelineno-0-2071"></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">()</span>
+</span><span id="__span-0-2072"><a id="__codelineno-0-2072" name="__codelineno-0-2072"></a>        <span class="n">response</span><span class="o">.</span><span class="n">set_response_type</span><span class="p">(</span><span class="s2">&quot;moderation&quot;</span><span class="p">)</span>
+</span><span id="__span-0-2073"><a id="__codelineno-0-2073" name="__codelineno-0-2073"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execute_model</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2074"><a id="__codelineno-0-2074" name="__codelineno-0-2074"></a>        <span class="n">moderation</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="n">model_output</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()})</span>
+</span><span id="__span-0-2075"><a id="__codelineno-0-2075" name="__codelineno-0-2075"></a>        <span class="n">moderation</span><span class="o">.</span><span class="n">safe</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">moderation</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">flagged</span>
+</span><span id="__span-0-2076"><a id="__codelineno-0-2076" name="__codelineno-0-2076"></a>        <span class="n">response</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">moderation</span><span class="p">)</span>
+</span><span id="__span-0-2077"><a id="__codelineno-0-2077" name="__codelineno-0-2077"></a>
+</span><span id="__span-0-2078"><a id="__codelineno-0-2078" name="__codelineno-0-2078"></a>        <span class="c1"># Store in cache if enabled</span>
+</span><span id="__span-0-2079"><a id="__codelineno-0-2079" name="__codelineno-0-2079"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
+</span><span id="__span-0-2080"><a id="__codelineno-0-2080" name="__codelineno-0-2080"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2081"><a id="__codelineno-0-2081" name="__codelineno-0-2081"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">cache_key</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
+</span><span id="__span-0-2082"><a id="__codelineno-0-2082" name="__codelineno-0-2082"></a>
 </span><span id="__span-0-2083"><a id="__codelineno-0-2083" name="__codelineno-0-2083"></a>        <span class="k">return</span> <span class="n">response</span>
+</span><span id="__span-0-2084"><a id="__codelineno-0-2084" name="__codelineno-0-2084"></a>
+</span><span id="__span-0-2085"><a id="__codelineno-0-2085" name="__codelineno-0-2085"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_agenerate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-2086"><a id="__codelineno-0-2086" name="__codelineno-0-2086"></a>        <span class="c1"># Check cache if enabled</span>
+</span><span id="__span-0-2087"><a id="__codelineno-0-2087" name="__codelineno-0-2087"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
+</span><span id="__span-0-2088"><a id="__codelineno-0-2088" name="__codelineno-0-2088"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2089"><a id="__codelineno-0-2089" name="__codelineno-0-2089"></a>            <span class="n">hit</span><span class="p">,</span> <span class="n">cached_response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cache_key</span><span class="p">)</span>
+</span><span id="__span-0-2090"><a id="__codelineno-0-2090" name="__codelineno-0-2090"></a>            <span class="k">if</span> <span class="n">hit</span><span class="p">:</span>
+</span><span id="__span-0-2091"><a id="__codelineno-0-2091" name="__codelineno-0-2091"></a>                <span class="k">return</span> <span class="n">cached_response</span>
+</span><span id="__span-0-2092"><a id="__codelineno-0-2092" name="__codelineno-0-2092"></a>
+</span><span id="__span-0-2093"><a id="__codelineno-0-2093" name="__codelineno-0-2093"></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">()</span>
+</span><span id="__span-0-2094"><a id="__codelineno-0-2094" name="__codelineno-0-2094"></a>        <span class="n">response</span><span class="o">.</span><span class="n">set_response_type</span><span class="p">(</span><span class="s2">&quot;moderation&quot;</span><span class="p">)</span>
+</span><span id="__span-0-2095"><a id="__codelineno-0-2095" name="__codelineno-0-2095"></a>        <span class="n">model_output</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_aexecute_model</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2096"><a id="__codelineno-0-2096" name="__codelineno-0-2096"></a>        <span class="n">moderation</span> <span class="o">=</span> <span class="n">dotdict</span><span class="p">({</span><span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="n">model_output</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()})</span>
+</span><span id="__span-0-2097"><a id="__codelineno-0-2097" name="__codelineno-0-2097"></a>        <span class="n">moderation</span><span class="o">.</span><span class="n">safe</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">moderation</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">flagged</span>
+</span><span id="__span-0-2098"><a id="__codelineno-0-2098" name="__codelineno-0-2098"></a>        <span class="n">response</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">moderation</span><span class="p">)</span>
+</span><span id="__span-0-2099"><a id="__codelineno-0-2099" name="__codelineno-0-2099"></a>
+</span><span id="__span-0-2100"><a id="__codelineno-0-2100" name="__codelineno-0-2100"></a>        <span class="c1"># Store in cache if enabled</span>
+</span><span id="__span-0-2101"><a id="__codelineno-0-2101" name="__codelineno-0-2101"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="p">:</span>
+</span><span id="__span-0-2102"><a id="__codelineno-0-2102" name="__codelineno-0-2102"></a>            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">generate_cache_key</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-2103"><a id="__codelineno-0-2103" name="__codelineno-0-2103"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_response_cache</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">cache_key</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
+</span><span id="__span-0-2104"><a id="__codelineno-0-2104" name="__codelineno-0-2104"></a>
+</span><span id="__span-0-2105"><a id="__codelineno-0-2105" name="__codelineno-0-2105"></a>        <span class="k">return</span> <span class="n">response</span>
+</span><span id="__span-0-2106"><a id="__codelineno-0-2106" name="__codelineno-0-2106"></a>
+</span><span id="__span-0-2107"><a id="__codelineno-0-2107" name="__codelineno-0-2107"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+</span><span id="__span-0-2108"><a id="__codelineno-0-2108" name="__codelineno-0-2108"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2109"><a id="__codelineno-0-2109" name="__codelineno-0-2109"></a>        <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
+</span><span id="__span-0-2110"><a id="__codelineno-0-2110" name="__codelineno-0-2110"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-2111"><a id="__codelineno-0-2111" name="__codelineno-0-2111"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Args:</span>
+</span><span id="__span-0-2112"><a id="__codelineno-0-2112" name="__codelineno-0-2112"></a><span class="sd">        data:</span>
+</span><span id="__span-0-2113"><a id="__codelineno-0-2113" name="__codelineno-0-2113"></a><span class="sd">            Input (or inputs) to classify. Can be a single string,</span>
+</span><span id="__span-0-2114"><a id="__codelineno-0-2114" name="__codelineno-0-2114"></a><span class="sd">            an array of strings, or an array of multi-modal input</span>
+</span><span id="__span-0-2115"><a id="__codelineno-0-2115" name="__codelineno-0-2115"></a><span class="sd">            objects similar to other models.</span>
+</span><span id="__span-0-2116"><a id="__codelineno-0-2116" name="__codelineno-0-2116"></a><span class="sd">        &quot;&quot;&quot;</span>
+</span><span id="__span-0-2117"><a id="__codelineno-0-2117" name="__codelineno-0-2117"></a>        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-2118"><a id="__codelineno-0-2118" name="__codelineno-0-2118"></a>        <span class="k">return</span> <span class="n">response</span>
+</span><span id="__span-0-2119"><a id="__codelineno-0-2119" name="__codelineno-0-2119"></a>
+</span><span id="__span-0-2120"><a id="__codelineno-0-2120" name="__codelineno-0-2120"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
+</span><span id="__span-0-2121"><a id="__codelineno-0-2121" name="__codelineno-0-2121"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2122"><a id="__codelineno-0-2122" name="__codelineno-0-2122"></a>        <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
+</span><span id="__span-0-2123"><a id="__codelineno-0-2123" name="__codelineno-0-2123"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-2124"><a id="__codelineno-0-2124" name="__codelineno-0-2124"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
+</span><span id="__span-0-2125"><a id="__codelineno-0-2125" name="__codelineno-0-2125"></a><span class="sd">        data:</span>
+</span><span id="__span-0-2126"><a id="__codelineno-0-2126" name="__codelineno-0-2126"></a><span class="sd">            Input (or inputs) to classify. Can be a single string,</span>
+</span><span id="__span-0-2127"><a id="__codelineno-0-2127" name="__codelineno-0-2127"></a><span class="sd">            an array of strings, or an array of multi-modal input</span>
+</span><span id="__span-0-2128"><a id="__codelineno-0-2128" name="__codelineno-0-2128"></a><span class="sd">            objects similar to other models.</span>
+</span><span id="__span-0-2129"><a id="__codelineno-0-2129" name="__codelineno-0-2129"></a><span class="sd">        &quot;&quot;&quot;</span>
+</span><span id="__span-0-2130"><a id="__codelineno-0-2130" name="__codelineno-0-2130"></a>        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-2131"><a id="__codelineno-0-2131" name="__codelineno-0-2131"></a>        <span class="k">return</span> <span class="n">response</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 
@@ -4890,29 +4920,29 @@
 
             <details class="quote">
               <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2059">2059</a></span>
-<span class="normal"><a href="#__codelineno-0-2060">2060</a></span>
-<span class="normal"><a href="#__codelineno-0-2061">2061</a></span>
-<span class="normal"><a href="#__codelineno-0-2062">2062</a></span>
-<span class="normal"><a href="#__codelineno-0-2063">2063</a></span>
-<span class="normal"><a href="#__codelineno-0-2064">2064</a></span>
-<span class="normal"><a href="#__codelineno-0-2065">2065</a></span>
-<span class="normal"><a href="#__codelineno-0-2066">2066</a></span>
-<span class="normal"><a href="#__codelineno-0-2067">2067</a></span>
-<span class="normal"><a href="#__codelineno-0-2068">2068</a></span>
-<span class="normal"><a href="#__codelineno-0-2069">2069</a></span>
-<span class="normal"><a href="#__codelineno-0-2070">2070</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2059"><a id="__codelineno-0-2059" name="__codelineno-0-2059"></a><span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
-</span><span id="__span-0-2060"><a id="__codelineno-0-2060" name="__codelineno-0-2060"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2061"><a id="__codelineno-0-2061" name="__codelineno-0-2061"></a>    <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
-</span><span id="__span-0-2062"><a id="__codelineno-0-2062" name="__codelineno-0-2062"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-2063"><a id="__codelineno-0-2063" name="__codelineno-0-2063"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Args:</span>
-</span><span id="__span-0-2064"><a id="__codelineno-0-2064" name="__codelineno-0-2064"></a><span class="sd">    data:</span>
-</span><span id="__span-0-2065"><a id="__codelineno-0-2065" name="__codelineno-0-2065"></a><span class="sd">        Input (or inputs) to classify. Can be a single string,</span>
-</span><span id="__span-0-2066"><a id="__codelineno-0-2066" name="__codelineno-0-2066"></a><span class="sd">        an array of strings, or an array of multi-modal input</span>
-</span><span id="__span-0-2067"><a id="__codelineno-0-2067" name="__codelineno-0-2067"></a><span class="sd">        objects similar to other models.</span>
-</span><span id="__span-0-2068"><a id="__codelineno-0-2068" name="__codelineno-0-2068"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2069"><a id="__codelineno-0-2069" name="__codelineno-0-2069"></a>    <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-2070"><a id="__codelineno-0-2070" name="__codelineno-0-2070"></a>    <span class="k">return</span> <span class="n">response</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2107">2107</a></span>
+<span class="normal"><a href="#__codelineno-0-2108">2108</a></span>
+<span class="normal"><a href="#__codelineno-0-2109">2109</a></span>
+<span class="normal"><a href="#__codelineno-0-2110">2110</a></span>
+<span class="normal"><a href="#__codelineno-0-2111">2111</a></span>
+<span class="normal"><a href="#__codelineno-0-2112">2112</a></span>
+<span class="normal"><a href="#__codelineno-0-2113">2113</a></span>
+<span class="normal"><a href="#__codelineno-0-2114">2114</a></span>
+<span class="normal"><a href="#__codelineno-0-2115">2115</a></span>
+<span class="normal"><a href="#__codelineno-0-2116">2116</a></span>
+<span class="normal"><a href="#__codelineno-0-2117">2117</a></span>
+<span class="normal"><a href="#__codelineno-0-2118">2118</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2107"><a id="__codelineno-0-2107" name="__codelineno-0-2107"></a><span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+</span><span id="__span-0-2108"><a id="__codelineno-0-2108" name="__codelineno-0-2108"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2109"><a id="__codelineno-0-2109" name="__codelineno-0-2109"></a>    <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
+</span><span id="__span-0-2110"><a id="__codelineno-0-2110" name="__codelineno-0-2110"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-2111"><a id="__codelineno-0-2111" name="__codelineno-0-2111"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Args:</span>
+</span><span id="__span-0-2112"><a id="__codelineno-0-2112" name="__codelineno-0-2112"></a><span class="sd">    data:</span>
+</span><span id="__span-0-2113"><a id="__codelineno-0-2113" name="__codelineno-0-2113"></a><span class="sd">        Input (or inputs) to classify. Can be a single string,</span>
+</span><span id="__span-0-2114"><a id="__codelineno-0-2114" name="__codelineno-0-2114"></a><span class="sd">        an array of strings, or an array of multi-modal input</span>
+</span><span id="__span-0-2115"><a id="__codelineno-0-2115" name="__codelineno-0-2115"></a><span class="sd">        objects similar to other models.</span>
+</span><span id="__span-0-2116"><a id="__codelineno-0-2116" name="__codelineno-0-2116"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2117"><a id="__codelineno-0-2117" name="__codelineno-0-2117"></a>    <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-2118"><a id="__codelineno-0-2118" name="__codelineno-0-2118"></a>    <span class="k">return</span> <span class="n">response</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -4953,63 +4983,63 @@ retry:
 
             <details class="quote">
               <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1977">1977</a></span>
-<span class="normal"><a href="#__codelineno-0-1978">1978</a></span>
-<span class="normal"><a href="#__codelineno-0-1979">1979</a></span>
-<span class="normal"><a href="#__codelineno-0-1980">1980</a></span>
-<span class="normal"><a href="#__codelineno-0-1981">1981</a></span>
-<span class="normal"><a href="#__codelineno-0-1982">1982</a></span>
-<span class="normal"><a href="#__codelineno-0-1983">1983</a></span>
-<span class="normal"><a href="#__codelineno-0-1984">1984</a></span>
-<span class="normal"><a href="#__codelineno-0-1985">1985</a></span>
-<span class="normal"><a href="#__codelineno-0-1986">1986</a></span>
-<span class="normal"><a href="#__codelineno-0-1987">1987</a></span>
-<span class="normal"><a href="#__codelineno-0-1988">1988</a></span>
-<span class="normal"><a href="#__codelineno-0-1989">1989</a></span>
-<span class="normal"><a href="#__codelineno-0-1990">1990</a></span>
-<span class="normal"><a href="#__codelineno-0-1991">1991</a></span>
-<span class="normal"><a href="#__codelineno-0-1992">1992</a></span>
-<span class="normal"><a href="#__codelineno-0-1993">1993</a></span>
-<span class="normal"><a href="#__codelineno-0-1994">1994</a></span>
-<span class="normal"><a href="#__codelineno-0-1995">1995</a></span>
-<span class="normal"><a href="#__codelineno-0-1996">1996</a></span>
-<span class="normal"><a href="#__codelineno-0-1997">1997</a></span>
-<span class="normal"><a href="#__codelineno-0-1998">1998</a></span>
-<span class="normal"><a href="#__codelineno-0-1999">1999</a></span>
-<span class="normal"><a href="#__codelineno-0-2000">2000</a></span>
-<span class="normal"><a href="#__codelineno-0-2001">2001</a></span>
-<span class="normal"><a href="#__codelineno-0-2002">2002</a></span>
-<span class="normal"><a href="#__codelineno-0-2003">2003</a></span>
-<span class="normal"><a href="#__codelineno-0-2004">2004</a></span>
-<span class="normal"><a href="#__codelineno-0-2005">2005</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1977"><a id="__codelineno-0-1977" name="__codelineno-0-1977"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
-</span><span id="__span-0-1978"><a id="__codelineno-0-1978" name="__codelineno-0-1978"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-1979"><a id="__codelineno-0-1979" name="__codelineno-0-1979"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1980"><a id="__codelineno-0-1980" name="__codelineno-0-1980"></a>    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-1981"><a id="__codelineno-0-1981" name="__codelineno-0-1981"></a>    <span class="n">base_url</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1982"><a id="__codelineno-0-1982" name="__codelineno-0-1982"></a>    <span class="n">enable_cache</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-0-1983"><a id="__codelineno-0-1983" name="__codelineno-0-1983"></a>    <span class="n">cache_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
-</span><span id="__span-0-1984"><a id="__codelineno-0-1984" name="__codelineno-0-1984"></a>    <span class="n">retry</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1985"><a id="__codelineno-0-1985" name="__codelineno-0-1985"></a><span class="p">):</span>
-</span><span id="__span-0-1986"><a id="__codelineno-0-1986" name="__codelineno-0-1986"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Args:</span>
-</span><span id="__span-0-1987"><a id="__codelineno-0-1987" name="__codelineno-0-1987"></a><span class="sd">    model_id:</span>
-</span><span id="__span-0-1988"><a id="__codelineno-0-1988" name="__codelineno-0-1988"></a><span class="sd">        Model ID in provider.</span>
-</span><span id="__span-0-1989"><a id="__codelineno-0-1989" name="__codelineno-0-1989"></a><span class="sd">    base_url:</span>
-</span><span id="__span-0-1990"><a id="__codelineno-0-1990" name="__codelineno-0-1990"></a><span class="sd">        URL to model provider.</span>
-</span><span id="__span-0-1991"><a id="__codelineno-0-1991" name="__codelineno-0-1991"></a><span class="sd">    enable_cache:</span>
-</span><span id="__span-0-1992"><a id="__codelineno-0-1992" name="__codelineno-0-1992"></a><span class="sd">        If True, enables response caching to avoid redundant API calls.</span>
-</span><span id="__span-0-1993"><a id="__codelineno-0-1993" name="__codelineno-0-1993"></a><span class="sd">    cache_size:</span>
-</span><span id="__span-0-1994"><a id="__codelineno-0-1994" name="__codelineno-0-1994"></a><span class="sd">        Maximum number of responses to cache (default: 128).</span>
-</span><span id="__span-0-1995"><a id="__codelineno-0-1995" name="__codelineno-0-1995"></a><span class="sd">    retry:</span>
-</span><span id="__span-0-1996"><a id="__codelineno-0-1996" name="__codelineno-0-1996"></a><span class="sd">        Retry config. A tenacity decorator, False to disable, or None for default.</span>
-</span><span id="__span-0-1997"><a id="__codelineno-0-1997" name="__codelineno-0-1997"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1998"><a id="__codelineno-0-1998" name="__codelineno-0-1998"></a>    <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-0-1999"><a id="__codelineno-0-1999" name="__codelineno-0-1999"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">model_id</span> <span class="o">=</span> <span class="n">model_id</span>
-</span><span id="__span-0-2000"><a id="__codelineno-0-2000" name="__codelineno-0-2000"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">sampling_params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;base_url&quot;</span><span class="p">:</span> <span class="n">base_url</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_base_url</span><span class="p">()}</span>
-</span><span id="__span-0-2001"><a id="__codelineno-0-2001" name="__codelineno-0-2001"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="o">=</span> <span class="n">enable_cache</span>
-</span><span id="__span-0-2002"><a id="__codelineno-0-2002" name="__codelineno-0-2002"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">cache_size</span> <span class="o">=</span> <span class="n">cache_size</span>
-</span><span id="__span-0-2003"><a id="__codelineno-0-2003" name="__codelineno-0-2003"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">retry</span> <span class="o">=</span> <span class="n">retry</span>
-</span><span id="__span-0-2004"><a id="__codelineno-0-2004" name="__codelineno-0-2004"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_initialize</span><span class="p">()</span>
-</span><span id="__span-0-2005"><a id="__codelineno-0-2005" name="__codelineno-0-2005"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_get_api_key</span><span class="p">()</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2025">2025</a></span>
+<span class="normal"><a href="#__codelineno-0-2026">2026</a></span>
+<span class="normal"><a href="#__codelineno-0-2027">2027</a></span>
+<span class="normal"><a href="#__codelineno-0-2028">2028</a></span>
+<span class="normal"><a href="#__codelineno-0-2029">2029</a></span>
+<span class="normal"><a href="#__codelineno-0-2030">2030</a></span>
+<span class="normal"><a href="#__codelineno-0-2031">2031</a></span>
+<span class="normal"><a href="#__codelineno-0-2032">2032</a></span>
+<span class="normal"><a href="#__codelineno-0-2033">2033</a></span>
+<span class="normal"><a href="#__codelineno-0-2034">2034</a></span>
+<span class="normal"><a href="#__codelineno-0-2035">2035</a></span>
+<span class="normal"><a href="#__codelineno-0-2036">2036</a></span>
+<span class="normal"><a href="#__codelineno-0-2037">2037</a></span>
+<span class="normal"><a href="#__codelineno-0-2038">2038</a></span>
+<span class="normal"><a href="#__codelineno-0-2039">2039</a></span>
+<span class="normal"><a href="#__codelineno-0-2040">2040</a></span>
+<span class="normal"><a href="#__codelineno-0-2041">2041</a></span>
+<span class="normal"><a href="#__codelineno-0-2042">2042</a></span>
+<span class="normal"><a href="#__codelineno-0-2043">2043</a></span>
+<span class="normal"><a href="#__codelineno-0-2044">2044</a></span>
+<span class="normal"><a href="#__codelineno-0-2045">2045</a></span>
+<span class="normal"><a href="#__codelineno-0-2046">2046</a></span>
+<span class="normal"><a href="#__codelineno-0-2047">2047</a></span>
+<span class="normal"><a href="#__codelineno-0-2048">2048</a></span>
+<span class="normal"><a href="#__codelineno-0-2049">2049</a></span>
+<span class="normal"><a href="#__codelineno-0-2050">2050</a></span>
+<span class="normal"><a href="#__codelineno-0-2051">2051</a></span>
+<span class="normal"><a href="#__codelineno-0-2052">2052</a></span>
+<span class="normal"><a href="#__codelineno-0-2053">2053</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2025"><a id="__codelineno-0-2025" name="__codelineno-0-2025"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+</span><span id="__span-0-2026"><a id="__codelineno-0-2026" name="__codelineno-0-2026"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2027"><a id="__codelineno-0-2027" name="__codelineno-0-2027"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-2028"><a id="__codelineno-0-2028" name="__codelineno-0-2028"></a>    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-2029"><a id="__codelineno-0-2029" name="__codelineno-0-2029"></a>    <span class="n">base_url</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-2030"><a id="__codelineno-0-2030" name="__codelineno-0-2030"></a>    <span class="n">enable_cache</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-2031"><a id="__codelineno-0-2031" name="__codelineno-0-2031"></a>    <span class="n">cache_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+</span><span id="__span-0-2032"><a id="__codelineno-0-2032" name="__codelineno-0-2032"></a>    <span class="n">retry</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-2033"><a id="__codelineno-0-2033" name="__codelineno-0-2033"></a><span class="p">):</span>
+</span><span id="__span-0-2034"><a id="__codelineno-0-2034" name="__codelineno-0-2034"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Args:</span>
+</span><span id="__span-0-2035"><a id="__codelineno-0-2035" name="__codelineno-0-2035"></a><span class="sd">    model_id:</span>
+</span><span id="__span-0-2036"><a id="__codelineno-0-2036" name="__codelineno-0-2036"></a><span class="sd">        Model ID in provider.</span>
+</span><span id="__span-0-2037"><a id="__codelineno-0-2037" name="__codelineno-0-2037"></a><span class="sd">    base_url:</span>
+</span><span id="__span-0-2038"><a id="__codelineno-0-2038" name="__codelineno-0-2038"></a><span class="sd">        URL to model provider.</span>
+</span><span id="__span-0-2039"><a id="__codelineno-0-2039" name="__codelineno-0-2039"></a><span class="sd">    enable_cache:</span>
+</span><span id="__span-0-2040"><a id="__codelineno-0-2040" name="__codelineno-0-2040"></a><span class="sd">        If True, enables response caching to avoid redundant API calls.</span>
+</span><span id="__span-0-2041"><a id="__codelineno-0-2041" name="__codelineno-0-2041"></a><span class="sd">    cache_size:</span>
+</span><span id="__span-0-2042"><a id="__codelineno-0-2042" name="__codelineno-0-2042"></a><span class="sd">        Maximum number of responses to cache (default: 128).</span>
+</span><span id="__span-0-2043"><a id="__codelineno-0-2043" name="__codelineno-0-2043"></a><span class="sd">    retry:</span>
+</span><span id="__span-0-2044"><a id="__codelineno-0-2044" name="__codelineno-0-2044"></a><span class="sd">        Retry config. A tenacity decorator, False to disable, or None for default.</span>
+</span><span id="__span-0-2045"><a id="__codelineno-0-2045" name="__codelineno-0-2045"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2046"><a id="__codelineno-0-2046" name="__codelineno-0-2046"></a>    <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span><span id="__span-0-2047"><a id="__codelineno-0-2047" name="__codelineno-0-2047"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">model_id</span> <span class="o">=</span> <span class="n">model_id</span>
+</span><span id="__span-0-2048"><a id="__codelineno-0-2048" name="__codelineno-0-2048"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">sampling_params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;base_url&quot;</span><span class="p">:</span> <span class="n">base_url</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_base_url</span><span class="p">()}</span>
+</span><span id="__span-0-2049"><a id="__codelineno-0-2049" name="__codelineno-0-2049"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">enable_cache</span> <span class="o">=</span> <span class="n">enable_cache</span>
+</span><span id="__span-0-2050"><a id="__codelineno-0-2050" name="__codelineno-0-2050"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">cache_size</span> <span class="o">=</span> <span class="n">cache_size</span>
+</span><span id="__span-0-2051"><a id="__codelineno-0-2051" name="__codelineno-0-2051"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">retry</span> <span class="o">=</span> <span class="n">retry</span>
+</span><span id="__span-0-2052"><a id="__codelineno-0-2052" name="__codelineno-0-2052"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_initialize</span><span class="p">()</span>
+</span><span id="__span-0-2053"><a id="__codelineno-0-2053" name="__codelineno-0-2053"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_get_api_key</span><span class="p">()</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -5042,29 +5072,29 @@ data:
 
             <details class="quote">
               <summary>Source code in <code>src/msgflux/models/providers/openai.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2072">2072</a></span>
-<span class="normal"><a href="#__codelineno-0-2073">2073</a></span>
-<span class="normal"><a href="#__codelineno-0-2074">2074</a></span>
-<span class="normal"><a href="#__codelineno-0-2075">2075</a></span>
-<span class="normal"><a href="#__codelineno-0-2076">2076</a></span>
-<span class="normal"><a href="#__codelineno-0-2077">2077</a></span>
-<span class="normal"><a href="#__codelineno-0-2078">2078</a></span>
-<span class="normal"><a href="#__codelineno-0-2079">2079</a></span>
-<span class="normal"><a href="#__codelineno-0-2080">2080</a></span>
-<span class="normal"><a href="#__codelineno-0-2081">2081</a></span>
-<span class="normal"><a href="#__codelineno-0-2082">2082</a></span>
-<span class="normal"><a href="#__codelineno-0-2083">2083</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2072"><a id="__codelineno-0-2072" name="__codelineno-0-2072"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
-</span><span id="__span-0-2073"><a id="__codelineno-0-2073" name="__codelineno-0-2073"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2074"><a id="__codelineno-0-2074" name="__codelineno-0-2074"></a>    <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
-</span><span id="__span-0-2075"><a id="__codelineno-0-2075" name="__codelineno-0-2075"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
-</span><span id="__span-0-2076"><a id="__codelineno-0-2076" name="__codelineno-0-2076"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
-</span><span id="__span-0-2077"><a id="__codelineno-0-2077" name="__codelineno-0-2077"></a><span class="sd">    data:</span>
-</span><span id="__span-0-2078"><a id="__codelineno-0-2078" name="__codelineno-0-2078"></a><span class="sd">        Input (or inputs) to classify. Can be a single string,</span>
-</span><span id="__span-0-2079"><a id="__codelineno-0-2079" name="__codelineno-0-2079"></a><span class="sd">        an array of strings, or an array of multi-modal input</span>
-</span><span id="__span-0-2080"><a id="__codelineno-0-2080" name="__codelineno-0-2080"></a><span class="sd">        objects similar to other models.</span>
-</span><span id="__span-0-2081"><a id="__codelineno-0-2081" name="__codelineno-0-2081"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2082"><a id="__codelineno-0-2082" name="__codelineno-0-2082"></a>    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
-</span><span id="__span-0-2083"><a id="__codelineno-0-2083" name="__codelineno-0-2083"></a>    <span class="k">return</span> <span class="n">response</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2120">2120</a></span>
+<span class="normal"><a href="#__codelineno-0-2121">2121</a></span>
+<span class="normal"><a href="#__codelineno-0-2122">2122</a></span>
+<span class="normal"><a href="#__codelineno-0-2123">2123</a></span>
+<span class="normal"><a href="#__codelineno-0-2124">2124</a></span>
+<span class="normal"><a href="#__codelineno-0-2125">2125</a></span>
+<span class="normal"><a href="#__codelineno-0-2126">2126</a></span>
+<span class="normal"><a href="#__codelineno-0-2127">2127</a></span>
+<span class="normal"><a href="#__codelineno-0-2128">2128</a></span>
+<span class="normal"><a href="#__codelineno-0-2129">2129</a></span>
+<span class="normal"><a href="#__codelineno-0-2130">2130</a></span>
+<span class="normal"><a href="#__codelineno-0-2131">2131</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2120"><a id="__codelineno-0-2120" name="__codelineno-0-2120"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acall</span><span class="p">(</span>
+</span><span id="__span-0-2121"><a id="__codelineno-0-2121" name="__codelineno-0-2121"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2122"><a id="__codelineno-0-2122" name="__codelineno-0-2122"></a>    <span class="n">data</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]],</span>
+</span><span id="__span-0-2123"><a id="__codelineno-0-2123" name="__codelineno-0-2123"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__span-0-2124"><a id="__codelineno-0-2124" name="__codelineno-0-2124"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Async version of __call__. Args:</span>
+</span><span id="__span-0-2125"><a id="__codelineno-0-2125" name="__codelineno-0-2125"></a><span class="sd">    data:</span>
+</span><span id="__span-0-2126"><a id="__codelineno-0-2126" name="__codelineno-0-2126"></a><span class="sd">        Input (or inputs) to classify. Can be a single string,</span>
+</span><span id="__span-0-2127"><a id="__codelineno-0-2127" name="__codelineno-0-2127"></a><span class="sd">        an array of strings, or an array of multi-modal input</span>
+</span><span id="__span-0-2128"><a id="__codelineno-0-2128" name="__codelineno-0-2128"></a><span class="sd">        objects similar to other models.</span>
+</span><span id="__span-0-2129"><a id="__codelineno-0-2129" name="__codelineno-0-2129"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2130"><a id="__codelineno-0-2130" name="__codelineno-0-2130"></a>    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agenerate</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_id</span><span class="p">)</span>
+</span><span id="__span-0-2131"><a id="__codelineno-0-2131" name="__codelineno-0-2131"></a>    <span class="k">return</span> <span class="n">response</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

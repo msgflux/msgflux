@@ -12,13 +12,13 @@
         <meta name="author" content="Vilson Rodrigues">
       
       
-        <link rel="canonical" href="https://msgflux.com/learn/nn/module/composing/">
+        <link rel="canonical" href="https://msgflux.com/learn/nn/agent/prompt-cache/">
       
       
-        <link rel="prev" href="../forward-and-async/">
+        <link rel="prev" href="../streaming/">
       
       
-        <link rel="next" href="../module-dict/">
+        <link rel="next" href="../reasoning/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Composing Modules - msgFlux</title>
+        <title>Prompt Cache Warmup - msgFlux</title>
       
     
     
@@ -88,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#composing-modules" class="md-skip">
+        <a href="#prompt-cache-warmup" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Composing Modules
+              Prompt Cache Warmup
             
           </span>
         </div>
@@ -1317,8 +1317,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1349,15 +1347,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7_1" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7_1" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../module/" class="md-nav__link ">
               
   
   
@@ -1381,7 +1379,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_7_1_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_7_1_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_7_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1401,7 +1399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../core-concepts/" class="md-nav__link">
+      <a href="../../module/core-concepts/" class="md-nav__link">
         
   
   
@@ -1429,7 +1427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../forward-and-async/" class="md-nav__link">
+      <a href="../../module/forward-and-async/" class="md-nav__link">
         
   
   
@@ -1454,37 +1452,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Composing Modules
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../module/composing/" class="md-nav__link">
         
   
   
@@ -1500,103 +1471,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ✦₊⁺ Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-sub-modules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Sub-Modules
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-state-dict-with-nested-keys" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. State Dict with Nested Keys
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-inspecting-the-module-tree" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Inspecting the Module Tree
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-deep-nesting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Deep Nesting
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-loading-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Loading State
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-container-modules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Container Modules
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1609,7 +1483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../module-dict/" class="md-nav__link">
+      <a href="../../module/module-dict/" class="md-nav__link">
         
   
   
@@ -1637,7 +1511,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../module-list/" class="md-nav__link">
+      <a href="../../module/module-list/" class="md-nav__link">
         
   
   
@@ -1665,7 +1539,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sequential/" class="md-nav__link">
+      <a href="../../module/sequential/" class="md-nav__link">
         
   
   
@@ -1693,7 +1567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../visualization/" class="md-nav__link">
+      <a href="../../module/visualization/" class="md-nav__link">
         
   
   
@@ -1754,6 +1628,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1800,15 +1676,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7_3" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../agent/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -1832,7 +1708,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_7_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_7_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_7_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1852,7 +1728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/quickstart/" class="md-nav__link">
+      <a href="../quickstart/" class="md-nav__link">
         
   
   
@@ -1880,7 +1756,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   
@@ -1908,7 +1784,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/streaming/" class="md-nav__link">
+      <a href="../streaming/" class="md-nav__link">
         
   
   
@@ -1933,10 +1809,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../agent/prompt-cache/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Cache Warmup
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1952,6 +1855,136 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#basic-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Async Usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fire-and-forget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fire And Forget
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-sent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Is Sent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-vars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime Vars
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Filtering
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-token-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider Token Limit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-cache-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading Cache Usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Practical Guidance
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1964,7 +1997,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/reasoning/" class="md-nav__link">
+      <a href="../reasoning/" class="md-nav__link">
         
   
   
@@ -1992,7 +2025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/debug/" class="md-nav__link">
+      <a href="../debug/" class="md-nav__link">
         
   
   
@@ -2020,7 +2053,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/system-prompt/" class="md-nav__link">
+      <a href="../system-prompt/" class="md-nav__link">
         
   
   
@@ -2048,7 +2081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/generation-schemas/" class="md-nav__link">
+      <a href="../generation-schemas/" class="md-nav__link">
         
   
   
@@ -2076,7 +2109,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/task-and-context/" class="md-nav__link">
+      <a href="../task-and-context/" class="md-nav__link">
         
   
   
@@ -2104,7 +2137,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/vars/" class="md-nav__link">
+      <a href="../vars/" class="md-nav__link">
         
   
   
@@ -2132,7 +2165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/tools/" class="md-nav__link">
+      <a href="../tools/" class="md-nav__link">
         
   
   
@@ -2160,7 +2193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/signatures/" class="md-nav__link">
+      <a href="../signatures/" class="md-nav__link">
         
   
   
@@ -2188,7 +2221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/hooks/" class="md-nav__link">
+      <a href="../hooks/" class="md-nav__link">
         
   
   
@@ -2216,7 +2249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/model-gateway/" class="md-nav__link">
+      <a href="../model-gateway/" class="md-nav__link">
         
   
   
@@ -2244,7 +2277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../agent/prefilling/" class="md-nav__link">
+      <a href="../prefilling/" class="md-nav__link">
         
   
   
@@ -4449,10 +4482,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
+  <a href="#basic-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ✦₊⁺ Overview
+        Basic Usage
       
     </span>
   </a>
@@ -4460,10 +4493,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-sub-modules" class="md-nav__link">
+  <a href="#async-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Sub-Modules
+        Async Usage
       
     </span>
   </a>
@@ -4471,10 +4504,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-state-dict-with-nested-keys" class="md-nav__link">
+  <a href="#fire-and-forget" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. State Dict with Nested Keys
+        Fire And Forget
       
     </span>
   </a>
@@ -4482,10 +4515,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-inspecting-the-module-tree" class="md-nav__link">
+  <a href="#what-is-sent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Inspecting the Module Tree
+        What Is Sent
       
     </span>
   </a>
@@ -4493,10 +4526,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-deep-nesting" class="md-nav__link">
+  <a href="#runtime-vars" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Deep Nesting
+        Runtime Vars
       
     </span>
   </a>
@@ -4504,10 +4537,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-loading-state" class="md-nav__link">
+  <a href="#tool-filtering" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Loading State
+        Tool Filtering
       
     </span>
   </a>
@@ -4515,10 +4548,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-container-modules" class="md-nav__link">
+  <a href="#model-gateway" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Container Modules
+        Model Gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-token-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider Token Limit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-cache-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading Cache Usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Practical Guidance
       
     </span>
   </a>
@@ -4582,7 +4648,7 @@
     
     
       <li class="md-path__item">
-        <a href="../" class="md-path__link">
+        <a href="../../module/" class="md-path__link">
           
   <span class="md-ellipsis">
     ⟢ Modules
@@ -4606,7 +4672,7 @@
         <a href="../" class="md-path__link">
           
   <span class="md-ellipsis">
-    Module
+    Agent
   </span>
 
         </a>
@@ -4628,7 +4694,7 @@
   
 
 
-<h1 id="composing-modules">Composing Modules</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<h1 id="prompt-cache-warmup">Prompt Cache Warmup</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <style>
 .copy-markdown-button {
     background: transparent;
@@ -4648,261 +4714,165 @@
 .copy-markdown-button:active { transform: translateY(1px); }
 #copy-icon { transition: opacity 0.1s ease; }
 </style>
-<div class="copy-markdown-container" data-markdown="# Composing Modules
+<div class="copy-markdown-container" data-markdown="# Prompt Cache Warmup
 
-## ✦₊⁺ Overview
+Prompt warmup sends the agent&#x27;s stable prompt prefix to the model provider before the first real task. Providers with prompt caching can prefill the system prompt and tool schemas, so the next request with the same prefix can start faster or report cached input tokens.
 
-Modules can contain other modules as sub-modules. Sub-modules are **automatically tracked** when assigned to attributes — no extra registration needed. They appear in the state dict with dot-separated keys and are visible to all `Module` methods like `named_modules()`, `state_dict()`, and `parameters()`.
+Use warmup when your agent has a large static system prompt, many tools, or loaded skills. It is not a replacement for response caching: no task message is sent, no checkpoint is written, and no conversation history is updated.
 
-## 1. **Sub-Modules**
-
-Any `Module` assigned to `self.&lt;attr&gt;` is automatically registered as a sub-module:
+## Basic Usage
 
 ```python
+# pip install msgflux[openai]
+import msgflux as mf
 import msgflux.nn as nn
 
-class Normalizer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer(&quot;prefix&quot;, &quot;[normalized]&quot;)
 
-    def forward(self, text: str) -&gt; str:
-        return f&quot;{self.prefix} {text.strip().lower()}&quot;
+def lookup_ticket(ticket_id: str) -&gt; str:
+    return f&quot;{ticket_id}: open&quot;
 
 
-class Classifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer(&quot;label&quot;, &quot;spam&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return f&quot;{text} → label={self.label}&quot;
-
-
-class Pipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.normalizer = Normalizer()   # auto-registered
-        self.classifier = Classifier()   # auto-registered
-
-    def forward(self, text: str) -&gt; str:
-        text = self.normalizer(text)
-        return self.classifier(text)
+class SupportAgent(nn.Agent):
+    model = mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;)
+    system_message = &quot;&quot;&quot;
+    You are a support agent.
+    Follow the escalation policy and use tools when needed.
+    &quot;&quot;&quot;
+    tools = [lookup_ticket]
 
 
-pipeline = Pipeline()
-result = pipeline(&quot;  HELLO WORLD  &quot;)
-print(result)
-# [normalized] hello world → label=spam
+agent = SupportAgent()
+
+# Sends only the rendered system prompt and tool schemas.
+agent.warmup_system_prompt()
+
+response = agent(&quot;Check ticket MSGFLUX-42&quot;)
+print(response)
 ```
 
-## 2. **State Dict with Nested Keys**
-
-Sub-module buffers and parameters appear in the state dict with **dot-separated paths**:
+## Async Usage
 
 ```python
-import msgflux.nn as nn
+agent = SupportAgent()
 
-class Normalizer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer(&quot;prefix&quot;, &quot;[normalized]&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return f&quot;{self.prefix} {text.strip().lower()}&quot;
-
-
-class Classifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer(&quot;label&quot;, &quot;spam&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return f&quot;{text} → label={self.label}&quot;
-
-
-class Pipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.normalizer = Normalizer()
-        self.classifier = Classifier()
-
-    def forward(self, text: str) -&gt; str:
-        text = self.normalizer(text)
-        return self.classifier(text)
-
-
-pipeline = Pipeline()
-print(pipeline.state_dict())
-# {
-#   &quot;normalizer.prefix&quot;: &quot;[normalized]&quot;,
-#   &quot;classifier.label&quot;: &quot;spam&quot;
-# }
+await agent.awarmup_system_prompt()
+response = await agent.acall(&quot;Check ticket MSGFLUX-42&quot;)
 ```
 
-## 3. **Inspecting the Module Tree**
+## Fire And Forget
 
-Use `named_modules()` to traverse the entire hierarchy:
+Warmup can run in the background while the process continues initializing:
 
 ```python
-import msgflux.nn as nn
+agent = SupportAgent()
 
-class Normalizer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer(&quot;prefix&quot;, &quot;[normalized]&quot;)
+agent.warmup_system_prompt(background=True)
 
-    def forward(self, text: str) -&gt; str:
-        return f&quot;{self.prefix} {text.strip().lower()}&quot;
-
-
-class Classifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.register_buffer(&quot;label&quot;, &quot;spam&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return f&quot;{text} → label={self.label}&quot;
-
-
-class Pipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.normalizer = Normalizer()
-        self.classifier = Classifier()
-
-    def forward(self, text: str) -&gt; str:
-        text = self.normalizer(text)
-        return self.classifier(text)
-
-
-pipeline = Pipeline()
-
-for name, module in pipeline.named_modules():
-    print(f&quot;{name!r:20} → {type(module).__name__}&quot;)
-# &#x27;&#x27;                   → Pipeline
-# &#x27;normalizer&#x27;         → Normalizer
-# &#x27;classifier&#x27;         → Classifier
+# Continue booting your CLI, server, or worker.
 ```
 
-Use `named_children()` for only **direct** children (one level deep):
+For async applications:
 
 ```python
-for name, module in pipeline.named_children():
-    print(f&quot;{name}: {type(module).__name__}&quot;)
-# normalizer: Normalizer
-# classifier: Classifier
+await agent.awarmup_system_prompt(background=True)
 ```
 
-## 4. **Deep Nesting**
+Background warmup does not return the provider response. Errors are logged by the background task runner.
 
-Sub-modules can be nested to any depth. State dict keys reflect the full path:
+## What Is Sent
+
+Warmup intentionally bypasses runtime state. It sends:
+
+- The rendered `system_prompt`
+- Tool schemas from the agent&#x27;s `ToolLibrary`
+- The provider&#x27;s configured warmup token limit
+
+It does not send:
+
+- User task messages
+- Chat history
+- Checkpointer state
+- Agent inbox notifications
+- Typed parsers or generation schemas
+- Response templates
+
+This keeps warmup focused on the stable prefix that providers can cache.
+
+## Runtime Vars
+
+If the system prompt uses runtime variables, pass the same `vars` you expect to use for the real request:
 
 ```python
-import msgflux.nn as nn
+agent.warmup_system_prompt(vars={&quot;tenant&quot;: &quot;acme&quot;})
 
-class Formatter(nn.Module):
-    def __init__(self, tag: str):
-        super().__init__()
-        self.register_buffer(&quot;tag&quot;, tag)
-
-    def forward(self, text: str) -&gt; str:
-        return f&quot;&lt;{self.tag}&gt;{text}&lt;/{self.tag}&gt;&quot;
-
-
-class InnerPipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.bold = Formatter(&quot;b&quot;)
-        self.italic = Formatter(&quot;i&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return self.italic(self.bold(text))
-
-
-class OuterPipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.inner = InnerPipeline()
-        self.wrapper = Formatter(&quot;div&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return self.wrapper(self.inner(text))
-
-
-outer = OuterPipeline()
-print(outer(&quot;hello&quot;))
-# &lt;div&gt;&lt;i&gt;&lt;b&gt;hello&lt;/b&gt;&lt;/i&gt;&lt;/div&gt;
-
-print(outer.state_dict())
-# {
-#   &quot;inner.bold.tag&quot;: &quot;b&quot;,
-#   &quot;inner.italic.tag&quot;: &quot;i&quot;,
-#   &quot;wrapper.tag&quot;: &quot;div&quot;
-# }
+response = agent(
+    &quot;Summarize the ticket&quot;,
+    vars={&quot;tenant&quot;: &quot;acme&quot;},
+)
 ```
 
-## 5. **Loading State**
+Cache hits depend on the provider seeing the same prompt prefix. If the rendered system prompt changes between warmup and the real call, the provider may miss the cache.
 
-Use `load_state_dict()` to restore a saved configuration across the whole tree:
+## Tool Filtering
+
+Warmup accepts the same `tool_filter` shape used by agent execution:
 
 ```python
-import msgflux.nn as nn
-
-class Formatter(nn.Module):
-    def __init__(self, tag: str):
-        super().__init__()
-        self.register_buffer(&quot;tag&quot;, tag)
-
-    def forward(self, text: str) -&gt; str:
-        return f&quot;&lt;{self.tag}&gt;{text}&lt;/{self.tag}&gt;&quot;
-
-
-class InnerPipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.bold = Formatter(&quot;b&quot;)
-        self.italic = Formatter(&quot;i&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return self.italic(self.bold(text))
-
-
-class OuterPipeline(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.inner = InnerPipeline()
-        self.wrapper = Formatter(&quot;div&quot;)
-
-    def forward(self, text: str) -&gt; str:
-        return self.wrapper(self.inner(text))
-
-
-outer = OuterPipeline()
-
-# Save state
-saved = outer.state_dict()
-
-# Mutate
-outer.inner.bold.tag = &quot;strong&quot;
-print(outer(&quot;hello&quot;))
-# &lt;div&gt;&lt;i&gt;&lt;strong&gt;hello&lt;/strong&gt;&lt;/i&gt;&lt;/div&gt;
-
-# Restore
-outer.load_state_dict(saved)
-print(outer(&quot;hello&quot;))
-# &lt;div&gt;&lt;i&gt;&lt;b&gt;hello&lt;/b&gt;&lt;/i&gt;&lt;/div&gt;
+agent.warmup_system_prompt(tool_filter={&quot;allow&quot;: [&quot;lookup_ticket&quot;]})
 ```
 
-## 6. **Container Modules**
+Use this when the real request will also restrict tools. A different tool schema list changes the prompt prefix and can reduce cache hits.
 
-For common patterns, msgFlux provides dedicated containers — see their individual pages:
+## Model Gateway
 
-| Container | When to use |
-|-----------|-------------|
-| [`nn.Sequential`](sequential.md) | Fixed chain: output of step N feeds step N+1 |
-| [`nn.ModuleList`](module-list.md) | Ordered collection iterated manually in `forward` |
-| [`nn.ModuleDict`](module-dict.md) | Named collection, selected by key at runtime |
+When the agent uses a `ModelGateway`, warmup routes through the gateway and accepts `model_preference`:
+
+```python
+agent.warmup_system_prompt(model_preference=&quot;fast&quot;)
+```
+
+The selected model must support `warmup_system_prompt`.
+
+## Provider Token Limit
+
+OpenAI-compatible chat providers default to one generated token for warmup. This keeps the request cheap while still forcing the provider to process the prompt.
+
+Override it on the model if a provider needs a different minimum:
+
+```python
+model = mf.Model.chat_completion(
+    &quot;openai/gpt-4.1-mini&quot;,
+    warmup_max_tokens=1,
+)
+```
+
+OpenAI Chat Completions and Groq reject zero completion tokens, so `0` is not a portable warmup value.
+
+## Reading Cache Usage
+
+The provider response is returned in foreground mode:
+
+```python
+raw_response = agent.warmup_system_prompt()
+print(raw_response.usage)
+```
+
+OpenAI reports prompt cache hits in usage metadata:
+
+- Chat Completions: `usage.prompt_tokens_details.cached_tokens`
+- Responses API: `usage.input_tokens_details.cached_tokens`
+
+msgflux currently implements this warmup path for chat completions.
+
+## Practical Guidance
+
+- Keep the warmup prefix stable.
+- Put large static instructions, tools, and skills before dynamic user content.
+- Warmup is most useful above the provider&#x27;s prompt-cache threshold.
+- Do not expect warmup to persist conversation state.
+- Use foreground warmup during tests so failures are visible.
+- Use background warmup during app startup when failures should not block serving.
+
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -4971,249 +4941,119 @@ For common patterns, msgFlux provides dedicated containers — see their individ
     window.copyMarkdownToClipboard = copyMarkdownToClipboard;
 }());
 </script>
-<h2 id="overview">✦₊⁺ Overview</h2>
-<p>Modules can contain other modules as sub-modules. Sub-modules are <strong>automatically tracked</strong> when assigned to attributes — no extra registration needed. They appear in the state dict with dot-separated keys and are visible to all <code>Module</code> methods like <code>named_modules()</code>, <code>state_dict()</code>, and <code>parameters()</code>.</p>
-<h2 id="1-sub-modules">1. <strong>Sub-Modules</strong></h2>
-<p>Any <code>Module</code> assigned to <code>self.&lt;attr&gt;</code> is automatically registered as a sub-module:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Normalizer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;prefix&quot;</span><span class="p">,</span> <span class="s2">&quot;[normalized]&quot;</span><span class="p">)</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">prefix</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">Classifier</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;label&quot;</span><span class="p">,</span> <span class="s2">&quot;spam&quot;</span><span class="p">)</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2"> → label=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+<p>Prompt warmup sends the agent's stable prompt prefix to the model provider before the first real task. Providers with prompt caching can prefill the system prompt and tool schemas, so the next request with the same prefix can start faster or report cached input tokens.</p>
+<p>Use warmup when your agent has a large static system prompt, many tools, or loaded skills. It is not a replacement for response caching: no task message is sent, no checkpoint is written, and no conversation history is updated.</p>
+<h2 id="basic-usage">Basic Usage</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">lookup_ticket</span><span class="p">(</span><span class="n">ticket_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">ticket_id</span><span class="si">}</span><span class="s2">: open&quot;</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">SupportAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="s2">    You are a support agent.</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="s2">    Follow the escalation policy and use tools when needed.</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">lookup_ticket</span><span class="p">]</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">SupportAgent</span><span class="p">()</span>
 </span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="k">class</span><span class="w"> </span><span class="nc">Pipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">normalizer</span> <span class="o">=</span> <span class="n">Normalizer</span><span class="p">()</span>   <span class="c1"># auto-registered</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">classifier</span> <span class="o">=</span> <span class="n">Classifier</span><span class="p">()</span>   <span class="c1"># auto-registered</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>        <span class="n">text</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">normalizer</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">classifier</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="n">pipeline</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">()</span>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="n">result</span> <span class="o">=</span> <span class="n">pipeline</span><span class="p">(</span><span class="s2">&quot;  HELLO WORLD  &quot;</span><span class="p">)</span>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="c1"># [normalized] hello world → label=spam</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="c1"># Sends only the rendered system prompt and tool schemas.</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="n">agent</span><span class="o">.</span><span class="n">warmup_system_prompt</span><span class="p">()</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="s2">&quot;Check ticket MSGFLUX-42&quot;</span><span class="p">)</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="2-state-dict-with-nested-keys">2. <strong>State Dict with Nested Keys</strong></h2>
-<p>Sub-module buffers and parameters appear in the state dict with <strong>dot-separated paths</strong>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<h2 id="async-usage">Async Usage</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">SupportAgent</span><span class="p">()</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Normalizer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;prefix&quot;</span><span class="p">,</span> <span class="s2">&quot;[normalized]&quot;</span><span class="p">)</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">prefix</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">Classifier</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;label&quot;</span><span class="p">,</span> <span class="s2">&quot;spam&quot;</span><span class="p">)</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2"> → label=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="k">class</span><span class="w"> </span><span class="nc">Pipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">normalizer</span> <span class="o">=</span> <span class="n">Normalizer</span><span class="p">()</span>
-</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">classifier</span> <span class="o">=</span> <span class="n">Classifier</span><span class="p">()</span>
-</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>
-</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>        <span class="n">text</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">normalizer</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">classifier</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>
-</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>
-</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="n">pipeline</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">()</span>
-</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="nb">print</span><span class="p">(</span><span class="n">pipeline</span><span class="o">.</span><span class="n">state_dict</span><span class="p">())</span>
-</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="c1"># {</span>
-</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="c1">#   &quot;normalizer.prefix&quot;: &quot;[normalized]&quot;,</span>
-</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="c1">#   &quot;classifier.label&quot;: &quot;spam&quot;</span>
-</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="c1"># }</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">awarmup_system_prompt</span><span class="p">()</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">acall</span><span class="p">(</span><span class="s2">&quot;Check ticket MSGFLUX-42&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="3-inspecting-the-module-tree">3. <strong>Inspecting the Module Tree</strong></h2>
-<p>Use <code>named_modules()</code> to traverse the entire hierarchy:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<h2 id="fire-and-forget">Fire And Forget</h2>
+<p>Warmup can run in the background while the process continues initializing:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">SupportAgent</span><span class="p">()</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Normalizer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;prefix&quot;</span><span class="p">,</span> <span class="s2">&quot;[normalized]&quot;</span><span class="p">)</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">prefix</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">Classifier</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;label&quot;</span><span class="p">,</span> <span class="s2">&quot;spam&quot;</span><span class="p">)</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2"> → label=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
-</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
-</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="k">class</span><span class="w"> </span><span class="nc">Pipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">normalizer</span> <span class="o">=</span> <span class="n">Normalizer</span><span class="p">()</span>
-</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">classifier</span> <span class="o">=</span> <span class="n">Classifier</span><span class="p">()</span>
-</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>
-</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>        <span class="n">text</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">normalizer</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">classifier</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>
-</span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>
-</span><span id="__span-2-32"><a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="n">pipeline</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">()</span>
-</span><span id="__span-2-33"><a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>
-</span><span id="__span-2-34"><a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">pipeline</span><span class="o">.</span><span class="n">named_modules</span><span class="p">():</span>
-</span><span id="__span-2-35"><a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">!r:</span><span class="s2">20</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-2-36"><a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="c1"># &#39;&#39;                   → Pipeline</span>
-</span><span id="__span-2-37"><a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="c1"># &#39;normalizer&#39;         → Normalizer</span>
-</span><span id="__span-2-38"><a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="c1"># &#39;classifier&#39;         → Classifier</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">agent</span><span class="o">.</span><span class="n">warmup_system_prompt</span><span class="p">(</span><span class="n">background</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># Continue booting your CLI, server, or worker.</span>
 </span></code></pre></div>
-<p>Use <code>named_children()</code> for only <strong>direct</strong> children (one level deep):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">pipeline</span><span class="o">.</span><span class="n">named_children</span><span class="p">():</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># normalizer: Normalizer</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># classifier: Classifier</span>
+<p>For async applications:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">awarmup_system_prompt</span><span class="p">(</span><span class="n">background</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="4-deep-nesting">4. <strong>Deep Nesting</strong></h2>
-<p>Sub-modules can be nested to any depth. State dict keys reflect the full path:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<p>Background warmup does not return the provider response. Errors are logged by the background task runner.</p>
+<h2 id="what-is-sent">What Is Sent</h2>
+<p>Warmup intentionally bypasses runtime state. It sends:</p>
+<ul>
+<li>The rendered <code>system_prompt</code></li>
+<li>Tool schemas from the agent's <code>ToolLibrary</code></li>
+<li>The provider's configured warmup token limit</li>
+</ul>
+<p>It does not send:</p>
+<ul>
+<li>User task messages</li>
+<li>Chat history</li>
+<li>Checkpointer state</li>
+<li>Agent inbox notifications</li>
+<li>Typed parsers or generation schemas</li>
+<li>Response templates</li>
+</ul>
+<p>This keeps warmup focused on the stable prefix that providers can cache.</p>
+<h2 id="runtime-vars">Runtime Vars</h2>
+<p>If the system prompt uses runtime variables, pass the same <code>vars</code> you expect to use for the real request:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">warmup_system_prompt</span><span class="p">(</span><span class="nb">vars</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;tenant&quot;</span><span class="p">:</span> <span class="s2">&quot;acme&quot;</span><span class="p">})</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Formatter</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;tag&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="si">}</span><span class="s2">&gt;</span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2">&lt;/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">InnerPipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">bold</span> <span class="o">=</span> <span class="n">Formatter</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">)</span>
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">italic</span> <span class="o">=</span> <span class="n">Formatter</span><span class="p">(</span><span class="s2">&quot;i&quot;</span><span class="p">)</span>
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>
-</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">italic</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bold</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
-</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>
-</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>
-</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="k">class</span><span class="w"> </span><span class="nc">OuterPipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">inner</span> <span class="o">=</span> <span class="n">InnerPipeline</span><span class="p">()</span>
-</span><span id="__span-4-26"><a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">wrapper</span> <span class="o">=</span> <span class="n">Formatter</span><span class="p">(</span><span class="s2">&quot;div&quot;</span><span class="p">)</span>
-</span><span id="__span-4-27"><a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>
-</span><span id="__span-4-28"><a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-4-29"><a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">wrapper</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
-</span><span id="__span-4-30"><a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>
-</span><span id="__span-4-31"><a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>
-</span><span id="__span-4-32"><a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="n">outer</span> <span class="o">=</span> <span class="n">OuterPipeline</span><span class="p">()</span>
-</span><span id="__span-4-33"><a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="nb">print</span><span class="p">(</span><span class="n">outer</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">))</span>
-</span><span id="__span-4-34"><a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="c1"># &lt;div&gt;&lt;i&gt;&lt;b&gt;hello&lt;/b&gt;&lt;/i&gt;&lt;/div&gt;</span>
-</span><span id="__span-4-35"><a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>
-</span><span id="__span-4-36"><a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="nb">print</span><span class="p">(</span><span class="n">outer</span><span class="o">.</span><span class="n">state_dict</span><span class="p">())</span>
-</span><span id="__span-4-37"><a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="c1"># {</span>
-</span><span id="__span-4-38"><a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="c1">#   &quot;inner.bold.tag&quot;: &quot;b&quot;,</span>
-</span><span id="__span-4-39"><a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="c1">#   &quot;inner.italic.tag&quot;: &quot;i&quot;,</span>
-</span><span id="__span-4-40"><a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="c1">#   &quot;wrapper.tag&quot;: &quot;div&quot;</span>
-</span><span id="__span-4-41"><a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="c1"># }</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="s2">&quot;Summarize the ticket&quot;</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="nb">vars</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;tenant&quot;</span><span class="p">:</span> <span class="s2">&quot;acme&quot;</span><span class="p">},</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="5-loading-state">5. <strong>Loading State</strong></h2>
-<p>Use <code>load_state_dict()</code> to restore a saved configuration across the whole tree:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Formatter</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">&quot;tag&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="si">}</span><span class="s2">&gt;</span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2">&lt;/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">InnerPipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">bold</span> <span class="o">=</span> <span class="n">Formatter</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">)</span>
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">italic</span> <span class="o">=</span> <span class="n">Formatter</span><span class="p">(</span><span class="s2">&quot;i&quot;</span><span class="p">)</span>
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">italic</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bold</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
-</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>
-</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>
-</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="k">class</span><span class="w"> </span><span class="nc">OuterPipeline</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
-</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">inner</span> <span class="o">=</span> <span class="n">InnerPipeline</span><span class="p">()</span>
-</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">wrapper</span> <span class="o">=</span> <span class="n">Formatter</span><span class="p">(</span><span class="s2">&quot;div&quot;</span><span class="p">)</span>
-</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>
-</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">wrapper</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
-</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>
-</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>
-</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="n">outer</span> <span class="o">=</span> <span class="n">OuterPipeline</span><span class="p">()</span>
-</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a>
-</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a><span class="c1"># Save state</span>
-</span><span id="__span-5-35"><a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a><span class="n">saved</span> <span class="o">=</span> <span class="n">outer</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
-</span><span id="__span-5-36"><a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a>
-</span><span id="__span-5-37"><a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a><span class="c1"># Mutate</span>
-</span><span id="__span-5-38"><a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a><span class="n">outer</span><span class="o">.</span><span class="n">inner</span><span class="o">.</span><span class="n">bold</span><span class="o">.</span><span class="n">tag</span> <span class="o">=</span> <span class="s2">&quot;strong&quot;</span>
-</span><span id="__span-5-39"><a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a><span class="nb">print</span><span class="p">(</span><span class="n">outer</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">))</span>
-</span><span id="__span-5-40"><a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a><span class="c1"># &lt;div&gt;&lt;i&gt;&lt;strong&gt;hello&lt;/strong&gt;&lt;/i&gt;&lt;/div&gt;</span>
-</span><span id="__span-5-41"><a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>
-</span><span id="__span-5-42"><a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a><span class="c1"># Restore</span>
-</span><span id="__span-5-43"><a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a><span class="n">outer</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">saved</span><span class="p">)</span>
-</span><span id="__span-5-44"><a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a><span class="nb">print</span><span class="p">(</span><span class="n">outer</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">))</span>
-</span><span id="__span-5-45"><a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a><span class="c1"># &lt;div&gt;&lt;i&gt;&lt;b&gt;hello&lt;/b&gt;&lt;/i&gt;&lt;/div&gt;</span>
+<p>Cache hits depend on the provider seeing the same prompt prefix. If the rendered system prompt changes between warmup and the real call, the provider may miss the cache.</p>
+<h2 id="tool-filtering">Tool Filtering</h2>
+<p>Warmup accepts the same <code>tool_filter</code> shape used by agent execution:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">warmup_system_prompt</span><span class="p">(</span><span class="n">tool_filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;allow&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;lookup_ticket&quot;</span><span class="p">]})</span>
 </span></code></pre></div>
-<h2 id="6-container-modules">6. <strong>Container Modules</strong></h2>
-<p>For common patterns, msgFlux provides dedicated containers — see their individual pages:</p>
-<table>
-<thead>
-<tr>
-<th>Container</th>
-<th>When to use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="../sequential/"><code>nn.Sequential</code></a></td>
-<td>Fixed chain: output of step N feeds step N+1</td>
-</tr>
-<tr>
-<td><a href="../module-list/"><code>nn.ModuleList</code></a></td>
-<td>Ordered collection iterated manually in <code>forward</code></td>
-</tr>
-<tr>
-<td><a href="../module-dict/"><code>nn.ModuleDict</code></a></td>
-<td>Named collection, selected by key at runtime</td>
-</tr>
-</tbody>
-</table>
+<p>Use this when the real request will also restrict tools. A different tool schema list changes the prompt prefix and can reduce cache hits.</p>
+<h2 id="model-gateway">Model Gateway</h2>
+<p>When the agent uses a <code>ModelGateway</code>, warmup routes through the gateway and accepts <code>model_preference</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">warmup_system_prompt</span><span class="p">(</span><span class="n">model_preference</span><span class="o">=</span><span class="s2">&quot;fast&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The selected model must support <code>warmup_system_prompt</code>.</p>
+<h2 id="provider-token-limit">Provider Token Limit</h2>
+<p>OpenAI-compatible chat providers default to one generated token for warmup. This keeps the request cheap while still forcing the provider to process the prompt.</p>
+<p>Override it on the model if a provider needs a different minimum:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">,</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">warmup_max_tokens</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>OpenAI Chat Completions and Groq reject zero completion tokens, so <code>0</code> is not a portable warmup value.</p>
+<h2 id="reading-cache-usage">Reading Cache Usage</h2>
+<p>The provider response is returned in foreground mode:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">raw_response</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">warmup_system_prompt</span><span class="p">()</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">raw_response</span><span class="o">.</span><span class="n">usage</span><span class="p">)</span>
+</span></code></pre></div>
+<p>OpenAI reports prompt cache hits in usage metadata:</p>
+<ul>
+<li>Chat Completions: <code>usage.prompt_tokens_details.cached_tokens</code></li>
+<li>Responses API: <code>usage.input_tokens_details.cached_tokens</code></li>
+</ul>
+<p>msgflux currently implements this warmup path for chat completions.</p>
+<h2 id="practical-guidance">Practical Guidance</h2>
+<ul>
+<li>Keep the warmup prefix stable.</li>
+<li>Put large static instructions, tools, and skills before dynamic user content.</li>
+<li>Warmup is most useful above the provider's prompt-cache threshold.</li>
+<li>Do not expect warmup to persist conversation state.</li>
+<li>Use foreground warmup during tests so failures are visible.</li>
+<li>Use background warmup during app startup when failures should not block serving.</li>
+</ul>
 
 
 
@@ -5251,7 +5091,7 @@ For common patterns, msgFlux provides dedicated containers — see their individ
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../forward-and-async/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Forward and Async">
+          <a href="../streaming/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Streaming">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -5261,20 +5101,20 @@ For common patterns, msgFlux provides dedicated containers — see their individ
                 Previous
               </span>
               <div class="md-ellipsis">
-                Forward and Async
+                Streaming
               </div>
             </div>
           </a>
         
         
           
-          <a href="../module-dict/" class="md-footer__link md-footer__link--next" aria-label="Next: ModuleDict">
+          <a href="../reasoning/" class="md-footer__link md-footer__link--next" aria-label="Next: Reasoning">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                ModuleDict
+                Reasoning
               </div>
             </div>
             <div class="md-footer__button md-icon">
