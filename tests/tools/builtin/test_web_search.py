@@ -134,10 +134,11 @@ class TestWebSearchInit:
         assert tool.engine_kind == "retriever"
         assert tool.engine_target == "wikipedia"
         assert tool.annotations == {"query": str, "return": str}
-        assert "wikipedia" in tool.description.lower()
-        assert "retriever backend" in tool.description.lower()
+        assert "current information" in tool.description.lower()
+        assert "concise search phrase" in tool.description.lower()
+        assert "wikipedia" not in tool.description.lower()
 
-    def test_model_engine_adds_prompt_annotation(self, mocker):
+    def test_model_engine_adds_goal_annotation(self, mocker):
         mock_factory = mocker.patch(
             "msgflux.tools.builtin.web_search.Model.chat_completion",
             return_value=MagicMock(),
@@ -151,10 +152,12 @@ class TestWebSearchInit:
         assert tool.engine_kind == "model"
         assert tool.engine_target == "openai/gpt-4o-search-preview"
         assert tool.annotations["query"] == str
-        assert tool.annotations["prompt"] == Optional[str]
+        assert tool.annotations["goal"] == Optional[str]
         assert tool.annotations["return"] == str
-        assert "openai/gpt-4o-search-preview" in tool.description
-        assert "init_params" in tool.description
+        assert "synthesized" in tool.description
+        assert "answer grounded in web results" in tool.description
+        assert "goal" in tool.description
+        assert "openai/gpt-4o-search-preview" not in tool.description
         mock_factory.assert_called_once_with(
             "openai/gpt-4o-search-preview",
             web_search_options={"search_context_size": "low"},
@@ -181,7 +184,7 @@ class TestWebSearchInit:
         with pytest.raises(ValueError, match="engine format"):
             WebSearch("invalid")
 
-    def test_retriever_engine_rejects_prompt(self, mocker):
+    def test_retriever_engine_rejects_goal(self, mocker):
         mocker.patch(
             "msgflux.tools.builtin.web_search.Retriever.web_search",
             return_value=MagicMock(),
@@ -189,8 +192,8 @@ class TestWebSearchInit:
 
         tool = WebSearch("retriever/wikipedia")
 
-        with pytest.raises(ValueError, match="prompt"):
-            tool("python", prompt="Guide the model.")
+        with pytest.raises(ValueError, match="goal"):
+            tool("python", goal="Guide the model.")
 
     def test_missing_engine_raises(self, mocker):
         mocker.patch.dict("os.environ", {}, clear=True)
@@ -242,7 +245,7 @@ class TestWebSearchCall:
         ]
         assert result["annotations"] == []
 
-    def test_model_engine_forwards_prompt_to_model(self, mocker):
+    def test_model_engine_forwards_goal_to_model(self, mocker):
         mock_response = MagicMock()
         mock_response.consume.return_value = "final answer"
         mock_response.metadata = dotdict(
@@ -259,7 +262,7 @@ class TestWebSearchCall:
             init_params={"web_search_options": {"search_context_size": "low"}},
         )
 
-        result = tool("What is the latest release?", prompt="Use concise style.")
+        result = tool("What is the latest release?", goal="Use concise style.")
 
         assert result["data"] == "final answer"
         assert result["annotations"] == [
@@ -285,11 +288,12 @@ class TestWebSearchToolLibraryIntegration:
         schemas = library.get_tool_json_schemas()
 
         assert schemas[0]["function"]["name"] == "web_search"
-        assert "wikipedia" in schemas[0]["function"]["description"].lower()
+        assert "current information" in schemas[0]["function"]["description"].lower()
         assert "query" in schemas[0]["function"]["parameters"]["properties"]
         assert "prompt" not in schemas[0]["function"]["parameters"]["properties"]
+        assert "goal" not in schemas[0]["function"]["parameters"]["properties"]
 
-    def test_model_mode_exposes_prompt_in_schema(self, mocker):
+    def test_model_mode_exposes_goal_in_schema(self, mocker):
         mock_model = MagicMock()
         mocker.patch(
             "msgflux.tools.builtin.web_search.Model.chat_completion",
@@ -302,6 +306,7 @@ class TestWebSearchToolLibraryIntegration:
 
         props = schemas[0]["function"]["parameters"]["properties"]
         assert "query" in props
-        assert "prompt" in props
+        assert "goal" in props
+        assert "prompt" not in props
         assert "web_search_options" not in props
         assert "call_params" not in props
