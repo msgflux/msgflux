@@ -37,7 +37,7 @@ from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import ChatCompletionModel
-from msgflux.nn.functional import await_for_event, wait_for_event
+from msgflux.nn.functional import aspawn, await_for_event, spawn, wait_for_event
 from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
@@ -522,6 +522,108 @@ class Agent(Module, metaclass=AutoParams):
         if self.config.get("verbose", False):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
         return await self.generator.acall(**model_execution_params)
+
+    def warmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+        background: bool = False,
+    ):
+        """Warm the provider cache for the rendered system prompt and tools.
+
+        This bypasses task messages, chat history, checkpointers and response
+        parsing. Warmup should only include stable prompt prefixes; dynamic user
+        content would reduce cache hits for the real request.
+        """
+        if background:
+            spawn(
+                self._warmup_system_prompt,
+                vars=vars,
+                tool_filter=tool_filter,
+                model_preference=model_preference,
+            )
+            return None
+        return self._warmup_system_prompt(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+
+    async def awarmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+        background: bool = False,
+    ):
+        """Async counterpart for warming the provider system prompt cache."""
+        if background:
+            await aspawn(
+                self._awarmup_system_prompt,
+                vars=vars,
+                tool_filter=tool_filter,
+                model_preference=model_preference,
+            )
+            return None
+        return await self._awarmup_system_prompt(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+
+    def _warmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+    ):
+        params = self._prepare_warmup_execution(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+        return self.model.warmup_system_prompt(**params)
+
+    async def _awarmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+    ):
+        params = self._prepare_warmup_execution(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+        return await self.model.awarmup_system_prompt(**params)
+
+    def _prepare_warmup_execution(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+    ) -> Mapping[str, Any]:
+        model_execution_params = self._prepare_model_execution(
+            messages=[],
+            vars=vars or {},
+            model_preference=model_preference,
+            tool_filter=tool_filter,
+        )
+        return dotdict(
+            system_prompt=model_execution_params.system_prompt,
+            tool_definitions=model_execution_params.tool_definitions,
+            **(
+                {"model_preference": model_execution_params.model_preference}
+                if model_preference
+                else {}
+            ),
+        )
 
     def _prepare_model_execution(
         self,
