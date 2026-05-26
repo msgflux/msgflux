@@ -6,6 +6,7 @@ from msgflux.data.retrievers.retriever import Retriever
 
 class Weather:
     name = "weather"
+    display_name = "Weather"
     engine_env_var = "MSGFLUX_TOOL_WEATHER_ENGINE"
     default_engine = "open_meteo"
     description = """
