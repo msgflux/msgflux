@@ -6,6 +6,7 @@ from msgflux.logger import logger
 from msgflux.models.base import BaseModel
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.tools.definitions import ToolDefinitions
 
 
 class ModelGateway:
@@ -371,6 +372,91 @@ class ModelGateway:
             message=error_message,
         )
 
+    def _available_models(
+        self,
+        model_preference: Optional[str] = None,
+    ) -> List[Tuple[str, BaseModel]]:
+        available = [
+            (name, model)
+            for name, model in zip(self.model_names, self.models)
+            if not self._is_time_restricted(name)
+        ]
+        if model_preference:
+            preferred = next(
+                ((n, m) for n, m in available if n == model_preference), None
+            )
+            if preferred:
+                available = [preferred] + [
+                    (n, m) for n, m in available if n != model_preference
+                ]
+        return available
+
+    def _execute_model_method(
+        self,
+        method_name: str,
+        *,
+        model_preference: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
+        available = self._available_models(model_preference)
+        if not available:
+            raise ModelRouterError(
+                [], [], message="No model available due to time constraints"
+            )
+
+        failures = []
+        for name, model in available:
+            try:
+                return getattr(model, method_name)(**kwargs)
+            except Exception as e:
+                logger.debug(
+                    f"""Model `{name}` ({model.provider})
+                    failed to execute `{method_name}`: {e}""",
+                    exc_info=False,
+                )
+                failures.append((name, model.provider, e))
+
+        error_message = f"All {len(available)} available models failed"
+        logger.error(error_message)
+        raise ModelRouterError(
+            [failure[2] for failure in failures],
+            failures,
+            message=error_message,
+        )
+
+    async def _aexecute_model_method(
+        self,
+        method_name: str,
+        *,
+        model_preference: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
+        available = self._available_models(model_preference)
+        if not available:
+            raise ModelRouterError(
+                [], [], message="No model available due to time constraints"
+            )
+
+        failures = []
+        for name, model in available:
+            try:
+                return await getattr(model, method_name)(**kwargs)
+            except Exception as e:
+                logger.debug(
+                    f"""Model `{name}` ({model.provider})
+                    failed to execute `{method_name}`: {e}""",
+                    exc_info=False,
+                )
+                failures.append((name, model.provider, e))
+
+        error_message = f"All {len(available)} available models failed"
+        logger.error(error_message)
+        raise ModelRouterError(
+            [failure[2] for failure in failures],
+            failures,
+            message=error_message,
+        )
+
     def __call__(
         self, *, model_preference: Optional[str] = None, **kwargs: Any
     ) -> Union[ModelResponse, ModelStreamResponse]:
@@ -414,6 +500,36 @@ class ModelGateway:
                 available/functional.
         """
         return await self._aexecute_model(model_preference=model_preference, **kwargs)
+
+    def warmup_system_prompt(
+        self,
+        *,
+        system_prompt: Optional[str],
+        tool_definitions: Optional[ToolDefinitions] = None,
+        model_preference: Optional[str] = None,
+    ) -> Any:
+        """Warm the first available deployment that supports prompt warmup."""
+        return self._execute_model_method(
+            "warmup_system_prompt",
+            model_preference=model_preference,
+            system_prompt=system_prompt,
+            tool_definitions=tool_definitions,
+        )
+
+    async def awarmup_system_prompt(
+        self,
+        *,
+        system_prompt: Optional[str],
+        tool_definitions: Optional[ToolDefinitions] = None,
+        model_preference: Optional[str] = None,
+    ) -> Any:
+        """Async prompt warmup for the first available deployment."""
+        return await self._aexecute_model_method(
+            "awarmup_system_prompt",
+            model_preference=model_preference,
+            system_prompt=system_prompt,
+            tool_definitions=tool_definitions,
+        )
 
     def serialize(self) -> Dict[str, Any]:
         """Serializes the gateway state including deployments."""
