@@ -5489,6 +5489,9 @@ Supported model engines: any OpenAI-compatible model.
 
 - **`call_params`**: Passed on each retriever call (retriever engines only).
 
+- **`goal`**: Optional call-time instruction for model-backed search only.
+  It steers the model backend before it answers.
+
 ```python
 # init_params: configure the backend at initialization
 search = WebSearch(
@@ -5498,6 +5501,10 @@ search = WebSearch(
 
 # call_params: passed on each call (retriever engines only)
 result = search(&quot;Python news&quot;, call_params={&quot;top_k&quot;: 5})
+
+# goal: passed at call time for model-backed search only
+model_search = WebSearch(&quot;model/openai/gpt-4o-search-preview&quot;)
+result = model_search(&quot;Python news&quot;, goal=&quot;Answer with concise bullet points.&quot;)
 ```
 
 Alternatively, read from environment variables:
@@ -5586,6 +5593,8 @@ export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS=&#x27;{&quot;top_k&quot;: 5}&#x27;
         explicitly, `WebSearch` reads the JSON objects from
         `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
         `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
+        Model-backed search also accepts `goal` at call time to steer
+        the model before it answers.
 
     === &quot;Wikipedia Search&quot;
 
@@ -7629,6 +7638,10 @@ Configure MCP servers using the `mcp_servers` attribute:
 <li>
 <p><strong><code>call_params</code></strong>: Passed on each retriever call (retriever engines only).</p>
 </li>
+<li>
+<p><strong><code>goal</code></strong>: Optional call-time instruction for model-backed search only.
+  It steers the model backend before it answers.</p>
+</li>
 </ul>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># init_params: configure the backend at initialization</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">search</span> <span class="o">=</span> <span class="n">WebSearch</span><span class="p">(</span>
@@ -7638,6 +7651,10 @@ Configure MCP servers using the `mcp_servers` attribute:
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
 </span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># call_params: passed on each call (retriever engines only)</span>
 </span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">result</span> <span class="o">=</span> <span class="n">search</span><span class="p">(</span><span class="s2">&quot;Python news&quot;</span><span class="p">,</span> <span class="n">call_params</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;top_k&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">})</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1"># goal: passed at call time for model-backed search only</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="n">model_search</span> <span class="o">=</span> <span class="n">WebSearch</span><span class="p">(</span><span class="s2">&quot;model/openai/gpt-4o-search-preview&quot;</span><span class="p">)</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="n">result</span> <span class="o">=</span> <span class="n">model_search</span><span class="p">(</span><span class="s2">&quot;Python news&quot;</span><span class="p">,</span> <span class="n">goal</span><span class="o">=</span><span class="s2">&quot;Answer with concise bullet points.&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Alternatively, read from environment variables:
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS</span><span class="o">=</span><span class="s1">&#39;{&quot;include_text&quot;: true}&#39;</span>
@@ -7716,7 +7733,9 @@ Configure MCP servers using the `mcp_servers` attribute:
 whenever the retriever is called. If these values are not passed
 explicitly, <code>WebSearch</code> reads the JSON objects from
 <code>MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS</code> and
-<code>MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS</code>.</p>
+<code>MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS</code>.
+Model-backed search also accepts <code>goal</code> at call time to steer
+the model before it answers.</p>
 </div>
 <div class="tabbed-block">
 <p>Use msgflux's built-in Wikipedia retriever as a tool:</p>
