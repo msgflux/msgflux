@@ -317,8 +317,6 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
             display_name = display_name or getattr(impl, "display_name", None)
             usage_guidance = usage_guidance or getattr(impl, "usage_guidance", None)
 
-        display_name = getattr(impl, "display_name", None)
-
         # Now extract annotations (after instantiation for classes)
         annotations = (
             getattr(impl, "annotations", None)
