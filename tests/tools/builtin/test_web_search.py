@@ -26,6 +26,10 @@ class TestRetrieverAlias:
 
 
 class TestWebSearchInit:
+    def test_name_and_display_name_attributes(self):
+        assert WebSearch.name == "web_search"
+        assert WebSearch.display_name == "Web Search"
+
     def test_engine_can_be_loaded_from_env(self, mocker):
         mock_retriever = MagicMock()
         mocker.patch(

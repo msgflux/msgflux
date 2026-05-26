@@ -7,6 +7,8 @@ from msgflux.core.dotdict import dotdict
 
 def tool_config(
     *,
+    display_name: Optional[str] = None,
+    usage_guidance: Optional[str] = None,
     return_direct: Optional[bool] = False,
     call_as_response: Optional[bool] = False,
     spawn: Optional[bool] = False,
@@ -34,6 +36,11 @@ def tool_config(
         return_direct:
             If True, the tool will return its output directly without additional
             processing.
+        display_name:
+            Human-readable name for UI/events. If omitted, the tool name is used.
+        usage_guidance:
+            Optional guidance describing when and how an agent should use the tool.
+            Agents may render this in their system prompt.
         call_as_response:
             If True, returns the tool call as its result. This property requires
             `return_direct = True` and will automatically change it to True if it
@@ -133,6 +140,8 @@ def tool_config(
             "tool_config": dotdict(
                 {
                     "spawn": spawn,
+                    "display_name": display_name,
+                    "usage_guidance": usage_guidance,
                     "call_as_response": call_as_response,
                     "handoff": handoff,
                     "disable_input": disable_input,
