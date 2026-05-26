@@ -20,6 +20,15 @@ SkillName = Annotated[
 ]
 SkillDescription = Annotated[str, msgspec.Meta(min_length=1, max_length=1024)]
 SkillCompatibility = Annotated[str, msgspec.Meta(max_length=500)]
+_TEMPORARY_SKILL_PATH_SUFFIXES = (
+    ".pyc",
+    ".pyo",
+    ".swp",
+    ".swo",
+    ".tmp",
+    ".temp",
+    "~",
+)
 
 
 def default_skill_paths() -> list[Path]:
@@ -404,11 +413,36 @@ class AgentSkillManager:
 
     def activate(self, name: str) -> str:
         skill = self.get(name)
-        return (
-            f'<skill_content name="{skill.name}">\n'
-            f"{skill.body}\n\n"
-            f"Skill directory: {skill.directory}\n"
-            "Relative paths in this skill are relative to the skill directory."
-            "\n"
-            "</skill_content>"
+        lines = [
+            f'<skill_content name="{skill.name}">',
+            skill.body,
+        ]
+        if self._has_related_content(skill):
+            lines.extend(
+                [
+                    "",
+                    f"Skill directory: {skill.directory}",
+                    "Relative paths in this skill are relative to the skill directory.",
+                ]
+            )
+        lines.append("</skill_content>")
+        return "\n".join(lines)
+
+    def _has_related_content(self, skill: AgentSkill) -> bool:
+        for path in skill.directory.rglob("*"):
+            if path == skill.path:
+                continue
+            relative_path = path.relative_to(skill.directory)
+            if self._is_temporary_skill_path(relative_path):
+                continue
+            if path.is_file():
+                return True
+        return False
+
+    def _is_temporary_skill_path(self, path: Path) -> bool:
+        return any(
+            part.startswith(".")
+            or (part.startswith("__") and part.endswith("__"))
+            or part.endswith(_TEMPORARY_SKILL_PATH_SUFFIXES)
+            for part in path.parts
         )

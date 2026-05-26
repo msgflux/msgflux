@@ -436,7 +436,27 @@ def test_skill_search_is_not_registered_when_all_skills_are_cataloged(tmp_path):
     assert "skill_search" not in agent.tool_library.library
 
 
-def test_activate_skill_returns_wrapped_content_without_resource_listing(tmp_path):
+def test_activate_skill_omits_directory_when_skill_has_no_related_content(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    skill_dir = _write_skill(skills_root, name="code-review")
+    (skill_dir / "__pycache__").mkdir()
+    (skill_dir / "__pycache__" / "module.pyc").write_bytes(b"cache")
+    (skill_dir / ".DS_Store").write_text("metadata", encoding="utf-8")
+    (skill_dir / "notes.tmp").write_text("draft", encoding="utf-8")
+
+    manager = AgentSkillManager({"paths": skills_root})
+    content = manager.activate("code-review")
+
+    assert '<skill_content name="code-review">' in content
+    assert "Follow the PDF workflow" in content
+    assert "Skill directory:" not in content
+    assert (
+        "Relative paths in this skill are relative to the skill directory."
+        not in content
+    )
+
+
+def test_activate_skill_includes_directory_when_skill_has_related_content(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     skill_dir = _write_skill(skills_root, name="code-review")
     (skill_dir / "references").mkdir()
