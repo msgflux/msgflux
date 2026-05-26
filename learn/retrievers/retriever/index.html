@@ -968,6 +968,8 @@
       
         
       
+        
+      
     
     
     
@@ -1240,6 +1242,34 @@
     
   
     Web Retrievers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../weather/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Weather Retrievers
   
 
     
@@ -4636,15 +4666,16 @@
 
 ## ✦₊⁺ Overview
 
-`Retriever` provides a unified interface for fetching relevant content from different sources. All retrievers return a consistent `dotdict` response and support both synchronous and async execution.
+`Retriever` provides a unified interface for fetching relevant content from different sources. Search-style retrievers return a consistent `dotdict` response, while weather retrievers return a structured `dotdict` for one place and time. All retrievers support both synchronous and async execution.
 
-There are three retriever families:
+There are four retriever families:
 
 | Family | Providers | Use Case |
 |--------|-----------|----------|
 | **Lexical** | `bm25`, `bm25s`, `rank_bm25` | Search a local document corpus by keyword relevance |
 | **Fuzzy** | `rapidfuzz` | Approximate string matching — tolerates typos and partial matches |
-| **Web** | `wikipedia` | Fetch content from external sources at query time |
+| **Web** | `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv` | Fetch content from external sources at query time |
+| **Weather** | `open_meteo` | Retrieve current, forecast, or historical weather data |
 
 ---
 
@@ -4704,17 +4735,43 @@ There are three retriever families:
         print(result.data.content)
     ```
 
+???+ example &quot;Weather — Open-Meteo&quot;
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.weather(&quot;open_meteo&quot;)
+
+    current = retriever(&quot;Fortaleza&quot;)
+    forecast = retriever(&quot;Fortaleza&quot;, when=&quot;+6h&quot;)
+    historical = retriever(&quot;-3.71722,-38.54306&quot;, when=&quot;-3d&quot;)
+
+    print(current[&quot;weather&quot;][&quot;temperature_c&quot;])
+    print(current[&quot;weather&quot;][&quot;is_raining&quot;])
+    ```
+
 ---
 
 ## 2. **Response Format**
 
-All retrievers return a `dotdict` with a consistent top-level structure:
+Search-style retrievers return a `dotdict` with a consistent top-level structure:
 
 ```python
 response.response_type  # &quot;lexical_search&quot;, &quot;fuzzy_search&quot;, or &quot;web_search&quot;
 response.data           # list — one entry per query
 response.data[0].results        # list of results for the first query
 response.data[0].results[0].data  # the retrieved content
+```
+
+Weather retrievers return a structured `dotdict` directly because each call
+targets one place and one time:
+
+```python
+response = mf.Retriever.weather(&quot;open_meteo&quot;)(&quot;Fortaleza&quot;)
+
+response[&quot;location&quot;]  # resolved place and coordinates
+response[&quot;when&quot;]      # target time metadata
+response[&quot;weather&quot;]   # temperature, rain, wind, humidity, and condition
 ```
 
 ### Lexical response
@@ -4843,8 +4900,8 @@ for result in response.data[0].results:
 }());
 </script>
 <h2 id="overview">✦₊⁺ Overview</h2>
-<p><code>Retriever</code> provides a unified interface for fetching relevant content from different sources. All retrievers return a consistent <code>dotdict</code> response and support both synchronous and async execution.</p>
-<p>There are three retriever families:</p>
+<p><code>Retriever</code> provides a unified interface for fetching relevant content from different sources. Search-style retrievers return a consistent <code>dotdict</code> response, while weather retrievers return a structured <code>dotdict</code> for one place and time. All retrievers support both synchronous and async execution.</p>
+<p>There are four retriever families:</p>
 <table>
 <thead>
 <tr>
@@ -4866,8 +4923,13 @@ for result in response.data[0].results:
 </tr>
 <tr>
 <td><strong>Web</strong></td>
-<td><code>wikipedia</code></td>
+<td><code>wikipedia</code>, <code>serpapi</code>, <code>brave</code>, <code>tavily</code>, <code>linkup</code>, <code>exa</code>, <code>arxiv</code></td>
 <td>Fetch content from external sources at query time</td>
+</tr>
+<tr>
+<td><strong>Weather</strong></td>
+<td><code>open_meteo</code></td>
+<td>Retrieve current, forecast, or historical weather data</td>
 </tr>
 </tbody>
 </table>
@@ -4924,55 +4986,77 @@ for result in response.data[0].results:
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
 </span></code></pre></div>
 </details>
+<details class="example" open="open">
+<summary>Weather — Open-Meteo</summary>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">current</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">)</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">forecast</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;+6h&quot;</span><span class="p">)</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">historical</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;-3.71722,-38.54306&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;-3d&quot;</span><span class="p">)</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">current</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;temperature_c&quot;</span><span class="p">])</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="nb">print</span><span class="p">(</span><span class="n">current</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;is_raining&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+</details>
 <hr />
 <h2 id="2-response-format">2. <strong>Response Format</strong></h2>
-<p>All retrievers return a <code>dotdict</code> with a consistent top-level structure:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">response</span><span class="o">.</span><span class="n">response_type</span>  <span class="c1"># &quot;lexical_search&quot;, &quot;fuzzy_search&quot;, or &quot;web_search&quot;</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">response</span><span class="o">.</span><span class="n">data</span>           <span class="c1"># list — one entry per query</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span>        <span class="c1"># list of results for the first query</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">data</span>  <span class="c1"># the retrieved content</span>
+<p>Search-style retrievers return a <code>dotdict</code> with a consistent top-level structure:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">response</span><span class="o">.</span><span class="n">response_type</span>  <span class="c1"># &quot;lexical_search&quot;, &quot;fuzzy_search&quot;, or &quot;web_search&quot;</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">response</span><span class="o">.</span><span class="n">data</span>           <span class="c1"># list — one entry per query</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span>        <span class="c1"># list of results for the first query</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">data</span>  <span class="c1"># the retrieved content</span>
+</span></code></pre></div>
+<p>Weather retrievers return a structured <code>dotdict</code> directly because each call
+targets one place and one time:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">response</span><span class="p">[</span><span class="s2">&quot;location&quot;</span><span class="p">]</span>  <span class="c1"># resolved place and coordinates</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">response</span><span class="p">[</span><span class="s2">&quot;when&quot;</span><span class="p">]</span>      <span class="c1"># target time metadata</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">response</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">]</span>   <span class="c1"># temperature, rain, wind, humidity, and condition</span>
 </span></code></pre></div>
 <h3 id="lexical-response">Lexical response</h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;my query&quot;</span><span class="p">,</span> <span class="n">return_score</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>   <span class="c1"># &quot;Document text...&quot;</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">score</span><span class="p">)</span>  <span class="c1"># 3.14  (BM25 score, only if return_score=True)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;my query&quot;</span><span class="p">,</span> <span class="n">return_score</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>   <span class="c1"># &quot;Document text...&quot;</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">score</span><span class="p">)</span>  <span class="c1"># 3.14  (BM25 score, only if return_score=True)</span>
 </span></code></pre></div>
 <h3 id="web-response">Web response</h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;Python programming&quot;</span><span class="p">)</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>    <span class="c1"># &quot;Python (programming language)&quot;</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>  <span class="c1"># &quot;Python\n\nPython is...&quot;</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;Python programming&quot;</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>    <span class="c1"># &quot;Python (programming language)&quot;</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>  <span class="c1"># &quot;Python\n\nPython is...&quot;</span>
 </span></code></pre></div>
 <hr />
 <h2 id="3-batch-queries">3. <strong>Batch Queries</strong></h2>
 <p>Pass a list to search multiple queries in a single call. Results are returned in the same order:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">lexical</span><span class="p">(</span><span class="s2">&quot;bm25&quot;</span><span class="p">)</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">retriever</span><span class="o">.</span><span class="n">add</span><span class="p">([</span><span class="s2">&quot;Doc A about Python&quot;</span><span class="p">,</span> <span class="s2">&quot;Doc B about Java&quot;</span><span class="p">,</span> <span class="s2">&quot;Doc C about Rust&quot;</span><span class="p">])</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">queries</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Python language&quot;</span><span class="p">,</span> <span class="s2">&quot;systems programming&quot;</span><span class="p">]</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="n">queries</span><span class="p">)</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
-</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">query</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">queries</span><span class="p">):</span>
-</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2"> ---&quot;</span><span class="p">)</span>
-</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
-</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">lexical</span><span class="p">(</span><span class="s2">&quot;bm25&quot;</span><span class="p">)</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">retriever</span><span class="o">.</span><span class="n">add</span><span class="p">([</span><span class="s2">&quot;Doc A about Python&quot;</span><span class="p">,</span> <span class="s2">&quot;Doc B about Java&quot;</span><span class="p">,</span> <span class="s2">&quot;Doc C about Rust&quot;</span><span class="p">])</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">queries</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Python language&quot;</span><span class="p">,</span> <span class="s2">&quot;systems programming&quot;</span><span class="p">]</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">response</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="n">queries</span><span class="p">)</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">query</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">queries</span><span class="p">):</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2"> ---&quot;</span><span class="p">)</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
 </span></code></pre></div>
 <hr />
 <h2 id="4-async-support">4. <strong>Async Support</strong></h2>
 <p>All retrievers expose <code>.acall()</code> for async usage:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;wikipedia&quot;</span><span class="p">,</span> <span class="n">summary</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">retriever</span><span class="o">.</span><span class="n">acall</span><span class="p">(</span><span class="s2">&quot;artificial intelligence&quot;</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">web</span><span class="p">(</span><span class="s2">&quot;wikipedia&quot;</span><span class="p">,</span> <span class="n">summary</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">retriever</span><span class="o">.</span><span class="n">acall</span><span class="p">(</span><span class="s2">&quot;artificial intelligence&quot;</span><span class="p">,</span> <span class="n">top_k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">title</span><span class="p">)</span>
 </span></code></pre></div>
 
 

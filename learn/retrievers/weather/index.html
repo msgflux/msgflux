@@ -12,27 +12,31 @@
         <meta name="author" content="Vilson Rodrigues">
       
       
-        <link rel="canonical" href="https://msgflux.com/anatomy/">
+        <link rel="canonical" href="https://msgflux.com/learn/retrievers/weather/">
       
       
+        <link rel="prev" href="../web/">
+      
+      
+        <link rel="next" href="../../parsers/">
       
       
         
       
       
-      <link rel="icon" href="../assets/logo.png">
+      <link rel="icon" href="../../../assets/logo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Anatomy - msgFlux</title>
+        <title>Weather Retrievers - msgFlux</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,15 +55,15 @@
       
     
     
-      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
     
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&display=swap">
     
       <link rel="stylesheet" href="https://unpkg.com/mermaid@8.5.1/dist/mermaid.css">
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#anatomy" class="md-skip">
+        <a href="#weather-retrievers" class="md-skip">
           Skip to content
         </a>
       
@@ -98,9 +102,9 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="msgFlux" class="md-header__button md-logo" aria-label="msgFlux" data-md-component="logo">
+    <a href="../../.." title="msgFlux" class="md-header__button md-logo" aria-label="msgFlux" data-md-component="logo">
       
-  <img src="../assets/logo.png" alt="logo">
+  <img src="../../../assets/logo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -117,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Anatomy
+              Weather Retrievers
             
           </span>
         </div>
@@ -237,7 +241,7 @@
     
     
       <li class="md-tabs__item">
-        <a href=".." class="md-tabs__link">
+        <a href="../../.." class="md-tabs__link">
           
   
   
@@ -255,6 +259,8 @@
   
   
   
+    
+  
   
     
     
@@ -262,11 +268,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../learn/models/model/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../models/model/" class="md-tabs__link">
           
   
   
@@ -291,7 +299,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../tutorials/" class="md-tabs__link">
+        <a href="../../../tutorials/" class="md-tabs__link">
           
   
   
@@ -311,7 +319,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../dependency-management/" class="md-tabs__link">
+      <a href="../../../dependency-management/" class="md-tabs__link">
         
   
   
@@ -330,7 +338,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../CHANGELOG/" class="md-tabs__link">
+      <a href="../../../CHANGELOG/" class="md-tabs__link">
         
   
   
@@ -351,7 +359,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../blog/" class="md-tabs__link">
+        <a href="../../../blog/" class="md-tabs__link">
           
   
   
@@ -387,9 +395,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="msgFlux" class="md-nav__button md-logo" aria-label="msgFlux" data-md-component="logo">
+    <a href="../../.." title="msgFlux" class="md-nav__button md-logo" aria-label="msgFlux" data-md-component="logo">
       
-  <img src="../assets/logo.png" alt="logo">
+  <img src="../../../assets/logo.png" alt="logo">
 
     </a>
     msgFlux
@@ -437,7 +445,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href=".." class="md-nav__link ">
+            <a href="../../.." class="md-nav__link ">
               
   
   
@@ -480,8 +488,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -507,17 +517,20 @@
     
     
       
+        
+        
+      
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -535,7 +548,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -627,7 +640,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/model/" class="md-nav__link">
+      <a href="../../models/model/" class="md-nav__link">
         
   
   
@@ -655,7 +668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/model_gateway/" class="md-nav__link">
+      <a href="../../models/model_gateway/" class="md-nav__link">
         
   
   
@@ -683,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/chat_completion/" class="md-nav__link">
+      <a href="../../models/chat_completion/" class="md-nav__link">
         
   
   
@@ -711,7 +724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/moderation/" class="md-nav__link">
+      <a href="../../models/moderation/" class="md-nav__link">
         
   
   
@@ -739,7 +752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_embedder/" class="md-nav__link">
+      <a href="../../models/text_embedder/" class="md-nav__link">
         
   
   
@@ -767,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_to_speech/" class="md-nav__link">
+      <a href="../../models/text_to_speech/" class="md-nav__link">
         
   
   
@@ -795,7 +808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/speech_to_text/" class="md-nav__link">
+      <a href="../../models/speech_to_text/" class="md-nav__link">
         
   
   
@@ -823,7 +836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_to_image/" class="md-nav__link">
+      <a href="../../models/text_to_image/" class="md-nav__link">
         
   
   
@@ -851,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/image_text_to_image/" class="md-nav__link">
+      <a href="../../models/image_text_to_image/" class="md-nav__link">
         
   
   
@@ -879,7 +892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_classifier/" class="md-nav__link">
+      <a href="../../models/text_classifier/" class="md-nav__link">
         
   
   
@@ -907,7 +920,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/models/text_reranker/" class="md-nav__link">
+      <a href="../../models/text_reranker/" class="md-nav__link">
         
   
   
@@ -940,8 +953,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -962,11 +977,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
@@ -987,7 +1002,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1005,7 +1020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/retriever/" class="md-nav__link">
+      <a href="../retriever/" class="md-nav__link">
         
   
   
@@ -1033,7 +1048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/lexical/" class="md-nav__link">
+      <a href="../lexical/" class="md-nav__link">
         
   
   
@@ -1061,7 +1076,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/fuzzy/" class="md-nav__link">
+      <a href="../fuzzy/" class="md-nav__link">
         
   
   
@@ -1089,7 +1104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/retrievers/web/" class="md-nav__link">
+      <a href="../web/" class="md-nav__link">
         
   
   
@@ -1114,10 +1129,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../learn/retrievers/weather/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Weather Retrievers
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1133,6 +1175,109 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✦₊⁺ Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-open-meteo-weather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Open-Meteo Weather
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Open-Meteo Weather">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-response-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Response Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-agent-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Agent Tool
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1153,7 +1298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/parsers/" class="md-nav__link">
+      <a href="../../parsers/" class="md-nav__link">
         
   
   
@@ -1181,7 +1326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/dotdict/" class="md-nav__link">
+      <a href="../../dotdict/" class="md-nav__link">
         
   
   
@@ -1209,7 +1354,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/inline/" class="md-nav__link">
+      <a href="../../inline/" class="md-nav__link">
         
   
   
@@ -1237,7 +1382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/verifiers/" class="md-nav__link">
+      <a href="../../verifiers/" class="md-nav__link">
         
   
   
@@ -1370,7 +1515,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../learn/nn/module/" class="md-nav__link ">
+            <a href="../../nn/module/" class="md-nav__link ">
               
   
   
@@ -1414,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/core-concepts/" class="md-nav__link">
+      <a href="../../nn/module/core-concepts/" class="md-nav__link">
         
   
   
@@ -1442,7 +1587,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/forward-and-async/" class="md-nav__link">
+      <a href="../../nn/module/forward-and-async/" class="md-nav__link">
         
   
   
@@ -1470,7 +1615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/composing/" class="md-nav__link">
+      <a href="../../nn/module/composing/" class="md-nav__link">
         
   
   
@@ -1498,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/module-dict/" class="md-nav__link">
+      <a href="../../nn/module/module-dict/" class="md-nav__link">
         
   
   
@@ -1526,7 +1671,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/module-list/" class="md-nav__link">
+      <a href="../../nn/module/module-list/" class="md-nav__link">
         
   
   
@@ -1554,7 +1699,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/sequential/" class="md-nav__link">
+      <a href="../../nn/module/sequential/" class="md-nav__link">
         
   
   
@@ -1582,7 +1727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/module/visualization/" class="md-nav__link">
+      <a href="../../nn/module/visualization/" class="md-nav__link">
         
   
   
@@ -1618,7 +1763,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/message/" class="md-nav__link">
+      <a href="../../nn/message/" class="md-nav__link">
         
   
   
@@ -1697,7 +1842,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../learn/nn/agent/" class="md-nav__link ">
+            <a href="../../nn/agent/" class="md-nav__link ">
               
   
   
@@ -1741,7 +1886,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/quickstart/" class="md-nav__link">
+      <a href="../../nn/agent/quickstart/" class="md-nav__link">
         
   
   
@@ -1769,7 +1914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/async/" class="md-nav__link">
+      <a href="../../nn/agent/async/" class="md-nav__link">
         
   
   
@@ -1797,7 +1942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/streaming/" class="md-nav__link">
+      <a href="../../nn/agent/streaming/" class="md-nav__link">
         
   
   
@@ -1825,7 +1970,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/prompt-cache/" class="md-nav__link">
+      <a href="../../nn/agent/prompt-cache/" class="md-nav__link">
         
   
   
@@ -1853,7 +1998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/reasoning/" class="md-nav__link">
+      <a href="../../nn/agent/reasoning/" class="md-nav__link">
         
   
   
@@ -1881,7 +2026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/debug/" class="md-nav__link">
+      <a href="../../nn/agent/debug/" class="md-nav__link">
         
   
   
@@ -1909,7 +2054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/system-prompt/" class="md-nav__link">
+      <a href="../../nn/agent/system-prompt/" class="md-nav__link">
         
   
   
@@ -1937,7 +2082,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/generation-schemas/" class="md-nav__link">
+      <a href="../../nn/agent/generation-schemas/" class="md-nav__link">
         
   
   
@@ -1965,7 +2110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/task-and-context/" class="md-nav__link">
+      <a href="../../nn/agent/task-and-context/" class="md-nav__link">
         
   
   
@@ -1993,7 +2138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/vars/" class="md-nav__link">
+      <a href="../../nn/agent/vars/" class="md-nav__link">
         
   
   
@@ -2021,7 +2166,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/tools/" class="md-nav__link">
+      <a href="../../nn/agent/tools/" class="md-nav__link">
         
   
   
@@ -2049,7 +2194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/signatures/" class="md-nav__link">
+      <a href="../../nn/agent/signatures/" class="md-nav__link">
         
   
   
@@ -2077,7 +2222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/hooks/" class="md-nav__link">
+      <a href="../../nn/agent/hooks/" class="md-nav__link">
         
   
   
@@ -2105,7 +2250,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/model-gateway/" class="md-nav__link">
+      <a href="../../nn/agent/model-gateway/" class="md-nav__link">
         
   
   
@@ -2133,7 +2278,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/agent/prefilling/" class="md-nav__link">
+      <a href="../../nn/agent/prefilling/" class="md-nav__link">
         
   
   
@@ -2169,7 +2314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/functional/" class="md-nav__link">
+      <a href="../../nn/functional/" class="md-nav__link">
         
   
   
@@ -2197,7 +2342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/transcriber/" class="md-nav__link">
+      <a href="../../nn/transcriber/" class="md-nav__link">
         
   
   
@@ -2225,7 +2370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/searcher/" class="md-nav__link">
+      <a href="../../nn/searcher/" class="md-nav__link">
         
   
   
@@ -2253,7 +2398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/speaker/" class="md-nav__link">
+      <a href="../../nn/speaker/" class="md-nav__link">
         
   
   
@@ -2281,7 +2426,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/mediamaker/" class="md-nav__link">
+      <a href="../../nn/mediamaker/" class="md-nav__link">
         
   
   
@@ -2309,7 +2454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/nn/predictor/" class="md-nav__link">
+      <a href="../../nn/predictor/" class="md-nav__link">
         
   
   
@@ -2345,7 +2490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../learn/telemetry/" class="md-nav__link">
+      <a href="../../telemetry/" class="md-nav__link">
         
   
   
@@ -2489,7 +2634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/models/model/" class="md-nav__link">
+      <a href="../../../api-reference/models/model/" class="md-nav__link">
         
   
   
@@ -2517,7 +2662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/models/model_gateway/" class="md-nav__link">
+      <a href="../../../api-reference/models/model_gateway/" class="md-nav__link">
         
   
   
@@ -2599,7 +2744,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/models/types/chat_completion/" class="md-nav__link">
+      <a href="../../../api-reference/models/types/chat_completion/" class="md-nav__link">
         
   
   
@@ -2699,7 +2844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/databases/database/" class="md-nav__link">
+      <a href="../../../api-reference/databases/database/" class="md-nav__link">
         
   
   
@@ -2783,7 +2928,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/databases/types/kv/" class="md-nav__link">
+      <a href="../../../api-reference/databases/types/kv/" class="md-nav__link">
         
   
   
@@ -2811,7 +2956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/databases/types/vector/" class="md-nav__link">
+      <a href="../../../api-reference/databases/types/vector/" class="md-nav__link">
         
   
   
@@ -2911,7 +3056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/nn/functional/" class="md-nav__link">
+      <a href="../../../api-reference/nn/functional/" class="md-nav__link">
         
   
   
@@ -2939,7 +3084,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/nn/modules/agent/" class="md-nav__link">
+      <a href="../../../api-reference/nn/modules/agent/" class="md-nav__link">
         
   
   
@@ -3023,7 +3168,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../tutorials/" class="md-nav__link ">
+            <a href="../../../tutorials/" class="md-nav__link ">
               
   
   
@@ -3125,7 +3270,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/pix-assistant/" class="md-nav__link">
+      <a href="../../../tutorials/pix-assistant/" class="md-nav__link">
         
   
   
@@ -3153,7 +3298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/food-delivery-assistant/" class="md-nav__link">
+      <a href="../../../tutorials/food-delivery-assistant/" class="md-nav__link">
         
   
   
@@ -3181,7 +3326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/restaurant-supply-assistant/" class="md-nav__link">
+      <a href="../../../tutorials/restaurant-supply-assistant/" class="md-nav__link">
         
   
   
@@ -3275,7 +3420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/lead-scoring/" class="md-nav__link">
+      <a href="../../../tutorials/lead-scoring/" class="md-nav__link">
         
   
   
@@ -3303,7 +3448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/deal-briefing-generator/" class="md-nav__link">
+      <a href="../../../tutorials/deal-briefing-generator/" class="md-nav__link">
         
   
   
@@ -3331,7 +3476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/visit-report/" class="md-nav__link">
+      <a href="../../../tutorials/visit-report/" class="md-nav__link">
         
   
   
@@ -3427,7 +3572,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/support-ticket-router/" class="md-nav__link">
+      <a href="../../../tutorials/support-ticket-router/" class="md-nav__link">
         
   
   
@@ -3455,7 +3600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/email-auto-responder/" class="md-nav__link">
+      <a href="../../../tutorials/email-auto-responder/" class="md-nav__link">
         
   
   
@@ -3483,7 +3628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/call-transcript-analysis/" class="md-nav__link">
+      <a href="../../../tutorials/call-transcript-analysis/" class="md-nav__link">
         
   
   
@@ -3511,7 +3656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/streaming-support-triage/" class="md-nav__link">
+      <a href="../../../tutorials/streaming-support-triage/" class="md-nav__link">
         
   
   
@@ -3605,7 +3750,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/meeting-assistant/" class="md-nav__link">
+      <a href="../../../tutorials/meeting-assistant/" class="md-nav__link">
         
   
   
@@ -3633,7 +3778,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/meeting-action-items/" class="md-nav__link">
+      <a href="../../../tutorials/meeting-action-items/" class="md-nav__link">
         
   
   
@@ -3661,7 +3806,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/youtube-cut-detector/" class="md-nav__link">
+      <a href="../../../tutorials/youtube-cut-detector/" class="md-nav__link">
         
   
   
@@ -3753,7 +3898,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/product-poster/" class="md-nav__link">
+      <a href="../../../tutorials/product-poster/" class="md-nav__link">
         
   
   
@@ -3781,7 +3926,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/ad-focus-group/" class="md-nav__link">
+      <a href="../../../tutorials/ad-focus-group/" class="md-nav__link">
         
   
   
@@ -3877,7 +4022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/intent-router/" class="md-nav__link">
+      <a href="../../../tutorials/intent-router/" class="md-nav__link">
         
   
   
@@ -3905,7 +4050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/signature-router/" class="md-nav__link">
+      <a href="../../../tutorials/signature-router/" class="md-nav__link">
         
   
   
@@ -3933,7 +4078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/advisor-specialist-tool/" class="md-nav__link">
+      <a href="../../../tutorials/advisor-specialist-tool/" class="md-nav__link">
         
   
   
@@ -3961,7 +4106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/plan-tool-with-root-context/" class="md-nav__link">
+      <a href="../../../tutorials/plan-tool-with-root-context/" class="md-nav__link">
         
   
   
@@ -4004,7 +4149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dependency-management/" class="md-nav__link">
+      <a href="../../../dependency-management/" class="md-nav__link">
         
   
   
@@ -4031,7 +4176,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../CHANGELOG/" class="md-nav__link">
+      <a href="../../../CHANGELOG/" class="md-nav__link">
         
   
   
@@ -4083,7 +4228,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../blog/" class="md-nav__link ">
+            <a href="../../../blog/" class="md-nav__link ">
               
   
   
@@ -4183,7 +4328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../blog/archive/2026/" class="md-nav__link">
+      <a href="../../../blog/archive/2026/" class="md-nav__link">
         
   
   
@@ -4275,7 +4420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../blog/category/architecture/" class="md-nav__link">
+      <a href="../../../blog/category/architecture/" class="md-nav__link">
         
   
   
@@ -4338,10 +4483,82 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#pages" class="md-nav__link">
+  <a href="#overview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pages
+        ✦₊⁺ Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-open-meteo-weather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Open-Meteo Weather
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Open-Meteo Weather">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool Arguments
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-response-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Response Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-agent-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Agent Tool
       
     </span>
   </a>
@@ -4364,6 +4581,57 @@
 
 
 
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+      
+        
+  
+  
+    
+    
+      
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../../models/model/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Learn
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../retriever/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    ⟳ Retrievers
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
               
               <article class="md-content__inner md-typeset">
                 
@@ -4374,7 +4642,7 @@
   
 
 
-<h1 id="anatomy">Anatomy</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<h1 id="weather-retrievers">Weather Retrievers</h1><link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <style>
 .copy-markdown-button {
     background: transparent;
@@ -4394,51 +4662,188 @@
 .copy-markdown-button:active { transform: translateY(1px); }
 #copy-icon { transition: opacity 0.1s ease; }
 </style>
-<div class="copy-markdown-container" data-markdown="# Anatomy
+<div class="copy-markdown-container" data-markdown="# Weather Retrievers
 
-The pages in this section document architectural choices that are easy to miss
-when reading a single file in isolation.
+## ✦₊⁺ Overview
 
-They are not API tutorials. They describe the internal contracts that keep
-`Agent`, `ToolFlowControl`, provider adapters, transport schemas, and runtime
-normalization aligned.
+Weather retrievers fetch current, forecast, or historical weather data through
+`mf.Retriever.weather(...)`. The built-in `open_meteo` provider uses Open-Meteo
+for geocoding, forecast data, and historical observations.
 
-Use this section when you need to answer questions like:
+Use the built-in `Weather` tool when an agent needs weather access. Use the
+retriever directly when you want structured weather data in application code.
 
-- Why does a flow control exist instead of extending the default tool loop?
-- What is the difference between the logical generation schema and the provider
-  response format?
-- Why are some values lowered before they are sent to a model and restored
-  afterward?
-- Why does ReAct build a provider-specific schema instead of exposing its
-  runtime shape directly?
+---
 
-## Pages
+## 1. **Open-Meteo Weather**
 
-- [Agent](agent.md): the main orchestration module that ties together input
-  preparation, provider execution, tool loops, and final response shaping.
-- [Signatures](signatures.md): how a signature compiles templates,
-  annotations, output structs, and optional reasoning-schema fusion.
-- [ToolLibrary](tool-library.md): the execution boundary that registers tools,
-  exposes schemas, restores typed arguments, and collects tool results.
-- [OpenAI Chat Completion](openai-chat-completion.md): the provider adapter that
-  translates msgFlux chat contracts into OpenAI request, schema, and decoding
-  rules.
-- [Chat Schema Utils](chat-schema-utils.md): schema-envelope helpers for
-  `response_format`, tool JSON schema generation, and shared ChatML blocks.
-- [msgspec Transport Lowering](msgspec-transport-lowering.md): the type
-  translation layer that lowers logical schemas for providers and restores
-  transport payloads afterward.
-- [ToolFlowControl](tool-flow-control.md): extension point for custom tool loops
-  without modifying the default `Agent` flow.
-- [Logical vs Provider Schema](logical-vs-provider-schema.md): why msgFlux
-  separates runtime shape from provider-facing schema.
-- [Dict Lowering and Restoration](dict-lowering-and-restoration.md): how
-  `dict[K, V]` is encoded for strict structured outputs and restored at runtime.
-- [ReAct Provider Schemas](react-provider-schemas.md): how ReAct uses tool
-  schemas to build a dynamic provider-facing response format.
-- [LLM-as-a-Verifier](llm-as-a-verifier.md): how verifier prompts, concurrent
-  execution, score-token parsing, and weighted aggregation fit together.
+The `open_meteo` retriever accepts a simple city/place name or coordinates and
+returns a structured `dotdict`.
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.weather(&quot;open_meteo&quot;)
+
+current = retriever(&quot;Fortaleza&quot;)
+forecast = retriever(&quot;Fortaleza&quot;, when=&quot;+6h&quot;)
+historical = retriever(&quot;-3.71722,-38.54306&quot;, when=&quot;-3d&quot;)
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_future_days` | `7` | Furthest future forecast allowed before clamping |
+| `max_past_days` | `90` | Furthest historical observation allowed before clamping |
+| `forecast_hours_when_now` | `6` | Number of upcoming hourly items included for current/future calls |
+| `include_forecast_when_now` | `True` | Whether current weather calls include next-hour forecast data |
+| `enable_cache` | `True` | Cache geocoding, forecast, and historical responses |
+| `timeout` | `15.0` | HTTP timeout in seconds |
+
+### Tool Arguments
+
+The retriever call accepts:
+
+- **`location`**: A simple city/place name such as `&quot;Fortaleza&quot;`. Coordinates
+  like `&quot;-3.71722,-38.54306&quot;` are also accepted when already available.
+- **`when`**: `&quot;now&quot;`, a relative time like `&quot;+6h&quot;` or `&quot;-3d&quot;`, or an ISO
+  datetime.
+
+---
+
+## 2. **Response Format**
+
+Weather retrievers return a structured `dotdict`, so fields can be accessed by
+key or attribute:
+
+```python
+{
+    &quot;location&quot;: {
+        &quot;input&quot;: &quot;Fortaleza&quot;,
+        &quot;name&quot;: &quot;Fortaleza, Ceará, Brazil&quot;,
+        &quot;latitude&quot;: -3.71722,
+        &quot;longitude&quot;: -38.54306,
+        &quot;source&quot;: &quot;geocoding&quot;,
+    },
+    &quot;when&quot;: {
+        &quot;input&quot;: &quot;now&quot;,
+        &quot;target&quot;: &quot;2026-05-06T12:30:00+00:00&quot;,
+        &quot;kind&quot;: &quot;now&quot;,
+        &quot;clamped&quot;: False,
+    },
+    &quot;weather&quot;: {
+        &quot;time&quot;: &quot;2026-05-06T09:30&quot;,
+        &quot;temperature_c&quot;: 30.6,
+        &quot;apparent_temperature_c&quot;: 34.9,
+        &quot;relative_humidity_percent&quot;: 58,
+        &quot;condition&quot;: &quot;overcast&quot;,
+        &quot;weather_code&quot;: 3,
+        &quot;precipitation_mm&quot;: 0.0,
+        &quot;rain_mm&quot;: 0.0,
+        &quot;is_raining&quot;: False,
+        &quot;cloud_cover_percent&quot;: 100,
+        &quot;wind_speed_kmh&quot;: 13.8,
+        &quot;wind_direction_degrees&quot;: 123,
+    },
+    &quot;forecast&quot;: [...],
+    &quot;source&quot;: {
+        &quot;provider&quot;: &quot;open-meteo&quot;,
+        &quot;endpoint&quot;: &quot;forecast&quot;,
+    },
+    &quot;units&quot;: {...},
+}
+```
+
+---
+
+## 3. **Examples**
+
+=== &quot;Current&quot;
+
+    ```python
+    import msgflux as mf
+
+    weather = mf.Retriever.weather(&quot;open_meteo&quot;)
+
+    response = weather(&quot;Fortaleza&quot;)
+
+    print(response[&quot;weather&quot;][&quot;temperature_c&quot;])
+    print(response.weather.temperature_c)
+    print(response[&quot;weather&quot;][&quot;is_raining&quot;])
+    ```
+
+=== &quot;Forecast&quot;
+
+    ```python
+    import msgflux as mf
+
+    weather = mf.Retriever.weather(
+        &quot;open_meteo&quot;,
+        max_future_days=7,
+        forecast_hours_when_now=3,
+    )
+
+    response = weather(&quot;Fortaleza&quot;, when=&quot;+6h&quot;)
+
+    print(response[&quot;weather&quot;][&quot;condition&quot;])
+    print(response[&quot;forecast&quot;])
+    ```
+
+=== &quot;Historical&quot;
+
+    ```python
+    import msgflux as mf
+
+    weather = mf.Retriever.weather(&quot;open_meteo&quot;, max_past_days=90)
+
+    response = weather(&quot;Fortaleza&quot;, when=&quot;-3d&quot;)
+
+    print(response[&quot;source&quot;][&quot;endpoint&quot;])  # &quot;archive&quot;
+    print(response[&quot;weather&quot;][&quot;temperature_c&quot;])
+    ```
+
+=== &quot;Coordinates&quot;
+
+    ```python
+    import msgflux as mf
+
+    weather = mf.Retriever.weather(&quot;open_meteo&quot;)
+
+    response = weather(&quot;-3.71722,-38.54306&quot;)
+
+    print(response[&quot;location&quot;][&quot;source&quot;])  # &quot;coordinates&quot;
+    ```
+
+=== &quot;Async&quot;
+
+    ```python
+    import msgflux as mf
+
+    weather = mf.Retriever.weather(&quot;open_meteo&quot;)
+
+    response = await weather.acall(&quot;Fortaleza&quot;, when=&quot;+6h&quot;)
+
+    print(response[&quot;weather&quot;][&quot;temperature_c&quot;])
+    ```
+
+---
+
+## 4. **Agent Tool**
+
+The built-in `Weather` tool is a thin wrapper around this retriever:
+
+```python
+from msgflux.tools.builtin import Weather
+
+tool = Weather(engine=&quot;open_meteo&quot;)
+```
+
+The tool exposes only `location` and `when` to the agent, while provider
+configuration stays in the constructor.
+
+If `engine` is not passed, `Weather` reads `MSGFLUX_TOOL_WEATHER_ENGINE`.
+When neither is set, it defaults to `open_meteo`.
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -4507,48 +4912,189 @@ Use this section when you need to answer questions like:
     window.copyMarkdownToClipboard = copyMarkdownToClipboard;
 }());
 </script>
-<p>The pages in this section document architectural choices that are easy to miss
-when reading a single file in isolation.</p>
-<p>They are not API tutorials. They describe the internal contracts that keep
-<code>Agent</code>, <code>ToolFlowControl</code>, provider adapters, transport schemas, and runtime
-normalization aligned.</p>
-<p>Use this section when you need to answer questions like:</p>
+<h2 id="overview">✦₊⁺ Overview</h2>
+<p>Weather retrievers fetch current, forecast, or historical weather data through
+<code>mf.Retriever.weather(...)</code>. The built-in <code>open_meteo</code> provider uses Open-Meteo
+for geocoding, forecast data, and historical observations.</p>
+<p>Use the built-in <code>Weather</code> tool when an agent needs weather access. Use the
+retriever directly when you want structured weather data in application code.</p>
+<hr />
+<h2 id="1-open-meteo-weather">1. <strong>Open-Meteo Weather</strong></h2>
+<p>The <code>open_meteo</code> retriever accepts a simple city/place name or coordinates and
+returns a structured <code>dotdict</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">retriever</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">current</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">forecast</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;+6h&quot;</span><span class="p">)</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">historical</span> <span class="o">=</span> <span class="n">retriever</span><span class="p">(</span><span class="s2">&quot;-3.71722,-38.54306&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;-3d&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="parameters">Parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_future_days</code></td>
+<td><code>7</code></td>
+<td>Furthest future forecast allowed before clamping</td>
+</tr>
+<tr>
+<td><code>max_past_days</code></td>
+<td><code>90</code></td>
+<td>Furthest historical observation allowed before clamping</td>
+</tr>
+<tr>
+<td><code>forecast_hours_when_now</code></td>
+<td><code>6</code></td>
+<td>Number of upcoming hourly items included for current/future calls</td>
+</tr>
+<tr>
+<td><code>include_forecast_when_now</code></td>
+<td><code>True</code></td>
+<td>Whether current weather calls include next-hour forecast data</td>
+</tr>
+<tr>
+<td><code>enable_cache</code></td>
+<td><code>True</code></td>
+<td>Cache geocoding, forecast, and historical responses</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>15.0</code></td>
+<td>HTTP timeout in seconds</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tool-arguments">Tool Arguments</h3>
+<p>The retriever call accepts:</p>
 <ul>
-<li>Why does a flow control exist instead of extending the default tool loop?</li>
-<li>What is the difference between the logical generation schema and the provider
-  response format?</li>
-<li>Why are some values lowered before they are sent to a model and restored
-  afterward?</li>
-<li>Why does ReAct build a provider-specific schema instead of exposing its
-  runtime shape directly?</li>
+<li><strong><code>location</code></strong>: A simple city/place name such as <code>"Fortaleza"</code>. Coordinates
+  like <code>"-3.71722,-38.54306"</code> are also accepted when already available.</li>
+<li><strong><code>when</code></strong>: <code>"now"</code>, a relative time like <code>"+6h"</code> or <code>"-3d"</code>, or an ISO
+  datetime.</li>
 </ul>
-<h2 id="pages">Pages</h2>
-<ul>
-<li><a href="agent/">Agent</a>: the main orchestration module that ties together input
-  preparation, provider execution, tool loops, and final response shaping.</li>
-<li><a href="signatures/">Signatures</a>: how a signature compiles templates,
-  annotations, output structs, and optional reasoning-schema fusion.</li>
-<li><a href="tool-library/">ToolLibrary</a>: the execution boundary that registers tools,
-  exposes schemas, restores typed arguments, and collects tool results.</li>
-<li><a href="openai-chat-completion/">OpenAI Chat Completion</a>: the provider adapter that
-  translates msgFlux chat contracts into OpenAI request, schema, and decoding
-  rules.</li>
-<li><a href="chat-schema-utils/">Chat Schema Utils</a>: schema-envelope helpers for
-  <code>response_format</code>, tool JSON schema generation, and shared ChatML blocks.</li>
-<li><a href="msgspec-transport-lowering/">msgspec Transport Lowering</a>: the type
-  translation layer that lowers logical schemas for providers and restores
-  transport payloads afterward.</li>
-<li><a href="tool-flow-control/">ToolFlowControl</a>: extension point for custom tool loops
-  without modifying the default <code>Agent</code> flow.</li>
-<li><a href="logical-vs-provider-schema/">Logical vs Provider Schema</a>: why msgFlux
-  separates runtime shape from provider-facing schema.</li>
-<li><a href="dict-lowering-and-restoration/">Dict Lowering and Restoration</a>: how
-  <code>dict[K, V]</code> is encoded for strict structured outputs and restored at runtime.</li>
-<li><a href="react-provider-schemas/">ReAct Provider Schemas</a>: how ReAct uses tool
-  schemas to build a dynamic provider-facing response format.</li>
-<li><a href="llm-as-a-verifier/">LLM-as-a-Verifier</a>: how verifier prompts, concurrent
-  execution, score-token parsing, and weighted aggregation fit together.</li>
-</ul>
+<hr />
+<h2 id="2-response-format">2. <strong>Response Format</strong></h2>
+<p>Weather retrievers return a structured <code>dotdict</code>, so fields can be accessed by
+key or attribute:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="s2">&quot;location&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>        <span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="s2">&quot;Fortaleza&quot;</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Fortaleza, Ceará, Brazil&quot;</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="s2">&quot;latitude&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mf">3.71722</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="s2">&quot;longitude&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mf">38.54306</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;geocoding&quot;</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="p">},</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="s2">&quot;when&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="s2">&quot;now&quot;</span><span class="p">,</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        <span class="s2">&quot;target&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-05-06T12:30:00+00:00&quot;</span><span class="p">,</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;now&quot;</span><span class="p">,</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        <span class="s2">&quot;clamped&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="p">},</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="s2">&quot;weather&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-05-06T09:30&quot;</span><span class="p">,</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>        <span class="s2">&quot;temperature_c&quot;</span><span class="p">:</span> <span class="mf">30.6</span><span class="p">,</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>        <span class="s2">&quot;apparent_temperature_c&quot;</span><span class="p">:</span> <span class="mf">34.9</span><span class="p">,</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>        <span class="s2">&quot;relative_humidity_percent&quot;</span><span class="p">:</span> <span class="mi">58</span><span class="p">,</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="s2">&quot;condition&quot;</span><span class="p">:</span> <span class="s2">&quot;overcast&quot;</span><span class="p">,</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>        <span class="s2">&quot;weather_code&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>        <span class="s2">&quot;precipitation_mm&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>        <span class="s2">&quot;rain_mm&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>        <span class="s2">&quot;is_raining&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>        <span class="s2">&quot;cloud_cover_percent&quot;</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>        <span class="s2">&quot;wind_speed_kmh&quot;</span><span class="p">:</span> <span class="mf">13.8</span><span class="p">,</span>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>        <span class="s2">&quot;wind_direction_degrees&quot;</span><span class="p">:</span> <span class="mi">123</span><span class="p">,</span>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>    <span class="p">},</span>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>    <span class="s2">&quot;forecast&quot;</span><span class="p">:</span> <span class="p">[</span><span class="o">...</span><span class="p">],</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>    <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>        <span class="s2">&quot;provider&quot;</span><span class="p">:</span> <span class="s2">&quot;open-meteo&quot;</span><span class="p">,</span>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>        <span class="s2">&quot;endpoint&quot;</span><span class="p">:</span> <span class="s2">&quot;forecast&quot;</span><span class="p">,</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    <span class="p">},</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>    <span class="s2">&quot;units&quot;</span><span class="p">:</span> <span class="p">{</span><span class="o">...</span><span class="p">},</span>
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="p">}</span>
+</span></code></pre></div>
+<hr />
+<h2 id="3-examples">3. <strong>Examples</strong></h2>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:5"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Current</label><label for="__tabbed_1_2">Forecast</label><label for="__tabbed_1_3">Historical</label><label for="__tabbed_1_4">Coordinates</label><label for="__tabbed_1_5">Async</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">weather</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">response</span> <span class="o">=</span> <span class="n">weather</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;temperature_c&quot;</span><span class="p">])</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">weather</span><span class="o">.</span><span class="n">temperature_c</span><span class="p">)</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;is_raining&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">weather</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="s2">&quot;open_meteo&quot;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">max_future_days</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">forecast_hours_when_now</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">)</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">response</span> <span class="o">=</span> <span class="n">weather</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;+6h&quot;</span><span class="p">)</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;condition&quot;</span><span class="p">])</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;forecast&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">weather</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">,</span> <span class="n">max_past_days</span><span class="o">=</span><span class="mi">90</span><span class="p">)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">response</span> <span class="o">=</span> <span class="n">weather</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;-3d&quot;</span><span class="p">)</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;endpoint&quot;</span><span class="p">])</span>  <span class="c1"># &quot;archive&quot;</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;temperature_c&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">weather</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">response</span> <span class="o">=</span> <span class="n">weather</span><span class="p">(</span><span class="s2">&quot;-3.71722,-38.54306&quot;</span><span class="p">)</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;location&quot;</span><span class="p">][</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>  <span class="c1"># &quot;coordinates&quot;</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">weather</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Retriever</span><span class="o">.</span><span class="n">weather</span><span class="p">(</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">weather</span><span class="o">.</span><span class="n">acall</span><span class="p">(</span><span class="s2">&quot;Fortaleza&quot;</span><span class="p">,</span> <span class="n">when</span><span class="o">=</span><span class="s2">&quot;+6h&quot;</span><span class="p">)</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s2">&quot;weather&quot;</span><span class="p">][</span><span class="s2">&quot;temperature_c&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<hr />
+<h2 id="4-agent-tool">4. <strong>Agent Tool</strong></h2>
+<p>The built-in <code>Weather</code> tool is a thin wrapper around this retriever:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">Weather</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">tool</span> <span class="o">=</span> <span class="n">Weather</span><span class="p">(</span><span class="n">engine</span><span class="o">=</span><span class="s2">&quot;open_meteo&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The tool exposes only <code>location</code> and <code>when</code> to the agent, while provider
+configuration stays in the constructor.</p>
+<p>If <code>engine</code> is not passed, <code>Weather</code> reads <code>MSGFLUX_TOOL_WEATHER_ENGINE</code>.
+When neither is set, it defaults to <code>open_meteo</code>.</p>
 
 
 
@@ -4581,6 +5127,44 @@ normalization aligned.</p>
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../web/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Web Retrievers">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Web Retrievers
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../parsers/" class="md-footer__link md-footer__link--next" aria-label="Next: ⎙ Parsers">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                ⎙ Parsers
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -4644,10 +5228,10 @@ normalization aligned.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.indexes", "navigation.top", "navigation.instant", "navigation.instant.progress", "navigation.footer", "navigation.tracking", "navigation.path", "header.autohide", "blog", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "announce.dismiss"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.top", "navigation.instant", "navigation.instant.progress", "navigation.footer", "navigation.tracking", "navigation.path", "header.autohide", "blog", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "announce.dismiss"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.1/dist/mermaid.min.js"></script>
       
