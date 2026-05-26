@@ -1,9 +1,16 @@
 """Unit tests for transport-lowered tool params in LocalTool."""
 
+import msgspec
 import pytest
 from typing import Optional, Union
 
 from msgflux.nn.modules.tool import LocalTool, ToolLibrary, _convert_module_to_nn_tool
+
+
+class TodoItem(msgspec.Struct):
+    content: str
+    active_form: str
+    status: str
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -137,6 +144,54 @@ class TestRestoreTransportParams:
         }
         restored = tool._restore_transport_params(wire)
         assert restored["labels"] == {1: "one", 2: "two"}
+
+    def test_msgspec_struct_param_is_restored_to_struct(self):
+        def fn(todo: TodoItem) -> str:
+            """fn"""
+            return ""
+
+        tool = _make_local_tool(fn)
+        restored = tool._restore_transport_params(
+            {
+                "todo": {
+                    "content": "Run tests",
+                    "active_form": "Running tests",
+                    "status": "in_progress",
+                }
+            }
+        )
+
+        assert restored["todo"] == TodoItem(
+            content="Run tests",
+            active_form="Running tests",
+            status="in_progress",
+        )
+
+    def test_list_of_msgspec_struct_param_is_restored_to_structs(self):
+        def fn(todos: list[TodoItem]) -> str:
+            """fn"""
+            return ""
+
+        tool = _make_local_tool(fn)
+        restored = tool._restore_transport_params(
+            {
+                "todos": [
+                    {
+                        "content": "Run tests",
+                        "active_form": "Running tests",
+                        "status": "in_progress",
+                    }
+                ]
+            }
+        )
+
+        assert restored["todos"] == [
+            TodoItem(
+                content="Run tests",
+                active_form="Running tests",
+                status="in_progress",
+            )
+        ]
 
 
 # ── annotations drive restoration ────────────────────────────────────────────
