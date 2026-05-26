@@ -648,7 +648,119 @@ The `exa` retriever queries Exa for semantic web search results. It can return U
 
 ---
 
-## 7. **Ceramic Search**
+## 7. **SearXNG Search**
+
+The `searxng` retriever queries a local or self-hosted SearXNG instance and returns structured web results with title, content, URL, and optional image metadata. SearXNG is useful when you want free, private, local web search without adding a provider SDK or API key.
+
+!!! info "Dependencies"
+    Requires `httpx` and a running SearXNG instance with JSON output enabled:
+    `pip install httpx`
+
+    By default, msgFlux uses `http://localhost:8080`. Set `SEARXNG_BASE_URL`
+    or pass `base_url` to point at another local/self-hosted instance.
+
+    SearXNG's search API requires `q` and supports `format=json`. The SearXNG
+    server must enable JSON in `search.formats`.
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `base_url` | `SEARXNG_BASE_URL` or `"http://localhost:8080"` | Base URL for the SearXNG instance |
+| `categories` | `None` | Comma-separated active search categories, such as `"general,news"` |
+| `engines` | `None` | Comma-separated active search engines, such as `"duckduckgo,wikipedia"` |
+| `language` | `None` | Search language code |
+| `time_range` | `None` | Time range filter: `"day"`, `"month"`, or `"year"` |
+| `safesearch` | `None` | Safe search level: `0`, `1`, or `2` |
+| `pageno` | `None` | Search page number |
+| `timeout` | `30.0` | Request timeout in seconds |
+
+### Local Docker
+
+For local development, run SearXNG with JSON output enabled:
+
+```yaml
+# /tmp/msgflux-searxng/settings.yml
+use_default_settings: true
+server:
+  secret_key: "change-me"
+  bind_address: "0.0.0.0"
+search:
+  formats:
+    - html
+    - json
+```
+
+```bash
+docker run --name msgflux-searxng -d \
+  -p 8888:8080 \
+  -v /tmp/msgflux-searxng:/etc/searxng:ro \
+  docker.io/searxng/searxng:latest
+```
+
+Then use `base_url="http://localhost:8888"` or:
+
+```bash
+export SEARXNG_BASE_URL="http://localhost:8888"
+```
+
+### Examples
+
+=== "Search"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "searxng",
+        base_url="http://localhost:8888",
+    )
+    response = retriever("latest Python release", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== "Filters"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web(
+        "searxng",
+        base_url="http://localhost:8888",
+        categories="general,news",
+        engines="duckduckgo,wikipedia",
+        language="en",
+        time_range="month",
+        safesearch=1,
+    )
+
+    response = retriever("Python packaging standards", top_k=5)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.engine)
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("searxng", base_url="http://localhost:8888")
+
+    response = await retriever.acall(["Python 3.14", "Django release"], top_k=2)
+
+    for item in response.data:
+        print(item.results[0].data.title)
+    ```
+
+---
+
+## 8. **Ceramic Search**
 
 The `ceramic` retriever queries Ceramic Search and returns structured web results with title, content, and URL. Ceramic is a web search provider based on lexical query matching.
 
@@ -697,7 +809,7 @@ The `ceramic` retriever queries Ceramic Search and returns structured web result
 
 ---
 
-## 8. **arXiv Search**
+## 9. **arXiv Search**
 
 The `arxiv` retriever searches arXiv papers and returns structured academic metadata such as title, summary, authors, publication dates, categories, and PDF URLs.
 

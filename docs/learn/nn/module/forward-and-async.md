@@ -103,6 +103,39 @@ def post_hook(module, args, kwargs, output):
 post_hook_handle = model.register_forward_hook(post_hook)
 ```
 
+### Method Hooks
+
+When the extension point is not `forward`, use method hooks. They apply the same pre/post contract to an arbitrary method on the module:
+
+```python
+class Model(nn.Module):
+    def forward(self, x):
+        return self._normalize(x)
+
+    def _normalize(self, x):
+        return x.strip().lower()
+
+model = Model()
+
+def normalize_pre_hook(module, args, kwargs):
+    return (args[0] + "  ",), kwargs
+
+def normalize_post_hook(module, args, kwargs, output):
+    return f"[{output}]"
+
+pre_handle = model.register_method_pre_hook("_normalize", normalize_pre_hook)
+post_handle = model.register_method_hook("_normalize", normalize_post_hook)
+
+result = model(" Hello ")
+print(result)  # "[hello]"
+```
+
+!!! note
+    Method hooks themselves can inspect both `args` and `kwargs`. If the method
+    will be used with `Guard(..., on="pre", method=...)`, prefer a
+    keyword-oriented method signature, because `Guard` validates the method
+    `kwargs` payload in that mode.
+
 ### Complete Hook Example
 
 ```python
@@ -150,4 +183,6 @@ print(result)  # "You did the work?Yes I did." (no user_name enrichment)
 # View registered hooks
 print(model._forward_pre_hooks)   # Pre-forward hooks
 print(model._forward_hooks)       # Post-forward hooks
+print(model._method_pre_hooks)    # Pre-method hooks by method name
+print(model._method_hooks)        # Post-method hooks by method name
 ```

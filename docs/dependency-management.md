@@ -148,6 +148,7 @@ hide:
 | Provider    | Installation                     | Auth Env                         |
 |-------------|----------------------------------|-----------------------------------|
 | Trafilatura | `httpx`, `trafilatura`           |                                   |
+| SearXNG     | `httpx`                          |                                   |
 | SerpApi     | `httpx`                          | `SERPAPI_KEY`                     |
 | Ceramic     | `httpx`                          | `CERAMIC_API_KEY`                 |
 | Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |

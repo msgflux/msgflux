@@ -9,6 +9,7 @@ from msgflux.data.retrievers.types import (
     FuzzyRetriever,
     LexicalRetriever,
     SemanticRetriever,
+    WeatherRetriever,
     WebRetriever,
 )
 
@@ -82,6 +83,10 @@ class Retriever:
     def web_search(cls, provider: str, **kwargs) -> WebRetriever:
         """Alias for ``web`` kept for readability in web search flows."""
         return cls.web(provider, **kwargs)
+
+    @classmethod
+    def weather(cls, provider: str, **kwargs) -> WeatherRetriever:
+        return cls._create_retriever("weather", provider, **kwargs)
 
     @classmethod
     def fuzzy(cls, provider: str, **kwargs) -> FuzzyRetriever:
