@@ -127,6 +127,31 @@ class _BaseOpenAI(BaseModel):
 class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     """OpenAI Chat Completion."""
 
+    @staticmethod
+    def _merge_extra_body(
+        base_extra_body: Optional[Dict[str, Any]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        extra_body_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        merged_extra_body = dict(base_extra_body or {})
+        if extra_body is not None:
+            merged_extra_body.update(extra_body)
+        if extra_body_kwargs:
+            duplicated_extra_body_keys = sorted(
+                set(extra_body or {}).intersection(extra_body_kwargs)
+            )
+            if duplicated_extra_body_keys:
+                duplicated = ", ".join(duplicated_extra_body_keys)
+                raise ValueError(
+                    "Duplicate provider extra-body keys passed in both "
+                    "`extra_body` and direct kwargs: "
+                    f"{duplicated}"
+                )
+            merged_extra_body.update(extra_body_kwargs)
+        if not merged_extra_body and extra_body is None and not extra_body_kwargs:
+            return None
+        return merged_extra_body
+
     def __init__(  # noqa: C901
         self,
         model_id: str,
@@ -157,6 +182,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         cache_size: Optional[int] = 128,
         retry: Optional[Any] = None,
         warmup_max_tokens: Optional[int] = None,
+        **extra_body_kwargs: Any,
     ):
         """Args:
         model_id:
@@ -220,6 +246,10 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         extra_body:
             Provider-specific request body extensions forwarded to
             OpenAI-compatible clients.
+        extra_body_kwargs:
+            Additional provider-specific request body extensions passed
+            directly as keyword arguments. These are merged into
+            ``extra_body``.
         verbose:
             If True, Prints the model output to the console before it is transformed
             into typed structured output.
@@ -263,8 +293,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             sampling_run_params["modalities"] = modalities
         if web_search_options:
             sampling_run_params["web_search_options"] = web_search_options
-        if extra_body is not None:
-            sampling_run_params["extra_body"] = dict(extra_body)
+        merged_extra_body = self._merge_extra_body(
+            extra_body=extra_body,
+            extra_body_kwargs=extra_body_kwargs,
+        )
+        if merged_extra_body is not None:
+            sampling_run_params["extra_body"] = merged_extra_body
         if audio:
             sampling_run_params["audio"] = audio
         if reasoning_effort:
@@ -900,6 +934,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         *,
         logprobs: Optional[bool] = None,
         top_logprobs: Optional[int] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        extra_body_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if isinstance(messages, str):
             messages = [ChatBlock.user(messages)]
@@ -926,6 +962,13 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             generation_params["logprobs"] = logprobs
         if top_logprobs is not None:
             generation_params["top_logprobs"] = top_logprobs
+        merged_extra_body = self._merge_extra_body(
+            self.sampling_run_params.get("extra_body"),
+            extra_body,
+            extra_body_kwargs,
+        )
+        if merged_extra_body is not None:
+            generation_params["extra_body"] = merged_extra_body
 
         if tool_definitions and tool_definitions.schemas:
             generation_params["tools"] = tool_definitions.schemas
@@ -966,6 +1009,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         generation_schema: Optional[msgspec.Struct] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        **extra_body_kwargs: Any,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Args:
             messages:
@@ -992,6 +1037,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
+            extra_body:
+                Provider-specific request body extensions for this request.
+            extra_body_kwargs:
+                Additional provider-specific request body extensions for this
+                request, merged into ``extra_body``.
 
         Raises:
             ValueError:
@@ -1015,6 +1065,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             None if is_flow_control else tool_definitions,
             logprobs=logprobs,
             top_logprobs=top_logprobs,
+            extra_body=extra_body,
+            extra_body_kwargs=extra_body_kwargs,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions
@@ -1057,6 +1109,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         generation_schema: Optional[msgspec.Struct] = None,
         tool_definitions: Optional[ToolDefinitions] = None,
         typed_parser: Optional[str] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        **extra_body_kwargs: Any,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         """Async version of __call__. Args:
             messages:
@@ -1083,6 +1137,11 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             typed_parser:
                 Converts the model raw output into a typed-dict. Supported parser:
                 `typed_xml`.
+            extra_body:
+                Provider-specific request body extensions for this request.
+            extra_body_kwargs:
+                Additional provider-specific request body extensions for this
+                request, merged into ``extra_body``.
 
         Raises:
             ValueError:
@@ -1106,6 +1165,8 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             None if is_flow_control else tool_definitions,
             logprobs=logprobs,
             top_logprobs=top_logprobs,
+            extra_body=extra_body,
+            extra_body_kwargs=extra_body_kwargs,
         )
         if tool_definitions is not None:
             generation_params["tool_definitions"] = tool_definitions
