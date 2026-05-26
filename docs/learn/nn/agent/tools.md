@@ -251,7 +251,7 @@ agent = Researcher()
 result = agent("What is the latest Python version?")
 ```
 
-Supported retriever engines: `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
+Supported retriever engines: `wikipedia`, `searxng`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
 
 Supported model engines: any OpenAI-compatible model.
 
@@ -260,6 +260,9 @@ Supported model engines: any OpenAI-compatible model.
 - **`init_params`**: Passed when initializing the retriever or model backend.
 
 - **`call_params`**: Passed on each retriever call (retriever engines only).
+
+- **`goal`**: Optional call-time instruction for model-backed search only.
+  It steers the model backend before it answers.
 
 ```python
 # init_params: configure the backend at initialization
@@ -270,6 +273,10 @@ search = WebSearch(
 
 # call_params: passed on each call (retriever engines only)
 result = search("Python news", call_params={"top_k": 5})
+
+# goal: passed at call time for model-backed search only
+model_search = WebSearch("model/openai/gpt-4o-search-preview")
+result = model_search("Python news", goal="Answer with concise bullet points.")
 ```
 
 Alternatively, read from environment variables:
@@ -410,6 +417,8 @@ The tool returns a structured `dotdict` with:
         explicitly, `WebSearch` reads the JSON objects from
         `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
         `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
+        Model-backed search also accepts `goal` at call time to steer
+        the model before it answers.
 
     === "Weather"
 
@@ -813,6 +822,54 @@ Control how the model selects tools.
 
     - If `tool_filter` removes a specific tool configured in `tool_choice`, the Agent falls back to `"auto"` for that request
     - If `tool_filter` removes all tools, tool usage is disabled for that request
+
+### Structured Tool Parameters
+
+Use `msgspec.Struct` when a tool parameter needs a complex object shape. This
+gives the model a strict object schema and lets the tool receive typed Python
+objects instead of loose dictionaries.
+
+```python
+from typing import Literal
+
+import msgspec
+
+
+class TodoItem(msgspec.Struct):
+    content: str
+    active_form: str
+    status: Literal["pending", "in_progress", "completed"]
+
+
+def write_todos(todos: list[TodoItem]) -> str:
+    """Persist the current task checklist.
+
+    Args:
+        todos: Complete todo list for the current session.
+    """
+    first = todos[0]
+    assert isinstance(first, TodoItem)
+    return f"Saved {len(todos)} todos."
+```
+
+When the model calls `write_todos`, msgFlux restores each item in `todos` to a
+`TodoItem` instance before executing the tool. This is preferable to
+`list[dict[str, str]]` for complex inputs because the generated tool schema
+spells out the allowed fields and status values.
+
+This works with OpenAI-compatible strict tool schemas:
+
+```python
+agent = nn.Agent(
+    name="developer_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=[write_todos],
+)
+```
+
+Use this pattern for stable contracts. Avoid adding fields that only save a few
+runtime conveniences if they cost prompt/tool-call tokens, such as an `id` field
+that the runtime can derive internally.
 
 ### Runtime Tool Filtering
 
@@ -1678,6 +1735,75 @@ def github_repository_search_v2_extended(query: str) -> str:
 # Tool is exposed as "search_repos" instead of the long function name
 ```
 
+#### display_name
+
+Assign a human-readable name for UI surfaces and events while keeping the tool's
+programmatic name stable:
+
+```python
+@mf.tool_config(display_name="Repository Search")
+def search_repos(query: str) -> str:
+    """Search GitHub repositories."""
+    ...
+```
+
+The model still calls `search_repos`, but clients such as a CLI can show
+`Repository Search` to users.
+
+#### usage_guidance
+
+Add guidance that is rendered into the agent system prompt under
+`<tool_usage_guidance>`. Use it for tool-specific "when/how to use" instructions
+that should not live in the function description.
+
+```python
+@mf.tool_config(
+    display_name="Repository Search",
+    usage_guidance=(
+        "Use when the user asks for GitHub repositories. Prefer concise search "
+        "queries with language, framework, or topic constraints."
+    ),
+)
+def search_repos(query: str) -> str:
+    """Search GitHub repositories."""
+    ...
+```
+
+#### Builtin usage guidance
+
+msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
+tool implementations neutral while letting applications such as a CLI attach
+ready-to-use instructions when composing an agent.
+
+Use `apply_tool_guidance()` to fill `usage_guidance` only when a tool does not
+already define one:
+
+```python
+import msgflux as mf
+from msgflux.tools import apply_tool_guidance
+from msgflux.tools.builtin import WebFetch, WebSearch
+
+tools = apply_tool_guidance([WebSearch(), WebFetch()])
+
+agent = mf.nn.Agent(
+    name="assistant",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=tools,
+)
+```
+
+Explicit guidance always wins:
+
+```python
+@mf.tool_config(usage_guidance="Use only for internal repository search.")
+def web_search(query: str) -> str:
+    """Search internal repositories."""
+    ...
+
+tools = apply_tool_guidance([web_search])
+# Keeps "Use only for internal repository search."
+```
+
 #### retry
 
 Control retry behavior per tool. Accepts a [tenacity](https://tenacity.readthedocs.io/) decorator, `False` to disable, or `None` (default) to use env-based retry.
@@ -2104,4 +2230,4 @@ Configure MCP servers using the `mcp_servers` attribute:
 | `auth` | Authentication provider — `BearerTokenAuth`, `APIKeyAuth`, etc. (http only) |
 | `include_tools` | Allowlist of tools to expose |
 | `exclude_tools` | Blocklist of tools to hide |
-| `tool_config` | Per-tool configuration options |
+| `tool_config` | Per-tool configuration options such as `display_name`, `usage_guidance`, retry, and injection behavior |

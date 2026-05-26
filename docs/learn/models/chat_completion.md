@@ -87,6 +87,28 @@ Use `extra_body` for provider-specific request body fields supported by
 OpenAI-compatible APIs but not modeled directly by msgFlux. The dict is
 forwarded to the underlying OpenAI SDK client.
 
+You can also pass provider-specific fields directly as keyword arguments
+in the model constructor, or per request with `model(...)` / `model.acall(...)`.
+msgFlux merges these kwargs into `extra_body`.
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "brave/brave",
+    extra_body={"enable_citations": True},
+    enable_entities=True,    # merged into extra_body
+    enable_research=False,   # merged into extra_body
+)
+
+# Per-request extensions are merged with constructor defaults.
+response = model(
+    "Search the latest release notes.",
+    extra_body={"country": "US"},
+    enable_citations=True,
+)
+```
+
 ## 2. **System Prompt**
 
 The `system_prompt` parameter sets the model's overarching behavior and role before any user messages. It is a convenience shorthand: when provided, msgFlux automatically inserts a `system` message at the beginning of the conversation, so you don't have to do it manually in the messages list.
@@ -221,6 +243,23 @@ The cache is sensitive to:
 - Tool definitions
 
 Changing any of these creates a new cache entry.
+
+### 3.2 **Prompt Cache Warmup**
+
+Some providers cache long prompt prefixes server-side. For agent-level warmup, use `Agent.warmup_system_prompt()`. It sends the rendered system prompt and tool schemas without task messages, chat history, or checkpointer state.
+
+See [Agent — Prompt Cache Warmup](../nn/agent/prompt-cache.md) for the recommended usage.
+
+OpenAI-compatible chat providers use `warmup_max_tokens=1` by default:
+
+```python
+model = mf.Model.chat_completion(
+    "openai/gpt-4.1-mini",
+    warmup_max_tokens=1,
+)
+```
+
+This is separate from `enable_cache`: response caching is local/in-process, while prompt cache warmup targets the provider's prompt cache.
 
 ## 4. **Message Formats**
 
