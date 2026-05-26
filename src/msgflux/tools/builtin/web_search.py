@@ -25,7 +25,7 @@ class WebSearch:
 
     The public tool schema is configured dynamically from the selected engine.
     Retriever-backed tools expose ``query`` only. Model-backed tools expose an
-    optional ``prompt`` parameter so the caller can steer the underlying model.
+    optional ``goal`` parameter so the caller can steer the underlying model.
 
     Returns:
         A dict with:
@@ -77,7 +77,7 @@ class WebSearch:
                     "`call_params` is only supported for retriever engines."
                 )
             self.model = Model.chat_completion(self.engine_target, **self.init_params)
-            self.annotations = {"query": str, "prompt": Optional[str], "return": str}
+            self.annotations = {"query": str, "goal": Optional[str], "return": str}
 
         self.description = self._build_description()
 
@@ -137,22 +137,24 @@ class WebSearch:
     def _build_description(self) -> str:
         if self.engine_kind == "retriever":
             return inspect.cleandoc(
-                f"""
-                Search the web using the `{self.engine_target}` retriever backend.
+                """
+                Search the web for current information and return structured
+                results from relevant pages.
 
-                This mode is deterministic and delegates retrieval to the selected
-                provider implementation. Backend initialization and execution
-                options can be configured through `init_params` and `call_params`.
+                Use this when the answer depends on up-to-date public web
+                sources, URLs, citations, or snippets. The `query` should be a
+                concise search phrase, not a full conversation transcript.
                 """
             )
 
         return inspect.cleandoc(
-            f"""
-            Search the web using the `{self.engine_target}` model backend.
+            """
+            Search the web for current information and return a synthesized
+            answer grounded in web results.
 
-            This mode relies on the model's built-in web search capability and
-            accepts model initialization options through `init_params`. The
-            call-time `prompt` argument can steer the model before it answers.
+            Use this when the answer should combine web lookup with concise
+            reasoning or summarization. Pass `goal` only when the response
+            needs a specific style, scope, or success criterion.
             """
         )
 
@@ -178,8 +180,8 @@ class WebSearch:
     def _consume_response(response: Any) -> Any:
         return response.consume() if hasattr(response, "consume") else response
 
-    def _model_prompt(self, prompt: Optional[str]) -> str:
-        return prompt if prompt is not None else self._default_model_prompt()
+    def _model_prompt(self, goal: Optional[str]) -> str:
+        return goal if goal is not None else self._default_model_prompt()
 
     def _run_retriever(
         self,
@@ -194,11 +196,11 @@ class WebSearch:
     def _run_model(
         self,
         query: str,
-        prompt: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         response = self.model(
             messages=query,
-            system_prompt=self._model_prompt(prompt),
+            system_prompt=self._model_prompt(goal),
         )
         return {
             "data": self._consume_response(response),
@@ -218,11 +220,11 @@ class WebSearch:
     async def _arun_model(
         self,
         query: str,
-        prompt: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         response = await self.model.acall(
             messages=query,
-            system_prompt=self._model_prompt(prompt),
+            system_prompt=self._model_prompt(goal),
         )
         return {
             "data": self._consume_response(response),
@@ -232,27 +234,27 @@ class WebSearch:
     def __call__(
         self,
         query: str,
-        prompt: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Search the web with the configured backend."""
         if self.engine_kind == "retriever":
-            if prompt is not None:
+            if goal is not None:
                 raise ValueError(
-                    "The `prompt` argument is only supported for model engines."
+                    "The `goal` argument is only supported for model engines."
                 )
             return self._run_retriever(query)
-        return self._run_model(query, prompt=prompt)
+        return self._run_model(query, goal=goal)
 
     async def acall(
         self,
         query: str,
-        prompt: Optional[str] = None,
+        goal: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async version of ``__call__``."""
         if self.engine_kind == "retriever":
-            if prompt is not None:
+            if goal is not None:
                 raise ValueError(
-                    "The `prompt` argument is only supported for model engines."
+                    "The `goal` argument is only supported for model engines."
                 )
             return await self._arun_retriever(query)
-        return await self._arun_model(query, prompt=prompt)
+        return await self._arun_model(query, goal=goal)

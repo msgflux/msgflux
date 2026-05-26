@@ -261,6 +261,9 @@ Supported model engines: any OpenAI-compatible model.
 
 - **`call_params`**: Passed on each retriever call (retriever engines only).
 
+- **`goal`**: Optional call-time instruction for model-backed search only.
+  It steers the model backend before it answers.
+
 ```python
 # init_params: configure the backend at initialization
 search = WebSearch(
@@ -270,6 +273,10 @@ search = WebSearch(
 
 # call_params: passed on each call (retriever engines only)
 result = search("Python news", call_params={"top_k": 5})
+
+# goal: passed at call time for model-backed search only
+model_search = WebSearch("model/openai/gpt-4o-search-preview")
+result = model_search("Python news", goal="Answer with concise bullet points.")
 ```
 
 Alternatively, read from environment variables:
@@ -358,6 +365,8 @@ export MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS='{"top_k": 5}'
         explicitly, `WebSearch` reads the JSON objects from
         `MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS` and
         `MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`.
+        Model-backed search also accepts `goal` at call time to steer
+        the model before it answers.
 
     === "Wikipedia Search"
 
