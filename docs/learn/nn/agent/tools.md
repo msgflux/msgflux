@@ -251,7 +251,7 @@ agent = Researcher()
 result = agent("What is the latest Python version?")
 ```
 
-Supported retriever engines: `wikipedia`, `searxng`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
+Supported retriever engines: `wikipedia`, `searxng`, `serpapi`, `ceramic`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
 
 Supported model engines: any OpenAI-compatible model.
 
