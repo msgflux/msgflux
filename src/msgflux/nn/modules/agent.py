@@ -189,7 +189,7 @@ class Agent(Module, metaclass=AutoParams):
             Dictionary with configuration options.
             Valid keys: "verbose", "return_messages", "tool_choice",
             "stream", "image_block_kwargs", "video_block_kwargs", "include_date",
-            "reasoning_in_response"
+            "reasoning_in_response", "validate_inputs"
             !!! example
                 config={
                     "verbose": True,
@@ -198,7 +198,8 @@ class Agent(Module, metaclass=AutoParams):
                     "stream": False,
                     "image_block_kwargs": {"detail": "high"},
                     "video_block_kwargs": {"format": "mp4"},
-                    "include_date": False
+                    "include_date": False,
+                    "validate_inputs": True,
                 }
 
             Configuration options:
@@ -212,6 +213,8 @@ class Agent(Module, metaclass=AutoParams):
               (e.g., {"format": "mp4"})
             - include_date: Include current date with weekday in system prompt
               (bool). Format: "Weekday, Month DD, YYYY"
+            - validate_inputs: Validate input types against the signature
+              schema before calling the model (bool).
         templates:
             Dictionary mapping template types to Jinja template strings.
             Valid keys: "task", "response", "task_context", "system_prompt"
@@ -528,8 +531,6 @@ class Agent(Module, metaclass=AutoParams):
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
     ) -> Mapping[str, Any]:
-        system_prompt = self.get_system_prompt(vars)
-
         tool_schemas = self.tool_library.get_tool_json_schemas()
 
         tool_choice = self.config.get("tool_choice")
@@ -538,6 +539,12 @@ class Agent(Module, metaclass=AutoParams):
             tool_schemas = self._apply_tool_filter(tool_schemas, tool_filter)
 
         tool_choice = self._resolve_tool_choice(tool_choice, tool_schemas)
+        tool_names = {
+            schema["function"]["name"]
+            for schema in tool_schemas or []
+            if schema.get("function", {}).get("name")
+        }
+        system_prompt = self.get_system_prompt(vars, tool_names=tool_names)
 
         if not tool_schemas:
             tool_schemas = None
@@ -1151,6 +1158,10 @@ class Agent(Module, metaclass=AutoParams):
         ):
             messages = self._get_content_from_message(self.messages, message)
 
+        validation_inputs = self._get_validation_inputs(message, task, vars)
+        if validation_inputs is not None:
+            self._validate_inputs(validation_inputs)
+
         content = self._render_task(message, task=task, vars=vars, **kwargs)
 
         if content is None and not messages:
@@ -1247,6 +1258,10 @@ class Agent(Module, metaclass=AutoParams):
             and self.messages is not None
         ):
             messages = self._get_content_from_message(self.messages, message)
+
+        validation_inputs = self._get_validation_inputs(message, task, vars)
+        if validation_inputs is not None:
+            self._validate_inputs(validation_inputs)
 
         content = await self._arender_task(message, task=task, vars=vars, **kwargs)
 
@@ -1957,6 +1972,7 @@ class Agent(Module, metaclass=AutoParams):
             "include_date",
             "reasoning_in_response",
             "max_tool_turns",
+            "validate_inputs",
         }
 
         if config is None:
@@ -1972,20 +1988,18 @@ class Agent(Module, metaclass=AutoParams):
                 f"Invalid config keys: {invalid_keys}. Valid keys are: {valid_keys}"
             )
 
-        if "image_block_kwargs" in config:
-            if not isinstance(config["image_block_kwargs"], dict):
-                raise TypeError(
-                    f"`image_block_kwargs` must be a dict, "
-                    f"given `{type(config['image_block_kwargs'])}`"
-                )
+        self._validate_config_blocks(config)
+        self._validate_config_limits(config)
+        self._validate_config_flags(config)
 
-        if "video_block_kwargs" in config:
-            if not isinstance(config["video_block_kwargs"], dict):
-                raise TypeError(
-                    f"`video_block_kwargs` must be a dict, "
-                    f"given `{type(config['video_block_kwargs'])}`"
-                )
+        self.register_buffer("config", config.copy())
 
+    def _validate_config_blocks(self, config: Dict[str, Any]):
+        for key in ("image_block_kwargs", "video_block_kwargs"):
+            if key in config and not isinstance(config[key], dict):
+                raise TypeError(f"`{key}` must be a dict, given `{type(config[key])}`")
+
+    def _validate_config_limits(self, config: Dict[str, Any]):
         if "max_tool_turns" in config:
             max_turns = config["max_tool_turns"]
             if not isinstance(max_turns, int) or max_turns < 1:
@@ -1994,7 +2008,14 @@ class Agent(Module, metaclass=AutoParams):
                     f"given `{config['max_tool_turns']}`"
                 )
 
-        self.register_buffer("config", config.copy())
+    def _validate_config_flags(self, config: Dict[str, Any]):
+        if "validate_inputs" in config and not isinstance(
+            config["validate_inputs"], bool
+        ):
+            raise TypeError(
+                f"`validate_inputs` must be a bool, "
+                f"given `{type(config['validate_inputs'])}`"
+            )
 
     def _set_system_extra_message(self, system_extra_message: Optional[str] = None):
         if isinstance(system_extra_message, str) or system_extra_message is None:
@@ -2201,9 +2222,72 @@ class Agent(Module, metaclass=AutoParams):
             )
             self.set_annotations(generated_annotations)
 
+            input_schema = SignatureFactory.get_input_schema_from_signature(
+                inputs_info, signature
+            )
+            self._input_schema = input_schema
+            if input_schema is not None:
+                self._input_encoder = msgspec.json.Encoder()
+                self._input_decoder = msgspec.json.Decoder(input_schema)
+            else:
+                self._input_encoder = None
+                self._input_decoder = None
+
+    def _get_validation_inputs(
+        self,
+        message: Optional[Union[str, Message, Mapping[str, Any]]],
+        task: Any,
+        vars: Mapping[str, Any],
+    ) -> Optional[Mapping[str, Any]]:
+        if not self.config.get("validate_inputs", False):
+            return None
+        if getattr(self, "_input_decoder", None) is None:
+            return None
+
+        if task is _UNSET:
+            if isinstance(message, dotdict):
+                task = self._extract_message_values(self.task, message)
+            else:
+                task = message
+
+        if isinstance(task, Mapping):
+            validation_inputs = dict(task)
+            validation_inputs.update(vars)
+            return validation_inputs
+        if task is None and vars:
+            return vars
+        schema_fields = getattr(self._input_schema, "__struct_fields__", ())
+        if len(schema_fields) == 1 and task is not None:
+            validation_inputs = {schema_fields[0]: task}
+            validation_inputs.update(vars)
+            return validation_inputs
+        return None
+
+    def _validate_inputs(self, inputs: Mapping[str, Any]) -> None:
+        if not self.config.get("validate_inputs", False):
+            return
+        decoder = getattr(self, "_input_decoder", None)
+        if decoder is None:
+            return
+
+        schema_fields = getattr(self._input_schema, "__struct_fields__", ())
+        payload = {field: inputs[field] for field in schema_fields if field in inputs}
+
+        try:
+            decoder.decode(self._input_encoder.encode(payload))
+        except (msgspec.ValidationError, msgspec.EncodeError, TypeError) as exc:
+            raise ValueError(
+                f"[{self.name}] Input validation failed: {exc}. "
+                f"Expected schema: {self._input_schema.__struct_fields__}"
+            ) from exc
+
     # --- System Prompt ---
 
-    def get_system_prompt(self, vars: Optional[Mapping[str, Any]] = None) -> str:
+    def get_system_prompt(
+        self,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_names: Optional[set[str]] = None,
+    ) -> str:
         """Render the system prompt using the Jinja template.
         Returns an empty string if no segments are provided.
         """
@@ -2213,6 +2297,7 @@ class Agent(Module, metaclass=AutoParams):
             expected_output=self.expected_output.data,
             examples=self.examples.data,
             system_extra_message=self.system_extra_message,
+            tool_usage_guidance=self.tool_library.get_tool_usage_guidance(tool_names),
         )
 
         if self.config.get("include_date", False):

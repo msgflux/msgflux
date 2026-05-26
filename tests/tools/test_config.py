@@ -66,6 +66,24 @@ class TestToolConfig:
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
+        assert config.display_name is None
+        assert config.usage_guidance is None
+
+    def test_tool_config_display_name_and_usage_guidance(self):
+        """Test display_name and usage_guidance metadata."""
+
+        @tool_config(
+            display_name="Customer Lookup",
+            usage_guidance="Use when you need customer profile data.",
+        )
+        def sample_function():
+            pass
+
+        assert sample_function.tool_config.display_name == "Customer Lookup"
+        assert (
+            sample_function.tool_config.usage_guidance
+            == "Use when you need customer profile data."
+        )
 
     def test_tool_config_call_as_response_sets_return_direct(self):
         """Test that call_as_response=True automatically sets return_direct=True."""
