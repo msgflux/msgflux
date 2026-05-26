@@ -760,7 +760,56 @@ export SEARXNG_BASE_URL="http://localhost:8888"
 
 ---
 
-## 8. **arXiv Search**
+## 8. **Ceramic Search**
+
+The `ceramic` retriever queries Ceramic Search and returns structured web results with title, content, and URL. Ceramic is a web search provider based on lexical query matching.
+
+!!! info "Dependencies"
+    Requires `httpx` and the `CERAMIC_API_KEY` env variable:
+    `pip install httpx`
+
+    Both synchronous and async calls use direct requests to
+    `https://api.ceramic.ai/search`.
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `timeout` | `30.0` | Request timeout in seconds |
+
+### Examples
+
+=== "Search"
+
+    ```python
+    import msgflux as mf
+
+    mf.set_envs(CERAMIC_API_KEY="...")
+
+    retriever = mf.Retriever.web("ceramic")
+    response = retriever("California rental laws", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+        print(result.data.url)
+        print(result.data.content)
+    ```
+
+=== "Async"
+
+    ```python
+    import msgflux as mf
+
+    retriever = mf.Retriever.web("ceramic", timeout=10.0)
+    response = await retriever.acall("California rental laws", top_k=3)
+
+    for result in response.data[0].results:
+        print(result.data.title)
+    ```
+
+---
+
+## 9. **arXiv Search**
 
 The `arxiv` retriever searches arXiv papers and returns structured academic metadata such as title, summary, authors, publication dates, categories, and PDF URLs.
 
