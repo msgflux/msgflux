@@ -2348,6 +2348,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#display_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        display_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage_guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        usage_guidance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#builtin-usage-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Builtin usage guidance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#retry" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5000,6 +5033,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#display_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        display_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage_guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        usage_guidance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#builtin-usage-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Builtin usage guidance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#retry" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6746,6 +6812,75 @@ def github_repository_search_v2_extended(query: str) -&gt; str:
 # Tool is exposed as &quot;search_repos&quot; instead of the long function name
 ```
 
+#### display_name
+
+Assign a human-readable name for UI surfaces and events while keeping the tool&#x27;s
+programmatic name stable:
+
+```python
+@mf.tool_config(display_name=&quot;Repository Search&quot;)
+def search_repos(query: str) -&gt; str:
+    &quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;
+    ...
+```
+
+The model still calls `search_repos`, but clients such as a CLI can show
+`Repository Search` to users.
+
+#### usage_guidance
+
+Add guidance that is rendered into the agent system prompt under
+`&lt;tool_usage_guidance&gt;`. Use it for tool-specific &quot;when/how to use&quot; instructions
+that should not live in the function description.
+
+```python
+@mf.tool_config(
+    display_name=&quot;Repository Search&quot;,
+    usage_guidance=(
+        &quot;Use when the user asks for GitHub repositories. Prefer concise search &quot;
+        &quot;queries with language, framework, or topic constraints.&quot;
+    ),
+)
+def search_repos(query: str) -&gt; str:
+    &quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;
+    ...
+```
+
+#### Builtin usage guidance
+
+msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
+tool implementations neutral while letting applications such as a CLI attach
+ready-to-use instructions when composing an agent.
+
+Use `apply_tool_guidance()` to fill `usage_guidance` only when a tool does not
+already define one:
+
+```python
+import msgflux as mf
+from msgflux.tools import apply_tool_guidance
+from msgflux.tools.builtin import WebFetch, WebSearch
+
+tools = apply_tool_guidance([WebSearch(), WebFetch()])
+
+agent = mf.nn.Agent(
+    name=&quot;assistant&quot;,
+    model=mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;),
+    tools=tools,
+)
+```
+
+Explicit guidance always wins:
+
+```python
+@mf.tool_config(usage_guidance=&quot;Use only for internal repository search.&quot;)
+def web_search(query: str) -&gt; str:
+    &quot;&quot;&quot;Search internal repositories.&quot;&quot;&quot;
+    ...
+
+tools = apply_tool_guidance([web_search])
+# Keeps &quot;Use only for internal repository search.&quot;
+```
+
 #### retry
 
 Control retry behavior per tool. Accepts a [tenacity](https://tenacity.readthedocs.io/) decorator, `False` to disable, or `None` (default) to use env-based retry.
@@ -7172,7 +7307,7 @@ Configure MCP servers using the `mcp_servers` attribute:
 | `auth` | Authentication provider — `BearerTokenAuth`, `APIKeyAuth`, etc. (http only) |
 | `include_tools` | Allowlist of tools to expose |
 | `exclude_tools` | Blocklist of tools to hide |
-| `tool_config` | Per-tool configuration options |
+| `tool_config` | Per-tool configuration options such as `display_name`, `usage_guidance`, retry, and injection behavior |
 ">
   <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">
     <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>
@@ -8749,6 +8884,58 @@ to a specialist agent.</p>
 </span><span id="__span-52-10"><a id="__codelineno-52-10" name="__codelineno-52-10" href="#__codelineno-52-10"></a>
 </span><span id="__span-52-11"><a id="__codelineno-52-11" name="__codelineno-52-11" href="#__codelineno-52-11"></a><span class="c1"># Tool is exposed as &quot;search_repos&quot; instead of the long function name</span>
 </span></code></pre></div>
+<h4 id="display_name">display_name</h4>
+<p>Assign a human-readable name for UI surfaces and events while keeping the tool's
+programmatic name stable:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-53-1"><a id="__codelineno-53-1" name="__codelineno-53-1" href="#__codelineno-53-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">display_name</span><span class="o">=</span><span class="s2">&quot;Repository Search&quot;</span><span class="p">)</span>
+</span><span id="__span-53-2"><a id="__codelineno-53-2" name="__codelineno-53-2" href="#__codelineno-53-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">search_repos</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-53-3"><a id="__codelineno-53-3" name="__codelineno-53-3" href="#__codelineno-53-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;</span>
+</span><span id="__span-53-4"><a id="__codelineno-53-4" name="__codelineno-53-4" href="#__codelineno-53-4"></a>    <span class="o">...</span>
+</span></code></pre></div>
+<p>The model still calls <code>search_repos</code>, but clients such as a CLI can show
+<code>Repository Search</code> to users.</p>
+<h4 id="usage_guidance">usage_guidance</h4>
+<p>Add guidance that is rendered into the agent system prompt under
+<code>&lt;tool_usage_guidance&gt;</code>. Use it for tool-specific "when/how to use" instructions
+that should not live in the function description.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-54-1"><a id="__codelineno-54-1" name="__codelineno-54-1" href="#__codelineno-54-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span>
+</span><span id="__span-54-2"><a id="__codelineno-54-2" name="__codelineno-54-2" href="#__codelineno-54-2"></a>    <span class="n">display_name</span><span class="o">=</span><span class="s2">&quot;Repository Search&quot;</span><span class="p">,</span>
+</span><span id="__span-54-3"><a id="__codelineno-54-3" name="__codelineno-54-3" href="#__codelineno-54-3"></a>    <span class="n">usage_guidance</span><span class="o">=</span><span class="p">(</span>
+</span><span id="__span-54-4"><a id="__codelineno-54-4" name="__codelineno-54-4" href="#__codelineno-54-4"></a>        <span class="s2">&quot;Use when the user asks for GitHub repositories. Prefer concise search &quot;</span>
+</span><span id="__span-54-5"><a id="__codelineno-54-5" name="__codelineno-54-5" href="#__codelineno-54-5"></a>        <span class="s2">&quot;queries with language, framework, or topic constraints.&quot;</span>
+</span><span id="__span-54-6"><a id="__codelineno-54-6" name="__codelineno-54-6" href="#__codelineno-54-6"></a>    <span class="p">),</span>
+</span><span id="__span-54-7"><a id="__codelineno-54-7" name="__codelineno-54-7" href="#__codelineno-54-7"></a><span class="p">)</span>
+</span><span id="__span-54-8"><a id="__codelineno-54-8" name="__codelineno-54-8" href="#__codelineno-54-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">search_repos</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-54-9"><a id="__codelineno-54-9" name="__codelineno-54-9" href="#__codelineno-54-9"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;</span>
+</span><span id="__span-54-10"><a id="__codelineno-54-10" name="__codelineno-54-10" href="#__codelineno-54-10"></a>    <span class="o">...</span>
+</span></code></pre></div>
+<h4 id="builtin-usage-guidance">Builtin usage guidance</h4>
+<p>msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
+tool implementations neutral while letting applications such as a CLI attach
+ready-to-use instructions when composing an agent.</p>
+<p>Use <code>apply_tool_guidance()</code> to fill <code>usage_guidance</code> only when a tool does not
+already define one:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-55-1"><a id="__codelineno-55-1" name="__codelineno-55-1" href="#__codelineno-55-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-55-2"><a id="__codelineno-55-2" name="__codelineno-55-2" href="#__codelineno-55-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_tool_guidance</span>
+</span><span id="__span-55-3"><a id="__codelineno-55-3" name="__codelineno-55-3" href="#__codelineno-55-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">WebFetch</span><span class="p">,</span> <span class="n">WebSearch</span>
+</span><span id="__span-55-4"><a id="__codelineno-55-4" name="__codelineno-55-4" href="#__codelineno-55-4"></a>
+</span><span id="__span-55-5"><a id="__codelineno-55-5" name="__codelineno-55-5" href="#__codelineno-55-5"></a><span class="n">tools</span> <span class="o">=</span> <span class="n">apply_tool_guidance</span><span class="p">([</span><span class="n">WebSearch</span><span class="p">(),</span> <span class="n">WebFetch</span><span class="p">()])</span>
+</span><span id="__span-55-6"><a id="__codelineno-55-6" name="__codelineno-55-6" href="#__codelineno-55-6"></a>
+</span><span id="__span-55-7"><a id="__codelineno-55-7" name="__codelineno-55-7" href="#__codelineno-55-7"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">(</span>
+</span><span id="__span-55-8"><a id="__codelineno-55-8" name="__codelineno-55-8" href="#__codelineno-55-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+</span><span id="__span-55-9"><a id="__codelineno-55-9" name="__codelineno-55-9" href="#__codelineno-55-9"></a>    <span class="n">model</span><span class="o">=</span><span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">),</span>
+</span><span id="__span-55-10"><a id="__codelineno-55-10" name="__codelineno-55-10" href="#__codelineno-55-10"></a>    <span class="n">tools</span><span class="o">=</span><span class="n">tools</span><span class="p">,</span>
+</span><span id="__span-55-11"><a id="__codelineno-55-11" name="__codelineno-55-11" href="#__codelineno-55-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Explicit guidance always wins:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-56-1"><a id="__codelineno-56-1" name="__codelineno-56-1" href="#__codelineno-56-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">usage_guidance</span><span class="o">=</span><span class="s2">&quot;Use only for internal repository search.&quot;</span><span class="p">)</span>
+</span><span id="__span-56-2"><a id="__codelineno-56-2" name="__codelineno-56-2" href="#__codelineno-56-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">web_search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-56-3"><a id="__codelineno-56-3" name="__codelineno-56-3" href="#__codelineno-56-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search internal repositories.&quot;&quot;&quot;</span>
+</span><span id="__span-56-4"><a id="__codelineno-56-4" name="__codelineno-56-4" href="#__codelineno-56-4"></a>    <span class="o">...</span>
+</span><span id="__span-56-5"><a id="__codelineno-56-5" name="__codelineno-56-5" href="#__codelineno-56-5"></a>
+</span><span id="__span-56-6"><a id="__codelineno-56-6" name="__codelineno-56-6" href="#__codelineno-56-6"></a><span class="n">tools</span> <span class="o">=</span> <span class="n">apply_tool_guidance</span><span class="p">([</span><span class="n">web_search</span><span class="p">])</span>
+</span><span id="__span-56-7"><a id="__codelineno-56-7" name="__codelineno-56-7" href="#__codelineno-56-7"></a><span class="c1"># Keeps &quot;Use only for internal repository search.&quot;</span>
+</span></code></pre></div>
 <h4 id="retry">retry</h4>
 <p>Control retry behavior per tool. Accepts a <a href="https://tenacity.readthedocs.io/">tenacity</a> decorator, <code>False</code> to disable, or <code>None</code> (default) to use env-based retry.</p>
 <p>By default, all tools have automatic retry enabled using environment variables (<code>TOOL_STOP_AFTER_ATTEMPT</code>, <code>TOOL_STOP_AFTER_DELAY</code>). Use this parameter to customize or disable retry for specific tools.</p>
@@ -8757,36 +8944,36 @@ to a specialist agent.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="13:3"><input checked="checked" id="__tabbed_13_1" name="__tabbed_13" type="radio" /><input id="__tabbed_13_2" name="__tabbed_13" type="radio" /><input id="__tabbed_13_3" name="__tabbed_13" type="radio" /><div class="tabbed-labels"><label for="__tabbed_13_1">Custom Retry</label><label for="__tabbed_13_2">Disable Retry</label><label for="__tabbed_13_3">Default (env-based)</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-53-1"><a id="__codelineno-53-1" name="__codelineno-53-1" href="#__codelineno-53-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">tenacity</span><span class="w"> </span><span class="kn">import</span> <span class="n">retry</span><span class="p">,</span> <span class="n">stop_after_attempt</span><span class="p">,</span> <span class="n">wait_exponential</span>
-</span><span id="__span-53-2"><a id="__codelineno-53-2" name="__codelineno-53-2" href="#__codelineno-53-2"></a>
-</span><span id="__span-53-3"><a id="__codelineno-53-3" name="__codelineno-53-3" href="#__codelineno-53-3"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span>
-</span><span id="__span-53-4"><a id="__codelineno-53-4" name="__codelineno-53-4" href="#__codelineno-53-4"></a>    <span class="n">retry</span><span class="o">=</span><span class="n">retry</span><span class="p">(</span>
-</span><span id="__span-53-5"><a id="__codelineno-53-5" name="__codelineno-53-5" href="#__codelineno-53-5"></a>        <span class="n">reraise</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-53-6"><a id="__codelineno-53-6" name="__codelineno-53-6" href="#__codelineno-53-6"></a>        <span class="n">stop</span><span class="o">=</span><span class="n">stop_after_attempt</span><span class="p">(</span><span class="mi">5</span><span class="p">),</span>
-</span><span id="__span-53-7"><a id="__codelineno-53-7" name="__codelineno-53-7" href="#__codelineno-53-7"></a>        <span class="n">wait</span><span class="o">=</span><span class="n">wait_exponential</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
-</span><span id="__span-53-8"><a id="__codelineno-53-8" name="__codelineno-53-8" href="#__codelineno-53-8"></a>    <span class="p">)</span>
-</span><span id="__span-53-9"><a id="__codelineno-53-9" name="__codelineno-53-9" href="#__codelineno-53-9"></a><span class="p">)</span>
-</span><span id="__span-53-10"><a id="__codelineno-53-10" name="__codelineno-53-10" href="#__codelineno-53-10"></a><span class="k">def</span><span class="w"> </span><span class="nf">call_external_api</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-53-11"><a id="__codelineno-53-11" name="__codelineno-53-11" href="#__codelineno-53-11"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Call an unreliable external API.&quot;&quot;&quot;</span>
-</span><span id="__span-53-12"><a id="__codelineno-53-12" name="__codelineno-53-12" href="#__codelineno-53-12"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
-</span><span id="__span-53-13"><a id="__codelineno-53-13" name="__codelineno-53-13" href="#__codelineno-53-13"></a>    <span class="n">resp</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;https://api.example.com/search&quot;</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;q&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">})</span>
-</span><span id="__span-53-14"><a id="__codelineno-53-14" name="__codelineno-53-14" href="#__codelineno-53-14"></a>    <span class="n">resp</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
-</span><span id="__span-53-15"><a id="__codelineno-53-15" name="__codelineno-53-15" href="#__codelineno-53-15"></a>    <span class="k">return</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s2">&quot;result&quot;</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-57-1"><a id="__codelineno-57-1" name="__codelineno-57-1" href="#__codelineno-57-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">tenacity</span><span class="w"> </span><span class="kn">import</span> <span class="n">retry</span><span class="p">,</span> <span class="n">stop_after_attempt</span><span class="p">,</span> <span class="n">wait_exponential</span>
+</span><span id="__span-57-2"><a id="__codelineno-57-2" name="__codelineno-57-2" href="#__codelineno-57-2"></a>
+</span><span id="__span-57-3"><a id="__codelineno-57-3" name="__codelineno-57-3" href="#__codelineno-57-3"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span>
+</span><span id="__span-57-4"><a id="__codelineno-57-4" name="__codelineno-57-4" href="#__codelineno-57-4"></a>    <span class="n">retry</span><span class="o">=</span><span class="n">retry</span><span class="p">(</span>
+</span><span id="__span-57-5"><a id="__codelineno-57-5" name="__codelineno-57-5" href="#__codelineno-57-5"></a>        <span class="n">reraise</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-57-6"><a id="__codelineno-57-6" name="__codelineno-57-6" href="#__codelineno-57-6"></a>        <span class="n">stop</span><span class="o">=</span><span class="n">stop_after_attempt</span><span class="p">(</span><span class="mi">5</span><span class="p">),</span>
+</span><span id="__span-57-7"><a id="__codelineno-57-7" name="__codelineno-57-7" href="#__codelineno-57-7"></a>        <span class="n">wait</span><span class="o">=</span><span class="n">wait_exponential</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+</span><span id="__span-57-8"><a id="__codelineno-57-8" name="__codelineno-57-8" href="#__codelineno-57-8"></a>    <span class="p">)</span>
+</span><span id="__span-57-9"><a id="__codelineno-57-9" name="__codelineno-57-9" href="#__codelineno-57-9"></a><span class="p">)</span>
+</span><span id="__span-57-10"><a id="__codelineno-57-10" name="__codelineno-57-10" href="#__codelineno-57-10"></a><span class="k">def</span><span class="w"> </span><span class="nf">call_external_api</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-57-11"><a id="__codelineno-57-11" name="__codelineno-57-11" href="#__codelineno-57-11"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Call an unreliable external API.&quot;&quot;&quot;</span>
+</span><span id="__span-57-12"><a id="__codelineno-57-12" name="__codelineno-57-12" href="#__codelineno-57-12"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+</span><span id="__span-57-13"><a id="__codelineno-57-13" name="__codelineno-57-13" href="#__codelineno-57-13"></a>    <span class="n">resp</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;https://api.example.com/search&quot;</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;q&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">})</span>
+</span><span id="__span-57-14"><a id="__codelineno-57-14" name="__codelineno-57-14" href="#__codelineno-57-14"></a>    <span class="n">resp</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+</span><span id="__span-57-15"><a id="__codelineno-57-15" name="__codelineno-57-15" href="#__codelineno-57-15"></a>    <span class="k">return</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s2">&quot;result&quot;</span><span class="p">]</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-54-1"><a id="__codelineno-54-1" name="__codelineno-54-1" href="#__codelineno-54-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">retry</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-54-2"><a id="__codelineno-54-2" name="__codelineno-54-2" href="#__codelineno-54-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">fast_lookup</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-54-3"><a id="__codelineno-54-3" name="__codelineno-54-3" href="#__codelineno-54-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Fast local lookup that should not retry.&quot;&quot;&quot;</span>
-</span><span id="__span-54-4"><a id="__codelineno-54-4" name="__codelineno-54-4" href="#__codelineno-54-4"></a>    <span class="k">return</span> <span class="n">cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-58-1"><a id="__codelineno-58-1" name="__codelineno-58-1" href="#__codelineno-58-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">retry</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-58-2"><a id="__codelineno-58-2" name="__codelineno-58-2" href="#__codelineno-58-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">fast_lookup</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-58-3"><a id="__codelineno-58-3" name="__codelineno-58-3" href="#__codelineno-58-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Fast local lookup that should not retry.&quot;&quot;&quot;</span>
+</span><span id="__span-58-4"><a id="__codelineno-58-4" name="__codelineno-58-4" href="#__codelineno-58-4"></a>    <span class="k">return</span> <span class="n">cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-55-1"><a id="__codelineno-55-1" name="__codelineno-55-1" href="#__codelineno-55-1"></a><span class="c1"># No retry parameter needed — uses env defaults</span>
-</span><span id="__span-55-2"><a id="__codelineno-55-2" name="__codelineno-55-2" href="#__codelineno-55-2"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">return_direct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-55-3"><a id="__codelineno-55-3" name="__codelineno-55-3" href="#__codelineno-55-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-55-4"><a id="__codelineno-55-4" name="__codelineno-55-4" href="#__codelineno-55-4"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search with default retry behavior.&quot;&quot;&quot;</span>
-</span><span id="__span-55-5"><a id="__codelineno-55-5" name="__codelineno-55-5" href="#__codelineno-55-5"></a>    <span class="k">return</span> <span class="n">do_search</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-59-1"><a id="__codelineno-59-1" name="__codelineno-59-1" href="#__codelineno-59-1"></a><span class="c1"># No retry parameter needed — uses env defaults</span>
+</span><span id="__span-59-2"><a id="__codelineno-59-2" name="__codelineno-59-2" href="#__codelineno-59-2"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">return_direct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-59-3"><a id="__codelineno-59-3" name="__codelineno-59-3" href="#__codelineno-59-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-59-4"><a id="__codelineno-59-4" name="__codelineno-59-4" href="#__codelineno-59-4"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search with default retry behavior.&quot;&quot;&quot;</span>
+</span><span id="__span-59-5"><a id="__codelineno-59-5" name="__codelineno-59-5" href="#__codelineno-59-5"></a>    <span class="k">return</span> <span class="n">do_search</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -8795,37 +8982,37 @@ to a specialist agent.</p>
 <h3 id="agent-as-tool">Agent-as-Tool</h3>
 <p>Agents can be used as tools for other agents, enabling hierarchical task delegation, also known as <strong>SubAgents</strong>. Using AutoParams makes this pattern especially clean: the class name becomes the tool name, and the docstring becomes the tool description.</p>
 <p>The Coordinator calls the Specialist as any other tool. The result returns to the Coordinator's model, which synthesizes it into the final response.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-56-1"><a id="__codelineno-56-1" name="__codelineno-56-1" href="#__codelineno-56-1"></a>              Input
-</span><span id="__span-56-2"><a id="__codelineno-56-2" name="__codelineno-56-2" href="#__codelineno-56-2"></a>                │
-</span><span id="__span-56-3"><a id="__codelineno-56-3" name="__codelineno-56-3" href="#__codelineno-56-3"></a>                ▼
-</span><span id="__span-56-4"><a id="__codelineno-56-4" name="__codelineno-56-4" href="#__codelineno-56-4"></a>  ┌──────────────────────────────┐
-</span><span id="__span-56-5"><a id="__codelineno-56-5" name="__codelineno-56-5" href="#__codelineno-56-5"></a>  │         Coordinator          │
-</span><span id="__span-56-6"><a id="__codelineno-56-6" name="__codelineno-56-6" href="#__codelineno-56-6"></a>  │                              │
-</span><span id="__span-56-7"><a id="__codelineno-56-7" name="__codelineno-56-7" href="#__codelineno-56-7"></a>  │   ┌──────────┐               │
-</span><span id="__span-56-8"><a id="__codelineno-56-8" name="__codelineno-56-8" href="#__codelineno-56-8"></a>  │   │  Model   │──▶ &quot;call      │
-</span><span id="__span-56-9"><a id="__codelineno-56-9" name="__codelineno-56-9" href="#__codelineno-56-9"></a>  │   └──────────┘    Specialist │
-</span><span id="__span-56-10"><a id="__codelineno-56-10" name="__codelineno-56-10" href="#__codelineno-56-10"></a>  └─────────────┬────────────────┘
-</span><span id="__span-56-11"><a id="__codelineno-56-11" name="__codelineno-56-11" href="#__codelineno-56-11"></a>                │  call(task)
-</span><span id="__span-56-12"><a id="__codelineno-56-12" name="__codelineno-56-12" href="#__codelineno-56-12"></a>                ▼
-</span><span id="__span-56-13"><a id="__codelineno-56-13" name="__codelineno-56-13" href="#__codelineno-56-13"></a>  ┌──────────────────────────────┐
-</span><span id="__span-56-14"><a id="__codelineno-56-14" name="__codelineno-56-14" href="#__codelineno-56-14"></a>  │         Specialist           │
-</span><span id="__span-56-15"><a id="__codelineno-56-15" name="__codelineno-56-15" href="#__codelineno-56-15"></a>  │        (SubAgent)            │
-</span><span id="__span-56-16"><a id="__codelineno-56-16" name="__codelineno-56-16" href="#__codelineno-56-16"></a>  │                              │
-</span><span id="__span-56-17"><a id="__codelineno-56-17" name="__codelineno-56-17" href="#__codelineno-56-17"></a>  │  processes task independently│
-</span><span id="__span-56-18"><a id="__codelineno-56-18" name="__codelineno-56-18" href="#__codelineno-56-18"></a>  │  may call its own tools      │
-</span><span id="__span-56-19"><a id="__codelineno-56-19" name="__codelineno-56-19" href="#__codelineno-56-19"></a>  └─────────────┬────────────────┘
-</span><span id="__span-56-20"><a id="__codelineno-56-20" name="__codelineno-56-20" href="#__codelineno-56-20"></a>                │  result
-</span><span id="__span-56-21"><a id="__codelineno-56-21" name="__codelineno-56-21" href="#__codelineno-56-21"></a>                ▼
-</span><span id="__span-56-22"><a id="__codelineno-56-22" name="__codelineno-56-22" href="#__codelineno-56-22"></a>  ┌──────────────────────────────┐
-</span><span id="__span-56-23"><a id="__codelineno-56-23" name="__codelineno-56-23" href="#__codelineno-56-23"></a>  │         Coordinator          │
-</span><span id="__span-56-24"><a id="__codelineno-56-24" name="__codelineno-56-24" href="#__codelineno-56-24"></a>  │                              │
-</span><span id="__span-56-25"><a id="__codelineno-56-25" name="__codelineno-56-25" href="#__codelineno-56-25"></a>  │   ┌──────────┐               │
-</span><span id="__span-56-26"><a id="__codelineno-56-26" name="__codelineno-56-26" href="#__codelineno-56-26"></a>  │   │  Model   │──▶ synthesized│
-</span><span id="__span-56-27"><a id="__codelineno-56-27" name="__codelineno-56-27" href="#__codelineno-56-27"></a>  │   └──────────┘    response   │
-</span><span id="__span-56-28"><a id="__codelineno-56-28" name="__codelineno-56-28" href="#__codelineno-56-28"></a>  └─────────────┬────────────────┘
-</span><span id="__span-56-29"><a id="__codelineno-56-29" name="__codelineno-56-29" href="#__codelineno-56-29"></a>                │
-</span><span id="__span-56-30"><a id="__codelineno-56-30" name="__codelineno-56-30" href="#__codelineno-56-30"></a>                ▼
-</span><span id="__span-56-31"><a id="__codelineno-56-31" name="__codelineno-56-31" href="#__codelineno-56-31"></a>                Output
+<div class="language-text highlight"><pre><span></span><code><span id="__span-60-1"><a id="__codelineno-60-1" name="__codelineno-60-1" href="#__codelineno-60-1"></a>              Input
+</span><span id="__span-60-2"><a id="__codelineno-60-2" name="__codelineno-60-2" href="#__codelineno-60-2"></a>                │
+</span><span id="__span-60-3"><a id="__codelineno-60-3" name="__codelineno-60-3" href="#__codelineno-60-3"></a>                ▼
+</span><span id="__span-60-4"><a id="__codelineno-60-4" name="__codelineno-60-4" href="#__codelineno-60-4"></a>  ┌──────────────────────────────┐
+</span><span id="__span-60-5"><a id="__codelineno-60-5" name="__codelineno-60-5" href="#__codelineno-60-5"></a>  │         Coordinator          │
+</span><span id="__span-60-6"><a id="__codelineno-60-6" name="__codelineno-60-6" href="#__codelineno-60-6"></a>  │                              │
+</span><span id="__span-60-7"><a id="__codelineno-60-7" name="__codelineno-60-7" href="#__codelineno-60-7"></a>  │   ┌──────────┐               │
+</span><span id="__span-60-8"><a id="__codelineno-60-8" name="__codelineno-60-8" href="#__codelineno-60-8"></a>  │   │  Model   │──▶ &quot;call      │
+</span><span id="__span-60-9"><a id="__codelineno-60-9" name="__codelineno-60-9" href="#__codelineno-60-9"></a>  │   └──────────┘    Specialist │
+</span><span id="__span-60-10"><a id="__codelineno-60-10" name="__codelineno-60-10" href="#__codelineno-60-10"></a>  └─────────────┬────────────────┘
+</span><span id="__span-60-11"><a id="__codelineno-60-11" name="__codelineno-60-11" href="#__codelineno-60-11"></a>                │  call(task)
+</span><span id="__span-60-12"><a id="__codelineno-60-12" name="__codelineno-60-12" href="#__codelineno-60-12"></a>                ▼
+</span><span id="__span-60-13"><a id="__codelineno-60-13" name="__codelineno-60-13" href="#__codelineno-60-13"></a>  ┌──────────────────────────────┐
+</span><span id="__span-60-14"><a id="__codelineno-60-14" name="__codelineno-60-14" href="#__codelineno-60-14"></a>  │         Specialist           │
+</span><span id="__span-60-15"><a id="__codelineno-60-15" name="__codelineno-60-15" href="#__codelineno-60-15"></a>  │        (SubAgent)            │
+</span><span id="__span-60-16"><a id="__codelineno-60-16" name="__codelineno-60-16" href="#__codelineno-60-16"></a>  │                              │
+</span><span id="__span-60-17"><a id="__codelineno-60-17" name="__codelineno-60-17" href="#__codelineno-60-17"></a>  │  processes task independently│
+</span><span id="__span-60-18"><a id="__codelineno-60-18" name="__codelineno-60-18" href="#__codelineno-60-18"></a>  │  may call its own tools      │
+</span><span id="__span-60-19"><a id="__codelineno-60-19" name="__codelineno-60-19" href="#__codelineno-60-19"></a>  └─────────────┬────────────────┘
+</span><span id="__span-60-20"><a id="__codelineno-60-20" name="__codelineno-60-20" href="#__codelineno-60-20"></a>                │  result
+</span><span id="__span-60-21"><a id="__codelineno-60-21" name="__codelineno-60-21" href="#__codelineno-60-21"></a>                ▼
+</span><span id="__span-60-22"><a id="__codelineno-60-22" name="__codelineno-60-22" href="#__codelineno-60-22"></a>  ┌──────────────────────────────┐
+</span><span id="__span-60-23"><a id="__codelineno-60-23" name="__codelineno-60-23" href="#__codelineno-60-23"></a>  │         Coordinator          │
+</span><span id="__span-60-24"><a id="__codelineno-60-24" name="__codelineno-60-24" href="#__codelineno-60-24"></a>  │                              │
+</span><span id="__span-60-25"><a id="__codelineno-60-25" name="__codelineno-60-25" href="#__codelineno-60-25"></a>  │   ┌──────────┐               │
+</span><span id="__span-60-26"><a id="__codelineno-60-26" name="__codelineno-60-26" href="#__codelineno-60-26"></a>  │   │  Model   │──▶ synthesized│
+</span><span id="__span-60-27"><a id="__codelineno-60-27" name="__codelineno-60-27" href="#__codelineno-60-27"></a>  │   └──────────┘    response   │
+</span><span id="__span-60-28"><a id="__codelineno-60-28" name="__codelineno-60-28" href="#__codelineno-60-28"></a>  └─────────────┬────────────────┘
+</span><span id="__span-60-29"><a id="__codelineno-60-29" name="__codelineno-60-29" href="#__codelineno-60-29"></a>                │
+</span><span id="__span-60-30"><a id="__codelineno-60-30" name="__codelineno-60-30" href="#__codelineno-60-30"></a>                ▼
+</span><span id="__span-60-31"><a id="__codelineno-60-31" name="__codelineno-60-31" href="#__codelineno-60-31"></a>                Output
 </span></code></pre></div>
 <details class="note" open="open">
 <summary>Agent-as-Tool Examples</summary>
@@ -8833,164 +9020,164 @@ to a specialist agent.</p>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <p>A coordinator agent delegates to specialist agents:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-57-1"><a id="__codelineno-57-1" name="__codelineno-57-1" href="#__codelineno-57-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-57-2"><a id="__codelineno-57-2" name="__codelineno-57-2" href="#__codelineno-57-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-57-3"><a id="__codelineno-57-3" name="__codelineno-57-3" href="#__codelineno-57-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-57-4"><a id="__codelineno-57-4" name="__codelineno-57-4" href="#__codelineno-57-4"></a>
-</span><span id="__span-57-5"><a id="__codelineno-57-5" name="__codelineno-57-5" href="#__codelineno-57-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-57-6"><a id="__codelineno-57-6" name="__codelineno-57-6" href="#__codelineno-57-6"></a>
-</span><span id="__span-57-7"><a id="__codelineno-57-7" name="__codelineno-57-7" href="#__codelineno-57-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-57-8"><a id="__codelineno-57-8" name="__codelineno-57-8" href="#__codelineno-57-8"></a>
-</span><span id="__span-57-9"><a id="__codelineno-57-9" name="__codelineno-57-9" href="#__codelineno-57-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">Nutritionist</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-57-10"><a id="__codelineno-57-10" name="__codelineno-57-10" href="#__codelineno-57-10"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist in nutrition, diet planning, and healthy eating habits.</span>
-</span><span id="__span-57-11"><a id="__codelineno-57-11" name="__codelineno-57-11" href="#__codelineno-57-11"></a><span class="sd">    Consult for meal plans, dietary recommendations, and nutritional advice.&quot;&quot;&quot;</span>
-</span><span id="__span-57-12"><a id="__codelineno-57-12" name="__codelineno-57-12" href="#__codelineno-57-12"></a>
-</span><span id="__span-57-13"><a id="__codelineno-57-13" name="__codelineno-57-13" href="#__codelineno-57-13"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-57-14"><a id="__codelineno-57-14" name="__codelineno-57-14" href="#__codelineno-57-14"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a certified nutritionist.&quot;</span>
-</span><span id="__span-57-15"><a id="__codelineno-57-15" name="__codelineno-57-15" href="#__codelineno-57-15"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;Create clear and practical meal plans tailored to the user&#39;s goals.</span>
-</span><span id="__span-57-16"><a id="__codelineno-57-16" name="__codelineno-57-16" href="#__codelineno-57-16"></a><span class="s2">    Be objective, technical, and structured.&quot;&quot;&quot;</span>
-</span><span id="__span-57-17"><a id="__codelineno-57-17" name="__codelineno-57-17" href="#__codelineno-57-17"></a>
-</span><span id="__span-57-18"><a id="__codelineno-57-18" name="__codelineno-57-18" href="#__codelineno-57-18"></a><span class="k">class</span><span class="w"> </span><span class="nc">FitnessTrainer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-57-19"><a id="__codelineno-57-19" name="__codelineno-57-19" href="#__codelineno-57-19"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist in fitness, exercise routines, and physical training.</span>
-</span><span id="__span-57-20"><a id="__codelineno-57-20" name="__codelineno-57-20" href="#__codelineno-57-20"></a><span class="sd">    Consult for workout plans, training schedules, and exercise guidance.&quot;&quot;&quot;</span>
-</span><span id="__span-57-21"><a id="__codelineno-57-21" name="__codelineno-57-21" href="#__codelineno-57-21"></a>
-</span><span id="__span-57-22"><a id="__codelineno-57-22" name="__codelineno-57-22" href="#__codelineno-57-22"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-57-23"><a id="__codelineno-57-23" name="__codelineno-57-23" href="#__codelineno-57-23"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a certified personal trainer.&quot;</span>
-</span><span id="__span-57-24"><a id="__codelineno-57-24" name="__codelineno-57-24" href="#__codelineno-57-24"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;Design workout routines based on the user&#39;s fitness level and goals.</span>
-</span><span id="__span-57-25"><a id="__codelineno-57-25" name="__codelineno-57-25" href="#__codelineno-57-25"></a><span class="s2">    Focus on safety, progression, and sustainability.&quot;&quot;&quot;</span>
-</span><span id="__span-57-26"><a id="__codelineno-57-26" name="__codelineno-57-26" href="#__codelineno-57-26"></a>
-</span><span id="__span-57-27"><a id="__codelineno-57-27" name="__codelineno-57-27" href="#__codelineno-57-27"></a><span class="k">class</span><span class="w"> </span><span class="nc">HealthCoordinator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-57-28"><a id="__codelineno-57-28" name="__codelineno-57-28" href="#__codelineno-57-28"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Coordinates health specialists to provide comprehensive wellness advice.&quot;&quot;&quot;</span>
-</span><span id="__span-57-29"><a id="__codelineno-57-29" name="__codelineno-57-29" href="#__codelineno-57-29"></a>
-</span><span id="__span-57-30"><a id="__codelineno-57-30" name="__codelineno-57-30" href="#__codelineno-57-30"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-57-31"><a id="__codelineno-57-31" name="__codelineno-57-31" href="#__codelineno-57-31"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You coordinate a team of health specialists.&quot;</span>
-</span><span id="__span-57-32"><a id="__codelineno-57-32" name="__codelineno-57-32" href="#__codelineno-57-32"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;Delegate user requests to the appropriate specialist.&quot;</span>
-</span><span id="__span-57-33"><a id="__codelineno-57-33" name="__codelineno-57-33" href="#__codelineno-57-33"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">Nutritionist</span><span class="p">,</span> <span class="n">FitnessTrainer</span><span class="p">]</span>
-</span><span id="__span-57-34"><a id="__codelineno-57-34" name="__codelineno-57-34" href="#__codelineno-57-34"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-57-35"><a id="__codelineno-57-35" name="__codelineno-57-35" href="#__codelineno-57-35"></a>
-</span><span id="__span-57-36"><a id="__codelineno-57-36" name="__codelineno-57-36" href="#__codelineno-57-36"></a><span class="n">coordinator</span> <span class="o">=</span> <span class="n">HealthCoordinator</span><span class="p">()</span>
-</span><span id="__span-57-37"><a id="__codelineno-57-37" name="__codelineno-57-37" href="#__codelineno-57-37"></a>
-</span><span id="__span-57-38"><a id="__codelineno-57-38" name="__codelineno-57-38" href="#__codelineno-57-38"></a><span class="n">response</span> <span class="o">=</span> <span class="n">coordinator</span><span class="p">(</span><span class="s2">&quot;I want to lose 10kg and build muscle&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-61-1"><a id="__codelineno-61-1" name="__codelineno-61-1" href="#__codelineno-61-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-61-2"><a id="__codelineno-61-2" name="__codelineno-61-2" href="#__codelineno-61-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-61-3"><a id="__codelineno-61-3" name="__codelineno-61-3" href="#__codelineno-61-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-61-4"><a id="__codelineno-61-4" name="__codelineno-61-4" href="#__codelineno-61-4"></a>
+</span><span id="__span-61-5"><a id="__codelineno-61-5" name="__codelineno-61-5" href="#__codelineno-61-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-61-6"><a id="__codelineno-61-6" name="__codelineno-61-6" href="#__codelineno-61-6"></a>
+</span><span id="__span-61-7"><a id="__codelineno-61-7" name="__codelineno-61-7" href="#__codelineno-61-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-61-8"><a id="__codelineno-61-8" name="__codelineno-61-8" href="#__codelineno-61-8"></a>
+</span><span id="__span-61-9"><a id="__codelineno-61-9" name="__codelineno-61-9" href="#__codelineno-61-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">Nutritionist</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-61-10"><a id="__codelineno-61-10" name="__codelineno-61-10" href="#__codelineno-61-10"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist in nutrition, diet planning, and healthy eating habits.</span>
+</span><span id="__span-61-11"><a id="__codelineno-61-11" name="__codelineno-61-11" href="#__codelineno-61-11"></a><span class="sd">    Consult for meal plans, dietary recommendations, and nutritional advice.&quot;&quot;&quot;</span>
+</span><span id="__span-61-12"><a id="__codelineno-61-12" name="__codelineno-61-12" href="#__codelineno-61-12"></a>
+</span><span id="__span-61-13"><a id="__codelineno-61-13" name="__codelineno-61-13" href="#__codelineno-61-13"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-61-14"><a id="__codelineno-61-14" name="__codelineno-61-14" href="#__codelineno-61-14"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a certified nutritionist.&quot;</span>
+</span><span id="__span-61-15"><a id="__codelineno-61-15" name="__codelineno-61-15" href="#__codelineno-61-15"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;Create clear and practical meal plans tailored to the user&#39;s goals.</span>
+</span><span id="__span-61-16"><a id="__codelineno-61-16" name="__codelineno-61-16" href="#__codelineno-61-16"></a><span class="s2">    Be objective, technical, and structured.&quot;&quot;&quot;</span>
+</span><span id="__span-61-17"><a id="__codelineno-61-17" name="__codelineno-61-17" href="#__codelineno-61-17"></a>
+</span><span id="__span-61-18"><a id="__codelineno-61-18" name="__codelineno-61-18" href="#__codelineno-61-18"></a><span class="k">class</span><span class="w"> </span><span class="nc">FitnessTrainer</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-61-19"><a id="__codelineno-61-19" name="__codelineno-61-19" href="#__codelineno-61-19"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist in fitness, exercise routines, and physical training.</span>
+</span><span id="__span-61-20"><a id="__codelineno-61-20" name="__codelineno-61-20" href="#__codelineno-61-20"></a><span class="sd">    Consult for workout plans, training schedules, and exercise guidance.&quot;&quot;&quot;</span>
+</span><span id="__span-61-21"><a id="__codelineno-61-21" name="__codelineno-61-21" href="#__codelineno-61-21"></a>
+</span><span id="__span-61-22"><a id="__codelineno-61-22" name="__codelineno-61-22" href="#__codelineno-61-22"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-61-23"><a id="__codelineno-61-23" name="__codelineno-61-23" href="#__codelineno-61-23"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a certified personal trainer.&quot;</span>
+</span><span id="__span-61-24"><a id="__codelineno-61-24" name="__codelineno-61-24" href="#__codelineno-61-24"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;Design workout routines based on the user&#39;s fitness level and goals.</span>
+</span><span id="__span-61-25"><a id="__codelineno-61-25" name="__codelineno-61-25" href="#__codelineno-61-25"></a><span class="s2">    Focus on safety, progression, and sustainability.&quot;&quot;&quot;</span>
+</span><span id="__span-61-26"><a id="__codelineno-61-26" name="__codelineno-61-26" href="#__codelineno-61-26"></a>
+</span><span id="__span-61-27"><a id="__codelineno-61-27" name="__codelineno-61-27" href="#__codelineno-61-27"></a><span class="k">class</span><span class="w"> </span><span class="nc">HealthCoordinator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-61-28"><a id="__codelineno-61-28" name="__codelineno-61-28" href="#__codelineno-61-28"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Coordinates health specialists to provide comprehensive wellness advice.&quot;&quot;&quot;</span>
+</span><span id="__span-61-29"><a id="__codelineno-61-29" name="__codelineno-61-29" href="#__codelineno-61-29"></a>
+</span><span id="__span-61-30"><a id="__codelineno-61-30" name="__codelineno-61-30" href="#__codelineno-61-30"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-61-31"><a id="__codelineno-61-31" name="__codelineno-61-31" href="#__codelineno-61-31"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You coordinate a team of health specialists.&quot;</span>
+</span><span id="__span-61-32"><a id="__codelineno-61-32" name="__codelineno-61-32" href="#__codelineno-61-32"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;Delegate user requests to the appropriate specialist.&quot;</span>
+</span><span id="__span-61-33"><a id="__codelineno-61-33" name="__codelineno-61-33" href="#__codelineno-61-33"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">Nutritionist</span><span class="p">,</span> <span class="n">FitnessTrainer</span><span class="p">]</span>
+</span><span id="__span-61-34"><a id="__codelineno-61-34" name="__codelineno-61-34" href="#__codelineno-61-34"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-61-35"><a id="__codelineno-61-35" name="__codelineno-61-35" href="#__codelineno-61-35"></a>
+</span><span id="__span-61-36"><a id="__codelineno-61-36" name="__codelineno-61-36" href="#__codelineno-61-36"></a><span class="n">coordinator</span> <span class="o">=</span> <span class="n">HealthCoordinator</span><span class="p">()</span>
+</span><span id="__span-61-37"><a id="__codelineno-61-37" name="__codelineno-61-37" href="#__codelineno-61-37"></a>
+</span><span id="__span-61-38"><a id="__codelineno-61-38" name="__codelineno-61-38" href="#__codelineno-61-38"></a><span class="n">response</span> <span class="o">=</span> <span class="n">coordinator</span><span class="p">(</span><span class="s2">&quot;I want to lose 10kg and build muscle&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <p>Multiple research specialists with a coordinator:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-58-1"><a id="__codelineno-58-1" name="__codelineno-58-1" href="#__codelineno-58-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-58-2"><a id="__codelineno-58-2" name="__codelineno-58-2" href="#__codelineno-58-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-58-3"><a id="__codelineno-58-3" name="__codelineno-58-3" href="#__codelineno-58-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-58-4"><a id="__codelineno-58-4" name="__codelineno-58-4" href="#__codelineno-58-4"></a>
-</span><span id="__span-58-5"><a id="__codelineno-58-5" name="__codelineno-58-5" href="#__codelineno-58-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-58-6"><a id="__codelineno-58-6" name="__codelineno-58-6" href="#__codelineno-58-6"></a>
-</span><span id="__span-58-7"><a id="__codelineno-58-7" name="__codelineno-58-7" href="#__codelineno-58-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-58-8"><a id="__codelineno-58-8" name="__codelineno-58-8" href="#__codelineno-58-8"></a>
-</span><span id="__span-58-9"><a id="__codelineno-58-9" name="__codelineno-58-9" href="#__codelineno-58-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">AcademicResearcher</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-58-10"><a id="__codelineno-58-10" name="__codelineno-58-10" href="#__codelineno-58-10"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in academic research with peer-reviewed sources.</span>
-</span><span id="__span-58-11"><a id="__codelineno-58-11" name="__codelineno-58-11" href="#__codelineno-58-11"></a><span class="sd">    Use for scholarly inquiries and scientific topics.&quot;&quot;&quot;</span>
-</span><span id="__span-58-12"><a id="__codelineno-58-12" name="__codelineno-58-12" href="#__codelineno-58-12"></a>
-</span><span id="__span-58-13"><a id="__codelineno-58-13" name="__codelineno-58-13" href="#__codelineno-58-13"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-58-14"><a id="__codelineno-58-14" name="__codelineno-58-14" href="#__codelineno-58-14"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are an academic researcher.&quot;</span>
-</span><span id="__span-58-15"><a id="__codelineno-58-15" name="__codelineno-58-15" href="#__codelineno-58-15"></a>    <span class="n">expected_output</span> <span class="o">=</span> <span class="s2">&quot;Provide academic-level analysis with citations.&quot;</span>
-</span><span id="__span-58-16"><a id="__codelineno-58-16" name="__codelineno-58-16" href="#__codelineno-58-16"></a>
-</span><span id="__span-58-17"><a id="__codelineno-58-17" name="__codelineno-58-17" href="#__codelineno-58-17"></a><span class="k">class</span><span class="w"> </span><span class="nc">MarketResearcher</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-58-18"><a id="__codelineno-58-18" name="__codelineno-58-18" href="#__codelineno-58-18"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in market research and competitive analysis.</span>
-</span><span id="__span-58-19"><a id="__codelineno-58-19" name="__codelineno-58-19" href="#__codelineno-58-19"></a><span class="sd">    Use for business intelligence and market sizing.&quot;&quot;&quot;</span>
-</span><span id="__span-58-20"><a id="__codelineno-58-20" name="__codelineno-58-20" href="#__codelineno-58-20"></a>
-</span><span id="__span-58-21"><a id="__codelineno-58-21" name="__codelineno-58-21" href="#__codelineno-58-21"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-58-22"><a id="__codelineno-58-22" name="__codelineno-58-22" href="#__codelineno-58-22"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a market research analyst.&quot;</span>
-</span><span id="__span-58-23"><a id="__codelineno-58-23" name="__codelineno-58-23" href="#__codelineno-58-23"></a>    <span class="n">expected_output</span> <span class="o">=</span> <span class="s2">&quot;Provide actionable business insights.&quot;</span>
-</span><span id="__span-58-24"><a id="__codelineno-58-24" name="__codelineno-58-24" href="#__codelineno-58-24"></a>
-</span><span id="__span-58-25"><a id="__codelineno-58-25" name="__codelineno-58-25" href="#__codelineno-58-25"></a><span class="k">class</span><span class="w"> </span><span class="nc">TechnicalResearcher</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-58-26"><a id="__codelineno-58-26" name="__codelineno-58-26" href="#__codelineno-58-26"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in technical documentation and APIs.</span>
-</span><span id="__span-58-27"><a id="__codelineno-58-27" name="__codelineno-58-27" href="#__codelineno-58-27"></a><span class="sd">    Use for programming questions and library comparisons.&quot;&quot;&quot;</span>
-</span><span id="__span-58-28"><a id="__codelineno-58-28" name="__codelineno-58-28" href="#__codelineno-58-28"></a>
-</span><span id="__span-58-29"><a id="__codelineno-58-29" name="__codelineno-58-29" href="#__codelineno-58-29"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-58-30"><a id="__codelineno-58-30" name="__codelineno-58-30" href="#__codelineno-58-30"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a technical researcher.&quot;</span>
-</span><span id="__span-58-31"><a id="__codelineno-58-31" name="__codelineno-58-31" href="#__codelineno-58-31"></a>    <span class="n">expected_output</span> <span class="o">=</span> <span class="s2">&quot;Provide technical details with code examples.&quot;</span>
-</span><span id="__span-58-32"><a id="__codelineno-58-32" name="__codelineno-58-32" href="#__codelineno-58-32"></a>
-</span><span id="__span-58-33"><a id="__codelineno-58-33" name="__codelineno-58-33" href="#__codelineno-58-33"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResearchCoordinator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-58-34"><a id="__codelineno-58-34" name="__codelineno-58-34" href="#__codelineno-58-34"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-58-35"><a id="__codelineno-58-35" name="__codelineno-58-35" href="#__codelineno-58-35"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You coordinate research specialists.&quot;</span>
-</span><span id="__span-58-36"><a id="__codelineno-58-36" name="__codelineno-58-36" href="#__codelineno-58-36"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;Delegate to the appropriate researcher based on the query type.&quot;</span>
-</span><span id="__span-58-37"><a id="__codelineno-58-37" name="__codelineno-58-37" href="#__codelineno-58-37"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span>
-</span><span id="__span-58-38"><a id="__codelineno-58-38" name="__codelineno-58-38" href="#__codelineno-58-38"></a>        <span class="n">AcademicResearcher</span><span class="p">,</span>
-</span><span id="__span-58-39"><a id="__codelineno-58-39" name="__codelineno-58-39" href="#__codelineno-58-39"></a>        <span class="n">MarketResearcher</span><span class="p">,</span>
-</span><span id="__span-58-40"><a id="__codelineno-58-40" name="__codelineno-58-40" href="#__codelineno-58-40"></a>        <span class="n">TechnicalResearcher</span>
-</span><span id="__span-58-41"><a id="__codelineno-58-41" name="__codelineno-58-41" href="#__codelineno-58-41"></a>    <span class="p">]</span>
-</span><span id="__span-58-42"><a id="__codelineno-58-42" name="__codelineno-58-42" href="#__codelineno-58-42"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-58-43"><a id="__codelineno-58-43" name="__codelineno-58-43" href="#__codelineno-58-43"></a>
-</span><span id="__span-58-44"><a id="__codelineno-58-44" name="__codelineno-58-44" href="#__codelineno-58-44"></a><span class="n">coordinator</span> <span class="o">=</span> <span class="n">ResearchCoordinator</span><span class="p">()</span>
-</span><span id="__span-58-45"><a id="__codelineno-58-45" name="__codelineno-58-45" href="#__codelineno-58-45"></a>
-</span><span id="__span-58-46"><a id="__codelineno-58-46" name="__codelineno-58-46" href="#__codelineno-58-46"></a><span class="n">response</span> <span class="o">=</span> <span class="n">coordinator</span><span class="p">(</span><span class="s2">&quot;Compare FastAPI vs Flask for building REST APIs&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-62-1"><a id="__codelineno-62-1" name="__codelineno-62-1" href="#__codelineno-62-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-62-2"><a id="__codelineno-62-2" name="__codelineno-62-2" href="#__codelineno-62-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-62-3"><a id="__codelineno-62-3" name="__codelineno-62-3" href="#__codelineno-62-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-62-4"><a id="__codelineno-62-4" name="__codelineno-62-4" href="#__codelineno-62-4"></a>
+</span><span id="__span-62-5"><a id="__codelineno-62-5" name="__codelineno-62-5" href="#__codelineno-62-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-62-6"><a id="__codelineno-62-6" name="__codelineno-62-6" href="#__codelineno-62-6"></a>
+</span><span id="__span-62-7"><a id="__codelineno-62-7" name="__codelineno-62-7" href="#__codelineno-62-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-62-8"><a id="__codelineno-62-8" name="__codelineno-62-8" href="#__codelineno-62-8"></a>
+</span><span id="__span-62-9"><a id="__codelineno-62-9" name="__codelineno-62-9" href="#__codelineno-62-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">AcademicResearcher</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-62-10"><a id="__codelineno-62-10" name="__codelineno-62-10" href="#__codelineno-62-10"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in academic research with peer-reviewed sources.</span>
+</span><span id="__span-62-11"><a id="__codelineno-62-11" name="__codelineno-62-11" href="#__codelineno-62-11"></a><span class="sd">    Use for scholarly inquiries and scientific topics.&quot;&quot;&quot;</span>
+</span><span id="__span-62-12"><a id="__codelineno-62-12" name="__codelineno-62-12" href="#__codelineno-62-12"></a>
+</span><span id="__span-62-13"><a id="__codelineno-62-13" name="__codelineno-62-13" href="#__codelineno-62-13"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-62-14"><a id="__codelineno-62-14" name="__codelineno-62-14" href="#__codelineno-62-14"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are an academic researcher.&quot;</span>
+</span><span id="__span-62-15"><a id="__codelineno-62-15" name="__codelineno-62-15" href="#__codelineno-62-15"></a>    <span class="n">expected_output</span> <span class="o">=</span> <span class="s2">&quot;Provide academic-level analysis with citations.&quot;</span>
+</span><span id="__span-62-16"><a id="__codelineno-62-16" name="__codelineno-62-16" href="#__codelineno-62-16"></a>
+</span><span id="__span-62-17"><a id="__codelineno-62-17" name="__codelineno-62-17" href="#__codelineno-62-17"></a><span class="k">class</span><span class="w"> </span><span class="nc">MarketResearcher</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-62-18"><a id="__codelineno-62-18" name="__codelineno-62-18" href="#__codelineno-62-18"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in market research and competitive analysis.</span>
+</span><span id="__span-62-19"><a id="__codelineno-62-19" name="__codelineno-62-19" href="#__codelineno-62-19"></a><span class="sd">    Use for business intelligence and market sizing.&quot;&quot;&quot;</span>
+</span><span id="__span-62-20"><a id="__codelineno-62-20" name="__codelineno-62-20" href="#__codelineno-62-20"></a>
+</span><span id="__span-62-21"><a id="__codelineno-62-21" name="__codelineno-62-21" href="#__codelineno-62-21"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-62-22"><a id="__codelineno-62-22" name="__codelineno-62-22" href="#__codelineno-62-22"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a market research analyst.&quot;</span>
+</span><span id="__span-62-23"><a id="__codelineno-62-23" name="__codelineno-62-23" href="#__codelineno-62-23"></a>    <span class="n">expected_output</span> <span class="o">=</span> <span class="s2">&quot;Provide actionable business insights.&quot;</span>
+</span><span id="__span-62-24"><a id="__codelineno-62-24" name="__codelineno-62-24" href="#__codelineno-62-24"></a>
+</span><span id="__span-62-25"><a id="__codelineno-62-25" name="__codelineno-62-25" href="#__codelineno-62-25"></a><span class="k">class</span><span class="w"> </span><span class="nc">TechnicalResearcher</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-62-26"><a id="__codelineno-62-26" name="__codelineno-62-26" href="#__codelineno-62-26"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in technical documentation and APIs.</span>
+</span><span id="__span-62-27"><a id="__codelineno-62-27" name="__codelineno-62-27" href="#__codelineno-62-27"></a><span class="sd">    Use for programming questions and library comparisons.&quot;&quot;&quot;</span>
+</span><span id="__span-62-28"><a id="__codelineno-62-28" name="__codelineno-62-28" href="#__codelineno-62-28"></a>
+</span><span id="__span-62-29"><a id="__codelineno-62-29" name="__codelineno-62-29" href="#__codelineno-62-29"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-62-30"><a id="__codelineno-62-30" name="__codelineno-62-30" href="#__codelineno-62-30"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a technical researcher.&quot;</span>
+</span><span id="__span-62-31"><a id="__codelineno-62-31" name="__codelineno-62-31" href="#__codelineno-62-31"></a>    <span class="n">expected_output</span> <span class="o">=</span> <span class="s2">&quot;Provide technical details with code examples.&quot;</span>
+</span><span id="__span-62-32"><a id="__codelineno-62-32" name="__codelineno-62-32" href="#__codelineno-62-32"></a>
+</span><span id="__span-62-33"><a id="__codelineno-62-33" name="__codelineno-62-33" href="#__codelineno-62-33"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResearchCoordinator</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-62-34"><a id="__codelineno-62-34" name="__codelineno-62-34" href="#__codelineno-62-34"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-62-35"><a id="__codelineno-62-35" name="__codelineno-62-35" href="#__codelineno-62-35"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You coordinate research specialists.&quot;</span>
+</span><span id="__span-62-36"><a id="__codelineno-62-36" name="__codelineno-62-36" href="#__codelineno-62-36"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;Delegate to the appropriate researcher based on the query type.&quot;</span>
+</span><span id="__span-62-37"><a id="__codelineno-62-37" name="__codelineno-62-37" href="#__codelineno-62-37"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-62-38"><a id="__codelineno-62-38" name="__codelineno-62-38" href="#__codelineno-62-38"></a>        <span class="n">AcademicResearcher</span><span class="p">,</span>
+</span><span id="__span-62-39"><a id="__codelineno-62-39" name="__codelineno-62-39" href="#__codelineno-62-39"></a>        <span class="n">MarketResearcher</span><span class="p">,</span>
+</span><span id="__span-62-40"><a id="__codelineno-62-40" name="__codelineno-62-40" href="#__codelineno-62-40"></a>        <span class="n">TechnicalResearcher</span>
+</span><span id="__span-62-41"><a id="__codelineno-62-41" name="__codelineno-62-41" href="#__codelineno-62-41"></a>    <span class="p">]</span>
+</span><span id="__span-62-42"><a id="__codelineno-62-42" name="__codelineno-62-42" href="#__codelineno-62-42"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-62-43"><a id="__codelineno-62-43" name="__codelineno-62-43" href="#__codelineno-62-43"></a>
+</span><span id="__span-62-44"><a id="__codelineno-62-44" name="__codelineno-62-44" href="#__codelineno-62-44"></a><span class="n">coordinator</span> <span class="o">=</span> <span class="n">ResearchCoordinator</span><span class="p">()</span>
+</span><span id="__span-62-45"><a id="__codelineno-62-45" name="__codelineno-62-45" href="#__codelineno-62-45"></a>
+</span><span id="__span-62-46"><a id="__codelineno-62-46" name="__codelineno-62-46" href="#__codelineno-62-46"></a><span class="n">response</span> <span class="o">=</span> <span class="n">coordinator</span><span class="p">(</span><span class="s2">&quot;Compare FastAPI vs Flask for building REST APIs&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <p>Route requests directly to specialists using <code>return_direct</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-59-1"><a id="__codelineno-59-1" name="__codelineno-59-1" href="#__codelineno-59-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-59-2"><a id="__codelineno-59-2" name="__codelineno-59-2" href="#__codelineno-59-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-59-3"><a id="__codelineno-59-3" name="__codelineno-59-3" href="#__codelineno-59-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-59-4"><a id="__codelineno-59-4" name="__codelineno-59-4" href="#__codelineno-59-4"></a>
-</span><span id="__span-59-5"><a id="__codelineno-59-5" name="__codelineno-59-5" href="#__codelineno-59-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-59-6"><a id="__codelineno-59-6" name="__codelineno-59-6" href="#__codelineno-59-6"></a>
-</span><span id="__span-59-7"><a id="__codelineno-59-7" name="__codelineno-59-7" href="#__codelineno-59-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-59-8"><a id="__codelineno-59-8" name="__codelineno-59-8" href="#__codelineno-59-8"></a>
-</span><span id="__span-59-9"><a id="__codelineno-59-9" name="__codelineno-59-9" href="#__codelineno-59-9"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">return_direct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-59-10"><a id="__codelineno-59-10" name="__codelineno-59-10" href="#__codelineno-59-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">PythonExpert</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-59-11"><a id="__codelineno-59-11" name="__codelineno-59-11" href="#__codelineno-59-11"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in Python performance optimization.&quot;&quot;&quot;</span>
-</span><span id="__span-59-12"><a id="__codelineno-59-12" name="__codelineno-59-12" href="#__codelineno-59-12"></a>
-</span><span id="__span-59-13"><a id="__codelineno-59-13" name="__codelineno-59-13" href="#__codelineno-59-13"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-59-14"><a id="__codelineno-59-14" name="__codelineno-59-14" href="#__codelineno-59-14"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You specialize in Python performance.&quot;</span>
-</span><span id="__span-59-15"><a id="__codelineno-59-15" name="__codelineno-59-15" href="#__codelineno-59-15"></a>
-</span><span id="__span-59-16"><a id="__codelineno-59-16" name="__codelineno-59-16" href="#__codelineno-59-16"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">return_direct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-59-17"><a id="__codelineno-59-17" name="__codelineno-59-17" href="#__codelineno-59-17"></a><span class="k">class</span><span class="w"> </span><span class="nc">JavaScriptExpert</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-59-18"><a id="__codelineno-59-18" name="__codelineno-59-18" href="#__codelineno-59-18"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in JavaScript and Node.js.&quot;&quot;&quot;</span>
-</span><span id="__span-59-19"><a id="__codelineno-59-19" name="__codelineno-59-19" href="#__codelineno-59-19"></a>
-</span><span id="__span-59-20"><a id="__codelineno-59-20" name="__codelineno-59-20" href="#__codelineno-59-20"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-59-21"><a id="__codelineno-59-21" name="__codelineno-59-21" href="#__codelineno-59-21"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You specialize in JavaScript.&quot;</span>
-</span><span id="__span-59-22"><a id="__codelineno-59-22" name="__codelineno-59-22" href="#__codelineno-59-22"></a>
-</span><span id="__span-59-23"><a id="__codelineno-59-23" name="__codelineno-59-23" href="#__codelineno-59-23"></a><span class="k">class</span><span class="w"> </span><span class="nc">Router</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-59-24"><a id="__codelineno-59-24" name="__codelineno-59-24" href="#__codelineno-59-24"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-59-25"><a id="__codelineno-59-25" name="__codelineno-59-25" href="#__codelineno-59-25"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;Route programming questions to the right expert.&quot;</span>
-</span><span id="__span-59-26"><a id="__codelineno-59-26" name="__codelineno-59-26" href="#__codelineno-59-26"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">PythonExpert</span><span class="p">,</span> <span class="n">JavaScriptExpert</span><span class="p">]</span>
-</span><span id="__span-59-27"><a id="__codelineno-59-27" name="__codelineno-59-27" href="#__codelineno-59-27"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-59-28"><a id="__codelineno-59-28" name="__codelineno-59-28" href="#__codelineno-59-28"></a>
-</span><span id="__span-59-29"><a id="__codelineno-59-29" name="__codelineno-59-29" href="#__codelineno-59-29"></a><span class="n">router</span> <span class="o">=</span> <span class="n">Router</span><span class="p">()</span>
-</span><span id="__span-59-30"><a id="__codelineno-59-30" name="__codelineno-59-30" href="#__codelineno-59-30"></a>
-</span><span id="__span-59-31"><a id="__codelineno-59-31" name="__codelineno-59-31" href="#__codelineno-59-31"></a><span class="c1"># Response comes directly from the specialist</span>
-</span><span id="__span-59-32"><a id="__codelineno-59-32" name="__codelineno-59-32" href="#__codelineno-59-32"></a><span class="n">response</span> <span class="o">=</span> <span class="n">router</span><span class="p">(</span><span class="s2">&quot;How do I optimize a Python loop?&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-63-1"><a id="__codelineno-63-1" name="__codelineno-63-1" href="#__codelineno-63-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-63-2"><a id="__codelineno-63-2" name="__codelineno-63-2" href="#__codelineno-63-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-63-3"><a id="__codelineno-63-3" name="__codelineno-63-3" href="#__codelineno-63-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-63-4"><a id="__codelineno-63-4" name="__codelineno-63-4" href="#__codelineno-63-4"></a>
+</span><span id="__span-63-5"><a id="__codelineno-63-5" name="__codelineno-63-5" href="#__codelineno-63-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-63-6"><a id="__codelineno-63-6" name="__codelineno-63-6" href="#__codelineno-63-6"></a>
+</span><span id="__span-63-7"><a id="__codelineno-63-7" name="__codelineno-63-7" href="#__codelineno-63-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-63-8"><a id="__codelineno-63-8" name="__codelineno-63-8" href="#__codelineno-63-8"></a>
+</span><span id="__span-63-9"><a id="__codelineno-63-9" name="__codelineno-63-9" href="#__codelineno-63-9"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">return_direct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-63-10"><a id="__codelineno-63-10" name="__codelineno-63-10" href="#__codelineno-63-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">PythonExpert</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-63-11"><a id="__codelineno-63-11" name="__codelineno-63-11" href="#__codelineno-63-11"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in Python performance optimization.&quot;&quot;&quot;</span>
+</span><span id="__span-63-12"><a id="__codelineno-63-12" name="__codelineno-63-12" href="#__codelineno-63-12"></a>
+</span><span id="__span-63-13"><a id="__codelineno-63-13" name="__codelineno-63-13" href="#__codelineno-63-13"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-63-14"><a id="__codelineno-63-14" name="__codelineno-63-14" href="#__codelineno-63-14"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You specialize in Python performance.&quot;</span>
+</span><span id="__span-63-15"><a id="__codelineno-63-15" name="__codelineno-63-15" href="#__codelineno-63-15"></a>
+</span><span id="__span-63-16"><a id="__codelineno-63-16" name="__codelineno-63-16" href="#__codelineno-63-16"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">return_direct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-63-17"><a id="__codelineno-63-17" name="__codelineno-63-17" href="#__codelineno-63-17"></a><span class="k">class</span><span class="w"> </span><span class="nc">JavaScriptExpert</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-63-18"><a id="__codelineno-63-18" name="__codelineno-63-18" href="#__codelineno-63-18"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expert in JavaScript and Node.js.&quot;&quot;&quot;</span>
+</span><span id="__span-63-19"><a id="__codelineno-63-19" name="__codelineno-63-19" href="#__codelineno-63-19"></a>
+</span><span id="__span-63-20"><a id="__codelineno-63-20" name="__codelineno-63-20" href="#__codelineno-63-20"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-63-21"><a id="__codelineno-63-21" name="__codelineno-63-21" href="#__codelineno-63-21"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You specialize in JavaScript.&quot;</span>
+</span><span id="__span-63-22"><a id="__codelineno-63-22" name="__codelineno-63-22" href="#__codelineno-63-22"></a>
+</span><span id="__span-63-23"><a id="__codelineno-63-23" name="__codelineno-63-23" href="#__codelineno-63-23"></a><span class="k">class</span><span class="w"> </span><span class="nc">Router</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-63-24"><a id="__codelineno-63-24" name="__codelineno-63-24" href="#__codelineno-63-24"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-63-25"><a id="__codelineno-63-25" name="__codelineno-63-25" href="#__codelineno-63-25"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;Route programming questions to the right expert.&quot;</span>
+</span><span id="__span-63-26"><a id="__codelineno-63-26" name="__codelineno-63-26" href="#__codelineno-63-26"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">PythonExpert</span><span class="p">,</span> <span class="n">JavaScriptExpert</span><span class="p">]</span>
+</span><span id="__span-63-27"><a id="__codelineno-63-27" name="__codelineno-63-27" href="#__codelineno-63-27"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-63-28"><a id="__codelineno-63-28" name="__codelineno-63-28" href="#__codelineno-63-28"></a>
+</span><span id="__span-63-29"><a id="__codelineno-63-29" name="__codelineno-63-29" href="#__codelineno-63-29"></a><span class="n">router</span> <span class="o">=</span> <span class="n">Router</span><span class="p">()</span>
+</span><span id="__span-63-30"><a id="__codelineno-63-30" name="__codelineno-63-30" href="#__codelineno-63-30"></a>
+</span><span id="__span-63-31"><a id="__codelineno-63-31" name="__codelineno-63-31" href="#__codelineno-63-31"></a><span class="c1"># Response comes directly from the specialist</span>
+</span><span id="__span-63-32"><a id="__codelineno-63-32" name="__codelineno-63-32" href="#__codelineno-63-32"></a><span class="n">response</span> <span class="o">=</span> <span class="n">router</span><span class="p">(</span><span class="s2">&quot;How do I optimize a Python loop?&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
 <p>Seamless conversation handoff between agents:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-60-1"><a id="__codelineno-60-1" name="__codelineno-60-1" href="#__codelineno-60-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-60-2"><a id="__codelineno-60-2" name="__codelineno-60-2" href="#__codelineno-60-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-60-3"><a id="__codelineno-60-3" name="__codelineno-60-3" href="#__codelineno-60-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-60-4"><a id="__codelineno-60-4" name="__codelineno-60-4" href="#__codelineno-60-4"></a>
-</span><span id="__span-60-5"><a id="__codelineno-60-5" name="__codelineno-60-5" href="#__codelineno-60-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-60-6"><a id="__codelineno-60-6" name="__codelineno-60-6" href="#__codelineno-60-6"></a>
-</span><span id="__span-60-7"><a id="__codelineno-60-7" name="__codelineno-60-7" href="#__codelineno-60-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-60-8"><a id="__codelineno-60-8" name="__codelineno-60-8" href="#__codelineno-60-8"></a>
-</span><span id="__span-60-9"><a id="__codelineno-60-9" name="__codelineno-60-9" href="#__codelineno-60-9"></a><span class="c1"># Enable handoff - transfers conversation history</span>
-</span><span id="__span-60-10"><a id="__codelineno-60-10" name="__codelineno-60-10" href="#__codelineno-60-10"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">handoff</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-60-11"><a id="__codelineno-60-11" name="__codelineno-60-11" href="#__codelineno-60-11"></a><span class="k">class</span><span class="w"> </span><span class="nc">StartupSpecialist</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-60-12"><a id="__codelineno-60-12" name="__codelineno-60-12" href="#__codelineno-60-12"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist in scaling digital startups.</span>
-</span><span id="__span-60-13"><a id="__codelineno-60-13" name="__codelineno-60-13" href="#__codelineno-60-13"></a><span class="sd">    Use for growth strategies, metrics, and funding.&quot;&quot;&quot;</span>
-</span><span id="__span-60-14"><a id="__codelineno-60-14" name="__codelineno-60-14" href="#__codelineno-60-14"></a>
-</span><span id="__span-60-15"><a id="__codelineno-60-15" name="__codelineno-60-15" href="#__codelineno-60-15"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-60-16"><a id="__codelineno-60-16" name="__codelineno-60-16" href="#__codelineno-60-16"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a startup scaling expert.&quot;</span>
-</span><span id="__span-60-17"><a id="__codelineno-60-17" name="__codelineno-60-17" href="#__codelineno-60-17"></a>
-</span><span id="__span-60-18"><a id="__codelineno-60-18" name="__codelineno-60-18" href="#__codelineno-60-18"></a><span class="k">class</span><span class="w"> </span><span class="nc">BusinessConsultant</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-60-19"><a id="__codelineno-60-19" name="__codelineno-60-19" href="#__codelineno-60-19"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
-</span><span id="__span-60-20"><a id="__codelineno-60-20" name="__codelineno-60-20" href="#__codelineno-60-20"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;You are a business consultant.</span>
-</span><span id="__span-60-21"><a id="__codelineno-60-21" name="__codelineno-60-21" href="#__codelineno-60-21"></a><span class="s2">    If the context is a startup, transfer to the specialist.&quot;&quot;&quot;</span>
-</span><span id="__span-60-22"><a id="__codelineno-60-22" name="__codelineno-60-22" href="#__codelineno-60-22"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">StartupSpecialist</span><span class="p">]</span>
-</span><span id="__span-60-23"><a id="__codelineno-60-23" name="__codelineno-60-23" href="#__codelineno-60-23"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-60-24"><a id="__codelineno-60-24" name="__codelineno-60-24" href="#__codelineno-60-24"></a>
-</span><span id="__span-60-25"><a id="__codelineno-60-25" name="__codelineno-60-25" href="#__codelineno-60-25"></a><span class="n">consultant</span> <span class="o">=</span> <span class="n">BusinessConsultant</span><span class="p">()</span>
-</span><span id="__span-60-26"><a id="__codelineno-60-26" name="__codelineno-60-26" href="#__codelineno-60-26"></a>
-</span><span id="__span-60-27"><a id="__codelineno-60-27" name="__codelineno-60-27" href="#__codelineno-60-27"></a><span class="c1"># Conversation is handed off to specialist</span>
-</span><span id="__span-60-28"><a id="__codelineno-60-28" name="__codelineno-60-28" href="#__codelineno-60-28"></a><span class="n">response</span> <span class="o">=</span> <span class="n">consultant</span><span class="p">(</span>
-</span><span id="__span-60-29"><a id="__codelineno-60-29" name="__codelineno-60-29" href="#__codelineno-60-29"></a>    <span class="s2">&quot;My SaaS has a CAC of $120 and LTV of $600. How do I scale?&quot;</span>
-</span><span id="__span-60-30"><a id="__codelineno-60-30" name="__codelineno-60-30" href="#__codelineno-60-30"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-64-1"><a id="__codelineno-64-1" name="__codelineno-64-1" href="#__codelineno-64-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-64-2"><a id="__codelineno-64-2" name="__codelineno-64-2" href="#__codelineno-64-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-64-3"><a id="__codelineno-64-3" name="__codelineno-64-3" href="#__codelineno-64-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-64-4"><a id="__codelineno-64-4" name="__codelineno-64-4" href="#__codelineno-64-4"></a>
+</span><span id="__span-64-5"><a id="__codelineno-64-5" name="__codelineno-64-5" href="#__codelineno-64-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-64-6"><a id="__codelineno-64-6" name="__codelineno-64-6" href="#__codelineno-64-6"></a>
+</span><span id="__span-64-7"><a id="__codelineno-64-7" name="__codelineno-64-7" href="#__codelineno-64-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-64-8"><a id="__codelineno-64-8" name="__codelineno-64-8" href="#__codelineno-64-8"></a>
+</span><span id="__span-64-9"><a id="__codelineno-64-9" name="__codelineno-64-9" href="#__codelineno-64-9"></a><span class="c1"># Enable handoff - transfers conversation history</span>
+</span><span id="__span-64-10"><a id="__codelineno-64-10" name="__codelineno-64-10" href="#__codelineno-64-10"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">handoff</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-64-11"><a id="__codelineno-64-11" name="__codelineno-64-11" href="#__codelineno-64-11"></a><span class="k">class</span><span class="w"> </span><span class="nc">StartupSpecialist</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-64-12"><a id="__codelineno-64-12" name="__codelineno-64-12" href="#__codelineno-64-12"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Specialist in scaling digital startups.</span>
+</span><span id="__span-64-13"><a id="__codelineno-64-13" name="__codelineno-64-13" href="#__codelineno-64-13"></a><span class="sd">    Use for growth strategies, metrics, and funding.&quot;&quot;&quot;</span>
+</span><span id="__span-64-14"><a id="__codelineno-64-14" name="__codelineno-64-14" href="#__codelineno-64-14"></a>
+</span><span id="__span-64-15"><a id="__codelineno-64-15" name="__codelineno-64-15" href="#__codelineno-64-15"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-64-16"><a id="__codelineno-64-16" name="__codelineno-64-16" href="#__codelineno-64-16"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;You are a startup scaling expert.&quot;</span>
+</span><span id="__span-64-17"><a id="__codelineno-64-17" name="__codelineno-64-17" href="#__codelineno-64-17"></a>
+</span><span id="__span-64-18"><a id="__codelineno-64-18" name="__codelineno-64-18" href="#__codelineno-64-18"></a><span class="k">class</span><span class="w"> </span><span class="nc">BusinessConsultant</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-64-19"><a id="__codelineno-64-19" name="__codelineno-64-19" href="#__codelineno-64-19"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+</span><span id="__span-64-20"><a id="__codelineno-64-20" name="__codelineno-64-20" href="#__codelineno-64-20"></a>    <span class="n">system_message</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;You are a business consultant.</span>
+</span><span id="__span-64-21"><a id="__codelineno-64-21" name="__codelineno-64-21" href="#__codelineno-64-21"></a><span class="s2">    If the context is a startup, transfer to the specialist.&quot;&quot;&quot;</span>
+</span><span id="__span-64-22"><a id="__codelineno-64-22" name="__codelineno-64-22" href="#__codelineno-64-22"></a>    <span class="n">tools</span> <span class="o">=</span> <span class="p">[</span><span class="n">StartupSpecialist</span><span class="p">]</span>
+</span><span id="__span-64-23"><a id="__codelineno-64-23" name="__codelineno-64-23" href="#__codelineno-64-23"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-64-24"><a id="__codelineno-64-24" name="__codelineno-64-24" href="#__codelineno-64-24"></a>
+</span><span id="__span-64-25"><a id="__codelineno-64-25" name="__codelineno-64-25" href="#__codelineno-64-25"></a><span class="n">consultant</span> <span class="o">=</span> <span class="n">BusinessConsultant</span><span class="p">()</span>
+</span><span id="__span-64-26"><a id="__codelineno-64-26" name="__codelineno-64-26" href="#__codelineno-64-26"></a>
+</span><span id="__span-64-27"><a id="__codelineno-64-27" name="__codelineno-64-27" href="#__codelineno-64-27"></a><span class="c1"># Conversation is handed off to specialist</span>
+</span><span id="__span-64-28"><a id="__codelineno-64-28" name="__codelineno-64-28" href="#__codelineno-64-28"></a><span class="n">response</span> <span class="o">=</span> <span class="n">consultant</span><span class="p">(</span>
+</span><span id="__span-64-29"><a id="__codelineno-64-29" name="__codelineno-64-29" href="#__codelineno-64-29"></a>    <span class="s2">&quot;My SaaS has a CAC of $120 and LTV of $600. How do I scale?&quot;</span>
+</span><span id="__span-64-30"><a id="__codelineno-64-30" name="__codelineno-64-30" href="#__codelineno-64-30"></a><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -9005,121 +9192,121 @@ to a specialist agent.</p>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <p>Connect to an MCP server via standard I/O:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-61-1"><a id="__codelineno-61-1" name="__codelineno-61-1" href="#__codelineno-61-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-61-2"><a id="__codelineno-61-2" name="__codelineno-61-2" href="#__codelineno-61-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-61-3"><a id="__codelineno-61-3" name="__codelineno-61-3" href="#__codelineno-61-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-61-4"><a id="__codelineno-61-4" name="__codelineno-61-4" href="#__codelineno-61-4"></a>
-</span><span id="__span-61-5"><a id="__codelineno-61-5" name="__codelineno-61-5" href="#__codelineno-61-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-61-6"><a id="__codelineno-61-6" name="__codelineno-61-6" href="#__codelineno-61-6"></a>
-</span><span id="__span-61-7"><a id="__codelineno-61-7" name="__codelineno-61-7" href="#__codelineno-61-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">FileAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-61-8"><a id="__codelineno-61-8" name="__codelineno-61-8" href="#__codelineno-61-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-61-9"><a id="__codelineno-61-9" name="__codelineno-61-9" href="#__codelineno-61-9"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
-</span><span id="__span-61-10"><a id="__codelineno-61-10" name="__codelineno-61-10" href="#__codelineno-61-10"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;filesystem&quot;</span><span class="p">,</span>
-</span><span id="__span-61-11"><a id="__codelineno-61-11" name="__codelineno-61-11" href="#__codelineno-61-11"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
-</span><span id="__span-61-12"><a id="__codelineno-61-12" name="__codelineno-61-12" href="#__codelineno-61-12"></a>        <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;npx&quot;</span><span class="p">,</span>
-</span><span id="__span-61-13"><a id="__codelineno-61-13" name="__codelineno-61-13" href="#__codelineno-61-13"></a>        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;-y&quot;</span><span class="p">,</span> <span class="s2">&quot;@modelcontextprotocol/server-filesystem&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp&quot;</span><span class="p">],</span>
-</span><span id="__span-61-14"><a id="__codelineno-61-14" name="__codelineno-61-14" href="#__codelineno-61-14"></a>    <span class="p">}]</span>
-</span><span id="__span-61-15"><a id="__codelineno-61-15" name="__codelineno-61-15" href="#__codelineno-61-15"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-61-16"><a id="__codelineno-61-16" name="__codelineno-61-16" href="#__codelineno-61-16"></a>
-</span><span id="__span-61-17"><a id="__codelineno-61-17" name="__codelineno-61-17" href="#__codelineno-61-17"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">FileAgent</span><span class="p">()</span>
-</span><span id="__span-61-18"><a id="__codelineno-61-18" name="__codelineno-61-18" href="#__codelineno-61-18"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="s2">&quot;List all files in the current directory&quot;</span><span class="p">)</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
-<p>Connect to an MCP server via HTTP:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-62-1"><a id="__codelineno-62-1" name="__codelineno-62-1" href="#__codelineno-62-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-62-2"><a id="__codelineno-62-2" name="__codelineno-62-2" href="#__codelineno-62-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-62-3"><a id="__codelineno-62-3" name="__codelineno-62-3" href="#__codelineno-62-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-62-4"><a id="__codelineno-62-4" name="__codelineno-62-4" href="#__codelineno-62-4"></a>
-</span><span id="__span-62-5"><a id="__codelineno-62-5" name="__codelineno-62-5" href="#__codelineno-62-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-62-6"><a id="__codelineno-62-6" name="__codelineno-62-6" href="#__codelineno-62-6"></a>
-</span><span id="__span-62-7"><a id="__codelineno-62-7" name="__codelineno-62-7" href="#__codelineno-62-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">APIAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-62-8"><a id="__codelineno-62-8" name="__codelineno-62-8" href="#__codelineno-62-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-62-9"><a id="__codelineno-62-9" name="__codelineno-62-9" href="#__codelineno-62-9"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
-</span><span id="__span-62-10"><a id="__codelineno-62-10" name="__codelineno-62-10" href="#__codelineno-62-10"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;api&quot;</span><span class="p">,</span>
-</span><span id="__span-62-11"><a id="__codelineno-62-11" name="__codelineno-62-11" href="#__codelineno-62-11"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;http&quot;</span><span class="p">,</span>
-</span><span id="__span-62-12"><a id="__codelineno-62-12" name="__codelineno-62-12" href="#__codelineno-62-12"></a>        <span class="s2">&quot;base_url&quot;</span><span class="p">:</span> <span class="s2">&quot;http://localhost:8000&quot;</span><span class="p">,</span>
-</span><span id="__span-62-13"><a id="__codelineno-62-13" name="__codelineno-62-13" href="#__codelineno-62-13"></a>        <span class="s2">&quot;headers&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;Authorization&quot;</span><span class="p">:</span> <span class="s2">&quot;Bearer token&quot;</span><span class="p">}</span>
-</span><span id="__span-62-14"><a id="__codelineno-62-14" name="__codelineno-62-14" href="#__codelineno-62-14"></a>    <span class="p">}]</span>
-</span><span id="__span-62-15"><a id="__codelineno-62-15" name="__codelineno-62-15" href="#__codelineno-62-15"></a>
-</span><span id="__span-62-16"><a id="__codelineno-62-16" name="__codelineno-62-16" href="#__codelineno-62-16"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">APIAgent</span><span class="p">()</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
-<p>Apply <code>tool_config</code> options to MCP tools:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-63-1"><a id="__codelineno-63-1" name="__codelineno-63-1" href="#__codelineno-63-1"></a><span class="c1"># pip install msgflux[openai]</span>
-</span><span id="__span-63-2"><a id="__codelineno-63-2" name="__codelineno-63-2" href="#__codelineno-63-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-63-3"><a id="__codelineno-63-3" name="__codelineno-63-3" href="#__codelineno-63-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
-</span><span id="__span-63-4"><a id="__codelineno-63-4" name="__codelineno-63-4" href="#__codelineno-63-4"></a>
-</span><span id="__span-63-5"><a id="__codelineno-63-5" name="__codelineno-63-5" href="#__codelineno-63-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
-</span><span id="__span-63-6"><a id="__codelineno-63-6" name="__codelineno-63-6" href="#__codelineno-63-6"></a>
-</span><span id="__span-63-7"><a id="__codelineno-63-7" name="__codelineno-63-7" href="#__codelineno-63-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">ConfiguredAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
-</span><span id="__span-63-8"><a id="__codelineno-63-8" name="__codelineno-63-8" href="#__codelineno-63-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-63-9"><a id="__codelineno-63-9" name="__codelineno-63-9" href="#__codelineno-63-9"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
-</span><span id="__span-63-10"><a id="__codelineno-63-10" name="__codelineno-63-10" href="#__codelineno-63-10"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;filesystem&quot;</span><span class="p">,</span>
-</span><span id="__span-63-11"><a id="__codelineno-63-11" name="__codelineno-63-11" href="#__codelineno-63-11"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
-</span><span id="__span-63-12"><a id="__codelineno-63-12" name="__codelineno-63-12" href="#__codelineno-63-12"></a>        <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;npx&quot;</span><span class="p">,</span>
-</span><span id="__span-63-13"><a id="__codelineno-63-13" name="__codelineno-63-13" href="#__codelineno-63-13"></a>        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;-y&quot;</span><span class="p">,</span> <span class="s2">&quot;@modelcontextprotocol/server-filesystem&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp&quot;</span><span class="p">],</span>
-</span><span id="__span-63-14"><a id="__codelineno-63-14" name="__codelineno-63-14" href="#__codelineno-63-14"></a>        <span class="s2">&quot;include_tools&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;read_file&quot;</span><span class="p">,</span> <span class="s2">&quot;write_file&quot;</span><span class="p">],</span>
-</span><span id="__span-63-15"><a id="__codelineno-63-15" name="__codelineno-63-15" href="#__codelineno-63-15"></a>        <span class="s2">&quot;tool_config&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span id="__span-63-16"><a id="__codelineno-63-16" name="__codelineno-63-16" href="#__codelineno-63-16"></a>            <span class="s2">&quot;read_file&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;inject_vars&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
-</span><span id="__span-63-17"><a id="__codelineno-63-17" name="__codelineno-63-17" href="#__codelineno-63-17"></a>        <span class="p">}</span>
-</span><span id="__span-63-18"><a id="__codelineno-63-18" name="__codelineno-63-18" href="#__codelineno-63-18"></a>    <span class="p">}]</span>
-</span><span id="__span-63-19"><a id="__codelineno-63-19" name="__codelineno-63-19" href="#__codelineno-63-19"></a>
-</span><span id="__span-63-20"><a id="__codelineno-63-20" name="__codelineno-63-20" href="#__codelineno-63-20"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ConfiguredAgent</span><span class="p">()</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
-<p>Build a Python MCP server with <a href="https://github.com/jlowin/fastmcp">FastMCP</a> and
-connect it to an Agent — no Node.js required.</p>
-<p><strong>1. Create the server</strong> (<code>my_server.py</code>):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-64-1"><a id="__codelineno-64-1" name="__codelineno-64-1" href="#__codelineno-64-1"></a><span class="c1"># /// script</span>
-</span><span id="__span-64-2"><a id="__codelineno-64-2" name="__codelineno-64-2" href="#__codelineno-64-2"></a><span class="c1"># requires-python = &quot;&gt;=3.10&quot;</span>
-</span><span id="__span-64-3"><a id="__codelineno-64-3" name="__codelineno-64-3" href="#__codelineno-64-3"></a><span class="c1"># dependencies = [&quot;fastmcp&quot;]</span>
-</span><span id="__span-64-4"><a id="__codelineno-64-4" name="__codelineno-64-4" href="#__codelineno-64-4"></a><span class="c1"># ///</span>
-</span><span id="__span-64-5"><a id="__codelineno-64-5" name="__codelineno-64-5" href="#__codelineno-64-5"></a><span class="sd">&quot;&quot;&quot;MCP server — launch with: uv run my_server.py&quot;&quot;&quot;</span>
-</span><span id="__span-64-6"><a id="__codelineno-64-6" name="__codelineno-64-6" href="#__codelineno-64-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastmcp</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastMCP</span>
-</span><span id="__span-64-7"><a id="__codelineno-64-7" name="__codelineno-64-7" href="#__codelineno-64-7"></a>
-</span><span id="__span-64-8"><a id="__codelineno-64-8" name="__codelineno-64-8" href="#__codelineno-64-8"></a><span class="n">mcp</span> <span class="o">=</span> <span class="n">FastMCP</span><span class="p">(</span><span class="s2">&quot;my-server&quot;</span><span class="p">)</span>
-</span><span id="__span-64-9"><a id="__codelineno-64-9" name="__codelineno-64-9" href="#__codelineno-64-9"></a>
-</span><span id="__span-64-10"><a id="__codelineno-64-10" name="__codelineno-64-10" href="#__codelineno-64-10"></a><span class="nd">@mcp</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
-</span><span id="__span-64-11"><a id="__codelineno-64-11" name="__codelineno-64-11" href="#__codelineno-64-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-64-12"><a id="__codelineno-64-12" name="__codelineno-64-12" href="#__codelineno-64-12"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Add two numbers together.&quot;&quot;&quot;</span>
-</span><span id="__span-64-13"><a id="__codelineno-64-13" name="__codelineno-64-13" href="#__codelineno-64-13"></a>    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
-</span><span id="__span-64-14"><a id="__codelineno-64-14" name="__codelineno-64-14" href="#__codelineno-64-14"></a>
-</span><span id="__span-64-15"><a id="__codelineno-64-15" name="__codelineno-64-15" href="#__codelineno-64-15"></a><span class="nd">@mcp</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
-</span><span id="__span-64-16"><a id="__codelineno-64-16" name="__codelineno-64-16" href="#__codelineno-64-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_weather</span><span class="p">(</span><span class="n">city</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-64-17"><a id="__codelineno-64-17" name="__codelineno-64-17" href="#__codelineno-64-17"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the current weather for a city.&quot;&quot;&quot;</span>
-</span><span id="__span-64-18"><a id="__codelineno-64-18" name="__codelineno-64-18" href="#__codelineno-64-18"></a>    <span class="c1"># replace with a real API call</span>
-</span><span id="__span-64-19"><a id="__codelineno-64-19" name="__codelineno-64-19" href="#__codelineno-64-19"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;It&#39;s sunny in </span><span class="si">{</span><span class="n">city</span><span class="si">}</span><span class="s2">, 24°C&quot;</span>
-</span><span id="__span-64-20"><a id="__codelineno-64-20" name="__codelineno-64-20" href="#__codelineno-64-20"></a>
-</span><span id="__span-64-21"><a id="__codelineno-64-21" name="__codelineno-64-21" href="#__codelineno-64-21"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-</span><span id="__span-64-22"><a id="__codelineno-64-22" name="__codelineno-64-22" href="#__codelineno-64-22"></a>    <span class="n">mcp</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-</span></code></pre></div>
-<p>The <code># /// script</code> block is <a href="https://docs.astral.sh/uv/guides/scripts/">uv inline script metadata</a>.
-<code>uv run my_server.py</code> installs <code>fastmcp</code> automatically in an isolated environment —
-no <code>pip install</code> or <code>pyproject.toml</code> changes needed.</p>
-<p><strong>2. Connect via Agent</strong> (<code>main.py</code>):</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-65-1"><a id="__codelineno-65-1" name="__codelineno-65-1" href="#__codelineno-65-1"></a><span class="c1"># pip install msgflux[openai]</span>
 </span><span id="__span-65-2"><a id="__codelineno-65-2" name="__codelineno-65-2" href="#__codelineno-65-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
 </span><span id="__span-65-3"><a id="__codelineno-65-3" name="__codelineno-65-3" href="#__codelineno-65-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
 </span><span id="__span-65-4"><a id="__codelineno-65-4" name="__codelineno-65-4" href="#__codelineno-65-4"></a>
 </span><span id="__span-65-5"><a id="__codelineno-65-5" name="__codelineno-65-5" href="#__codelineno-65-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
 </span><span id="__span-65-6"><a id="__codelineno-65-6" name="__codelineno-65-6" href="#__codelineno-65-6"></a>
-</span><span id="__span-65-7"><a id="__codelineno-65-7" name="__codelineno-65-7" href="#__codelineno-65-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-65-7"><a id="__codelineno-65-7" name="__codelineno-65-7" href="#__codelineno-65-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">FileAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
 </span><span id="__span-65-8"><a id="__codelineno-65-8" name="__codelineno-65-8" href="#__codelineno-65-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
-</span><span id="__span-65-9"><a id="__codelineno-65-9" name="__codelineno-65-9" href="#__codelineno-65-9"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant.&quot;</span>
-</span><span id="__span-65-10"><a id="__codelineno-65-10" name="__codelineno-65-10" href="#__codelineno-65-10"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
-</span><span id="__span-65-11"><a id="__codelineno-65-11" name="__codelineno-65-11" href="#__codelineno-65-11"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;my&quot;</span><span class="p">,</span>
-</span><span id="__span-65-12"><a id="__codelineno-65-12" name="__codelineno-65-12" href="#__codelineno-65-12"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
-</span><span id="__span-65-13"><a id="__codelineno-65-13" name="__codelineno-65-13" href="#__codelineno-65-13"></a>        <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;uv&quot;</span><span class="p">,</span>
-</span><span id="__span-65-14"><a id="__codelineno-65-14" name="__codelineno-65-14" href="#__codelineno-65-14"></a>        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;run&quot;</span><span class="p">,</span> <span class="s2">&quot;my_server.py&quot;</span><span class="p">],</span>
-</span><span id="__span-65-15"><a id="__codelineno-65-15" name="__codelineno-65-15" href="#__codelineno-65-15"></a>    <span class="p">}]</span>
+</span><span id="__span-65-9"><a id="__codelineno-65-9" name="__codelineno-65-9" href="#__codelineno-65-9"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
+</span><span id="__span-65-10"><a id="__codelineno-65-10" name="__codelineno-65-10" href="#__codelineno-65-10"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;filesystem&quot;</span><span class="p">,</span>
+</span><span id="__span-65-11"><a id="__codelineno-65-11" name="__codelineno-65-11" href="#__codelineno-65-11"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
+</span><span id="__span-65-12"><a id="__codelineno-65-12" name="__codelineno-65-12" href="#__codelineno-65-12"></a>        <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;npx&quot;</span><span class="p">,</span>
+</span><span id="__span-65-13"><a id="__codelineno-65-13" name="__codelineno-65-13" href="#__codelineno-65-13"></a>        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;-y&quot;</span><span class="p">,</span> <span class="s2">&quot;@modelcontextprotocol/server-filesystem&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp&quot;</span><span class="p">],</span>
+</span><span id="__span-65-14"><a id="__codelineno-65-14" name="__codelineno-65-14" href="#__codelineno-65-14"></a>    <span class="p">}]</span>
+</span><span id="__span-65-15"><a id="__codelineno-65-15" name="__codelineno-65-15" href="#__codelineno-65-15"></a>    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;verbose&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
 </span><span id="__span-65-16"><a id="__codelineno-65-16" name="__codelineno-65-16" href="#__codelineno-65-16"></a>
-</span><span id="__span-65-17"><a id="__codelineno-65-17" name="__codelineno-65-17" href="#__codelineno-65-17"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">MyAgent</span><span class="p">()</span>
-</span><span id="__span-65-18"><a id="__codelineno-65-18" name="__codelineno-65-18" href="#__codelineno-65-18"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="s2">&quot;What is 3 + 4? Also, what&#39;s the weather in São Paulo?&quot;</span><span class="p">)</span>
-</span><span id="__span-65-19"><a id="__codelineno-65-19" name="__codelineno-65-19" href="#__codelineno-65-19"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
-</span><span id="__span-65-20"><a id="__codelineno-65-20" name="__codelineno-65-20" href="#__codelineno-65-20"></a><span class="c1"># The agent has access to my__add and my__get_weather.</span>
+</span><span id="__span-65-17"><a id="__codelineno-65-17" name="__codelineno-65-17" href="#__codelineno-65-17"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">FileAgent</span><span class="p">()</span>
+</span><span id="__span-65-18"><a id="__codelineno-65-18" name="__codelineno-65-18" href="#__codelineno-65-18"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="s2">&quot;List all files in the current directory&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Connect to an MCP server via HTTP:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-66-1"><a id="__codelineno-66-1" name="__codelineno-66-1" href="#__codelineno-66-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-66-2"><a id="__codelineno-66-2" name="__codelineno-66-2" href="#__codelineno-66-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-66-3"><a id="__codelineno-66-3" name="__codelineno-66-3" href="#__codelineno-66-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-66-4"><a id="__codelineno-66-4" name="__codelineno-66-4" href="#__codelineno-66-4"></a>
+</span><span id="__span-66-5"><a id="__codelineno-66-5" name="__codelineno-66-5" href="#__codelineno-66-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-66-6"><a id="__codelineno-66-6" name="__codelineno-66-6" href="#__codelineno-66-6"></a>
+</span><span id="__span-66-7"><a id="__codelineno-66-7" name="__codelineno-66-7" href="#__codelineno-66-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">APIAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-66-8"><a id="__codelineno-66-8" name="__codelineno-66-8" href="#__codelineno-66-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-66-9"><a id="__codelineno-66-9" name="__codelineno-66-9" href="#__codelineno-66-9"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
+</span><span id="__span-66-10"><a id="__codelineno-66-10" name="__codelineno-66-10" href="#__codelineno-66-10"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;api&quot;</span><span class="p">,</span>
+</span><span id="__span-66-11"><a id="__codelineno-66-11" name="__codelineno-66-11" href="#__codelineno-66-11"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;http&quot;</span><span class="p">,</span>
+</span><span id="__span-66-12"><a id="__codelineno-66-12" name="__codelineno-66-12" href="#__codelineno-66-12"></a>        <span class="s2">&quot;base_url&quot;</span><span class="p">:</span> <span class="s2">&quot;http://localhost:8000&quot;</span><span class="p">,</span>
+</span><span id="__span-66-13"><a id="__codelineno-66-13" name="__codelineno-66-13" href="#__codelineno-66-13"></a>        <span class="s2">&quot;headers&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;Authorization&quot;</span><span class="p">:</span> <span class="s2">&quot;Bearer token&quot;</span><span class="p">}</span>
+</span><span id="__span-66-14"><a id="__codelineno-66-14" name="__codelineno-66-14" href="#__codelineno-66-14"></a>    <span class="p">}]</span>
+</span><span id="__span-66-15"><a id="__codelineno-66-15" name="__codelineno-66-15" href="#__codelineno-66-15"></a>
+</span><span id="__span-66-16"><a id="__codelineno-66-16" name="__codelineno-66-16" href="#__codelineno-66-16"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">APIAgent</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Apply <code>tool_config</code> options to MCP tools:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-67-1"><a id="__codelineno-67-1" name="__codelineno-67-1" href="#__codelineno-67-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-67-2"><a id="__codelineno-67-2" name="__codelineno-67-2" href="#__codelineno-67-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-67-3"><a id="__codelineno-67-3" name="__codelineno-67-3" href="#__codelineno-67-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-67-4"><a id="__codelineno-67-4" name="__codelineno-67-4" href="#__codelineno-67-4"></a>
+</span><span id="__span-67-5"><a id="__codelineno-67-5" name="__codelineno-67-5" href="#__codelineno-67-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-67-6"><a id="__codelineno-67-6" name="__codelineno-67-6" href="#__codelineno-67-6"></a>
+</span><span id="__span-67-7"><a id="__codelineno-67-7" name="__codelineno-67-7" href="#__codelineno-67-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">ConfiguredAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-67-8"><a id="__codelineno-67-8" name="__codelineno-67-8" href="#__codelineno-67-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-67-9"><a id="__codelineno-67-9" name="__codelineno-67-9" href="#__codelineno-67-9"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
+</span><span id="__span-67-10"><a id="__codelineno-67-10" name="__codelineno-67-10" href="#__codelineno-67-10"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;filesystem&quot;</span><span class="p">,</span>
+</span><span id="__span-67-11"><a id="__codelineno-67-11" name="__codelineno-67-11" href="#__codelineno-67-11"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
+</span><span id="__span-67-12"><a id="__codelineno-67-12" name="__codelineno-67-12" href="#__codelineno-67-12"></a>        <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;npx&quot;</span><span class="p">,</span>
+</span><span id="__span-67-13"><a id="__codelineno-67-13" name="__codelineno-67-13" href="#__codelineno-67-13"></a>        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;-y&quot;</span><span class="p">,</span> <span class="s2">&quot;@modelcontextprotocol/server-filesystem&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp&quot;</span><span class="p">],</span>
+</span><span id="__span-67-14"><a id="__codelineno-67-14" name="__codelineno-67-14" href="#__codelineno-67-14"></a>        <span class="s2">&quot;include_tools&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;read_file&quot;</span><span class="p">,</span> <span class="s2">&quot;write_file&quot;</span><span class="p">],</span>
+</span><span id="__span-67-15"><a id="__codelineno-67-15" name="__codelineno-67-15" href="#__codelineno-67-15"></a>        <span class="s2">&quot;tool_config&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-67-16"><a id="__codelineno-67-16" name="__codelineno-67-16" href="#__codelineno-67-16"></a>            <span class="s2">&quot;read_file&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;inject_vars&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-67-17"><a id="__codelineno-67-17" name="__codelineno-67-17" href="#__codelineno-67-17"></a>        <span class="p">}</span>
+</span><span id="__span-67-18"><a id="__codelineno-67-18" name="__codelineno-67-18" href="#__codelineno-67-18"></a>    <span class="p">}]</span>
+</span><span id="__span-67-19"><a id="__codelineno-67-19" name="__codelineno-67-19" href="#__codelineno-67-19"></a>
+</span><span id="__span-67-20"><a id="__codelineno-67-20" name="__codelineno-67-20" href="#__codelineno-67-20"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ConfiguredAgent</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Build a Python MCP server with <a href="https://github.com/jlowin/fastmcp">FastMCP</a> and
+connect it to an Agent — no Node.js required.</p>
+<p><strong>1. Create the server</strong> (<code>my_server.py</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-68-1"><a id="__codelineno-68-1" name="__codelineno-68-1" href="#__codelineno-68-1"></a><span class="c1"># /// script</span>
+</span><span id="__span-68-2"><a id="__codelineno-68-2" name="__codelineno-68-2" href="#__codelineno-68-2"></a><span class="c1"># requires-python = &quot;&gt;=3.10&quot;</span>
+</span><span id="__span-68-3"><a id="__codelineno-68-3" name="__codelineno-68-3" href="#__codelineno-68-3"></a><span class="c1"># dependencies = [&quot;fastmcp&quot;]</span>
+</span><span id="__span-68-4"><a id="__codelineno-68-4" name="__codelineno-68-4" href="#__codelineno-68-4"></a><span class="c1"># ///</span>
+</span><span id="__span-68-5"><a id="__codelineno-68-5" name="__codelineno-68-5" href="#__codelineno-68-5"></a><span class="sd">&quot;&quot;&quot;MCP server — launch with: uv run my_server.py&quot;&quot;&quot;</span>
+</span><span id="__span-68-6"><a id="__codelineno-68-6" name="__codelineno-68-6" href="#__codelineno-68-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fastmcp</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastMCP</span>
+</span><span id="__span-68-7"><a id="__codelineno-68-7" name="__codelineno-68-7" href="#__codelineno-68-7"></a>
+</span><span id="__span-68-8"><a id="__codelineno-68-8" name="__codelineno-68-8" href="#__codelineno-68-8"></a><span class="n">mcp</span> <span class="o">=</span> <span class="n">FastMCP</span><span class="p">(</span><span class="s2">&quot;my-server&quot;</span><span class="p">)</span>
+</span><span id="__span-68-9"><a id="__codelineno-68-9" name="__codelineno-68-9" href="#__codelineno-68-9"></a>
+</span><span id="__span-68-10"><a id="__codelineno-68-10" name="__codelineno-68-10" href="#__codelineno-68-10"></a><span class="nd">@mcp</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
+</span><span id="__span-68-11"><a id="__codelineno-68-11" name="__codelineno-68-11" href="#__codelineno-68-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-68-12"><a id="__codelineno-68-12" name="__codelineno-68-12" href="#__codelineno-68-12"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Add two numbers together.&quot;&quot;&quot;</span>
+</span><span id="__span-68-13"><a id="__codelineno-68-13" name="__codelineno-68-13" href="#__codelineno-68-13"></a>    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+</span><span id="__span-68-14"><a id="__codelineno-68-14" name="__codelineno-68-14" href="#__codelineno-68-14"></a>
+</span><span id="__span-68-15"><a id="__codelineno-68-15" name="__codelineno-68-15" href="#__codelineno-68-15"></a><span class="nd">@mcp</span><span class="o">.</span><span class="n">tool</span><span class="p">()</span>
+</span><span id="__span-68-16"><a id="__codelineno-68-16" name="__codelineno-68-16" href="#__codelineno-68-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_weather</span><span class="p">(</span><span class="n">city</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-68-17"><a id="__codelineno-68-17" name="__codelineno-68-17" href="#__codelineno-68-17"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the current weather for a city.&quot;&quot;&quot;</span>
+</span><span id="__span-68-18"><a id="__codelineno-68-18" name="__codelineno-68-18" href="#__codelineno-68-18"></a>    <span class="c1"># replace with a real API call</span>
+</span><span id="__span-68-19"><a id="__codelineno-68-19" name="__codelineno-68-19" href="#__codelineno-68-19"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;It&#39;s sunny in </span><span class="si">{</span><span class="n">city</span><span class="si">}</span><span class="s2">, 24°C&quot;</span>
+</span><span id="__span-68-20"><a id="__codelineno-68-20" name="__codelineno-68-20" href="#__codelineno-68-20"></a>
+</span><span id="__span-68-21"><a id="__codelineno-68-21" name="__codelineno-68-21" href="#__codelineno-68-21"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+</span><span id="__span-68-22"><a id="__codelineno-68-22" name="__codelineno-68-22" href="#__codelineno-68-22"></a>    <span class="n">mcp</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+</span></code></pre></div>
+<p>The <code># /// script</code> block is <a href="https://docs.astral.sh/uv/guides/scripts/">uv inline script metadata</a>.
+<code>uv run my_server.py</code> installs <code>fastmcp</code> automatically in an isolated environment —
+no <code>pip install</code> or <code>pyproject.toml</code> changes needed.</p>
+<p><strong>2. Connect via Agent</strong> (<code>main.py</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-69-1"><a id="__codelineno-69-1" name="__codelineno-69-1" href="#__codelineno-69-1"></a><span class="c1"># pip install msgflux[openai]</span>
+</span><span id="__span-69-2"><a id="__codelineno-69-2" name="__codelineno-69-2" href="#__codelineno-69-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-69-3"><a id="__codelineno-69-3" name="__codelineno-69-3" href="#__codelineno-69-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-69-4"><a id="__codelineno-69-4" name="__codelineno-69-4" href="#__codelineno-69-4"></a>
+</span><span id="__span-69-5"><a id="__codelineno-69-5" name="__codelineno-69-5" href="#__codelineno-69-5"></a><span class="c1"># mf.set_envs(OPENAI_API_KEY=&quot;...&quot;)</span>
+</span><span id="__span-69-6"><a id="__codelineno-69-6" name="__codelineno-69-6" href="#__codelineno-69-6"></a>
+</span><span id="__span-69-7"><a id="__codelineno-69-7" name="__codelineno-69-7" href="#__codelineno-69-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyAgent</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">):</span>
+</span><span id="__span-69-8"><a id="__codelineno-69-8" name="__codelineno-69-8" href="#__codelineno-69-8"></a>    <span class="n">model</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">)</span>
+</span><span id="__span-69-9"><a id="__codelineno-69-9" name="__codelineno-69-9" href="#__codelineno-69-9"></a>    <span class="n">instructions</span> <span class="o">=</span> <span class="s2">&quot;You are a helpful assistant.&quot;</span>
+</span><span id="__span-69-10"><a id="__codelineno-69-10" name="__codelineno-69-10" href="#__codelineno-69-10"></a>    <span class="n">mcp_servers</span> <span class="o">=</span> <span class="p">[{</span>
+</span><span id="__span-69-11"><a id="__codelineno-69-11" name="__codelineno-69-11" href="#__codelineno-69-11"></a>        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;my&quot;</span><span class="p">,</span>
+</span><span id="__span-69-12"><a id="__codelineno-69-12" name="__codelineno-69-12" href="#__codelineno-69-12"></a>        <span class="s2">&quot;transport&quot;</span><span class="p">:</span> <span class="s2">&quot;stdio&quot;</span><span class="p">,</span>
+</span><span id="__span-69-13"><a id="__codelineno-69-13" name="__codelineno-69-13" href="#__codelineno-69-13"></a>        <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;uv&quot;</span><span class="p">,</span>
+</span><span id="__span-69-14"><a id="__codelineno-69-14" name="__codelineno-69-14" href="#__codelineno-69-14"></a>        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;run&quot;</span><span class="p">,</span> <span class="s2">&quot;my_server.py&quot;</span><span class="p">],</span>
+</span><span id="__span-69-15"><a id="__codelineno-69-15" name="__codelineno-69-15" href="#__codelineno-69-15"></a>    <span class="p">}]</span>
+</span><span id="__span-69-16"><a id="__codelineno-69-16" name="__codelineno-69-16" href="#__codelineno-69-16"></a>
+</span><span id="__span-69-17"><a id="__codelineno-69-17" name="__codelineno-69-17" href="#__codelineno-69-17"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">MyAgent</span><span class="p">()</span>
+</span><span id="__span-69-18"><a id="__codelineno-69-18" name="__codelineno-69-18" href="#__codelineno-69-18"></a><span class="n">response</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="s2">&quot;What is 3 + 4? Also, what&#39;s the weather in São Paulo?&quot;</span><span class="p">)</span>
+</span><span id="__span-69-19"><a id="__codelineno-69-19" name="__codelineno-69-19" href="#__codelineno-69-19"></a><span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span id="__span-69-20"><a id="__codelineno-69-20" name="__codelineno-69-20" href="#__codelineno-69-20"></a><span class="c1"># The agent has access to my__add and my__get_weather.</span>
 </span></code></pre></div>
 <div class="admonition tip">
 <p class="admonition-title">Tool namespacing</p>
@@ -9185,7 +9372,7 @@ Use <code>include_tools</code> / <code>exclude_tools</code> to control which too
 </tr>
 <tr>
 <td><code>tool_config</code></td>
-<td>Per-tool configuration options</td>
+<td>Per-tool configuration options such as <code>display_name</code>, <code>usage_guidance</code>, retry, and injection behavior</td>
 </tr>
 </tbody>
 </table>
