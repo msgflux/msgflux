@@ -144,6 +144,37 @@ def test_hint_to_schema():
     assert hint_to_schema(list[int]) == {"type": "array", "items": {"type": "integer"}}
 
 
+class TodoItem(msgspec.Struct):
+    content: str
+    active_form: str
+    status: str
+
+
+def test_hint_to_schema_supports_msgspec_struct():
+    schema = hint_to_schema(TodoItem)
+
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["active_form", "content", "status"]
+    assert schema["properties"]["content"]["type"] == "string"
+
+
+def test_hint_to_schema_supports_list_of_msgspec_struct():
+    schema = hint_to_schema(list[TodoItem])
+
+    assert schema["type"] == "array"
+    assert schema["items"]["type"] == "object"
+    assert schema["items"]["properties"]["active_form"]["type"] == "string"
+
+
+def test_hint_to_schema_rejects_msgspec_struct_renamed_fields():
+    class RenamedTodoItem(msgspec.Struct, rename="camel"):
+        active_form: str
+
+    with pytest.raises(TypeError, match="renamed fields"):
+        hint_to_schema(RenamedTodoItem)
+
+
 DOCSTRING = """
 My function.
 

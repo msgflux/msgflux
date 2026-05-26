@@ -913,6 +913,7 @@ def restore_transport_value(  # noqa: C901
     *,
     dict_factory: Type[dict] = dotdict,
     strict: bool = False,
+    restore_structs: bool = False,
 ) -> Any:
     """Restore transport-lowered values using the original logical type hint.
 
@@ -980,8 +981,15 @@ def restore_transport_value(  # noqa: C901
                 field.type,
                 dict_factory=dict_factory,
                 strict=strict,
+                restore_structs=restore_structs,
             )
-        return dotdict(restored)
+        if restore_structs:
+            try:
+                return logical_type(**restored)
+            except (TypeError, ValueError):
+                if strict:
+                    raise
+        return dict_factory(restored)
 
     if origin in (list, List):
         if not isinstance(value, list):
@@ -999,6 +1007,7 @@ def restore_transport_value(  # noqa: C901
                 item_type,
                 dict_factory=dict_factory,
                 strict=strict,
+                restore_structs=restore_structs,
             )
             for item in value
         ]
@@ -1032,12 +1041,14 @@ def restore_transport_value(  # noqa: C901
                 key_type,
                 dict_factory=dict_factory,
                 strict=strict,
+                restore_structs=restore_structs,
             )
             restored[key] = restore_transport_value(
                 item["value"],
                 value_type,
                 dict_factory=dict_factory,
                 strict=strict,
+                restore_structs=restore_structs,
             )
         return dict_factory(restored)
 
@@ -1049,6 +1060,7 @@ def restore_transport_value(  # noqa: C901
                 args[0],
                 dict_factory=dict_factory,
                 strict=strict,
+                restore_structs=restore_structs,
             )
         if args and strict:
             raise TypeError(
@@ -1076,6 +1088,7 @@ def restore_transport_value(  # noqa: C901
                     item_type,
                     dict_factory=dict_factory,
                     strict=strict,
+                    restore_structs=restore_structs,
                 )
                 for item in value
             )
@@ -1085,6 +1098,7 @@ def restore_transport_value(  # noqa: C901
                 tuple_args[index],
                 dict_factory=dict_factory,
                 strict=strict,
+                restore_structs=restore_structs,
             )
             for index, item in enumerate(value)
         )
