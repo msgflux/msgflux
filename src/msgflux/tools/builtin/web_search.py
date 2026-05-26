@@ -34,6 +34,7 @@ class WebSearch:
     """
 
     name = "web_search"
+    display_name = "Web Search"
     engine_env_var = "MSGFLUX_TOOL_WEB_SEARCH_ENGINE"
     init_params_env_var = "MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS"
     call_params_env_var = "MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS"

@@ -1584,6 +1584,75 @@ def github_repository_search_v2_extended(query: str) -> str:
 # Tool is exposed as "search_repos" instead of the long function name
 ```
 
+#### display_name
+
+Assign a human-readable name for UI surfaces and events while keeping the tool's
+programmatic name stable:
+
+```python
+@mf.tool_config(display_name="Repository Search")
+def search_repos(query: str) -> str:
+    """Search GitHub repositories."""
+    ...
+```
+
+The model still calls `search_repos`, but clients such as a CLI can show
+`Repository Search` to users.
+
+#### usage_guidance
+
+Add guidance that is rendered into the agent system prompt under
+`<tool_usage_guidance>`. Use it for tool-specific "when/how to use" instructions
+that should not live in the function description.
+
+```python
+@mf.tool_config(
+    display_name="Repository Search",
+    usage_guidance=(
+        "Use when the user asks for GitHub repositories. Prefer concise search "
+        "queries with language, framework, or topic constraints."
+    ),
+)
+def search_repos(query: str) -> str:
+    """Search GitHub repositories."""
+    ...
+```
+
+#### Builtin usage guidance
+
+msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
+tool implementations neutral while letting applications such as a CLI attach
+ready-to-use instructions when composing an agent.
+
+Use `apply_tool_guidance()` to fill `usage_guidance` only when a tool does not
+already define one:
+
+```python
+import msgflux as mf
+from msgflux.tools import apply_tool_guidance
+from msgflux.tools.builtin import WebFetch, WebSearch
+
+tools = apply_tool_guidance([WebSearch(), WebFetch()])
+
+agent = mf.nn.Agent(
+    name="assistant",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=tools,
+)
+```
+
+Explicit guidance always wins:
+
+```python
+@mf.tool_config(usage_guidance="Use only for internal repository search.")
+def web_search(query: str) -> str:
+    """Search internal repositories."""
+    ...
+
+tools = apply_tool_guidance([web_search])
+# Keeps "Use only for internal repository search."
+```
+
 #### retry
 
 Control retry behavior per tool. Accepts a [tenacity](https://tenacity.readthedocs.io/) decorator, `False` to disable, or `None` (default) to use env-based retry.
@@ -2010,4 +2079,4 @@ Configure MCP servers using the `mcp_servers` attribute:
 | `auth` | Authentication provider — `BearerTokenAuth`, `APIKeyAuth`, etc. (http only) |
 | `include_tools` | Allowlist of tools to expose |
 | `exclude_tools` | Blocklist of tools to hide |
-| `tool_config` | Per-tool configuration options |
+| `tool_config` | Per-tool configuration options such as `display_name`, `usage_guidance`, retry, and injection behavior |
