@@ -83,7 +83,6 @@ def test_agent_inbox_renders_incoming_user_message():
         "content": (
             "<incoming_user_message>\n"
             "Please adjust the answer.\n"
-            "user_id=u1\n"
             "</incoming_user_message>"
         ),
     }

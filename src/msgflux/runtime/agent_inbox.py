@@ -654,10 +654,6 @@ class AgentInbox:
             lines.append("<incoming_user_message>")
             if notification.hint:
                 lines.append(self._escape_text(notification.hint))
-            for key, value in sorted(notification.metadata.items()):
-                lines.append(
-                    f"{self._escape_text(key)}={self._escape_text(self._stringify(value))}"
-                )
             lines.append("</incoming_user_message>")
 
         if lines:

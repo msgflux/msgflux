@@ -175,7 +175,6 @@ An incoming user message renders separately:
     "content": (
         "<incoming_user_message>\n"
         "Please adjust the answer.\n"
-        "user_id=u1\n"
         "</incoming_user_message>"
     ),
 }
