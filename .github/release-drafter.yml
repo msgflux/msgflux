@@ -2,51 +2,47 @@ name-template: 'v$RESOLVED_VERSION'
 tag-template: 'v$RESOLVED_VERSION'
 
 categories:
-  - title: '🚨 Breaking Changes'
+  - title: 'Breaking Changes'
     labels:
       - 'breaking-change'
       - 'breaking'
-  - title: '🚀 Features'
+  - title: 'Features'
     labels:
       - 'enhancement'
       - 'feat'
       - 'feature'
-  - title: '🐛 Bug Fixes'
+  - title: 'Bug Fixes'
     labels:
       - 'bug'
       - 'fix'
-  - title: '⚡ Performance'
+  - title: 'Performance'
     labels:
       - 'performance'
       - 'perf'
-  - title: '🔐 Security'
+  - title: 'Security'
     labels:
       - 'security'
-  - title: '📚 Documentation'
+  - title: 'Documentation'
     labels:
       - 'documentation'
       - 'docs'
-  - title: '🔄 Refactoring'
-    labels:
-      - 'refactor'
-      - 'refactoring'
-  - title: '🧪 Tests'
-    labels:
-      - 'tests'
-      - 'test'
-  - title: '🤖 CI/CD'
+  - title: 'CI/CD'
     labels:
       - 'ci'
       - 'ci-cd'
-  - title: '📦 Dependencies'
+  - title: 'Dependencies'
     labels:
       - 'dependencies'
-  - title: '🔧 Maintenance'
+  - title: 'Maintenance'
     labels:
       - 'maintenance'
       - 'chore'
+      - 'refactor'
+      - 'refactoring'
+      - 'tests'
+      - 'test'
 
-change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-template: '- $TITLE by @$AUTHOR in #$NUMBER'
 change-title-escapes: '\<*_&'
 
 version-resolver:
@@ -65,16 +61,19 @@ version-resolver:
       - 'fix'
       - 'patch'
       - 'documentation'
+      - 'ci'
       - 'dependencies'
+      - 'maintenance'
+      - 'chore'
+      - 'refactor'
+      - 'tests'
   default: patch
 
 template: |
-  ## Changes
+  ## Summary
 
   $CHANGES
 
   ## Contributors
-
-  Thank you to all contributors! 🙏
 
   $CONTRIBUTORS
