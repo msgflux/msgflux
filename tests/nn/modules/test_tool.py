@@ -524,6 +524,21 @@ class TestToolLibrary:
         with pytest.raises(ValueError, match="already in tool library"):
             library.add(my_tool)
 
+    def test_runtime_tool_conflict_raises_error(self):
+        """Test that runtime tools cannot overwrite user tools."""
+
+        def task_status(task_id: str) -> str:
+            """User-defined task status."""
+            return task_id
+
+        @mf.tool_config(background=True)
+        def background_tool() -> str:
+            """Run in the background."""
+            return "ok"
+
+        with pytest.raises(ValueError, match="runtime tool `task_status` conflicts"):
+            ToolLibrary(name="lib", tools=[task_status, background_tool])
+
     def test_tool_library_add_already_tool_instance(self):
         """Test adding Tool instance directly."""
 
@@ -536,6 +551,18 @@ class TestToolLibrary:
         library.add(tool)
 
         assert "my_func" in library.library
+
+    def test_tool_library_rejects_non_mapping_tool_params(self):
+        """Test that tool call params must be mappings."""
+
+        def my_tool(x: int) -> int:
+            """My tool."""
+            return x
+
+        library = ToolLibrary(name="lib", tools=[my_tool])
+
+        with pytest.raises(TypeError, match="parameters must be a mapping"):
+            library([("call_1", "my_tool", "not-a-mapping")])
 
     def test_tool_library_remove_tool(self):
         """Test removing a tool from library."""

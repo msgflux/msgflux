@@ -851,6 +851,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
             raise ValueError(
                 f"The runtime tool `{name}` conflicts with an existing tool."
             )
+        if name in self.library and name not in self._runtime_tool_names:
+            raise ValueError(
+                f"The runtime tool `{name}` conflicts with an existing tool."
+            )
         self.library.update({name: tool})
         self.tool_configs[name] = {}
 
@@ -1254,7 +1258,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("handoff", False) or config.get("disable_input", False):
             call_params: Dict[str, Any] = {}
         else:
-            call_params = dict(tool_params or {})
+            call_params = self._coerce_tool_params(tool_name, tool_params)
 
         inject_vars = config.get("inject_vars", False)
         if inject_vars:
@@ -1290,6 +1294,17 @@ class ToolLibrary(Module, metaclass=AutoParams):
             call_params["tool_library"] = ToolLibraryHandle(self)
 
         return call_params
+
+    @staticmethod
+    def _coerce_tool_params(tool_name: str, tool_params: Any) -> Dict[str, Any]:
+        if tool_params is None:
+            return {}
+        if isinstance(tool_params, Mapping):
+            return dict(tool_params)
+        raise TypeError(
+            f"Tool `{tool_name}` parameters must be a mapping or None, "
+            f"given `{type(tool_params)}`."
+        )
 
     def _build_call_parameters_for_response(
         self, params: Optional[Mapping[str, Any]]

@@ -2485,15 +2485,7 @@ class Agent(Module, metaclass=AutoParams):
 
         session_id = messages.session_id or "default"
         run_id = turns[-1]["turn_id"]
-        state = {
-            "status": status,
-            "messages": messages._to_state(),
-            "vars": dict(vars) if vars else {},
-            "metadata": {
-                "namespace": self.get_module_name(),
-                "saved_at": datetime.now(timezone.utc).isoformat(),
-            },
-        }
+        state = self._build_checkpoint_state(messages, vars, status=status)
         checkpointer.save_state(self.get_module_name(), session_id, run_id, state)
 
     async def _acheckpoint_save(
@@ -2512,15 +2504,7 @@ class Agent(Module, metaclass=AutoParams):
 
         session_id = messages.session_id or "default"
         run_id = turns[-1]["turn_id"]
-        state = {
-            "status": status,
-            "messages": messages._to_state(),
-            "vars": dict(vars) if vars else {},
-            "metadata": {
-                "namespace": self.get_module_name(),
-                "saved_at": datetime.now(timezone.utc).isoformat(),
-            },
-        }
+        state = self._build_checkpoint_state(messages, vars, status=status)
         if hasattr(checkpointer, "asave_state"):
             await checkpointer.asave_state(
                 self.get_module_name(),
@@ -2530,6 +2514,23 @@ class Agent(Module, metaclass=AutoParams):
             )
         else:
             checkpointer.save_state(self.get_module_name(), session_id, run_id, state)
+
+    def _build_checkpoint_state(
+        self,
+        messages: ChatMessages,
+        vars: Mapping[str, Any],
+        *,
+        status: str,
+    ) -> Mapping[str, Any]:
+        return {
+            "status": status,
+            "messages": messages._to_state(),
+            "vars": dict(vars) if vars else {},
+            "metadata": {
+                "namespace": self.get_module_name(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
 
     def _checkpoint_save_on_error(self, inputs: Mapping[str, Any]) -> None:
         if self._get_effective_checkpointer() is None:

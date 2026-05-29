@@ -605,7 +605,7 @@ class AgentInbox:
             return rendered_messages[0]
         return rendered_messages
 
-    def render_messages(  # noqa: C901
+    def render_messages(
         self,
         notifications: Iterable[AgentNotification | Mapping[str, Any]],
     ) -> List[Dict[str, str]]:
@@ -625,40 +625,61 @@ class AgentInbox:
         ]
 
         rendered_messages: List[Dict[str, str]] = []
-        lines: List[str] = []
-        lines.append("<system_note>")
-        for notification in system_notifications:
-            body_lines: List[str] = []
-            body_lines.append(f"source: {self._escape_text(notification.source)}")
-            if notification.ref:
-                body_lines.append(f"ref: {self._escape_text(notification.ref)}")
-            if notification.status:
-                body_lines.append(f"status: {self._escape_text(notification.status)}")
-            for key, value in sorted(notification.metadata.items()):
-                rendered_value = self._escape_text(self._stringify(value))
-                body_lines.append(
-                    f"{self._escape_text(key)}: {rendered_value}"
-                )
-            if notification.hint:
-                body_lines.append(f"hint: {self._escape_text(notification.hint)}")
+        if system_notifications:
+            rendered_messages.append(
+                {
+                    "role": "system",
+                    "content": self._render_system_notifications(
+                        system_notifications
+                    ),
+                }
+            )
 
+        incoming_content = self._render_incoming_user_messages(incoming_messages)
+        if incoming_content is not None:
+            rendered_messages.append({"role": "user", "content": incoming_content})
+        return rendered_messages
+
+    def _render_system_notifications(
+        self,
+        notifications: List[AgentNotification],
+    ) -> str:
+        lines: List[str] = ["<system_note>"]
+        for notification in notifications:
             lines.append("<notification>")
-            lines.extend(body_lines)
+            lines.extend(self._render_notification_body(notification))
             lines.append("</notification>")
         lines.append("</system_note>")
-        if system_notifications:
-            rendered_messages.append({"role": "system", "content": "\n".join(lines)})
+        return "\n".join(lines)
 
-        lines = []
+    def _render_incoming_user_messages(
+        self,
+        incoming_messages: List[AgentNotification],
+    ) -> str | None:
+        lines: List[str] = []
         for notification in incoming_messages:
             lines.append("<incoming_user_message>")
             if notification.hint:
                 lines.append(self._escape_text(notification.hint))
             lines.append("</incoming_user_message>")
+        if not lines:
+            return None
+        return "\n".join(lines)
 
-        if lines:
-            rendered_messages.append({"role": "user", "content": "\n".join(lines)})
-        return rendered_messages
+    def _render_notification_body(self, notification: AgentNotification) -> List[str]:
+        body_lines: List[str] = [
+            f"source: {self._escape_text(notification.source)}"
+        ]
+        if notification.ref:
+            body_lines.append(f"ref: {self._escape_text(notification.ref)}")
+        if notification.status:
+            body_lines.append(f"status: {self._escape_text(notification.status)}")
+        for key, value in sorted(notification.metadata.items()):
+            rendered_value = self._escape_text(self._stringify(value))
+            body_lines.append(f"{self._escape_text(key)}: {rendered_value}")
+        if notification.hint:
+            body_lines.append(f"hint: {self._escape_text(notification.hint)}")
+        return body_lines
 
     # --- Normalization Helpers ---
 
