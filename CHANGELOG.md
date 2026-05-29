@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.0] - 2026-05-29
+
+### Feat
+- Added opt-in input validation for signatures (#82).
+- Added method hooks beyond `forward` (#87).
+- Added `extra_body` passthrough extensions for OpenAI-compatible chat completions (#88).
+- Added Open-Meteo weather retriever support and the builtin `Weather` tool (#97).
+- Added tool display names and usage guidance metadata (#98).
+- Added the Ceramic web retriever (#99).
+- Added the SearXNG web retriever (#101).
+- Added agent prompt warmup (#105).
+- Added `msgspec.Struct` tool parameter support (#110).
+- Added Agent Skills runtime support (#111).
+
+### Docs
+- Corrected retriever section numbering in `docs/learn/nn/agent/tools.md` (#80).
+- Added the Builtin Tools section to `tools.md` (#81).
+
+### Refactor
+- Renamed the WebSearch steering parameter to `goal` (#100).
+- Clarified tool display-name and usage-guidance examples and aligned `ToolLibrary.get_tool_display_names()` with a fallback to the registered tool name (#114).
+
+### CI / Maintenance
+- Updated pre-commit hooks (#86).
+- Bumped `packaging` from 25.0 to 26.2 (#92).
+- Bumped `openai` from 2.32.0 to 2.38.0 (#106).
+- Bumped `bm25s` from 0.3.4 to 0.3.9 (#107).
+- Bumped `ruff` from 0.15.11 to 0.15.14 (#108).
+- Bumped `pymdown-extensions` from 10.21.2 to 10.21.3 (#109).
+- Bumped `pytest-asyncio` from 1.3.0 to 1.4.0 (#113).
+
 ## [0.4.1] - 2026-04-22
 
 - Fixes: restored uv.lock file for CI compatibility (#78).
