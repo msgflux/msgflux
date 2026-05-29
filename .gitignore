@@ -21,8 +21,7 @@ __pycache__/
 Pipfile
 Pipfile.lock
 poetry.lock
-# Keep uv.lock for reproducibility
-# uv.lock should be committed
+uv.lock
 
 # Build artifacts
 *.egg-info/
