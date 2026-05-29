@@ -1,22 +1,18 @@
 name: Label PRs
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize]
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
   label:
-    # Disabled: fails on fork PRs due to token permissions
-    if: false
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
       - name: Label PR based on files
         uses: actions/labeler@v6
         with:
