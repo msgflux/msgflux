@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.5.0] - 2026-05-28
+
 ## [0.4.1] - 2026-04-22
 
 - Fixes: restored uv.lock file for CI compatibility (#78).
