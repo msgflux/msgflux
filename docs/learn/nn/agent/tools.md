@@ -1741,14 +1741,29 @@ Assign a human-readable name for UI surfaces and events while keeping the tool's
 programmatic name stable:
 
 ```python
+import msgflux as mf
+import msgflux.nn as nn
+
 @mf.tool_config(display_name="Repository Search")
 def search_repos(query: str) -> str:
     """Search GitHub repositories."""
-    ...
+    return query
+
+
+def edit(text: str) -> str:
+    """Edit text in place."""
+    return text
+
+
+library = nn.ToolLibrary(name="assistant", tools=[search_repos, edit])
+print(library.get_tool_display_names())
+# {'search_repos': 'Repository Search', 'edit': 'edit'}
 ```
 
-The model still calls `search_repos`, but clients such as a CLI can show
-`Repository Search` to users.
+`ToolLibrary.get_tool_display_names()` returns a `tool_name -> display_name`
+mapping. The model still calls `search_repos`, but clients such as a CLI can
+show `Repository Search` to users. If `display_name` is not passed, msgFlux
+falls back to the tool's registered name.
 
 #### usage_guidance
 
@@ -1757,6 +1772,9 @@ Add guidance that is rendered into the agent system prompt under
 that should not live in the function description.
 
 ```python
+import msgflux as mf
+import msgflux.nn as nn
+
 @mf.tool_config(
     display_name="Repository Search",
     usage_guidance=(
@@ -1766,8 +1784,20 @@ that should not live in the function description.
 )
 def search_repos(query: str) -> str:
     """Search GitHub repositories."""
-    ...
+    return query
+
+
+agent = nn.Agent(
+    name="assistant",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=[search_repos],
+)
+
+print(agent.get_system_prompt())
 ```
+
+The guidance is injected into the system prompt when you render it with
+`agent.get_system_prompt()`.
 
 #### Builtin usage guidance
 
@@ -1780,16 +1810,19 @@ already define one:
 
 ```python
 import msgflux as mf
+import msgflux.nn as nn
 from msgflux.tools import apply_tool_guidance
 from msgflux.tools.builtin import WebFetch, WebSearch
 
 tools = apply_tool_guidance([WebSearch(), WebFetch()])
 
-agent = mf.nn.Agent(
+agent = nn.Agent(
     name="assistant",
     model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
     tools=tools,
 )
+
+print(agent.get_system_prompt())
 ```
 
 Explicit guidance always wins:
