@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-05-29
+
+### CI / Maintenance
+- Updated documentation publishing to run on non-prerelease GitHub releases while keeping pull requests as build validation only (#116).
+- Enabled PR labeling and release draft automation for forked pull requests, and simplified the release draft template (#117).
+
 ## [0.5.0] - 2026-05-29
 
 ### Feat
