@@ -6,14 +6,14 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator, List, Mapping
 
-from msgflux.context import (
+from msgflux.core.examples import Example
+from msgflux.data.types import Audio, File, Image, MediaType, Video
+from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_SESSION_ID,
     get_session_context,
     session_context,
 )
-from msgflux.core.examples import Example
-from msgflux.data.types import Audio, File, Image, MediaType, Video
 from msgflux.utils.msgspec import msgspec_dumps
 
 

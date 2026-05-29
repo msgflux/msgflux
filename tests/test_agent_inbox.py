@@ -1,6 +1,6 @@
-"""Tests for msgflux.agent_inbox."""
+"""Tests for msgflux.runtime.agent_inbox."""
 
-from msgflux.agent_inbox import (
+from msgflux.runtime.agent_inbox import (
     AgentControlMessage,
     AgentInbox,
     InMemoryAgentInboxStore,

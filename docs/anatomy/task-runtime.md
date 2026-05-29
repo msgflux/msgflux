@@ -273,7 +273,7 @@ src/msgflux/tasks/store.py
   -> TaskActivityRecorder
   -> TaskHandle
 
-src/msgflux/agent_inbox.py
+src/msgflux/runtime/agent_inbox.py
   -> AgentNotification
   -> AgentInbox
   -> ToolNotificationHandle

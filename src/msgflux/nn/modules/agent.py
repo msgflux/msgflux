@@ -17,10 +17,8 @@ from uuid import uuid4
 
 import msgspec
 
-from msgflux.agent_inbox import AgentInbox, AgentNotification
 from msgflux.auto import AutoParams
 from msgflux.chat_messages import ChatMessages
-from msgflux.context import ExecutionScope, execution_context, get_execution_context
 from msgflux.core.dotdict import dotdict
 from msgflux.core.examples import Example, ExampleCollection
 from msgflux.core.message import Message
@@ -52,6 +50,12 @@ from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
+from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
+from msgflux.runtime.context import (
+    ExecutionScope,
+    execution_context,
+    get_execution_context,
+)
 from msgflux.runtime.skills import AgentSkillManager, SkillsConfig
 from msgflux.tools.builtin import ActivateSkill, SkillSearch
 from msgflux.tools.definitions import ToolDefinitions

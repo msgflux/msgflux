@@ -1,5 +1,5 @@
 from msgflux.chat_messages import ChatMessages
-from msgflux.context import (
+from msgflux.runtime.context import (
     ExecutionScope,
     execution_context,
     get_execution_scope,

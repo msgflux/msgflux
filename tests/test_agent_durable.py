@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from msgflux.chat_messages import ChatMessages
-from msgflux.context import ExecutionScope
+from msgflux.runtime.context import ExecutionScope
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.models.response import ModelResponse
 from msgflux.nn.modules.agent import Agent

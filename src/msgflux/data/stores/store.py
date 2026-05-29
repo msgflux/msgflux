@@ -12,7 +12,7 @@ class Store:
     def providers(cls) -> dict[str, list[str]]:
         # Import lazily so inbox providers register without creating package
         # initialization cycles.
-        import msgflux.agent_inbox  # noqa: F401, PLC0415
+        import msgflux.runtime.agent_inbox  # noqa: F401, PLC0415
 
         return {
             store_type: list(providers)
@@ -34,7 +34,7 @@ class Store:
     def agent_inbox(cls, provider: str, **kwargs: Any) -> Any:
         # Import lazily so inbox providers register without creating package
         # initialization cycles.
-        import msgflux.agent_inbox  # noqa: F401, PLC0415
+        import msgflux.runtime.agent_inbox  # noqa: F401, PLC0415
 
         return cls._create("agent_inbox", provider, **kwargs)
 

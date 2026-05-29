@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
-from msgflux.agent_inbox import AgentInbox
+from msgflux.runtime.agent_inbox import AgentInbox
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse

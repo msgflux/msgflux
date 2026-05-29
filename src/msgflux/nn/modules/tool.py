@@ -16,10 +16,8 @@ import msgspec
 
 import msgflux.nn.functional as F
 from msgflux._private.executor import Executor
-from msgflux.agent_inbox import AgentInbox, AgentNotification, ToolNotificationHandle
 from msgflux.auto import AutoParams
 from msgflux.chat_messages import ChatMessages
-from msgflux.context import ExecutionScope, execution_context, get_execution_context
 from msgflux.core.dotdict import dotdict
 from msgflux.exceptions import (
     TaskError,
@@ -34,6 +32,16 @@ from msgflux.protocols.mcp import (
     convert_mcp_schema_to_tool_schema,
     extract_tool_result_text,
     filter_tools,
+)
+from msgflux.runtime.agent_inbox import (
+    AgentInbox,
+    AgentNotification,
+    ToolNotificationHandle,
+)
+from msgflux.runtime.context import (
+    ExecutionScope,
+    execution_context,
+    get_execution_context,
 )
 from msgflux.tasks import TaskActivityRecorder, TaskHandle, TaskStore
 from msgflux.telemetry.span import (

@@ -263,3 +263,8 @@ def get_session_context() -> Mapping[str, str | None]:
         "session_id": scope.session_id,
         "namespace": scope.namespace,
     }
+
+
+def get_session_id() -> str:
+    """Return the active execution session id."""
+    return get_execution_scope().session_id

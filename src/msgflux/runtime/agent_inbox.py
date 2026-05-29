@@ -13,8 +13,8 @@ from typing import Any, Dict, Iterable, List, Mapping
 from uuid import uuid4
 from xml.sax.saxutils import escape
 
-from msgflux.context import ExecutionScope
 from msgflux.data.stores.registry import register_store
+from msgflux.runtime.context import ExecutionScope
 from msgflux.utils.console import cprint
 
 # --- Module Utilities ---

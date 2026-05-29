@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 import msgflux as mf
 import pytest
 from msgflux.chat_messages import ChatMessages
-from msgflux.context import execution_context
+from msgflux.runtime.context import execution_context
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.exceptions import TaskPauseRequestedError, TaskStopRequestedError
 from msgflux.models.tool_call_agg import ToolCallAggregator

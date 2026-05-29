@@ -7,8 +7,12 @@ from threading import RLock
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
-from msgflux.agent_inbox import AgentInbox, AgentNotification, ToolNotificationHandle
 from msgflux.exceptions import TaskPauseRequestedError, TaskStopRequestedError
+from msgflux.runtime.agent_inbox import (
+    AgentInbox,
+    AgentNotification,
+    ToolNotificationHandle,
+)
 
 # --- Module Utilities ---
 
