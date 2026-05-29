@@ -39,7 +39,6 @@ dependencies:
   - changed-files:
     - any-glob-to-any-file:
       - 'pyproject.toml'
-      - 'uv.lock'
       - '.pre-commit-config.yaml'
 
 # Examples

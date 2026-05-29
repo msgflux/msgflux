@@ -75,7 +75,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --group dev
 
       - name: Build package
         run: uv build
