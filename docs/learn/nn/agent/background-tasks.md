@@ -174,16 +174,17 @@ It also includes timing helpers such as:
 ## Example 3: Passive Notification Back Into The Agent
 
 Completed and failed tasks are injected back into the next provider call as a
-synthetic user message:
+synthetic system message:
 
 ```text
 <system_note>
-<notifications>
-<notification source="task" ref="abcd1234" status="completed">
-tool=long_sum
-hint=Use task_output(task_id='abcd1234') if you need the result.
+<notification>
+source: task
+ref: abcd1234
+status: completed
+tool: long_sum
+hint: Use task_output(task_id='abcd1234') if you need the result.
 </notification>
-</notifications>
 </system_note>
 ```
 
@@ -266,8 +267,8 @@ def process_items(items: list[str], notification) -> int:
 ```
 
 For background tools, the injected `notification` handle is automatically bound
-to the current `task_id`, so the agent sees a normal notification envelope with
-`ref="<task_id>"`.
+to the current `task_id`, so the agent sees a normal notification block with
+`ref: <task_id>`.
 
 ## Example 4: Dynamic Tool Mutation With `inject_library`
 

@@ -24,10 +24,11 @@ def test_agent_inbox_verbose_publish_and_drain_are_printed(capsys):
 
     captured = capsys.readouterr()
     assert "[assistant][notification_publish]" in captured.out
-    assert (
-        '<notification source="task" ref="task_123" status="completed">' in captured.out
-    )
-    assert "tool=worker" in captured.out
+    assert "<notification>" in captured.out
+    assert "source: task" in captured.out
+    assert "ref: task_123" in captured.out
+    assert "status: completed" in captured.out
+    assert "tool: worker" in captured.out
     assert "[assistant][notification_drain]" in captured.out
     assert "1 notification(s)" in captured.out
     assert "<system_note>" in captured.out
@@ -56,8 +57,8 @@ def test_agent_inbox_verbose_replace_is_printed(capsys):
 
     captured = capsys.readouterr()
     assert "[assistant][notification_replace]" in captured.out
-    assert 'status="process"' in captured.out
-    assert "dedupe_key=progress:task_123" in captured.out
+    assert "status: process" in captured.out
+    assert "dedupe_key: progress:task_123" in captured.out
 
 
 def test_agent_inbox_accepts_control_messages():
@@ -104,10 +105,10 @@ def test_agent_inbox_renders_runtime_notifications_as_system_messages():
     assert isinstance(rendered, dict)
     assert rendered["role"] == "system"
     assert "<system_note>" in rendered["content"]
-    assert (
-        '<notification source="task" ref="task_123" status="completed">'
-        in rendered["content"]
-    )
+    assert "<notification>" in rendered["content"]
+    assert "source: task" in rendered["content"]
+    assert "ref: task_123" in rendered["content"]
+    assert "status: completed" in rendered["content"]
 
 
 def test_agent_inbox_separates_incoming_user_message_from_system_notifications():

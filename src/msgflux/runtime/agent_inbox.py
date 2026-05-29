@@ -499,7 +499,7 @@ class AgentInbox:
                                 "notification_replace",
                                 self._render_notification_payload(normalized),
                                 suffix=(
-                                    f"\ndedupe_key={normalized.dedupe_key}"
+                                    f"\ndedupe_key: {normalized.dedupe_key}"
                                     if normalized.dedupe_key
                                     else ""
                                 ),
@@ -626,30 +626,26 @@ class AgentInbox:
 
         rendered_messages: List[Dict[str, str]] = []
         lines: List[str] = []
-        lines.extend(["<system_note>", "<notifications>"])
+        lines.append("<system_note>")
         for notification in system_notifications:
-            attrs = [f'source="{self._escape_attr(notification.source)}"']
-            if notification.ref:
-                attrs.append(f'ref="{self._escape_attr(notification.ref)}"')
-            if notification.status:
-                attrs.append(f'status="{self._escape_attr(notification.status)}"')
-
             body_lines: List[str] = []
+            body_lines.append(f"source: {self._escape_text(notification.source)}")
+            if notification.ref:
+                body_lines.append(f"ref: {self._escape_text(notification.ref)}")
+            if notification.status:
+                body_lines.append(f"status: {self._escape_text(notification.status)}")
             for key, value in sorted(notification.metadata.items()):
+                rendered_value = self._escape_text(self._stringify(value))
                 body_lines.append(
-                    f"{self._escape_text(key)}={self._escape_text(self._stringify(value))}"
+                    f"{self._escape_text(key)}: {rendered_value}"
                 )
             if notification.hint:
-                body_lines.append(f"hint={self._escape_text(notification.hint)}")
+                body_lines.append(f"hint: {self._escape_text(notification.hint)}")
 
-            attrs_repr = " ".join(attrs)
-            if body_lines:
-                lines.append(f"<notification {attrs_repr}>")
-                lines.extend(body_lines)
-                lines.append("</notification>")
-            else:
-                lines.append(f"<notification {attrs_repr} />")
-        lines.extend(["</notifications>", "</system_note>"])
+            lines.append("<notification>")
+            lines.extend(body_lines)
+            lines.append("</notification>")
+        lines.append("</system_note>")
         if system_notifications:
             rendered_messages.append({"role": "system", "content": "\n".join(lines)})
 

@@ -260,11 +260,11 @@ The model receives:
 
 ```xml
 <system_note>
-<notifications>
-<notification source="system_note" status="policy_update">
-hint=Use the enterprise refund policy for this answer.
+<notification>
+source: system_note
+status: policy_update
+hint: Use the enterprise refund policy for this answer.
 </notification>
-</notifications>
 </system_note>
 ```
 

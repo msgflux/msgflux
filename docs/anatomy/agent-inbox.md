@@ -112,7 +112,7 @@ background tool / checkpoint / hook
      AgentInbox.drain() + render_messages()
               |
               v
-<system_note><notifications>...</notifications></system_note>
+<system_note><notification>...</notification></system_note>
               |
               v
          provider call
@@ -123,7 +123,7 @@ background tool / checkpoint / hook
 The renderer converts a drained batch into one or more synthetic messages.
 
 Runtime notifications are delivered as `role="system"` messages containing a
-`<system_note>` with a `<notifications>` envelope. They are operational context,
+`<system_note>` with one or more `<notification>` blocks. They are operational context,
 not user speech.
 
 Incoming user messages are delivered separately as `role="user"` messages. They
@@ -142,15 +142,19 @@ Example:
 
 ```xml
 <system_note>
-<notifications>
-<notification source="task" ref="abcd1234" status="completed">
-hint=use task_output(task_id='abcd1234')
+<notification>
+source: task
+ref: abcd1234
+status: completed
+hint: use task_output(task_id='abcd1234')
 </notification>
-<notification source="context_budget" ref="run_1" status="warning">
-usage_percent=92
-hint=be concise and avoid repeating prior context
+<notification>
+source: context_budget
+ref: run_1
+status: warning
+usage_percent: 92
+hint: be concise and avoid repeating prior context
 </notification>
-</notifications>
 </system_note>
 ```
 
@@ -228,7 +232,7 @@ Current and planned producers include:
 The important rule is:
 
 - producers publish structured notifications
-- producers do not build synthetic user messages
+- producers do not build synthetic messages
 
 ## Coalescing
 
