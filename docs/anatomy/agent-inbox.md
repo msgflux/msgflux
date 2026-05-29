@@ -2,6 +2,9 @@
 
 This page records the notification primitive used by `Agent`.
 
+Implementation lives under `src/msgflux/runtime/agent_inbox.py` and
+`src/msgflux/runtime/context.py`.
+
 The goal is to make runtime notifications pluggable, durable, and
 easy to inject into model execution without hard-coding every new signal inside
 the core tool loop.
@@ -106,7 +109,7 @@ background tool / checkpoint / hook
    Agent._prepare_model_execution()
               |
               v
-     AgentInbox.drain() + render()
+     AgentInbox.drain() + render_messages()
               |
               v
 <system_note><notifications>...</notifications></system_note>
@@ -117,8 +120,23 @@ background tool / checkpoint / hook
 
 ## Rendering
 
-The renderer should build one synthetic message containing a `<system_note>`
-with a `<notifications>` envelope.
+The renderer converts a drained batch into one or more synthetic messages.
+
+Runtime notifications are delivered as `role="system"` messages containing a
+`<system_note>` with a `<notifications>` envelope. They are operational context,
+not user speech.
+
+Incoming user messages are delivered separately as `role="user"` messages. They
+are not wrapped in `<system_note>`, because they represent new user input rather
+than runtime context.
+
+When a drain contains both runtime notifications and incoming user messages, the
+message order is:
+
+1. `system`: runtime notifications
+2. `user`: incoming user message batch
+
+That lets the model receive operational state before the new user turn.
 
 Example:
 
@@ -136,11 +154,38 @@ hint=be concise and avoid repeating prior context
 </system_note>
 ```
 
-Why one message:
+The corresponding ChatML message is:
+
+```python
+{
+    "role": "system",
+    "content": "<system_note>...</system_note>",
+}
+```
+
+An incoming user message renders separately:
+
+```python
+{
+    "role": "user",
+    "content": (
+        "<incoming_user_message>\n"
+        "Please adjust the answer.\n"
+        "user_id=u1\n"
+        "</incoming_user_message>"
+    ),
+}
+```
+
+Why group runtime notifications:
 
 - it reduces message noise
 - it keeps the system-visible content grouped
 - it allows multiple runtime sources to deliver together
+
+Current tradeoff: the XML-like envelope is explicit but verbose. If token
+pressure becomes a problem, the renderer is the right place to simplify the
+format without changing producers or persistence.
 
 ## Context Propagation
 

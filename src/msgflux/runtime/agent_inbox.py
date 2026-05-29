@@ -626,23 +626,6 @@ class AgentInbox:
 
         rendered_messages: List[Dict[str, str]] = []
         lines: List[str] = []
-        for notification in incoming_messages:
-            lines.append("<incoming_user_message>")
-            if notification.hint:
-                lines.append(self._escape_text(notification.hint))
-            for key, value in sorted(notification.metadata.items()):
-                lines.append(
-                    f"{self._escape_text(key)}={self._escape_text(self._stringify(value))}"
-                )
-            lines.append("</incoming_user_message>")
-
-        if lines:
-            rendered_messages.append({"role": "user", "content": "\n".join(lines)})
-
-        if not system_notifications:
-            return rendered_messages
-
-        lines = []
         lines.extend(["<system_note>", "<notifications>"])
         for notification in system_notifications:
             attrs = [f'source="{self._escape_attr(notification.source)}"']
@@ -667,7 +650,22 @@ class AgentInbox:
             else:
                 lines.append(f"<notification {attrs_repr} />")
         lines.extend(["</notifications>", "</system_note>"])
-        rendered_messages.append({"role": "system", "content": "\n".join(lines)})
+        if system_notifications:
+            rendered_messages.append({"role": "system", "content": "\n".join(lines)})
+
+        lines = []
+        for notification in incoming_messages:
+            lines.append("<incoming_user_message>")
+            if notification.hint:
+                lines.append(self._escape_text(notification.hint))
+            for key, value in sorted(notification.metadata.items()):
+                lines.append(
+                    f"{self._escape_text(key)}={self._escape_text(self._stringify(value))}"
+                )
+            lines.append("</incoming_user_message>")
+
+        if lines:
+            rendered_messages.append({"role": "user", "content": "\n".join(lines)})
         return rendered_messages
 
     # --- Normalization Helpers ---

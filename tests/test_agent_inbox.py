@@ -117,10 +117,10 @@ def test_agent_inbox_separates_incoming_user_message_from_system_notifications()
     inbox.publish({"source": "task", "status": "completed"})
     rendered = inbox.render_messages(inbox.drain())
 
-    assert [message["role"] for message in rendered] == ["user", "system"]
-    assert "<incoming_user_message>" in rendered[0]["content"]
-    assert "<system_note>" not in rendered[0]["content"]
-    assert "<system_note>" in rendered[1]["content"]
+    assert [message["role"] for message in rendered] == ["system", "user"]
+    assert "<system_note>" in rendered[0]["content"]
+    assert "<incoming_user_message>" in rendered[1]["content"]
+    assert "<system_note>" not in rendered[1]["content"]
 
 
 def test_agent_inbox_persists_notifications_with_memory_store():
