@@ -7103,14 +7103,29 @@ Assign a human-readable name for UI surfaces and events while keeping the tool&#
 programmatic name stable:
 
 ```python
+import msgflux as mf
+import msgflux.nn as nn
+
 @mf.tool_config(display_name=&quot;Repository Search&quot;)
 def search_repos(query: str) -&gt; str:
     &quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;
-    ...
+    return query
+
+
+def edit(text: str) -&gt; str:
+    &quot;&quot;&quot;Edit text in place.&quot;&quot;&quot;
+    return text
+
+
+library = nn.ToolLibrary(name=&quot;assistant&quot;, tools=[search_repos, edit])
+print(library.get_tool_display_names())
+# {&#x27;search_repos&#x27;: &#x27;Repository Search&#x27;, &#x27;edit&#x27;: &#x27;edit&#x27;}
 ```
 
-The model still calls `search_repos`, but clients such as a CLI can show
-`Repository Search` to users.
+`ToolLibrary.get_tool_display_names()` returns a `tool_name -&gt; display_name`
+mapping. The model still calls `search_repos`, but clients such as a CLI can
+show `Repository Search` to users. If `display_name` is not passed, msgFlux
+falls back to the tool&#x27;s registered name.
 
 #### usage_guidance
 
@@ -7119,6 +7134,9 @@ Add guidance that is rendered into the agent system prompt under
 that should not live in the function description.
 
 ```python
+import msgflux as mf
+import msgflux.nn as nn
+
 @mf.tool_config(
     display_name=&quot;Repository Search&quot;,
     usage_guidance=(
@@ -7128,8 +7146,20 @@ that should not live in the function description.
 )
 def search_repos(query: str) -&gt; str:
     &quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;
-    ...
+    return query
+
+
+agent = nn.Agent(
+    name=&quot;assistant&quot;,
+    model=mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;),
+    tools=[search_repos],
+)
+
+print(agent.get_system_prompt())
 ```
+
+The guidance is injected into the system prompt when you render it with
+`agent.get_system_prompt()`.
 
 #### Builtin usage guidance
 
@@ -7142,16 +7172,19 @@ already define one:
 
 ```python
 import msgflux as mf
+import msgflux.nn as nn
 from msgflux.tools import apply_tool_guidance
 from msgflux.tools.builtin import WebFetch, WebSearch
 
 tools = apply_tool_guidance([WebSearch(), WebFetch()])
 
-agent = mf.nn.Agent(
+agent = nn.Agent(
     name=&quot;assistant&quot;,
     model=mf.Model.chat_completion(&quot;openai/gpt-4.1-mini&quot;),
     tools=tools,
 )
+
+print(agent.get_system_prompt())
 ```
 
 Explicit guidance always wins:
@@ -9304,28 +9337,57 @@ to a specialist agent.</p>
 <h4 id="display_name">display_name</h4>
 <p>Assign a human-readable name for UI surfaces and events while keeping the tool's
 programmatic name stable:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-59-1"><a id="__codelineno-59-1" name="__codelineno-59-1" href="#__codelineno-59-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">display_name</span><span class="o">=</span><span class="s2">&quot;Repository Search&quot;</span><span class="p">)</span>
-</span><span id="__span-59-2"><a id="__codelineno-59-2" name="__codelineno-59-2" href="#__codelineno-59-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">search_repos</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-59-3"><a id="__codelineno-59-3" name="__codelineno-59-3" href="#__codelineno-59-3"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;</span>
-</span><span id="__span-59-4"><a id="__codelineno-59-4" name="__codelineno-59-4" href="#__codelineno-59-4"></a>    <span class="o">...</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-59-1"><a id="__codelineno-59-1" name="__codelineno-59-1" href="#__codelineno-59-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-59-2"><a id="__codelineno-59-2" name="__codelineno-59-2" href="#__codelineno-59-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-59-3"><a id="__codelineno-59-3" name="__codelineno-59-3" href="#__codelineno-59-3"></a>
+</span><span id="__span-59-4"><a id="__codelineno-59-4" name="__codelineno-59-4" href="#__codelineno-59-4"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">display_name</span><span class="o">=</span><span class="s2">&quot;Repository Search&quot;</span><span class="p">)</span>
+</span><span id="__span-59-5"><a id="__codelineno-59-5" name="__codelineno-59-5" href="#__codelineno-59-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">search_repos</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-59-6"><a id="__codelineno-59-6" name="__codelineno-59-6" href="#__codelineno-59-6"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;</span>
+</span><span id="__span-59-7"><a id="__codelineno-59-7" name="__codelineno-59-7" href="#__codelineno-59-7"></a>    <span class="k">return</span> <span class="n">query</span>
+</span><span id="__span-59-8"><a id="__codelineno-59-8" name="__codelineno-59-8" href="#__codelineno-59-8"></a>
+</span><span id="__span-59-9"><a id="__codelineno-59-9" name="__codelineno-59-9" href="#__codelineno-59-9"></a>
+</span><span id="__span-59-10"><a id="__codelineno-59-10" name="__codelineno-59-10" href="#__codelineno-59-10"></a><span class="k">def</span><span class="w"> </span><span class="nf">edit</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-59-11"><a id="__codelineno-59-11" name="__codelineno-59-11" href="#__codelineno-59-11"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Edit text in place.&quot;&quot;&quot;</span>
+</span><span id="__span-59-12"><a id="__codelineno-59-12" name="__codelineno-59-12" href="#__codelineno-59-12"></a>    <span class="k">return</span> <span class="n">text</span>
+</span><span id="__span-59-13"><a id="__codelineno-59-13" name="__codelineno-59-13" href="#__codelineno-59-13"></a>
+</span><span id="__span-59-14"><a id="__codelineno-59-14" name="__codelineno-59-14" href="#__codelineno-59-14"></a>
+</span><span id="__span-59-15"><a id="__codelineno-59-15" name="__codelineno-59-15" href="#__codelineno-59-15"></a><span class="n">library</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">ToolLibrary</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_repos</span><span class="p">,</span> <span class="n">edit</span><span class="p">])</span>
+</span><span id="__span-59-16"><a id="__codelineno-59-16" name="__codelineno-59-16" href="#__codelineno-59-16"></a><span class="nb">print</span><span class="p">(</span><span class="n">library</span><span class="o">.</span><span class="n">get_tool_display_names</span><span class="p">())</span>
+</span><span id="__span-59-17"><a id="__codelineno-59-17" name="__codelineno-59-17" href="#__codelineno-59-17"></a><span class="c1"># {&#39;search_repos&#39;: &#39;Repository Search&#39;, &#39;edit&#39;: &#39;edit&#39;}</span>
 </span></code></pre></div>
-<p>The model still calls <code>search_repos</code>, but clients such as a CLI can show
-<code>Repository Search</code> to users.</p>
+<p><code>ToolLibrary.get_tool_display_names()</code> returns a <code>tool_name -&gt; display_name</code>
+mapping. The model still calls <code>search_repos</code>, but clients such as a CLI can
+show <code>Repository Search</code> to users. If <code>display_name</code> is not passed, msgFlux
+falls back to the tool's registered name.</p>
 <h4 id="usage_guidance">usage_guidance</h4>
 <p>Add guidance that is rendered into the agent system prompt under
 <code>&lt;tool_usage_guidance&gt;</code>. Use it for tool-specific "when/how to use" instructions
 that should not live in the function description.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-60-1"><a id="__codelineno-60-1" name="__codelineno-60-1" href="#__codelineno-60-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span>
-</span><span id="__span-60-2"><a id="__codelineno-60-2" name="__codelineno-60-2" href="#__codelineno-60-2"></a>    <span class="n">display_name</span><span class="o">=</span><span class="s2">&quot;Repository Search&quot;</span><span class="p">,</span>
-</span><span id="__span-60-3"><a id="__codelineno-60-3" name="__codelineno-60-3" href="#__codelineno-60-3"></a>    <span class="n">usage_guidance</span><span class="o">=</span><span class="p">(</span>
-</span><span id="__span-60-4"><a id="__codelineno-60-4" name="__codelineno-60-4" href="#__codelineno-60-4"></a>        <span class="s2">&quot;Use when the user asks for GitHub repositories. Prefer concise search &quot;</span>
-</span><span id="__span-60-5"><a id="__codelineno-60-5" name="__codelineno-60-5" href="#__codelineno-60-5"></a>        <span class="s2">&quot;queries with language, framework, or topic constraints.&quot;</span>
-</span><span id="__span-60-6"><a id="__codelineno-60-6" name="__codelineno-60-6" href="#__codelineno-60-6"></a>    <span class="p">),</span>
-</span><span id="__span-60-7"><a id="__codelineno-60-7" name="__codelineno-60-7" href="#__codelineno-60-7"></a><span class="p">)</span>
-</span><span id="__span-60-8"><a id="__codelineno-60-8" name="__codelineno-60-8" href="#__codelineno-60-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">search_repos</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-60-9"><a id="__codelineno-60-9" name="__codelineno-60-9" href="#__codelineno-60-9"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;</span>
-</span><span id="__span-60-10"><a id="__codelineno-60-10" name="__codelineno-60-10" href="#__codelineno-60-10"></a>    <span class="o">...</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-60-1"><a id="__codelineno-60-1" name="__codelineno-60-1" href="#__codelineno-60-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
+</span><span id="__span-60-2"><a id="__codelineno-60-2" name="__codelineno-60-2" href="#__codelineno-60-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-60-3"><a id="__codelineno-60-3" name="__codelineno-60-3" href="#__codelineno-60-3"></a>
+</span><span id="__span-60-4"><a id="__codelineno-60-4" name="__codelineno-60-4" href="#__codelineno-60-4"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span>
+</span><span id="__span-60-5"><a id="__codelineno-60-5" name="__codelineno-60-5" href="#__codelineno-60-5"></a>    <span class="n">display_name</span><span class="o">=</span><span class="s2">&quot;Repository Search&quot;</span><span class="p">,</span>
+</span><span id="__span-60-6"><a id="__codelineno-60-6" name="__codelineno-60-6" href="#__codelineno-60-6"></a>    <span class="n">usage_guidance</span><span class="o">=</span><span class="p">(</span>
+</span><span id="__span-60-7"><a id="__codelineno-60-7" name="__codelineno-60-7" href="#__codelineno-60-7"></a>        <span class="s2">&quot;Use when the user asks for GitHub repositories. Prefer concise search &quot;</span>
+</span><span id="__span-60-8"><a id="__codelineno-60-8" name="__codelineno-60-8" href="#__codelineno-60-8"></a>        <span class="s2">&quot;queries with language, framework, or topic constraints.&quot;</span>
+</span><span id="__span-60-9"><a id="__codelineno-60-9" name="__codelineno-60-9" href="#__codelineno-60-9"></a>    <span class="p">),</span>
+</span><span id="__span-60-10"><a id="__codelineno-60-10" name="__codelineno-60-10" href="#__codelineno-60-10"></a><span class="p">)</span>
+</span><span id="__span-60-11"><a id="__codelineno-60-11" name="__codelineno-60-11" href="#__codelineno-60-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">search_repos</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-60-12"><a id="__codelineno-60-12" name="__codelineno-60-12" href="#__codelineno-60-12"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Search GitHub repositories.&quot;&quot;&quot;</span>
+</span><span id="__span-60-13"><a id="__codelineno-60-13" name="__codelineno-60-13" href="#__codelineno-60-13"></a>    <span class="k">return</span> <span class="n">query</span>
+</span><span id="__span-60-14"><a id="__codelineno-60-14" name="__codelineno-60-14" href="#__codelineno-60-14"></a>
+</span><span id="__span-60-15"><a id="__codelineno-60-15" name="__codelineno-60-15" href="#__codelineno-60-15"></a>
+</span><span id="__span-60-16"><a id="__codelineno-60-16" name="__codelineno-60-16" href="#__codelineno-60-16"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">(</span>
+</span><span id="__span-60-17"><a id="__codelineno-60-17" name="__codelineno-60-17" href="#__codelineno-60-17"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+</span><span id="__span-60-18"><a id="__codelineno-60-18" name="__codelineno-60-18" href="#__codelineno-60-18"></a>    <span class="n">model</span><span class="o">=</span><span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">),</span>
+</span><span id="__span-60-19"><a id="__codelineno-60-19" name="__codelineno-60-19" href="#__codelineno-60-19"></a>    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">search_repos</span><span class="p">],</span>
+</span><span id="__span-60-20"><a id="__codelineno-60-20" name="__codelineno-60-20" href="#__codelineno-60-20"></a><span class="p">)</span>
+</span><span id="__span-60-21"><a id="__codelineno-60-21" name="__codelineno-60-21" href="#__codelineno-60-21"></a>
+</span><span id="__span-60-22"><a id="__codelineno-60-22" name="__codelineno-60-22" href="#__codelineno-60-22"></a><span class="nb">print</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">get_system_prompt</span><span class="p">())</span>
 </span></code></pre></div>
+<p>The guidance is injected into the system prompt when you render it with
+<code>agent.get_system_prompt()</code>.</p>
 <h4 id="builtin-usage-guidance">Builtin usage guidance</h4>
 <p>msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
 tool implementations neutral while letting applications such as a CLI attach
@@ -9333,16 +9395,19 @@ ready-to-use instructions when composing an agent.</p>
 <p>Use <code>apply_tool_guidance()</code> to fill <code>usage_guidance</code> only when a tool does not
 already define one:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-61-1"><a id="__codelineno-61-1" name="__codelineno-61-1" href="#__codelineno-61-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mf</span>
-</span><span id="__span-61-2"><a id="__codelineno-61-2" name="__codelineno-61-2" href="#__codelineno-61-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_tool_guidance</span>
-</span><span id="__span-61-3"><a id="__codelineno-61-3" name="__codelineno-61-3" href="#__codelineno-61-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">WebFetch</span><span class="p">,</span> <span class="n">WebSearch</span>
-</span><span id="__span-61-4"><a id="__codelineno-61-4" name="__codelineno-61-4" href="#__codelineno-61-4"></a>
-</span><span id="__span-61-5"><a id="__codelineno-61-5" name="__codelineno-61-5" href="#__codelineno-61-5"></a><span class="n">tools</span> <span class="o">=</span> <span class="n">apply_tool_guidance</span><span class="p">([</span><span class="n">WebSearch</span><span class="p">(),</span> <span class="n">WebFetch</span><span class="p">()])</span>
-</span><span id="__span-61-6"><a id="__codelineno-61-6" name="__codelineno-61-6" href="#__codelineno-61-6"></a>
-</span><span id="__span-61-7"><a id="__codelineno-61-7" name="__codelineno-61-7" href="#__codelineno-61-7"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">(</span>
-</span><span id="__span-61-8"><a id="__codelineno-61-8" name="__codelineno-61-8" href="#__codelineno-61-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
-</span><span id="__span-61-9"><a id="__codelineno-61-9" name="__codelineno-61-9" href="#__codelineno-61-9"></a>    <span class="n">model</span><span class="o">=</span><span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">),</span>
-</span><span id="__span-61-10"><a id="__codelineno-61-10" name="__codelineno-61-10" href="#__codelineno-61-10"></a>    <span class="n">tools</span><span class="o">=</span><span class="n">tools</span><span class="p">,</span>
-</span><span id="__span-61-11"><a id="__codelineno-61-11" name="__codelineno-61-11" href="#__codelineno-61-11"></a><span class="p">)</span>
+</span><span id="__span-61-2"><a id="__codelineno-61-2" name="__codelineno-61-2" href="#__codelineno-61-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgflux.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+</span><span id="__span-61-3"><a id="__codelineno-61-3" name="__codelineno-61-3" href="#__codelineno-61-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_tool_guidance</span>
+</span><span id="__span-61-4"><a id="__codelineno-61-4" name="__codelineno-61-4" href="#__codelineno-61-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">msgflux.tools.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">WebFetch</span><span class="p">,</span> <span class="n">WebSearch</span>
+</span><span id="__span-61-5"><a id="__codelineno-61-5" name="__codelineno-61-5" href="#__codelineno-61-5"></a>
+</span><span id="__span-61-6"><a id="__codelineno-61-6" name="__codelineno-61-6" href="#__codelineno-61-6"></a><span class="n">tools</span> <span class="o">=</span> <span class="n">apply_tool_guidance</span><span class="p">([</span><span class="n">WebSearch</span><span class="p">(),</span> <span class="n">WebFetch</span><span class="p">()])</span>
+</span><span id="__span-61-7"><a id="__codelineno-61-7" name="__codelineno-61-7" href="#__codelineno-61-7"></a>
+</span><span id="__span-61-8"><a id="__codelineno-61-8" name="__codelineno-61-8" href="#__codelineno-61-8"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Agent</span><span class="p">(</span>
+</span><span id="__span-61-9"><a id="__codelineno-61-9" name="__codelineno-61-9" href="#__codelineno-61-9"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+</span><span id="__span-61-10"><a id="__codelineno-61-10" name="__codelineno-61-10" href="#__codelineno-61-10"></a>    <span class="n">model</span><span class="o">=</span><span class="n">mf</span><span class="o">.</span><span class="n">Model</span><span class="o">.</span><span class="n">chat_completion</span><span class="p">(</span><span class="s2">&quot;openai/gpt-4.1-mini&quot;</span><span class="p">),</span>
+</span><span id="__span-61-11"><a id="__codelineno-61-11" name="__codelineno-61-11" href="#__codelineno-61-11"></a>    <span class="n">tools</span><span class="o">=</span><span class="n">tools</span><span class="p">,</span>
+</span><span id="__span-61-12"><a id="__codelineno-61-12" name="__codelineno-61-12" href="#__codelineno-61-12"></a><span class="p">)</span>
+</span><span id="__span-61-13"><a id="__codelineno-61-13" name="__codelineno-61-13" href="#__codelineno-61-13"></a>
+</span><span id="__span-61-14"><a id="__codelineno-61-14" name="__codelineno-61-14" href="#__codelineno-61-14"></a><span class="nb">print</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">get_system_prompt</span><span class="p">())</span>
 </span></code></pre></div>
 <p>Explicit guidance always wins:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-62-1"><a id="__codelineno-62-1" name="__codelineno-62-1" href="#__codelineno-62-1"></a><span class="nd">@mf</span><span class="o">.</span><span class="n">tool_config</span><span class="p">(</span><span class="n">usage_guidance</span><span class="o">=</span><span class="s2">&quot;Use only for internal repository search.&quot;</span><span class="p">)</span>
