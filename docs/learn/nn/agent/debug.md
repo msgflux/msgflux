@@ -179,7 +179,6 @@ msgFlux provides several inspection mechanisms to help you debug and understand 
                 }
             },
             "tool_library.name": "Assistant_tool_library",
-            "tool_library.special_library": [],
             "tool_library.tool_configs": {},
             "tool_library.mcp_clients": {}
         }

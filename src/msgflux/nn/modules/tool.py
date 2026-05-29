@@ -1,17 +1,31 @@
 import asyncio
 import inspect
+import time
+from concurrent.futures import CancelledError as FutureCancelledError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from functools import partial
 from importlib import import_module
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union
+from threading import Lock
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
+from uuid import uuid4
 
 import msgspec
 
 import msgflux.nn.functional as F
+from msgflux._private.executor import Executor
+from msgflux.agent_inbox import AgentInbox, AgentNotification, ToolNotificationHandle
 from msgflux.auto import AutoParams
+from msgflux.chat_messages import ChatMessages
+from msgflux.context import ExecutionScope, execution_context, get_execution_context
 from msgflux.core.dotdict import dotdict
-from msgflux.exceptions import TaskError
+from msgflux.exceptions import (
+    TaskError,
+    TaskPauseRequestedError,
+    TaskStopRequestedError,
+)
 from msgflux.logger import logger
 from msgflux.nn.modules.container import ModuleDict
 from msgflux.nn.modules.module import Module
@@ -21,6 +35,7 @@ from msgflux.protocols.mcp import (
     extract_tool_result_text,
     filter_tools,
 )
+from msgflux.tasks import TaskActivityRecorder, TaskHandle, TaskStore
 from msgflux.telemetry.span import (
     aset_tool_attributes,
     set_tool_attributes,
@@ -71,6 +86,35 @@ class ToolResponses:
     def get_by_name(self, tool_name: str) -> Optional[ToolCall]:
         """Retrieve a tool_call by tool name."""
         return next((r for r in self.tool_calls if r.name == tool_name), None)
+
+
+class ToolLibraryHandle:
+    """Controlled handle exposed to runtime-aware tools."""
+
+    def __init__(self, library: "ToolLibrary"):
+        self._library = library
+
+    def add(self, tool: Callable) -> str:
+        self._library.add(tool)
+        return getattr(tool, "name", None) or getattr(tool, "__name__", None)
+
+    def remove(self, tool_name: str) -> str:
+        if tool_name in self._library._runtime_tool_names:
+            raise ValueError(f"The runtime tool `{tool_name}` cannot be removed.")
+        self._library.remove(tool_name)
+        return tool_name
+
+    def list_tools(self) -> List[str]:
+        return self._library.get_tool_names()
+
+
+def _uses_library_injection(config: Mapping[str, Any]) -> bool:
+    return config.get("inject_library", False)
+
+
+def _is_agent_tool_impl(impl: Any) -> bool:
+    agent_type = import_module("msgflux.nn.modules.agent").Agent
+    return isinstance(impl, agent_type)
 
 
 class Tool(Module):
@@ -274,7 +318,7 @@ class LocalTool(Tool):
 
 def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
     """Convert a callable in nn.Tool."""
-    tool_config = getattr(impl, "tool_config", dotdict())
+    tool_config = dotdict(deepcopy(getattr(impl, "tool_config", dotdict())))
 
     name_overridden = tool_config.pop("name_overridden", None)
     configured_display_name = tool_config.get("display_name")
@@ -367,11 +411,28 @@ def _convert_module_to_nn_tool(impl: Callable) -> Tool:  # noqa: C901
     if tool_config.get("handoff", False):
         name = "transfer_to_" + name
 
+    tool_config["tool_kind"] = "agent" if _is_agent_tool_impl(impl) else "tool"
+
     if tool_config.get("handoff", False) or tool_config.get("disable_input", False):
         annotations = {}  # pass only the model state
+    else:
+        if tool_config.get("inject_message", False):
+            annotations.pop("message", None)
+        if tool_config.get("inject_messages", False):
+            annotations.pop("messages", None)
+        if tool_config.get("inject_vars", False):
+            annotations.pop("vars", None)
+        if tool_config.get("inject_task", False):
+            annotations.pop("task", None)
+        if tool_config.get("inject_notification", False):
+            annotations.pop("notification", None)
+        if _uses_library_injection(tool_config):
+            annotations.pop("tool_library", None)
 
     if tool_config.get("spawn"):
         doc = "This tool will not generate a return. \n" + doc
+    if tool_config.get("background"):
+        doc = "This tool runs in the background and returns a task id. \n" + doc
 
     return LocalTool(
         name=name,
@@ -391,7 +452,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self,
         name: str,
         tools: List[Callable],
-        special_tools: Optional[List[str]] = None,
         mcp_servers: Optional[List[Dict[str, Any]]] = None,
     ):
         """Initialize the ToolLibrary.
@@ -401,8 +461,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
             Library name.
         tools:
             A list of callables.
-        special_tools:
-            Autonomy tools for the model.
         mcp_servers:
             List of MCP server configurations. Each config should contain:
             - name: Namespace for tools from this server
@@ -414,53 +472,71 @@ class ToolLibrary(Module, metaclass=AutoParams):
         super().__init__()
         self.set_name(f"{name}_tool_library")
         self.library = ModuleDict()
-        self.register_buffer("special_library", [])
         self.register_buffer("tool_configs", {})
         self.register_buffer("mcp_clients", {})
+        self.task_store = TaskStore()
+        self.agent_inbox = AgentInbox(owner=f"{name}_tool_library")
+        self._runtime_tool_names = {
+            "task_status",
+            "task_list",
+            "task_output",
+            "task_wait",
+            "task_stop",
+        }
+        self._task_runtime_enabled = False
+        self._agent_task_runtime_enabled = False
+        self._on_demand_runtime_enabled = False
+        self._loaded_on_demand_tool_names: set[str] = set()
+        self._task_futures: Dict[str, Any] = {}
+        self._task_futures_lock = Lock()
+        self._task_inboxes: Dict[str, AgentInbox] = {}
+        self._task_inboxes_lock = Lock()
         for tool in tools:
             self.add(tool)
-        if special_tools:
-            for special_tool in special_tools:
-                self.special_add(special_tool)
         if mcp_servers:
             self._initialize_mcp_clients(mcp_servers)
 
-    def add(self, tool: Union[str, Callable]):
+    def add(self, tool: Callable):
         """Add a local tool in library."""
-        if isinstance(tool, str):
-            if tool in self.special_library.keys():
-                raise ValueError(
-                    f"The special tool name `{tool}` is already in special tool library"
-                )
-            self.special_library.append(tool)
-        else:
-            name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
-            if name in self.library.keys():
-                raise ValueError(f"The tool name `{name}` is already in tool library")
-            if not isinstance(tool, Tool):
-                tool = _convert_module_to_nn_tool(tool)
+        name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+        if name in self.library.keys():
+            raise ValueError(f"The tool name `{name}` is already in tool library")
+        if not isinstance(tool, Tool):
+            tool = _convert_module_to_nn_tool(tool)
 
-            # Store tool config (may be empty dict for local tools)
-            self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
-
-            self.library.update({tool.name: tool})
+        # Store tool config (may be empty dict for local tools)
+        self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
+        self.library.update({tool.name: tool})
+        self._apply_tool_registration_effects(tool.name)
 
     def remove(self, tool_name: str):
         if tool_name in self.library.keys():
             self.library.pop(tool_name)
             self.tool_configs.pop(tool_name, None)
-        elif tool_name in self.special_library:
-            self.special_library.remove(tool_name)
+            self._loaded_on_demand_tool_names.discard(tool_name)
+            self._sync_on_demand_runtime_tools()
         else:
             raise ValueError(f"The tool name `{tool_name}` is not in tool library")
 
     def clear(self):
         self.library.clear()
-        self.special_library.clear()
         self.tool_configs.clear()
         for mcp_data in self.mcp_clients.values():
             F.wait_for(mcp_data["client"].disconnect)
         self.mcp_clients.clear()
+        self._task_runtime_enabled = False
+        self._agent_task_runtime_enabled = False
+        self._on_demand_runtime_enabled = False
+        self._loaded_on_demand_tool_names.clear()
+        self._runtime_tool_names = {
+            "task_status",
+            "task_list",
+            "task_output",
+            "task_wait",
+            "task_stop",
+        }
+        with self._task_futures_lock:
+            self._task_futures.clear()
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
@@ -530,6 +606,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     # Add to library (will have name like "namespace__tool_name")
                     self.library.update({mcp_tool.name: mcp_tool})
                     self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
+                    self._apply_tool_registration_effects(mcp_tool.name)
 
                 self.mcp_clients[namespace] = {
                     "client": client,
@@ -596,17 +673,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def get_tool_json_schemas(self) -> List[Dict[str, Any]]:
         """Returns a list of JSON schemas from local and MCP tools."""
         schemas = []
-
-        # Local tools
         for tool_name in self.library:
+            if not self._is_tool_exposed(tool_name):
+                continue
             schemas.append(self.library[tool_name].get_json_schema())
-
-        # MCP tools
-        if self.mcp_clients:
-            for namespace, mcp_data in self.mcp_clients.items():
-                for mcp_tool in mcp_data["tools"]:
-                    schema = convert_mcp_schema_to_tool_schema(mcp_tool, namespace)
-                    schemas.append(schema)
 
         return schemas
 
@@ -614,12 +684,980 @@ class ToolLibrary(Module, metaclass=AutoParams):
         """Return local tool annotations keyed by tool name."""
         annotations = {}
         for tool_name, tool in self.library.items():
+            if not self._is_tool_exposed(tool_name):
+                continue
             annotations[tool_name] = {
                 name: hint
                 for name, hint in tool.get_module_annotations().items()
                 if name != "return"
             }
         return annotations
+
+    def set_agent_inbox(self, agent_inbox: AgentInbox) -> None:
+        self.agent_inbox = agent_inbox
+
+    # --- Tool Visibility Helpers ---
+
+    def _apply_tool_registration_effects(self, tool_name: str) -> None:
+        config = self.tool_configs.get(tool_name, {})
+        if config.get("background", False):
+            self._ensure_task_runtime_tools()
+        if config.get("background", False) and config.get("tool_kind") == "agent":
+            self._ensure_agent_task_runtime_tools()
+        if config.get("on_demand", False):
+            self._ensure_on_demand_runtime_tools()
+
+    def _get_on_demand_tool_names(self) -> List[str]:
+        return [
+            tool_name
+            for tool_name, config in self.tool_configs.items()
+            if config.get("on_demand", False)
+        ]
+
+    def _is_tool_exposed(self, tool_name: str) -> bool:
+        if tool_name in self._runtime_tool_names:
+            return True
+        config = self.tool_configs.get(tool_name, {})
+        if not config.get("on_demand", False):
+            return True
+        return tool_name in self._loaded_on_demand_tool_names
+
+    def _load_on_demand_tools(self, tool_names: List[str]) -> List[str]:
+        newly_loaded = []
+        for tool_name in tool_names:
+            if tool_name not in self._loaded_on_demand_tool_names:
+                self._loaded_on_demand_tool_names.add(tool_name)
+                newly_loaded.append(tool_name)
+        return newly_loaded
+
+    def _sync_on_demand_runtime_tools(self) -> None:
+        if self._get_on_demand_tool_names():
+            self._ensure_on_demand_runtime_tools()
+            return
+        if not self._on_demand_runtime_enabled:
+            return
+        self._on_demand_runtime_enabled = False
+        self._runtime_tool_names.discard("tool_search")
+        if "tool_search" in self.library:
+            self.library.pop("tool_search")
+        self.tool_configs.pop("tool_search", None)
+
+    # --- Task Runtime Registration ---
+
+    def _ensure_task_runtime_tools(self) -> None:
+        if self._task_runtime_enabled:
+            return
+        self._task_runtime_enabled = True
+        self._register_runtime_tool(
+            name="task_status",
+            description="Get the current status of a background task by task_id.",
+            annotations={"task_id": str},
+            impl=self._task_status,
+        )
+        self._register_runtime_tool(
+            name="task_list",
+            description="List background tasks registered in the current tool library.",
+            annotations={"status": Optional[str]},
+            impl=self._task_list,
+        )
+        self._register_runtime_tool(
+            name="task_output",
+            description="Get the final output of a background task by task_id.",
+            annotations={"task_id": str},
+            impl=self._task_output,
+        )
+        self._register_runtime_tool(
+            name="task_wait",
+            description=(
+                "Wait for a background task to finish. "
+                "Returns the final output, failed payload, or a timeout status."
+            ),
+            annotations={"task_id": str, "timeout": Optional[float]},
+            impl=self._task_wait,
+        )
+        self._register_runtime_tool(
+            name="task_stop",
+            description=(
+                "Request a cooperative stop for a background task. "
+                "Stops immediately only if the task has not started yet."
+            ),
+            annotations={"task_id": str},
+            impl=self._task_stop,
+        )
+
+    def _ensure_agent_task_runtime_tools(self) -> None:
+        if self._agent_task_runtime_enabled:
+            return
+        self._agent_task_runtime_enabled = True
+        self._runtime_tool_names.add("task_activity")
+        self._register_runtime_tool(
+            name="task_activity",
+            description="List compact activity entries for a background agent task.",
+            annotations={"task_id": str, "limit": Optional[int]},
+            impl=self._task_activity,
+        )
+        self._runtime_tool_names.add("task_message")
+        self._register_runtime_tool(
+            name="task_message",
+            description=(
+                "Send a message to a background agent task. "
+                "If it is still running, deliver the message to its inbox. "
+                "If it already stopped, resume the task from its checkpoint."
+            ),
+            annotations={"task_id": str, "message": str},
+            impl=self._task_message,
+        )
+
+    def _ensure_on_demand_runtime_tools(self) -> None:
+        if self._on_demand_runtime_enabled:
+            return
+        self._on_demand_runtime_enabled = True
+        self._runtime_tool_names.add("tool_search")
+        self._register_runtime_tool(
+            name="tool_search",
+            description=(
+                "Search registered on-demand tools by keyword or exact "
+                "selection. Matching tools become available in the next model "
+                "call. Use `select:tool_a,tool_b` for direct selection."
+            ),
+            annotations={"query": str, "max_results": Optional[int]},
+            impl=self._tool_search,
+        )
+
+    def _register_runtime_tool(
+        self,
+        *,
+        name: str,
+        description: str,
+        annotations: Dict[str, Any],
+        impl: Callable,
+    ) -> None:
+        tool = LocalTool(
+            name=name,
+            description=description,
+            annotations=annotations,
+            tool_config={},
+            impl=impl,
+        )
+        if name in self.library and self.tool_configs.get(name):
+            raise ValueError(
+                f"The runtime tool `{name}` conflicts with an existing tool."
+            )
+        self.library.update({name: tool})
+        self.tool_configs[name] = {}
+
+    # --- Task Runtime Tools ---
+
+    def _task_status(self, task_id: str) -> Dict[str, Any]:
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+        payload = task.to_dict()
+        payload.update(self._build_task_timing_fields(task))
+        last_activity = self.task_store.get_last_activity(task_id)
+        if last_activity is not None:
+            payload["last_activity_summary"] = self._format_task_activity_entry(
+                last_activity
+            )
+        return payload
+
+    def _task_list(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        tasks = []
+        for task in self.task_store.list(status=status):
+            payload = task.to_dict()
+            payload.update(self._build_task_timing_fields(task))
+            last_activity = self.task_store.get_last_activity(task.task_id)
+            if last_activity is not None:
+                payload["last_activity_summary"] = self._format_task_activity_entry(
+                    last_activity
+                )
+            tasks.append(payload)
+        return tasks
+
+    def _task_output(self, task_id: str) -> Any:
+        task = self.task_store.get(task_id)
+        return self._build_task_result(task_id=task_id, task=task)
+
+    def _tool_search(
+        self,
+        query: str,
+        max_results: Optional[int] = 5,
+    ) -> Dict[str, Any]:
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("`query` must be a non-empty string.")
+        if max_results is not None:
+            if isinstance(max_results, bool) or not isinstance(max_results, int):
+                raise TypeError(
+                    f"`max_results` must be int or None, given `{type(max_results)}`"
+                )
+            if max_results <= 0:
+                raise ValueError("`max_results` must be greater than 0.")
+
+        on_demand_tool_names = self._get_on_demand_tool_names()
+        total = len(on_demand_tool_names)
+        if total == 0:
+            return {
+                "query": query,
+                "matches": [],
+                "loaded": [],
+                "already_loaded": [],
+                "total_on_demand_tools": 0,
+            }
+
+        if query.lower().startswith("select:"):
+            requested = [
+                item.strip()
+                for item in query.split(":", 1)[1].split(",")
+                if item.strip()
+            ]
+            matches = self._select_on_demand_tools(requested)
+        else:
+            matches = self._search_on_demand_tools(
+                query=query,
+                max_results=max_results or 5,
+            )
+
+        newly_loaded = self._load_on_demand_tools(matches)
+        already_loaded = [
+            tool_name for tool_name in matches if tool_name not in newly_loaded
+        ]
+        return {
+            "query": query,
+            "matches": matches,
+            "loaded": newly_loaded,
+            "already_loaded": already_loaded,
+            "total_on_demand_tools": total,
+        }
+
+    def _task_activity(
+        self,
+        task_id: str,
+        limit: Optional[int] = 10,
+    ) -> Any:
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise TypeError(f"`limit` must be int or None, given `{type(limit)}`")
+            if limit <= 0:
+                raise ValueError("`limit` must be greater than 0.")
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+        if task.metadata.get("task_kind") != "agent":
+            return {
+                "task_id": task_id,
+                "status": "unsupported",
+                "error": "task_activity is only available for background agent tasks.",
+            }
+        activity = self.task_store.list_activity(task_id, limit=limit)
+        return [self._format_task_activity_entry(item) for item in activity]
+
+    def _task_wait(self, task_id: str, timeout: Optional[float] = None) -> Any:  # noqa: C901
+        if timeout is not None:
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise TypeError(
+                    f"`timeout` must be float, int or None, given `{type(timeout)}`"
+                )
+            if timeout < 0:
+                raise ValueError("`timeout` must be greater than or equal to 0.")
+
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+        if task.status in {"completed", "failed", "stopped"}:
+            return self._build_task_result(task_id=task_id, task=task)
+
+        future = self._get_task_future(task_id)
+        if future is not None:
+            try:
+                future.result(timeout=timeout)
+            except FutureTimeoutError:
+                task = self.task_store.get(task_id)
+                return self._build_task_timeout_result(task_id=task_id, task=task)
+            except Exception:
+                task = self.task_store.get(task_id)
+                return self._build_task_result(task_id=task_id, task=task)
+            task = self.task_store.get(task_id)
+            return self._build_task_result(task_id=task_id, task=task)
+
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
+        while True:
+            task = self.task_store.get(task_id)
+            if task is None or task.status in {"completed", "failed", "stopped"}:
+                return self._build_task_result(task_id=task_id, task=task)
+            if deadline is not None and time.monotonic() >= deadline:
+                return self._build_task_timeout_result(task_id=task_id, task=task)
+            time.sleep(0.05)
+
+    def _task_stop(self, task_id: str) -> Dict[str, Any]:
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+
+        if task.status in {"completed", "failed", "stopped"}:
+            return {
+                "task_id": task_id,
+                "status": task.status,
+                "message": "Task already reached a terminal state.",
+            }
+
+        self.task_store.request_stop(task_id)
+        future = self._get_task_future(task_id)
+        if future is not None and future.cancel():
+            stopped = self.task_store.stop(
+                task_id,
+                reason="Task was cancelled before it started running.",
+            )
+            return {
+                "task_id": task_id,
+                "status": "stopped",
+                "message": "Task stopped before execution started.",
+                "task_status": stopped.status if stopped is not None else "stopped",
+            }
+
+        return {
+            "task_id": task_id,
+            "status": "stop_requested",
+            "message": (
+                "Stop requested. The task will stop at the next cooperative checkpoint."
+            ),
+        }
+
+    def _task_message(self, task_id: str, message: str) -> Dict[str, Any]:
+        task = self.task_store.get(task_id)
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+        if task.metadata.get("task_kind") != "agent":
+            return {
+                "task_id": task_id,
+                "status": "unsupported",
+                "error": "task_message is only available for background agent tasks.",
+            }
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("`message` must be a non-empty string.")
+
+        task_inbox = self._get_task_inbox(task_id)
+        if task.status == "running" and task_inbox is not None:
+            task_inbox.publish(
+                {
+                    "source": "task_message",
+                    "ref": task_id,
+                    "status": "message",
+                    "hint": message.strip(),
+                    "metadata": {"direction": "root_to_task"},
+                }
+            )
+            self.task_store.add_activity(
+                task_id,
+                kind="message",
+                summary=f"Root message: {self._truncate_activity_text(message)}",
+                metadata={"direction": "root_to_task"},
+            )
+            return {
+                "task_id": task_id,
+                "status": "delivered",
+                "message": "Message delivered to the running background agent.",
+            }
+
+        resumed = self._resume_background_agent_task(task=task, message=message.strip())
+        return {
+            "task_id": task_id,
+            "status": "resumed",
+            "message": resumed,
+        }
+
+    # --- Task Runtime Helpers ---
+
+    def _build_task_result(self, *, task_id: str, task: Optional[Any]) -> Any:
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+        if task.status == "completed":
+            return task.result
+        if task.status == "failed":
+            return {"task_id": task_id, "status": task.status, "error": task.error}
+        if task.status == "stopped":
+            return {
+                "task_id": task_id,
+                "status": task.status,
+                "reason": task.metadata.get("stop_reason"),
+            }
+        return {
+            "task_id": task_id,
+            "status": task.status,
+            "progress": task.progress.to_dict(),
+        }
+
+    def _build_task_timeout_result(
+        self, *, task_id: str, task: Optional[Any]
+    ) -> Dict[str, Any]:
+        if task is None:
+            return {"task_id": task_id, "status": "not_found"}
+        payload = {
+            "task_id": task_id,
+            "status": "timeout",
+            "task_status": task.status,
+        }
+        if task.status not in {"completed", "failed"}:
+            if task.status == "stopped":
+                payload["reason"] = task.metadata.get("stop_reason")
+                return payload
+            payload["progress"] = task.progress.to_dict()
+        elif task.status == "failed":
+            payload["error"] = task.error
+        return payload
+
+    def _build_task_timing_fields(self, task: Any) -> Dict[str, Any]:
+        started_at = task.created_at
+        now = time.time()
+        created_ts = self._parse_utc_timestamp(task.created_at)
+        completed_ts = self._parse_utc_timestamp(task.completed_at)
+        payload: Dict[str, Any] = {"started_at": started_at}
+        if created_ts is None:
+            return payload
+        if completed_ts is not None:
+            payload["elapsed_seconds"] = round(completed_ts - created_ts, 3)
+        else:
+            payload["running_for_seconds"] = round(now - created_ts, 3)
+        return payload
+
+    def _format_task_activity_entry(self, activity: Any) -> str:
+        label_map = {
+            "status": "Status",
+            "progress": "Progress",
+            "tool_call": "ToolCall",
+            "error": "Error",
+            "message": "Message",
+        }
+        label = label_map.get(activity.kind, activity.kind.title())
+        return f"{label}: {activity.summary}"
+
+    def _select_on_demand_tools(self, requested: List[str]) -> List[str]:
+        resolved = []
+        normalized = {
+            tool_name.lower(): tool_name
+            for tool_name in self._get_on_demand_tool_names()
+        }
+        for tool_name in requested:
+            match = normalized.get(tool_name.lower())
+            if match is not None and match not in resolved:
+                resolved.append(match)
+        return resolved
+
+    def _search_on_demand_tools(self, *, query: str, max_results: int) -> List[str]:
+        query_lower = query.strip().lower()
+        terms = [term for term in query_lower.split() if term]
+        if not terms:
+            return []
+
+        matches = []
+        for tool_name in self._get_on_demand_tool_names():
+            if tool_name not in self.library:
+                continue
+            tool = self.library[tool_name]
+            name_parts = tool_name.lower().replace("__", " ").replace("_", " ")
+            description = (tool.get_module_description() or "").lower()
+            score = 0
+            if query_lower == tool_name.lower():
+                score += 100
+            if query_lower in name_parts:
+                score += 40
+            for term in terms:
+                if term in name_parts:
+                    score += 15
+                if description and term in description:
+                    score += 5
+            if score > 0:
+                matches.append((score, tool_name))
+
+        matches.sort(key=lambda item: (-item[0], item[1]))
+        return [tool_name for _, tool_name in matches[:max_results]]
+
+    def _build_background_dispatch_result(
+        self,
+        *,
+        task_id: str,
+        tool_name: str,
+        task_kind: str,
+    ) -> str:
+        actions = ["`task_status`", "`task_stop`", "`task_wait`", "`task_output`"]
+        if task_kind == "agent":
+            actions.insert(1, "`task_activity`")
+            actions.insert(2, "`task_message`")
+        return (
+            f"The `{tool_name}` tool is running in the background with "
+            f"task_id='{task_id}'. Use that task_id with "
+            + ", ".join(actions[:-1])
+            + f", or {actions[-1]}."
+        )
+
+    @staticmethod
+    def _parse_utc_timestamp(value: Optional[str]) -> Optional[float]:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            normalized = value.replace("Z", "+00:00")
+            return (
+                datetime.fromisoformat(normalized).astimezone(timezone.utc).timestamp()
+            )
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _truncate_activity_text(value: str, *, limit: int = 140) -> str:
+        text = " ".join(str(value).split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    def _register_task_future(self, task_id: str, future: Any) -> None:
+        with self._task_futures_lock:
+            self._task_futures[task_id] = future
+
+    def _get_task_future(self, task_id: str) -> Optional[Any]:
+        with self._task_futures_lock:
+            return self._task_futures.get(task_id)
+
+    def _cleanup_task_future(self, task_id: str, future: Any) -> None:
+        with self._task_futures_lock:
+            current = self._task_futures.get(task_id)
+            if current is future:
+                self._task_futures.pop(task_id, None)
+
+    def _register_task_inbox(self, task_id: str, inbox: AgentInbox) -> None:
+        with self._task_inboxes_lock:
+            self._task_inboxes[task_id] = inbox
+
+    def _get_task_inbox(self, task_id: str) -> Optional[AgentInbox]:
+        with self._task_inboxes_lock:
+            return self._task_inboxes.get(task_id)
+
+    # --- Tool Call Preparation ---
+
+    def _build_call_params(  # noqa: C901
+        self,
+        *,
+        tool: Tool,
+        tool_name: str,
+        tool_params: Any,
+        config: Mapping[str, Any],
+        message: Optional[Any],
+        messages: List[Dict[str, Any]],
+        vars: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        if config.get("handoff", False) or config.get("disable_input", False):
+            call_params: Dict[str, Any] = {}
+        else:
+            call_params = dict(tool_params or {})
+
+        inject_vars = config.get("inject_vars", False)
+        if inject_vars:
+            if isinstance(inject_vars, list):
+                for key in inject_vars:
+                    if key not in vars:
+                        raise ValueError(
+                            f"The tool `{tool_name}` requires the injected "
+                            f"parameter `{key}`, but it was not found."
+                        )
+                    call_params[key] = vars[key]
+            elif inject_vars is True:
+                call_params["vars"] = vars
+
+        if config.get("inject_messages", False):
+            if _should_copy_injected_messages(tool, config):
+                call_params["messages"] = deepcopy(messages)
+            else:
+                call_params["messages"] = messages
+
+        if config.get("inject_message", False):
+            call_params["message"] = message
+
+        if (
+            config.get("inject_notification", False)
+            and config.get("tool_kind") != "agent"
+        ):
+            call_params["notification"] = self._build_notification_handle(
+                tool_name=tool_name
+            )
+
+        if _uses_library_injection(config):
+            call_params["tool_library"] = ToolLibraryHandle(self)
+
+        return call_params
+
+    def _build_call_parameters_for_response(
+        self, params: Optional[Mapping[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if params is None:
+            return None
+        if hasattr(params, "to_dict"):
+            parameters = params.to_dict()
+        else:
+            parameters = dict(params)
+        for key in (
+            "vars",
+            "messages",
+            "message",
+            "task",
+            "notification",
+            "scope",
+            "tool_library",
+            "tool_call_id",
+        ):
+            parameters.pop(key, None)
+        return parameters
+
+    def _build_notification_handle(
+        self,
+        *,
+        tool_name: str,
+        ref: Optional[str] = None,
+        agent_inbox: Optional[AgentInbox] = None,
+    ) -> ToolNotificationHandle:
+        execution_context = get_execution_context()
+        inbox = agent_inbox or execution_context.get("agent_inbox") or self.agent_inbox
+        metadata = {"tool": tool_name}
+        return ToolNotificationHandle(
+            inbox,
+            ref=ref,
+            metadata=metadata,
+        )
+
+    # --- Background Task Execution ---
+
+    def _run_background_tool(
+        self,
+        *,
+        tool: Tool,
+        task_handle: TaskHandle,
+        tool_name: str,
+        call_params: Dict[str, Any],
+        execution_scope: Optional[Dict[str, Any]] = None,
+        agent_inbox: Optional[AgentInbox] = None,
+    ) -> Any:
+        scope = execution_scope or {}
+        with execution_context(**scope):
+            task_handle.set_running()
+            try:
+                result = tool(**call_params)
+            except TaskStopRequestedError as exc:
+                task_handle.stop(reason=str(exc))
+                self._publish_task_notification(
+                    task_id=task_handle.task_id,
+                    tool_name=tool_name,
+                    status="stopped",
+                    hint=(
+                        f"Use task_status(task_id='{task_handle.task_id}') "
+                        "if you need stop details."
+                    ),
+                    agent_inbox=agent_inbox,
+                )
+                raise
+            except TaskPauseRequestedError as exc:
+                task_handle.pause(reason=str(exc))
+                self._publish_task_notification(
+                    task_id=task_handle.task_id,
+                    tool_name=tool_name,
+                    status="paused",
+                    hint=(
+                        f"Use task_message(task_id='{task_handle.task_id}', "
+                        "message='...') to resume the paused task."
+                    ),
+                    agent_inbox=agent_inbox,
+                )
+                raise
+            except Exception as exc:
+                task_handle.fail(exc)
+                self._publish_task_notification(
+                    task_id=task_handle.task_id,
+                    tool_name=tool_name,
+                    status="failed",
+                    hint=(
+                        f"Use task_status(task_id='{task_handle.task_id}') "
+                        "if you need error details."
+                    ),
+                    agent_inbox=agent_inbox,
+                )
+                raise
+            task_handle.complete(result)
+            self._publish_task_notification(
+                task_id=task_handle.task_id,
+                tool_name=tool_name,
+                status="completed",
+                hint=(
+                    f"Use task_output(task_id='{task_handle.task_id}') "
+                    "if you need the result."
+                ),
+                agent_inbox=agent_inbox,
+            )
+            return result
+
+    def _resume_background_agent_task(self, *, task: Any, message: str) -> str:
+        tool_name = task.tool_name
+        if tool_name not in self.library:
+            raise ValueError(f"The tool `{tool_name}` is no longer available.")
+        tool = self.library[tool_name]
+        checkpoint_namespace = (
+            tool.impl.get_module_name()
+            if hasattr(tool, "impl") and hasattr(tool.impl, "get_module_name")
+            else tool.get_module_name()
+        )
+
+        checkpoint_store = get_execution_context().get("checkpoint_store")
+        session_id = task.metadata.get("checkpoint_session_id") or task.metadata.get(
+            "session_id"
+        )
+        run_id = task.metadata.get("checkpoint_run_id") or task.task_id
+        restored_messages = ChatMessages()
+        restored_vars: Dict[str, Any] = {}
+        restored_model_preference = None
+
+        if checkpoint_store is not None and isinstance(session_id, str) and session_id:
+            state = checkpoint_store.load_state(
+                checkpoint_namespace,
+                session_id,
+                run_id,
+            )
+            if state is not None:
+                restored_messages._hydrate_state(state.get("messages", {}))
+                restored_vars = state.get("vars", {}) or {}
+                restored_model_preference = state.get("model_preference")
+
+        root_inbox = get_execution_context().get("agent_inbox") or self.agent_inbox
+        task_inbox = self._get_task_inbox(task.task_id)
+        if task_inbox is None:
+            task_inbox = root_inbox.fork(
+                owner=f"{tool_name}:{task.task_id}",
+                namespace=checkpoint_namespace,
+                session_id=(
+                    session_id if isinstance(session_id, str) and session_id else None
+                ),
+                run_id=run_id,
+            )
+            self._register_task_inbox(task.task_id, task_inbox)
+
+        self.task_store.requeue(task.task_id)
+        self.task_store.add_activity(
+            task.task_id,
+            kind="message",
+            summary=f"Root message: {self._truncate_activity_text(message)}",
+            metadata={"direction": "root_to_task", "resume": True},
+        )
+
+        execution_scope = {
+            "session_id": session_id
+            if isinstance(session_id, str) and session_id
+            else None,
+            "run_id": run_id,
+            "parent_run_id": task.metadata.get("parent_run_id"),
+            "root_run_id": task.metadata.get("root_run_id"),
+            "checkpoint_store": checkpoint_store,
+            "agent_inbox": task_inbox,
+            "task_activity_recorder": TaskActivityRecorder(
+                task.task_id, self.task_store
+            ),
+        }
+        future = Executor.get_instance().submit(
+            partial(
+                self._run_background_tool,
+                tool=tool,
+                task_handle=TaskHandle(
+                    task.task_id,
+                    self.task_store,
+                    tool_name=tool_name,
+                    agent_inbox=root_inbox,
+                ),
+                tool_name=tool_name,
+                call_params={
+                    "messages": restored_messages,
+                    "scope": ExecutionScope(
+                        session_id=(
+                            session_id if isinstance(session_id, str) else "default"
+                        ),
+                        namespace=checkpoint_namespace,
+                        run_id=run_id,
+                        parent_run_id=task.metadata.get("parent_run_id"),
+                        root_run_id=task.metadata.get("root_run_id"),
+                    ),
+                    "model_preference": restored_model_preference,
+                    "vars": restored_vars,
+                    "tool_call_id": f"task_message_{task.task_id}",
+                    "task": message,
+                },
+                execution_scope=execution_scope,
+                agent_inbox=root_inbox,
+            )
+        )
+        self._register_task_future(task.task_id, future)
+        future.add_done_callback(partial(self._cleanup_task_future, task.task_id))
+        future.add_done_callback(self._log_background_task_failure)
+        return "Message scheduled and background agent resumed."
+
+    def _log_background_task_failure(self, future: Any) -> None:
+        try:
+            future.result()
+        except FutureCancelledError:
+            return
+        except TaskStopRequestedError:
+            return
+        except TaskPauseRequestedError:
+            return
+        except Exception as exc:
+            logger.error(f"Background task error: {exc!s}", exc_info=True)
+
+    # --- Background Task Dispatch ---
+
+    def _dispatch_background_tool(
+        self,
+        *,
+        tool: Tool,
+        tool_id: str,
+        tool_name: str,
+        call_params: Dict[str, Any],
+        config: Mapping[str, Any],
+    ) -> ToolCall:
+        task_kind = config.get("tool_kind", "tool")
+        execution_context = get_execution_context()
+        session_id = execution_context.get("session_id")
+        parent_run_id = execution_context.get("run_id")
+        root_run_id = execution_context.get("root_run_id")
+        checkpoint_store = execution_context.get("checkpoint_store")
+        root_agent_inbox = execution_context.get("agent_inbox") or self.agent_inbox
+        task_id = uuid4().hex[:8]
+        task_inbox = None
+        if task_kind == "agent":
+            task_inbox = root_agent_inbox.fork(
+                owner=f"{tool_name}:{task_id}",
+                namespace=tool_name,
+                session_id=session_id if isinstance(session_id, str) else None,
+                run_id=task_id,
+            )
+            self._register_task_inbox(task_id, task_inbox)
+        task = self.task_store.create(
+            task_id=task_id,
+            tool_name=tool_name,
+            metadata={
+                "tool_call_id": tool_id,
+                "task_kind": task_kind,
+                "session_id": session_id,
+                "parent_run_id": parent_run_id,
+                "root_run_id": root_run_id,
+                "checkpoint_session_id": session_id,
+                "checkpoint_run_id": task_id if task_kind == "agent" else None,
+                "supports_activity": task_kind == "agent",
+                "supports_message": task_kind == "agent",
+                "stop_requested": False,
+            },
+        )
+        runner_params = dict(call_params)
+        if config.get("inject_task", False) and task_kind != "agent":
+            runner_params["task"] = TaskHandle(
+                task.task_id,
+                self.task_store,
+                tool_name=tool_name,
+                agent_inbox=root_agent_inbox,
+            )
+        if config.get("inject_notification", False) and task_kind != "agent":
+            runner_params["notification"] = self._build_notification_handle(
+                tool_name=tool_name,
+                ref=task.task_id,
+                agent_inbox=root_agent_inbox,
+            )
+        if task_kind == "agent":
+            runner_params["scope"] = ExecutionScope(
+                session_id=session_id if isinstance(session_id, str) else "default",
+                namespace=tool_name,
+                run_id=task.task_id,
+                parent_run_id=(
+                    parent_run_id
+                    if isinstance(parent_run_id, str) and parent_run_id
+                    else None
+                ),
+                root_run_id=(
+                    root_run_id
+                    if isinstance(root_run_id, str) and root_run_id
+                    else task.task_id
+                ),
+            )
+        runner_params["tool_call_id"] = tool_id
+        execution_scope = {
+            "session_id": session_id
+            if isinstance(session_id, str) and session_id
+            else None,
+            "run_id": task.task_id,
+            "parent_run_id": (
+                parent_run_id
+                if isinstance(parent_run_id, str) and parent_run_id
+                else None
+            ),
+            "root_run_id": (
+                root_run_id if isinstance(root_run_id, str) and root_run_id else None
+            ),
+            "checkpoint_store": checkpoint_store,
+            "agent_inbox": task_inbox or root_agent_inbox,
+            "task_handle": TaskHandle(
+                task.task_id,
+                self.task_store,
+                tool_name=tool_name,
+                agent_inbox=root_agent_inbox,
+            ),
+            "task_activity_recorder": TaskActivityRecorder(
+                task.task_id, self.task_store
+            ),
+        }
+        future = Executor.get_instance().submit(
+            partial(
+                self._run_background_tool,
+                tool=tool,
+                task_handle=TaskHandle(
+                    task.task_id,
+                    self.task_store,
+                    tool_name=tool_name,
+                    agent_inbox=root_agent_inbox,
+                ),
+                tool_name=tool_name,
+                call_params=runner_params,
+                execution_scope=execution_scope,
+                agent_inbox=root_agent_inbox,
+            )
+        )
+        self._register_task_future(task.task_id, future)
+        future.add_done_callback(partial(self._cleanup_task_future, task.task_id))
+        future.add_done_callback(self._log_background_task_failure)
+        return ToolCall(
+            id=tool_id,
+            name=tool_name,
+            parameters=self._build_call_parameters_for_response(call_params),
+            result=self._build_background_dispatch_result(
+                task_id=task.task_id,
+                tool_name=tool_name,
+                task_kind=task_kind,
+            ),
+        )
+
+    # --- Background Task Notifications ---
+
+    def _publish_task_notification(
+        self,
+        *,
+        task_id: str,
+        tool_name: str,
+        status: str,
+        hint: str,
+        agent_inbox: Optional[AgentInbox] = None,
+    ) -> Optional[AgentNotification]:
+        inbox = agent_inbox or self.agent_inbox
+        if inbox is None:
+            return None
+        return inbox.publish(
+            AgentNotification(
+                notification_id=uuid4().hex[:8],
+                source="task",
+                ref=task_id,
+                status=status,
+                hint=hint,
+                metadata={"tool": tool_name},
+                dedupe_key=f"task:{task_id}:{status}",
+            )
+        )
 
     def forward(  # noqa: C901
         self,
@@ -653,6 +1691,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if vars is None:
             vars = {}
 
+        activity_recorder = get_execution_context().get("task_activity_recorder")
         prepared_calls = []
         call_metadata = []
         tool_calls: List[ToolCall] = []
@@ -674,25 +1713,20 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
-
-            if config.get("handoff", False) or config.get("disable_input", False):
-                call_params = {}
-            else:
-                call_params = tool_params or {}
-
-            # Handle inject_vars
-            inject_vars = config.get("inject_vars", False)
-            if inject_vars:
-                if isinstance(inject_vars, list):
-                    for key in inject_vars:
-                        if key not in vars:
-                            raise ValueError(
-                                f"The tool `{tool_name}` requires the injected "
-                                f"parameter `{key}`, but it was not found."
-                            )
-                        call_params[key] = vars[key]
-                elif inject_vars is True:
-                    call_params["vars"] = vars
+            if (
+                activity_recorder is not None
+                and tool_name not in self._runtime_tool_names
+            ):
+                activity_recorder.tool_call(tool_name, tool_params)
+            call_params = self._build_call_params(
+                tool=tool,
+                tool_name=tool_name,
+                tool_params=tool_params,
+                config=config,
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
 
             if config.get("spawn", False):
                 return_directly = False
@@ -708,6 +1742,19 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 continue
 
+            if config.get("background", False):
+                return_directly = False
+                tool_calls.append(
+                    self._dispatch_background_tool(
+                        tool=tool,
+                        tool_id=tool_id,
+                        tool_name=tool_name,
+                        call_params=call_params,
+                        config=config,
+                    )
+                )
+                continue
+
             if config.get(
                 "call_as_response", False
             ):  # return function call as response
@@ -716,15 +1763,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 return_directly = True
                 continue
-
-            if config.get("inject_messages", False):
-                if _should_copy_injected_messages(tool, config):
-                    call_params["messages"] = deepcopy(messages)
-                else:
-                    call_params["messages"] = messages
-
-            if config.get("inject_message", False):  # Add original message/envelope
-                call_params["message"] = message
 
             if not config.get("return_direct", False):
                 return_directly = False
@@ -745,14 +1783,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if prepared_calls:
             results = F.scatter_gather(prepared_calls)
             for meta, result in zip(call_metadata, results):
-                if isinstance(meta.params, dict):
-                    parameters = meta.params.to_dict()
-                    parameters.pop("vars", None)
-                    parameters.pop("messages", None)
-                    parameters.pop("message", None)
-                    parameters.pop("tool_call_id", None)
-                else:
-                    parameters = None
+                parameters = self._build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,
@@ -798,6 +1829,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if vars is None:
             vars = {}
 
+        activity_recorder = get_execution_context().get("task_activity_recorder")
         prepared_calls = []
         call_metadata = []
         tool_calls: List[ToolCall] = []
@@ -819,25 +1851,20 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
-
-            if config.get("handoff", False) or config.get("disable_input", False):
-                call_params = {}
-            else:
-                call_params = tool_params or {}
-
-            # Handle inject_vars
-            inject_vars = config.get("inject_vars", False)
-            if inject_vars:
-                if isinstance(inject_vars, list):
-                    for key in inject_vars:
-                        if key not in vars:
-                            raise ValueError(
-                                f"The tool `{tool_name}` requires the injected "
-                                f"parameter `{key}`, but it was not found."
-                            )
-                        call_params[key] = vars[key]
-                elif inject_vars is True:
-                    call_params["vars"] = vars
+            if (
+                activity_recorder is not None
+                and tool_name not in self._runtime_tool_names
+            ):
+                activity_recorder.tool_call(tool_name, tool_params)
+            call_params = self._build_call_params(
+                tool=tool,
+                tool_name=tool_name,
+                tool_params=tool_params,
+                config=config,
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
 
             if config.get("spawn", False):
                 return_directly = False
@@ -853,6 +1880,19 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 continue
 
+            if config.get("background", False):
+                return_directly = False
+                tool_calls.append(
+                    self._dispatch_background_tool(
+                        tool=tool,
+                        tool_id=tool_id,
+                        tool_name=tool_name,
+                        call_params=call_params,
+                        config=config,
+                    )
+                )
+                continue
+
             if config.get(
                 "call_as_response", False
             ):  # return function call as response
@@ -861,15 +1901,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 return_directly = True
                 continue
-
-            if config.get("inject_messages", False):
-                if _should_copy_injected_messages(tool, config):
-                    call_params["messages"] = deepcopy(messages)
-                else:
-                    call_params["messages"] = messages
-
-            if config.get("inject_message", False):  # Add original message/envelope
-                call_params["message"] = message
 
             if not config.get("return_direct", False):
                 return_directly = False
@@ -890,14 +1921,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if prepared_calls:
             results = await F.ascatter_gather(prepared_calls)
             for meta, result in zip(call_metadata, results):
-                if isinstance(meta.params, dict):
-                    parameters = meta.params.to_dict()
-                    parameters.pop("vars", None)
-                    parameters.pop("messages", None)
-                    parameters.pop("message", None)
-                    parameters.pop("tool_call_id", None)
-                else:
-                    parameters = None
+                parameters = self._build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,
@@ -907,5 +1931,4 @@ class ToolLibrary(Module, metaclass=AutoParams):
                         error=str(result) if isinstance(result, TaskError) else None,
                     )
                 )
-
         return ToolResponses(return_directly=return_directly, tool_calls=tool_calls)

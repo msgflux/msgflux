@@ -104,6 +104,27 @@ That means the caller does not need different orchestration logic for:
 
 The library normalizes all of them into a single execution surface.
 
+## On-Demand Tools
+
+`ToolLibrary` can also keep tools registered without exposing them immediately
+to the model.
+
+The contract is intentionally small:
+
+- `@tool_config(on_demand=True)` keeps the tool out of
+  `get_tool_json_schemas()` and `get_tool_annotations()`
+- the tool remains registered in the library and can still be found by name
+- if at least one on-demand tool exists, `ToolLibrary` injects `tool_search`
+- `tool_search` can search both local and MCP-backed on-demand tools
+- matching tools become visible to the model in the next provider call
+
+This is useful when a session can register a large number of tools but should
+keep the active tool context small.
+
+`inject_library=True` is the natural companion feature here: a tool can add a
+new on-demand tool at runtime, and `ToolLibrary` will expose `tool_search`
+automatically if needed.
+
 ## Typed Restoration
 
 One of the most important newer responsibilities of this layer is restoring

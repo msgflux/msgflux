@@ -20,6 +20,8 @@ Tools are interfaces that allow models to perform actions or query information.
 
 In msgFlux, a **Tool can be any callable** (function, class with `__call__`/`acall` e.g. nn.Agent).
 
+For the current background-task design, see [Background Tasks](background-tasks.md).
+
 !!! info
 
     While more tools enable more actions, too many tools can confuse the model about which one to use.

@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
+from msgflux.agent_inbox import AgentInbox
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse
@@ -895,6 +896,22 @@ class TestAgentConfigOptions:
         agent = Agent(name="agent", model=mock_model, config={"verbose": True})
 
         assert agent.config.get("verbose") is True
+
+    def test_agent_verbose_propagates_to_external_inbox(self):
+        """Verbose agents should enable verbose mode on inherited inboxes."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        inbox = AgentInbox()
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            config={"verbose": True},
+            agent_inbox=inbox,
+        )
+
+        assert agent.agent_inbox is inbox
+        assert inbox.verbose is True
 
     def test_agent_config_return_messages(self):
         """Test Agent with return_messages config."""
