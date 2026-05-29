@@ -4368,6 +4368,67 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#050-2026-05-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.5.0] - 2026-05-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.5.0] - 2026-05-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#feat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#refactor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ci-maintenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI / Maintenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#041-2026-04-22" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4559,6 +4620,40 @@
     window.copyMarkdownToClipboard = copyMarkdownToClipboard;
 }());
 </script>
+<h2 id="050-2026-05-29">[0.5.0] - 2026-05-29</h2>
+<h3 id="feat">Feat</h3>
+<ul>
+<li>Added opt-in input validation for signatures (#82).</li>
+<li>Added method hooks beyond <code>forward</code> (#87).</li>
+<li>Added <code>extra_body</code> passthrough extensions for OpenAI-compatible chat completions (#88).</li>
+<li>Added Open-Meteo weather retriever support and the builtin <code>Weather</code> tool (#97).</li>
+<li>Added tool display names and usage guidance metadata (#98).</li>
+<li>Added the Ceramic web retriever (#99).</li>
+<li>Added the SearXNG web retriever (#101).</li>
+<li>Added agent prompt warmup (#105).</li>
+<li>Added <code>msgspec.Struct</code> tool parameter support (#110).</li>
+<li>Added Agent Skills runtime support (#111).</li>
+</ul>
+<h3 id="docs">Docs</h3>
+<ul>
+<li>Corrected retriever section numbering in <code>docs/learn/nn/agent/tools.md</code> (#80).</li>
+<li>Added the Builtin Tools section to <code>tools.md</code> (#81).</li>
+</ul>
+<h3 id="refactor">Refactor</h3>
+<ul>
+<li>Renamed the WebSearch steering parameter to <code>goal</code> (#100).</li>
+<li>Clarified tool display-name and usage-guidance examples and aligned <code>ToolLibrary.get_tool_display_names()</code> with a fallback to the registered tool name (#114).</li>
+</ul>
+<h3 id="ci-maintenance">CI / Maintenance</h3>
+<ul>
+<li>Updated pre-commit hooks (#86).</li>
+<li>Bumped <code>packaging</code> from 25.0 to 26.2 (#92).</li>
+<li>Bumped <code>openai</code> from 2.32.0 to 2.38.0 (#106).</li>
+<li>Bumped <code>bm25s</code> from 0.3.4 to 0.3.9 (#107).</li>
+<li>Bumped <code>ruff</code> from 0.15.11 to 0.15.14 (#108).</li>
+<li>Bumped <code>pymdown-extensions</code> from 10.21.2 to 10.21.3 (#109).</li>
+<li>Bumped <code>pytest-asyncio</code> from 1.3.0 to 1.4.0 (#113).</li>
+</ul>
 <h2 id="041-2026-04-22">[0.4.1] - 2026-04-22</h2>
 <ul>
 <li>Fixes: restored uv.lock file for CI compatibility (#78).</li>
