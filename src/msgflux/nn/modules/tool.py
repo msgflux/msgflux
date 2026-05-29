@@ -118,7 +118,7 @@ class MCPTool(Tool):
         self.set_name(full_name)
         self.register_buffer(
             "display_name",
-            config.get("display_name", full_name) if config else full_name,
+            (config.get("display_name") or full_name) if config else full_name,
         )
         self.register_buffer(
             "usage_guidance",
@@ -556,10 +556,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
         return list(self.library.keys())
 
     def get_tool_display_names(self) -> Dict[str, str]:
-        """Return human-readable display names keyed by tool name."""
+        """Return human-readable display names keyed by registered tool name."""
         display_names = {}
         for tool_name, tool in self.library.items():
-            display_names[tool_name] = getattr(tool, "display_name", tool_name)
+            display_names[tool_name] = getattr(tool, "display_name", None) or tool_name
 
         return display_names
 
