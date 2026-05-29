@@ -2270,9 +2270,9 @@ class Agent(Module, metaclass=AutoParams):
         if not notifications:
             return False
 
-        notification_message = inbox.render(notifications)
-        self._persist_notification_message(messages, notification_message)
-        return notification_message is not None
+        notification_messages = inbox.render_messages(notifications)
+        self._persist_notification_messages(messages, notification_messages)
+        return bool(notification_messages)
 
     # --- Inbox Delivery ---
 
@@ -2311,6 +2311,14 @@ class Agent(Module, metaclass=AutoParams):
                 messages.append(notification_message)
             return
         messages.append(notification_message)
+
+    def _persist_notification_messages(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        notification_messages: List[Mapping[str, Any]],
+    ) -> None:
+        for notification_message in notification_messages:
+            self._persist_notification_message(messages, notification_message)
 
     # --- Session And Run Resolution ---
 

@@ -88,6 +88,41 @@ def test_agent_inbox_renders_incoming_user_message():
     }
 
 
+def test_agent_inbox_renders_runtime_notifications_as_system_messages():
+    inbox = AgentInbox()
+
+    inbox.publish(
+        {
+            "source": "task",
+            "ref": "task_123",
+            "status": "completed",
+            "metadata": {"tool": "worker"},
+        }
+    )
+    rendered = inbox.render(inbox.drain())
+
+    assert isinstance(rendered, dict)
+    assert rendered["role"] == "system"
+    assert "<system_note>" in rendered["content"]
+    assert (
+        '<notification source="task" ref="task_123" status="completed">'
+        in rendered["content"]
+    )
+
+
+def test_agent_inbox_separates_incoming_user_message_from_system_notifications():
+    inbox = AgentInbox()
+
+    inbox.user_message("Please adjust the answer.")
+    inbox.publish({"source": "task", "status": "completed"})
+    rendered = inbox.render_messages(inbox.drain())
+
+    assert [message["role"] for message in rendered] == ["user", "system"]
+    assert "<incoming_user_message>" in rendered[0]["content"]
+    assert "<system_note>" not in rendered[0]["content"]
+    assert "<system_note>" in rendered[1]["content"]
+
+
 def test_agent_inbox_persists_notifications_with_memory_store():
     store = InMemoryAgentInboxStore()
     writer = AgentInbox(

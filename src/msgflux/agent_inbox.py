@@ -572,9 +572,10 @@ class AgentInbox:
             notifications = deepcopy(self._load_notifications_locked())
             self._save_notifications_locked([])
         if self.verbose and notifications:
+            rendered_messages = self.render_messages(notifications)
             self._print_verbose_event(
                 "notification_drain",
-                self.render(notifications)["content"],
+                "\n\n".join(message["content"] for message in rendered_messages),
                 prefix=f"{len(notifications)} notification(s)\n",
             )
         return notifications
@@ -593,13 +594,24 @@ class AgentInbox:
 
     # --- Rendering ---
 
-    def render(  # noqa: C901
+    def render(
         self,
         notifications: Iterable[AgentNotification | Mapping[str, Any]],
-    ) -> Dict[str, str] | None:
+    ) -> Dict[str, str] | List[Dict[str, str]] | None:
+        rendered_messages = self.render_messages(notifications)
+        if not rendered_messages:
+            return None
+        if len(rendered_messages) == 1:
+            return rendered_messages[0]
+        return rendered_messages
+
+    def render_messages(  # noqa: C901
+        self,
+        notifications: Iterable[AgentNotification | Mapping[str, Any]],
+    ) -> List[Dict[str, str]]:
         normalized = [self._normalize(notification) for notification in notifications]
         if not normalized:
-            return None
+            return []
 
         incoming_messages = [
             notification
@@ -612,6 +624,7 @@ class AgentInbox:
             if notification.source != "incoming_user_message"
         ]
 
+        rendered_messages: List[Dict[str, str]] = []
         lines: List[str] = []
         for notification in incoming_messages:
             lines.append("<incoming_user_message>")
@@ -623,9 +636,13 @@ class AgentInbox:
                 )
             lines.append("</incoming_user_message>")
 
-        if not system_notifications:
-            return {"role": "user", "content": "\n".join(lines)}
+        if lines:
+            rendered_messages.append({"role": "user", "content": "\n".join(lines)})
 
+        if not system_notifications:
+            return rendered_messages
+
+        lines = []
         lines.extend(["<system_note>", "<notifications>"])
         for notification in system_notifications:
             attrs = [f'source="{self._escape_attr(notification.source)}"']
@@ -650,7 +667,8 @@ class AgentInbox:
             else:
                 lines.append(f"<notification {attrs_repr} />")
         lines.extend(["</notifications>", "</system_note>"])
-        return {"role": "user", "content": "\n".join(lines)}
+        rendered_messages.append({"role": "system", "content": "\n".join(lines)})
+        return rendered_messages
 
     # --- Normalization Helpers ---
 
@@ -749,6 +767,8 @@ class AgentInbox:
         rendered = self.render([notification])
         if rendered is None:
             return ""
+        if isinstance(rendered, list):
+            rendered = rendered[0]
         content = rendered["content"]
         lines = content.splitlines()
         if len(lines) >= 4:

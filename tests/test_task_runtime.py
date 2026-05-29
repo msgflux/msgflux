@@ -495,6 +495,7 @@ def test_agent_injects_pending_task_notifications_as_system_note_messages():
     )
 
     assert len(notification_messages) == 1
+    assert notification_messages[0]["role"] == "system"
     content = notification_messages[0]["content"]
     assert "<system_note>" in content
     assert "<notifications>" in content
@@ -567,6 +568,7 @@ def test_inspect_model_execution_params_does_not_consume_notifications():
         status="completed",
     )
     assert len(notification_messages) == 1
+    assert notification_messages[0]["role"] == "system"
 
     history_messages = messages.to_chatml()
     persisted_notifications = _notification_messages(
@@ -575,6 +577,7 @@ def test_inspect_model_execution_params_does_not_consume_notifications():
         status="completed",
     )
     assert len(persisted_notifications) == 1
+    assert persisted_notifications[0]["role"] == "system"
     notification_index = history_messages.index(persisted_notifications[0])
     user_index = next(
         index
@@ -634,7 +637,9 @@ def test_agent_incoming_user_message_is_injected_before_model_call():
 
     incoming = _incoming_user_messages(model.call_args.kwargs["messages"])
     assert len(incoming) == 1
+    assert incoming[0]["role"] == "user"
     assert "I changed my mind." in incoming[0]["content"]
+    assert "<system_note>" not in incoming[0]["content"]
 
 
 def test_agent_consumes_persisted_incoming_user_message_for_scope():
@@ -655,7 +660,9 @@ def test_agent_consumes_persisted_incoming_user_message_for_scope():
 
     incoming = _incoming_user_messages(model.call_args.kwargs["messages"])
     assert len(incoming) == 1
+    assert incoming[0]["role"] == "user"
     assert "Use the customer-visible tone." in incoming[0]["content"]
+    assert "<system_note>" not in incoming[0]["content"]
     assert external_inbox.peek() == []
 
 
@@ -683,6 +690,7 @@ def test_agent_drains_notifications_after_tool_call_before_next_model_call():
         status="progress",
     )
     assert len(notifications) == 1
+    assert notifications[0]["role"] == "system"
     assert "Tool completed." in notifications[0]["content"]
 
 
@@ -729,6 +737,7 @@ def test_task_progress_notifications_are_persisted():
         status="update",
     )
     assert len(progress_notifications) == 1
+    assert progress_notifications[0]["role"] == "system"
     assert f'ref="{task_id}"' in progress_notifications[0]["content"]
     assert "tool_stage=prepare" in progress_notifications[0]["content"]
 
@@ -738,6 +747,7 @@ def test_task_progress_notifications_are_persisted():
         status="update",
     )
     assert len(persisted_notifications) == 1
+    assert persisted_notifications[0]["role"] == "system"
 
     release.set()
     _wait_until(
