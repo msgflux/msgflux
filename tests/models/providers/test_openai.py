@@ -1229,6 +1229,37 @@ class TestOpenAITextToSpeech:
         assert model.sampling_run_params["voice"] == "nova"
         assert model.sampling_run_params["speed"] == 1.5
 
+    @pytest.mark.asyncio
+    async def test_text_to_speech_acall_stream_uses_asyncio_spawn(
+        self, mock_openai_client
+    ):
+        """TTS async streaming should stay on F.aspawn, not the global Executor."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAITextToSpeech
+
+        model = OpenAITextToSpeech(model_id="tts-1")
+
+        with (
+            patch(
+                "msgflux.models.providers.openai.F.aspawn",
+                new_callable=AsyncMock,
+            ) as aspawn,
+            patch(
+                "msgflux.models.providers.openai.F.await_for_event",
+                new_callable=AsyncMock,
+            ) as await_for_event,
+            patch(
+                "msgflux.nn.functional.Executor.get_instance",
+                side_effect=AssertionError("Executor should not be used"),
+            ),
+        ):
+            stream_response = await model.acall("hello", stream=True)
+
+        assert stream_response.mode == "async"
+        aspawn.assert_awaited_once()
+        await_for_event.assert_awaited_once_with(stream_response.first_chunk_event)
+
 
 class TestOpenAITextToImage:
     """Test suite for OpenAITextToImage."""
@@ -1314,6 +1345,41 @@ class TestOpenAISpeechToText:
         )
 
         assert model.sampling_run_params["temperature"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_speech_to_text_acall_stream_uses_asyncio_spawn(
+        self, mock_openai_client
+    ):
+        """STT async streaming should stay on F.aspawn, not the global Executor."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAISpeechToText
+
+        model = OpenAISpeechToText(model_id="gpt-4o-transcribe")
+
+        with (
+            patch(
+                "msgflux.models.providers.openai.encode_data_to_bytes",
+                return_value=b"audio",
+            ),
+            patch(
+                "msgflux.models.providers.openai.F.aspawn",
+                new_callable=AsyncMock,
+            ) as aspawn,
+            patch(
+                "msgflux.models.providers.openai.F.await_for_event",
+                new_callable=AsyncMock,
+            ) as await_for_event,
+            patch(
+                "msgflux.nn.functional.Executor.get_instance",
+                side_effect=AssertionError("Executor should not be used"),
+            ),
+        ):
+            stream_response = await model.acall("audio.wav", stream=True)
+
+        assert stream_response.mode == "async"
+        aspawn.assert_awaited_once()
+        await_for_event.assert_awaited_once_with(stream_response.first_chunk_event)
 
 
 class TestOpenAITextEmbedder:
