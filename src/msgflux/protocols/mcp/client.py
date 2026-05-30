@@ -6,6 +6,7 @@ A lightweight implementation that supports multiple transports (stdio, HTTP/SSE)
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from msgflux.logger import logger
 from msgflux.protocols.mcp.exceptions import MCPConnectionError, MCPError
 from msgflux.protocols.mcp.loglevels import LogLevel
 from msgflux.protocols.mcp.transports import (
@@ -206,6 +207,10 @@ class MCPClient:
                 return
             except Exception as e:
                 self._last_error = e
+                try:
+                    await self.transport.disconnect()
+                except Exception:
+                    logger.debug("Failed to clean up MCP transport", exc_info=True)
 
                 if attempt < self.max_retries - 1:
                     # Exponential backoff

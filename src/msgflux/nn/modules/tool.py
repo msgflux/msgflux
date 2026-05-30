@@ -409,7 +409,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             - transport: "stdio" or "http"
             - For stdio: command, args, cwd, env
             - For http: base_url, headers
-            - Optional: include_tools, exclude_tools, tool_config
+            - Optional: include_tools, exclude_tools, tool_config, required
         """
         super().__init__()
         self.set_name(f"{name}_tool_library")
@@ -417,6 +417,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.register_buffer("special_library", [])
         self.register_buffer("tool_configs", {})
         self.register_buffer("mcp_clients", {})
+        self.register_buffer("mcp_errors", {})
         for tool in tools:
             self.add(tool)
         if special_tools:
@@ -542,11 +543,33 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     f"with {len(filtered_tools)} tools"
                 )
             except Exception as e:
-                logger.error(
-                    f"Failed to initialize MCP server '{namespace}': {e!s}",
-                    exc_info=True,
-                )
-                # Continue with other servers instead of failing completely
+                self._handle_mcp_init_error(namespace, client, server_config, e)
+
+    def _handle_mcp_init_error(
+        self,
+        namespace: str,
+        client: MCPClient,
+        server_config: Dict[str, Any],
+        error: Exception,
+    ) -> None:
+        self.mcp_errors[namespace] = str(error)
+        try:
+            F.wait_for(client.disconnect)
+        except Exception:
+            logger.debug(
+                "Failed to clean up MCP server `%s` after init error",
+                namespace,
+                exc_info=True,
+            )
+        logger.error(
+            f"Failed to initialize MCP server '{namespace}': {error!s}",
+            exc_info=True,
+        )
+        if server_config.get("required", False):
+            raise RuntimeError(
+                f"Failed to initialize required MCP server '{namespace}'"
+            ) from error
+        # Optional servers can fail without preventing library creation.
 
     def get_tools(self) -> Iterator[Dict[str, Tool]]:
         return self.library.items()
@@ -597,16 +620,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
         """Returns a list of JSON schemas from local and MCP tools."""
         schemas = []
 
-        # Local tools
+        # MCP tools are registered into `library` as Tool instances, so this
+        # single pass covers both local and remote tools without duplicating names.
         for tool_name in self.library:
             schemas.append(self.library[tool_name].get_json_schema())
-
-        # MCP tools
-        if self.mcp_clients:
-            for namespace, mcp_data in self.mcp_clients.items():
-                for mcp_tool in mcp_data["tools"]:
-                    schema = convert_mcp_schema_to_tool_schema(mcp_tool, namespace)
-                    schemas.append(schema)
 
         return schemas
 

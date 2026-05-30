@@ -135,6 +135,43 @@ class TestMCPClient:
         assert client._connection_attempts == 3
 
     @pytest.mark.asyncio
+    async def test_connect_disconnects_transport_after_initialize_failure(self):
+        """A failed initialize should not leave a connected transport behind."""
+        transport = MockTransport()
+        transport.responses["initialize"] = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "error": {"message": "initialize failed"},
+        }
+        transport.disconnect = AsyncMock(side_effect=transport.disconnect)
+
+        client = MCPClient(transport=transport, max_retries=1)
+
+        with pytest.raises(MCPConnectionError):
+            await client.connect()
+
+        transport.disconnect.assert_awaited_once()
+        assert transport.connected is False
+
+    @pytest.mark.asyncio
+    async def test_connect_preserves_initialize_error_when_cleanup_fails(self):
+        """Cleanup failures should not replace the original connection error."""
+        transport = MockTransport()
+        transport.responses["initialize"] = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "error": {"message": "initialize failed"},
+        }
+        transport.disconnect = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+
+        client = MCPClient(transport=transport, max_retries=1)
+
+        with pytest.raises(MCPConnectionError, match="Failed to initialize"):
+            await client.connect()
+
+        transport.disconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_disconnect(self):
         """Test disconnect."""
         transport = MockTransport()

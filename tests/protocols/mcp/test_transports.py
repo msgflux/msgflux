@@ -157,6 +157,9 @@ class TestStdioTransport:
             return_value=b""
         )  # EOF stops read loop
         mock_process.stderr = AsyncMock()
+        mock_process.stderr.readline = AsyncMock(return_value=b"")
+        mock_process.terminate = Mock()
+        mock_process.wait = AsyncMock()
         mock_subprocess.return_value = mock_process
 
         transport = StdioTransport(command="test-command")
@@ -164,6 +167,8 @@ class TestStdioTransport:
 
         assert transport._process is not None
         mock_subprocess.assert_called_once()
+        assert transport._stderr_task is not None
+        await transport.disconnect()
 
     @pytest.mark.asyncio
     @patch("asyncio.create_subprocess_exec")
@@ -174,6 +179,7 @@ class TestStdioTransport:
         mock_process.stdin.write = MagicMock()  # write() is sync in StreamWriter
         mock_process.stdout = AsyncMock()
         mock_process.stderr = AsyncMock()
+        mock_process.stderr.readline = AsyncMock(return_value=b"")
 
         # Mock stdout to return a response
         response_data = {"jsonrpc": "2.0", "id": "1", "result": {"success": True}}
@@ -209,6 +215,7 @@ class TestStdioTransport:
             return_value=b""
         )  # EOF stops read loop
         mock_process.stderr = AsyncMock()
+        mock_process.stderr.readline = AsyncMock(return_value=b"")
         mock_subprocess.return_value = mock_process
 
         transport = StdioTransport(command="test-command")
@@ -233,6 +240,7 @@ class TestStdioTransport:
             return_value=b""
         )  # EOF stops read loop
         mock_process.stderr = AsyncMock()
+        mock_process.stderr.readline = AsyncMock(return_value=b"")
         mock_process.terminate = Mock()
         mock_process.wait = AsyncMock()
         mock_subprocess.return_value = mock_process
@@ -243,6 +251,33 @@ class TestStdioTransport:
 
         mock_process.terminate.assert_called_once()
         assert transport._process is None
+
+    @pytest.mark.asyncio
+    @patch("asyncio.create_subprocess_exec")
+    async def test_disconnect_cancels_stderr_task(self, mock_subprocess):
+        """Test disconnect cancels the stderr drain task."""
+        mock_process = AsyncMock()
+        mock_process.stdin = AsyncMock()
+        mock_process.stdout = AsyncMock()
+        mock_process.stdout.readline = AsyncMock(return_value=b"")
+        mock_process.stderr = AsyncMock()
+
+        async def never_return():
+            await asyncio.sleep(100)
+            return b""
+
+        mock_process.stderr.readline = never_return
+        mock_process.terminate = Mock()
+        mock_process.wait = AsyncMock()
+        mock_subprocess.return_value = mock_process
+
+        transport = StdioTransport(command="test-command")
+        await transport.connect()
+        assert transport._stderr_task is not None
+
+        await transport.disconnect()
+
+        assert transport._stderr_task is None
 
     @pytest.mark.asyncio
     @patch("asyncio.create_subprocess_exec")
@@ -264,6 +299,7 @@ class TestStdioTransport:
         mock_process.stdin.write = MagicMock()  # write() is sync in StreamWriter
         mock_process.stdout = AsyncMock()
         mock_process.stderr = AsyncMock()
+        mock_process.stderr.readline = AsyncMock(return_value=b"")
 
         # stdout never returns a response (simulates timeout)
         async def never_return():
