@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY mcp_auth_http_server.py /app/mcp_auth_http_server.py
+
+ENV MCP_AUTH_HOST=0.0.0.0
+ENV MCP_AUTH_PORT=8765
+ENV MCP_AUTH_TOKEN=test-token
+
+EXPOSE 8765
+CMD ["python", "/app/mcp_auth_http_server.py"]

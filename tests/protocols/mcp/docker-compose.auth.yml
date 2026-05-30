@@ -1,0 +1,11 @@
+services:
+  mcp-auth-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    environment:
+      MCP_AUTH_HOST: 0.0.0.0
+      MCP_AUTH_PORT: 8765
+      MCP_AUTH_TOKEN: test-token
+    ports:
+      - "8765:8765"
