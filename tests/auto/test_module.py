@@ -139,9 +139,9 @@ def test_auto_module_instance_create_supports_model_object_override(tmp_path):
 def test_auto_module_model_replacement_skips_original_provider_init(tmp_path):
     original_chat_completion = model_registry.get("chat_completion")
     model_registry["chat_completion"] = dict(original_chat_completion or {})
-    model_registry["chat_completion"][
-        "exploding_auto_module_test"
-    ] = ExplodingChatCompletion
+    model_registry["chat_completion"]["exploding_auto_module_test"] = (
+        ExplodingChatCompletion
+    )
     try:
         state = _agent_state()
         state["generator.model"] = {
@@ -315,18 +315,24 @@ def create():
         )
         (root / "helper.py").write_text(f'marker = "{marker}"', encoding="utf-8")
 
-    assert AutoModule.create(
-        "owner/one",
-        cache_dir=tmp_path,
-        local_files_only=True,
-        trust_remote_code=True,
-    ) == "one"
-    assert AutoModule.create(
-        "owner/two",
-        cache_dir=tmp_path,
-        local_files_only=True,
-        trust_remote_code=True,
-    ) == "two"
+    assert (
+        AutoModule.create(
+            "owner/one",
+            cache_dir=tmp_path,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+        == "one"
+    )
+    assert (
+        AutoModule.create(
+            "owner/two",
+            cache_dir=tmp_path,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+        == "two"
+    )
     assert "helper" not in sys.modules
 
 
