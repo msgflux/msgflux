@@ -619,6 +619,79 @@ class TestToolLibrary:
         assert "tool1" in names
         assert "tool2" in names
 
+    def test_tool_library_get_tool_display_names(self):
+        """Test getting human-readable tool display names."""
+
+        def plain_tool(x: int) -> int:
+            """Plain tool."""
+            return x
+
+        def configured_tool(x: int) -> int:
+            """Configured tool."""
+            return x
+
+        configured_tool.tool_config = dotdict({"display_name": "Configured Tool"})
+        library = ToolLibrary(name="lib", tools=[plain_tool, configured_tool])
+
+        display_names = library.get_tool_display_names()
+
+        assert display_names["plain_tool"] == "plain_tool"
+        assert display_names["configured_tool"] == "Configured Tool"
+
+    def test_tool_library_get_tool_usage_guidance(self):
+        """Test getting tool usage guidance metadata."""
+
+        def search_orders(order_id: str) -> str:
+            """Search orders."""
+            return order_id
+
+        search_orders.tool_config = dotdict(
+            {
+                "display_name": "Order Search",
+                "usage_guidance": "Use when the user asks about an order.",
+            }
+        )
+        library = ToolLibrary(name="lib", tools=[search_orders])
+
+        guidance = library.get_tool_usage_guidance()
+
+        assert guidance == [
+            {
+                "name": "search_orders",
+                "display_name": "Order Search",
+                "guidance": "Use when the user asks about an order.",
+            }
+        ]
+
+    def test_tool_library_filters_tool_usage_guidance(self):
+        """Test usage guidance can be filtered by exposed tool names."""
+
+        def search_orders(order_id: str) -> str:
+            """Search orders."""
+            return order_id
+
+        def cancel_order(order_id: str) -> str:
+            """Cancel orders."""
+            return order_id
+
+        search_orders.tool_config = dotdict(
+            {"usage_guidance": "Use for order status questions."}
+        )
+        cancel_order.tool_config = dotdict(
+            {"usage_guidance": "Use for order cancellation requests."}
+        )
+        library = ToolLibrary(name="lib", tools=[search_orders, cancel_order])
+
+        guidance = library.get_tool_usage_guidance(tool_names={"search_orders"})
+
+        assert guidance == [
+            {
+                "name": "search_orders",
+                "display_name": "search_orders",
+                "guidance": "Use for order status questions.",
+            }
+        ]
+
     def test_tool_library_get_tool_json_schemas(self):
         """Test getting tool JSON schemas."""
 
@@ -1329,6 +1402,67 @@ class TestMCPTool:
         )
 
         assert tool.tool_config["timeout"] == 30
+
+    def test_mcp_tool_display_name_and_usage_guidance_are_not_duplicated(self):
+        """Test MCP metadata is read from library tools without duplicate entries."""
+        mock_client = Mock()
+        mock_info = Mock()
+        mock_info.name = "search"
+        mock_info.description = "Search docs"
+        mock_info.inputSchema = {"type": "object", "properties": {}}
+
+        tool = MCPTool(
+            name="search",
+            mcp_client=mock_client,
+            mcp_tool_info=mock_info,
+            namespace="docs",
+            config={
+                "display_name": "Docs Search",
+                "usage_guidance": "Use for documentation questions.",
+            },
+        )
+        library = ToolLibrary(name="lib", tools=[])
+        library.library[tool.name] = tool
+        library.mcp_clients["docs"] = {
+            "client": mock_client,
+            "tools": [mock_info],
+            "tool_config": {
+                "search": {
+                    "display_name": "Docs Search",
+                    "usage_guidance": "Use for documentation questions.",
+                }
+            },
+        }
+
+        assert library.get_tool_display_names() == {"docs__search": "Docs Search"}
+        assert library.get_tool_usage_guidance() == [
+            {
+                "name": "docs__search",
+                "display_name": "Docs Search",
+                "guidance": "Use for documentation questions.",
+            }
+        ]
+
+    def test_mcp_tool_display_name_falls_back_to_registered_name(self):
+        """Test MCP display_name falls back to the registered tool name."""
+        mock_client = Mock()
+        mock_info = Mock()
+        mock_info.name = "edit"
+        mock_info.description = "Edit docs"
+        mock_info.inputSchema = {"type": "object", "properties": {}}
+
+        tool = MCPTool(
+            name="edit",
+            mcp_client=mock_client,
+            mcp_tool_info=mock_info,
+            namespace="docs",
+            config={"display_name": None},
+        )
+        library = ToolLibrary(name="lib", tools=[])
+        library.library[tool.name] = tool
+
+        assert tool.display_name == "docs__edit"
+        assert library.get_tool_display_names() == {"docs__edit": "docs__edit"}
 
     def test_mcp_tool_forward_success(self):
         """Test MCPTool forward execution with success."""

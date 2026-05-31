@@ -37,12 +37,14 @@ from msgflux.models import Model
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import ChatCompletionModel
-from msgflux.nn.functional import await_for_event, wait_for_event
+from msgflux.nn.functional import aspawn, await_for_event, spawn, wait_for_event
 from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
+from msgflux.runtime.skills import AgentSkillManager, SkillsConfig
+from msgflux.tools.builtin import ActivateSkill, SkillSearch
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.common import has_format_placeholder, is_jinja_template
@@ -132,6 +134,7 @@ class Agent(Module, metaclass=AutoParams):
         typed_parser: Optional[str] = None,
         response_mode: Optional[str] = None,
         tools: Optional[List[Callable]] = None,
+        skills: Optional[SkillsConfig] = None,
         mcp_servers: Optional[List[Mapping[str, Any]]] = None,
         signature: Optional[Union[str, Signature]] = None,
         description: Optional[str] = None,
@@ -189,7 +192,7 @@ class Agent(Module, metaclass=AutoParams):
             Dictionary with configuration options.
             Valid keys: "verbose", "return_messages", "tool_choice",
             "stream", "image_block_kwargs", "video_block_kwargs", "include_date",
-            "reasoning_in_response"
+            "reasoning_in_response", "validate_inputs"
             !!! example
                 config={
                     "verbose": True,
@@ -198,7 +201,8 @@ class Agent(Module, metaclass=AutoParams):
                     "stream": False,
                     "image_block_kwargs": {"detail": "high"},
                     "video_block_kwargs": {"format": "mp4"},
-                    "include_date": False
+                    "include_date": False,
+                    "validate_inputs": True,
                 }
 
             Configuration options:
@@ -212,6 +216,8 @@ class Agent(Module, metaclass=AutoParams):
               (e.g., {"format": "mp4"})
             - include_date: Include current date with weekday in system prompt
               (bool). Format: "Weekday, Month DD, YYYY"
+            - validate_inputs: Validate input types against the signature
+              schema before calling the model (bool).
         templates:
             Dictionary mapping template types to Jinja template strings.
             Valid keys: "task", "response", "task_context", "system_prompt"
@@ -249,6 +255,10 @@ class Agent(Module, metaclass=AutoParams):
               (``dotdict`` or ``Message`` is mutated in place).
         tools:
             A list of callable objects.
+        skills:
+            Agent Skills config dict with `paths`, `catalog_limit`, `search_top_k`,
+            `allow`, `block`, and `load`. Use `msgflux.default_skill_paths()` when
+            you want common local paths.
         mcp_servers:
             List of MCP (Model Context Protocol) server configurations.
             Each config should contain:
@@ -362,6 +372,7 @@ class Agent(Module, metaclass=AutoParams):
 
         self._set_response_mode(response_mode)
         self._set_templates(templates)
+        self._set_skills(skills)
         self._set_tools(tools, mcp_servers)
 
         if signature is not None:
@@ -520,6 +531,108 @@ class Agent(Module, metaclass=AutoParams):
             cprint(f"[{self.name}][call_model]", bc="br1", ls="b")
         return await self.generator.acall(**model_execution_params)
 
+    def warmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+        background: bool = False,
+    ):
+        """Warm the provider cache for the rendered system prompt and tools.
+
+        This bypasses task messages, chat history, checkpointers and response
+        parsing. Warmup should only include stable prompt prefixes; dynamic user
+        content would reduce cache hits for the real request.
+        """
+        if background:
+            spawn(
+                self._warmup_system_prompt,
+                vars=vars,
+                tool_filter=tool_filter,
+                model_preference=model_preference,
+            )
+            return None
+        return self._warmup_system_prompt(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+
+    async def awarmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+        background: bool = False,
+    ):
+        """Async counterpart for warming the provider system prompt cache."""
+        if background:
+            await aspawn(
+                self._awarmup_system_prompt,
+                vars=vars,
+                tool_filter=tool_filter,
+                model_preference=model_preference,
+            )
+            return None
+        return await self._awarmup_system_prompt(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+
+    def _warmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+    ):
+        params = self._prepare_warmup_execution(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+        return self.model.warmup_system_prompt(**params)
+
+    async def _awarmup_system_prompt(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+    ):
+        params = self._prepare_warmup_execution(
+            vars=vars,
+            tool_filter=tool_filter,
+            model_preference=model_preference,
+        )
+        return await self.model.awarmup_system_prompt(**params)
+
+    def _prepare_warmup_execution(
+        self,
+        *,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_filter: Optional[ToolFilter] = None,
+        model_preference: Optional[str] = None,
+    ) -> Mapping[str, Any]:
+        model_execution_params = self._prepare_model_execution(
+            messages=[],
+            vars=vars or {},
+            model_preference=model_preference,
+            tool_filter=tool_filter,
+        )
+        return dotdict(
+            system_prompt=model_execution_params.system_prompt,
+            tool_definitions=model_execution_params.tool_definitions,
+            **(
+                {"model_preference": model_execution_params.model_preference}
+                if model_preference
+                else {}
+            ),
+        )
+
     def _prepare_model_execution(
         self,
         messages: List[Mapping[str, Any]],
@@ -528,8 +641,6 @@ class Agent(Module, metaclass=AutoParams):
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
     ) -> Mapping[str, Any]:
-        system_prompt = self.get_system_prompt(vars)
-
         tool_schemas = self.tool_library.get_tool_json_schemas()
 
         tool_choice = self.config.get("tool_choice")
@@ -538,6 +649,12 @@ class Agent(Module, metaclass=AutoParams):
             tool_schemas = self._apply_tool_filter(tool_schemas, tool_filter)
 
         tool_choice = self._resolve_tool_choice(tool_choice, tool_schemas)
+        tool_names = {
+            schema["function"]["name"]
+            for schema in tool_schemas or []
+            if schema.get("function", {}).get("name")
+        }
+        system_prompt = self.get_system_prompt(vars, tool_names=tool_names)
 
         if not tool_schemas:
             tool_schemas = None
@@ -1151,6 +1268,10 @@ class Agent(Module, metaclass=AutoParams):
         ):
             messages = self._get_content_from_message(self.messages, message)
 
+        validation_inputs = self._get_validation_inputs(message, task, vars)
+        if validation_inputs is not None:
+            self._validate_inputs(validation_inputs)
+
         content = self._render_task(message, task=task, vars=vars, **kwargs)
 
         if content is None and not messages:
@@ -1247,6 +1368,10 @@ class Agent(Module, metaclass=AutoParams):
             and self.messages is not None
         ):
             messages = self._get_content_from_message(self.messages, message)
+
+        validation_inputs = self._get_validation_inputs(message, task, vars)
+        if validation_inputs is not None:
+            self._validate_inputs(validation_inputs)
 
         content = await self._arender_task(message, task=task, vars=vars, **kwargs)
 
@@ -1798,9 +1923,17 @@ class Agent(Module, metaclass=AutoParams):
         tools: Optional[List[Callable]] = None,
         mcp_servers: Optional[List[Mapping[str, Any]]] = None,
     ):
+        tools = list(tools or [])
+        if self.agent_skill_manager.has_activatable_skills():
+            tools.append(ActivateSkill(self.agent_skill_manager))
+            if self.agent_skill_manager.has_searchable_skills():
+                tools.append(SkillSearch(self.agent_skill_manager))
         self.tool_library = ToolLibrary(
-            self.get_module_name(), tools or [], mcp_servers=mcp_servers
+            self.get_module_name(), tools, mcp_servers=mcp_servers
         )
+
+    def _set_skills(self, skills: Optional[SkillsConfig] = None):
+        self.agent_skill_manager = AgentSkillManager(skills)
 
     def _set_generation_schema(
         self, generation_schema: Optional[msgspec.Struct] = None
@@ -1957,6 +2090,7 @@ class Agent(Module, metaclass=AutoParams):
             "include_date",
             "reasoning_in_response",
             "max_tool_turns",
+            "validate_inputs",
         }
 
         if config is None:
@@ -1972,20 +2106,18 @@ class Agent(Module, metaclass=AutoParams):
                 f"Invalid config keys: {invalid_keys}. Valid keys are: {valid_keys}"
             )
 
-        if "image_block_kwargs" in config:
-            if not isinstance(config["image_block_kwargs"], dict):
-                raise TypeError(
-                    f"`image_block_kwargs` must be a dict, "
-                    f"given `{type(config['image_block_kwargs'])}`"
-                )
+        self._validate_config_blocks(config)
+        self._validate_config_limits(config)
+        self._validate_config_flags(config)
 
-        if "video_block_kwargs" in config:
-            if not isinstance(config["video_block_kwargs"], dict):
-                raise TypeError(
-                    f"`video_block_kwargs` must be a dict, "
-                    f"given `{type(config['video_block_kwargs'])}`"
-                )
+        self.register_buffer("config", config.copy())
 
+    def _validate_config_blocks(self, config: Dict[str, Any]):
+        for key in ("image_block_kwargs", "video_block_kwargs"):
+            if key in config and not isinstance(config[key], dict):
+                raise TypeError(f"`{key}` must be a dict, given `{type(config[key])}`")
+
+    def _validate_config_limits(self, config: Dict[str, Any]):
         if "max_tool_turns" in config:
             max_turns = config["max_tool_turns"]
             if not isinstance(max_turns, int) or max_turns < 1:
@@ -1994,7 +2126,14 @@ class Agent(Module, metaclass=AutoParams):
                     f"given `{config['max_tool_turns']}`"
                 )
 
-        self.register_buffer("config", config.copy())
+    def _validate_config_flags(self, config: Dict[str, Any]):
+        if "validate_inputs" in config and not isinstance(
+            config["validate_inputs"], bool
+        ):
+            raise TypeError(
+                f"`validate_inputs` must be a bool, "
+                f"given `{type(config['validate_inputs'])}`"
+            )
 
     def _set_system_extra_message(self, system_extra_message: Optional[str] = None):
         if isinstance(system_extra_message, str) or system_extra_message is None:
@@ -2201,9 +2340,72 @@ class Agent(Module, metaclass=AutoParams):
             )
             self.set_annotations(generated_annotations)
 
+            input_schema = SignatureFactory.get_input_schema_from_signature(
+                inputs_info, signature
+            )
+            self._input_schema = input_schema
+            if input_schema is not None:
+                self._input_encoder = msgspec.json.Encoder()
+                self._input_decoder = msgspec.json.Decoder(input_schema)
+            else:
+                self._input_encoder = None
+                self._input_decoder = None
+
+    def _get_validation_inputs(
+        self,
+        message: Optional[Union[str, Message, Mapping[str, Any]]],
+        task: Any,
+        vars: Mapping[str, Any],
+    ) -> Optional[Mapping[str, Any]]:
+        if not self.config.get("validate_inputs", False):
+            return None
+        if getattr(self, "_input_decoder", None) is None:
+            return None
+
+        if task is _UNSET:
+            if isinstance(message, dotdict):
+                task = self._extract_message_values(self.task, message)
+            else:
+                task = message
+
+        if isinstance(task, Mapping):
+            validation_inputs = dict(task)
+            validation_inputs.update(vars)
+            return validation_inputs
+        if task is None and vars:
+            return vars
+        schema_fields = getattr(self._input_schema, "__struct_fields__", ())
+        if len(schema_fields) == 1 and task is not None:
+            validation_inputs = {schema_fields[0]: task}
+            validation_inputs.update(vars)
+            return validation_inputs
+        return None
+
+    def _validate_inputs(self, inputs: Mapping[str, Any]) -> None:
+        if not self.config.get("validate_inputs", False):
+            return
+        decoder = getattr(self, "_input_decoder", None)
+        if decoder is None:
+            return
+
+        schema_fields = getattr(self._input_schema, "__struct_fields__", ())
+        payload = {field: inputs[field] for field in schema_fields if field in inputs}
+
+        try:
+            decoder.decode(self._input_encoder.encode(payload))
+        except (msgspec.ValidationError, msgspec.EncodeError, TypeError) as exc:
+            raise ValueError(
+                f"[{self.name}] Input validation failed: {exc}. "
+                f"Expected schema: {self._input_schema.__struct_fields__}"
+            ) from exc
+
     # --- System Prompt ---
 
-    def get_system_prompt(self, vars: Optional[Mapping[str, Any]] = None) -> str:
+    def get_system_prompt(
+        self,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_names: Optional[set[str]] = None,
+    ) -> str:
         """Render the system prompt using the Jinja template.
         Returns an empty string if no segments are provided.
         """
@@ -2213,6 +2415,18 @@ class Agent(Module, metaclass=AutoParams):
             expected_output=self.expected_output.data,
             examples=self.examples.data,
             system_extra_message=self.system_extra_message,
+            agent_skills=self.agent_skill_manager.catalog()
+            if self.agent_skill_manager.has_activatable_skills()
+            else None,
+            loaded_agent_skills=self.agent_skill_manager.loaded_content()
+            if self.agent_skill_manager.has_skills()
+            else None,
+            agent_skill_search_enabled=self.agent_skill_manager.has_searchable_skills()
+            if self.agent_skill_manager.has_activatable_skills()
+            else False,
+            agent_skills_enabled=self.agent_skill_manager.has_skills(),
+            agent_skill_activation_enabled=self.agent_skill_manager.has_activatable_skills(),
+            tool_usage_guidance=self.tool_library.get_tool_usage_guidance(tool_names),
         )
 
         if self.config.get("include_date", False):

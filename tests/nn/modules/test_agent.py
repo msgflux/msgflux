@@ -704,6 +704,108 @@ class TestAgentTemplates:
         assert isinstance(system_prompt, str)
         assert len(system_prompt) > 0
 
+    def test_agent_system_prompt_includes_tool_usage_guidance(self):
+        """Test system prompt renders tool usage guidance."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        def lookup_order(order_id: str) -> str:
+            """Look up an order."""
+            return order_id
+
+        lookup_order.tool_config = {
+            "display_name": "Order Lookup",
+            "usage_guidance": "Use only when the user provides an order id.",
+        }
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            system_message="You are helpful",
+            tools=[lookup_order],
+        )
+
+        system_prompt = agent.get_system_prompt()
+
+        assert "<tool_usage_guidance>" in system_prompt
+        assert 'name="lookup_order"' in system_prompt
+        assert "Order Lookup" not in system_prompt
+        assert "Use only when the user provides an order id." in system_prompt
+
+    def test_agent_system_prompt_filters_tool_usage_guidance(self):
+        """Test runtime tool filters also filter rendered usage guidance."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        def search_orders(order_id: str) -> str:
+            """Search orders."""
+            return order_id
+
+        def cancel_order(order_id: str) -> str:
+            """Cancel orders."""
+            return order_id
+
+        search_orders.tool_config = {
+            "usage_guidance": "Use for order status questions.",
+        }
+        cancel_order.tool_config = {
+            "usage_guidance": "Use for order cancellation requests.",
+        }
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            system_message="You are helpful",
+            tools=[search_orders, cancel_order],
+        )
+
+        params = agent._prepare_model_execution(
+            messages=[],
+            vars={},
+            tool_filter={"allow": ["search_orders"]},
+        )
+
+        assert 'name="search_orders"' in params.system_prompt
+        assert "Use for order status questions." in params.system_prompt
+        assert 'name="cancel_order"' not in params.system_prompt
+        assert "Use for order cancellation requests." not in params.system_prompt
+
+    def test_agent_system_prompt_omits_blocked_tool_usage_guidance(self):
+        """Test blocked tools are omitted from rendered usage guidance."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        def search_orders(order_id: str) -> str:
+            """Search orders."""
+            return order_id
+
+        def cancel_order(order_id: str) -> str:
+            """Cancel orders."""
+            return order_id
+
+        search_orders.tool_config = {
+            "usage_guidance": "Use for order status questions.",
+        }
+        cancel_order.tool_config = {
+            "usage_guidance": "Use for order cancellation requests.",
+        }
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            system_message="You are helpful",
+            tools=[search_orders, cancel_order],
+        )
+
+        params = agent._prepare_model_execution(
+            messages=[],
+            vars={},
+            tool_filter={"block": ["cancel_order"]},
+        )
+
+        assert 'name="search_orders"' in params.system_prompt
+        assert "Use for order status questions." in params.system_prompt
+        assert 'name="cancel_order"' not in params.system_prompt
+        assert "Use for order cancellation requests." not in params.system_prompt
+
     def test_agent_with_custom_task_template(self):
         """Test Agent with custom task template."""
         mock_model = Mock()
@@ -742,6 +844,34 @@ class TestAgentHooks:
         agent = Agent(name="agent", model=mock_model, hooks=[guard])
 
         assert len(agent.generator._forward_pre_hooks) == 1
+
+    def test_agent_method_hook_via_hooks_param(self):
+        """Test declarative method hooks register on Agent methods."""
+        from msgflux.nn.hooks import Hook
+
+        class PrepareResponseHook(Hook):
+            def __init__(self):
+                super().__init__(on="post", method="_prepare_response")
+
+            def __call__(self, module, args, kwargs, output=None):
+                return output + "!"
+
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(name="agent", model=mock_model, hooks=[PrepareResponseHook()])
+
+        response = agent._prepare_response(
+            raw_response="hello",
+            response_type="text_generation",
+            messages=[],
+            message="hello",
+            vars={},
+            reasoning=None,
+        )
+
+        assert len(agent._method_hooks["_prepare_response"]) == 1
+        assert response == "hello!"
 
 
 class TestAgentExamples:

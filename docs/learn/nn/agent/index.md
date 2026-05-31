@@ -25,6 +25,7 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [Quick Start](quickstart.md) | Get started with a minimal agent, class-based definition (AutoParams) |
 | [Async](async.md) | Asynchronous agent execution |
 | [Streaming](streaming.md) | Real-time response streaming |
+| [Prompt Cache Warmup](prompt-cache.md) | Warm provider prompt caches with the system prompt and tool schemas |
 | [Reasoning](reasoning.md) | Model-level reasoning, `reasoning_in_response`, dual-queue streaming |
 | [How to Debug an Agent](debug.md) | Inspection and debugging tools |
 | [System Prompt Components](system-prompt.md) | Compose system prompts from components |
@@ -32,6 +33,7 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [Task and Context](task-and-context.md) | Input handling, templates, multimodal, chat history |
 | [Vars](vars.md) | Unified execution variable space |
 | [Tools](tools.md) | Tool calling, configuration, MCP, agent-as-tool |
+| [Agent Skills](skills.md) | Reusable `SKILL.md` workflows loaded through progressive disclosure |
 | [Signatures](signatures.md) | Declarative input/output specifications |
 | [Hooks & Guards](hooks.md) | Input and output safety checks with configurable policy |
 | [Model Gateway](model-gateway.md) | Multi-model routing |

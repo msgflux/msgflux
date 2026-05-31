@@ -199,16 +199,20 @@ def test_restore_transport_value_restores_enum_keys():
 
 
 @pytest.mark.parametrize(
-    ("schema_type", "path", "dtype"),
+    ("schema_type", "path", "dtype_pattern"),
     [
-        (AnyOutput, "payload", "Any"),
-        (UnionOutput, "payload", "Union[str, int]"),
-        (SetOutput, "tags", "Set[str]"),
-        (BareDictOutput, "payload", "dict"),
+        (AnyOutput, "payload", re.escape("Any")),
+        (
+            UnionOutput,
+            "payload",
+            f"(?:{re.escape('Union[str, int]')}|{re.escape('str | int')})",
+        ),
+        (SetOutput, "tags", re.escape("Set[str]")),
+        (BareDictOutput, "payload", re.escape("dict")),
     ],
 )
 def test_lower_msgspec_struct_for_openai_rejects_unsupported_types(
-    schema_type, path, dtype
+    schema_type, path, dtype_pattern
 ):
-    with pytest.raises(TypeError, match=rf"`{path}`.*`{re.escape(dtype)}`"):
+    with pytest.raises(TypeError, match=rf"`{path}`.*`{dtype_pattern}`"):
         lower_msgspec_struct_for_openai(schema_type)

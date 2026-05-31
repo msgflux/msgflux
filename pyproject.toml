@@ -26,6 +26,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Information Analysis"
 ]
@@ -33,6 +34,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "msgspec-ext>=0.5.1",
     "msgtrace-sdk>=1.1.0",
+    "pyyaml>=6.0.3",
     "tenacity>=8.2.3",
     "typing-extensions>=4.14.1",
     "uvloop>=0.21.0 ; sys_platform != 'win32'",

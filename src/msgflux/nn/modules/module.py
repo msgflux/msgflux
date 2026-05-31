@@ -3,6 +3,7 @@ import functools
 import inspect
 import weakref
 from collections import OrderedDict, namedtuple
+from types import MethodType
 from typing import (
     Any,
     Callable,
@@ -361,6 +362,8 @@ class Module:
     _forward_hooks_always_called: Dict[int, bool]
     _forward_pre_hooks: Dict[int, Callable]
     _forward_pre_hooks_with_kwargs: Dict[int, bool]
+    _method_pre_hooks: Dict[str, Dict[int, Callable]]
+    _method_hooks: Dict[str, Dict[int, Callable]]
     _load_state_dict_post_hooks: Dict[int, Callable]
     _load_state_dict_pre_hooks: Dict[int, Callable]
     _state_dict_hooks: Dict[int, Callable]
@@ -393,6 +396,8 @@ class Module:
         super().__setattr__("_forward_pre_hooks", OrderedDict())
         super().__setattr__("_forward_hooks", OrderedDict())
         super().__setattr__("_forward_hooks_always_called", OrderedDict())
+        super().__setattr__("_method_pre_hooks", {})
+        super().__setattr__("_method_hooks", {})
         super().__setattr__("_state_dict_hooks", OrderedDict())
         super().__setattr__("_state_dict_pre_hooks", OrderedDict())
         super().__setattr__("_load_state_dict_pre_hooks", OrderedDict())
@@ -647,6 +652,11 @@ class Module:
                 resolved_target = getattr(self, hook.target)
             else:
                 resolved_target = self
+            if not isinstance(resolved_target, Module):
+                raise TypeError(
+                    f"Hook target `{hook.target}` must resolve to a Module, "
+                    f"given `{type(resolved_target)}`"
+                )
             # Auto-assign processor via hook.processor_key
             if processors and hook.processor_key:
                 processor = processors.get(hook.processor_key)
@@ -1135,6 +1145,86 @@ class Module:
             self._forward_pre_hooks.move_to_end(handle.id, last=False)
         return handle
 
+    def _get_method_hook_bucket(
+        self,
+        registry: Dict[str, Dict[int, Callable]],
+        method_name: str,
+    ) -> OrderedDict:
+        if not isinstance(method_name, str) or method_name == "":
+            raise ValueError("`method_name` must be a non-empty string")
+        if method_name in {"forward", "aforward"}:
+            raise ValueError(
+                f"`{method_name}` is reserved. Use forward hook registration APIs "
+                "for module execution."
+            )
+        if method_name.startswith("__") and method_name.endswith("__"):
+            raise ValueError("Magic methods are not supported for method hooks")
+
+        try:
+            method = super().__getattribute__(method_name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"`{type(self).__name__}` object has no method `{method_name}`"
+            ) from exc
+
+        if isinstance(method, Module):
+            raise TypeError(
+                f"`{method_name}` resolves to a submodule. Register hooks on that "
+                "submodule directly instead."
+            )
+        if not callable(method):
+            raise TypeError(f"`{method_name}` is not callable")
+
+        bucket = registry.get(method_name)
+        if bucket is None:
+            bucket = OrderedDict()
+            registry[method_name] = bucket
+        return bucket
+
+    def register_method_pre_hook(
+        self,
+        method_name: str,
+        hook: Callable[
+            [T, Tuple[Any, ...], Dict[str, Any]],
+            Optional[Tuple[Any, Dict[str, Any]]],
+        ],
+        *,
+        prepend: bool = False,
+    ) -> RemovableHandle:
+        """Register a pre-hook for an arbitrary method on this module.
+
+        The hook will be called every time the named method is invoked through
+        attribute access on this module instance. The hook receives the same
+        arguments as a forward pre-hook: ``hook(module, args, kwargs)`` and may
+        return ``(args, kwargs)`` to modify the call.
+        """
+        bucket = self._get_method_hook_bucket(self._method_pre_hooks, method_name)
+        handle = RemovableHandle(bucket)
+        bucket[handle.id] = hook
+        if prepend:
+            bucket.move_to_end(handle.id, last=False)
+        return handle
+
+    def register_method_hook(
+        self,
+        method_name: str,
+        hook: Callable[[T, tuple[Any, ...], dict[str, Any], Any], Optional[Any]],
+        *,
+        prepend: bool = False,
+    ) -> RemovableHandle:
+        """Register a post-hook for an arbitrary method on this module.
+
+        The hook will be called every time the named method returns. The hook
+        receives ``hook(module, args, kwargs, output)`` and may return a
+        replacement output.
+        """
+        bucket = self._get_method_hook_bucket(self._method_hooks, method_name)
+        handle = RemovableHandle(bucket)
+        bucket[handle.id] = hook
+        if prepend:
+            bucket.move_to_end(handle.id, last=False)
+        return handle
+
     def register_forward_hook(
         self,
         hook: Union[
@@ -1207,6 +1297,41 @@ class Module:
             hook_result = hook(self, args, kwargs, result)
             if hook_result is not None:
                 result = hook_result
+
+        return result
+
+    def _call_method_impl(
+        self,
+        method_name: str,
+        method: Callable[..., Any],
+        *args,
+        **kwargs,
+    ) -> Any:
+        pre_hooks = self._method_pre_hooks.get(method_name)
+        post_hooks = self._method_hooks.get(method_name)
+
+        if not (pre_hooks or post_hooks):
+            return method(*args, **kwargs)
+
+        if pre_hooks:
+            for hook in pre_hooks.values():
+                hook_result = hook(self, args, kwargs)
+                if hook_result is not None:
+                    if isinstance(hook_result, tuple) and len(hook_result) == 2:
+                        args, kwargs = hook_result
+                    else:
+                        raise RuntimeError(
+                            "method pre-hook must return None or a tuple of "
+                            "(args, kwargs)"
+                        )
+
+        result = method(*args, **kwargs)
+
+        if post_hooks:
+            for hook in post_hooks.values():
+                hook_result = hook(self, args, kwargs, result)
+                if hook_result is not None:
+                    result = hook_result
 
         return result
 
@@ -1311,6 +1436,43 @@ class Module:
 
         return result
 
+    async def _acall_method_impl(
+        self,
+        method_name: str,
+        method: Callable[..., Any],
+        *args,
+        **kwargs,
+    ) -> Any:
+        pre_hooks = self._method_pre_hooks.get(method_name)
+        post_hooks = self._method_hooks.get(method_name)
+
+        if not (pre_hooks or post_hooks):
+            return await method(*args, **kwargs)
+
+        if pre_hooks:
+            for hook in pre_hooks.values():
+                hook_result = await self._adispatch_hook(hook, self, args, kwargs)
+                if hook_result is not None:
+                    if isinstance(hook_result, tuple) and len(hook_result) == 2:
+                        args, kwargs = hook_result
+                    else:
+                        raise RuntimeError(
+                            "method pre-hook must return None or a tuple of "
+                            "(args, kwargs)"
+                        )
+
+        result = await method(*args, **kwargs)
+
+        if post_hooks:
+            for hook in post_hooks.values():
+                hook_result = await self._adispatch_hook(
+                    hook, self, args, kwargs, result
+                )
+                if hook_result is not None:
+                    result = hook_result
+
+        return result
+
     async def _aexecute_with_span(
         self, module_name_title: str, module_type: str, *args, **kwargs
     ):
@@ -1404,6 +1566,10 @@ class Module:
             self._forward_pre_hooks = OrderedDict()
         if "_forward_hooks_always_called" not in self.__dict__:
             self._forward_hooks_always_called = OrderedDict()
+        if "_method_pre_hooks" not in self.__dict__:
+            self._method_pre_hooks = {}
+        if "_method_hooks" not in self.__dict__:
+            self._method_hooks = {}
         if "_state_dict_hooks" not in self.__dict__:
             self._state_dict_hooks = OrderedDict()
         if "_state_dict_pre_hooks" not in self.__dict__:
@@ -1415,10 +1581,61 @@ class Module:
         if "_non_persistent_buffers_set" not in self.__dict__:
             self._non_persistent_buffers_set = set()
 
+    def _wrap_bound_hooked_method(self, name: str, method: Callable[..., Any]) -> Any:
+        target = method.__func__
+
+        if inspect.iscoroutinefunction(target):
+
+            @functools.wraps(target)
+            async def async_method_wrapper(this, *args, **kwargs):
+                return await this._acall_method_impl(name, method, *args, **kwargs)
+
+            return MethodType(async_method_wrapper, self)
+
+        @functools.wraps(target)
+        def method_wrapper(this, *args, **kwargs):
+            return this._call_method_impl(name, method, *args, **kwargs)
+
+        return MethodType(method_wrapper, self)
+
+    def _wrap_callable_hooked_method(self, name: str, attr: Callable[..., Any]) -> Any:
+        if inspect.iscoroutinefunction(attr):
+
+            @functools.wraps(attr)
+            async def async_wrapper(*args, **kwargs):
+                return await self._acall_method_impl(name, attr, *args, **kwargs)
+
+            return async_wrapper
+
+        @functools.wraps(attr)
+        def wrapper(*args, **kwargs):
+            return self._call_method_impl(name, attr, *args, **kwargs)
+
+        return wrapper
+
+    def _maybe_wrap_hooked_method(self, name: str, attr: Any) -> Any:
+        if not callable(attr):
+            return attr
+        if isinstance(attr, Module):
+            return attr
+
+        pre_hooks = self.__dict__.get("_method_pre_hooks", {})
+        post_hooks = self.__dict__.get("_method_hooks", {})
+        if not (pre_hooks.get(name) or post_hooks.get(name)):
+            return attr
+
+        if inspect.ismethod(attr):
+            return self._wrap_bound_hooked_method(name, attr)
+
+        return self._wrap_callable_hooked_method(name, attr)
+
     def __getattribute__(self, name: str) -> Union[Any, "Module"]:
+        maybe_wrap = super().__getattribute__("_maybe_wrap_hooked_method")
+
         # Don't intercept special attributes or private attributes
         if name.startswith("_"):
-            return super().__getattribute__(name)
+            attr = super().__getattribute__(name)
+            return maybe_wrap(name, attr)
 
         # Check if this is a registered parameter, buffer, or module
         # These should take priority over class attributes
@@ -1443,7 +1660,8 @@ class Module:
             pass
 
         # Fall back to normal attribute access
-        return super().__getattribute__(name)
+        attr = super().__getattribute__(name)
+        return maybe_wrap(name, attr)
 
     def __getattr__(self, name: str) -> Union[Any, "Module"]:
         # This is now only called when attribute truly doesn't exist

@@ -579,9 +579,104 @@ When an agent has a signature, its annotations are automatically configured base
     print(response)
     ```
 
+### Input Validation
+
+When using signatures, you can opt-in to **input validation** that checks types and required fields *before* calling the model. This catches errors early and avoids wasting tokens on malformed requests.
+
+Enable it via the `validate_inputs` config option:
+
+```python
+config = {"validate_inputs": True}
+```
+
+Validation requires two conditions:
+
+1. `config["validate_inputs"]` is `True`
+2. The agent has a `signature` configured (which generates the input schema)
+
+If either condition is missing, validation is silently skipped.
+
+???+ example "Input Validation Examples"
+
+    === "Catching Type Errors"
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class Calculator(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            signature = "expression: str, precision: int -> result: float"
+            config = {"validate_inputs": True}
+
+        agent = Calculator()
+
+        # This works
+        agent(expression="sqrt(2)", precision=4)
+
+        # This raises ValueError before calling the model:
+        # "Input validation failed: Expected `int`, got `str` - at `$.precision`"
+        agent(expression="sqrt(2)", precision="high")
+        ```
+
+    === "Catching Missing Fields"
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class Translator(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            signature = "text: str, target_language: str -> translation: str"
+            config = {"validate_inputs": True}
+
+        agent = Translator()
+
+        # Raises ValueError: missing required field `target_language`
+        agent(text="Hello world")
+        ```
+
+    === "With Optional Fields"
+
+        ```python
+        # pip install msgflux[openai]
+        from typing import Optional
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        class QA(mf.Signature):
+            """Answer the question based on the context."""
+            question: str = mf.InputField(desc="The question to answer")
+            context: Optional[str] = mf.InputField(desc="Supporting context")
+            answer: str = mf.OutputField()
+
+        class Answerer(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            signature = QA
+            config = {"validate_inputs": True}
+
+        agent = Answerer()
+
+        # Both are valid — context is optional
+        agent(question="What is Python?")
+        agent(question="What is Python?", context="Python is a programming language.")
+        ```
+
+!!! note "How It Works"
+    When a signature is configured with `validate_inputs: True`, msgFlux generates a [msgspec Struct](https://jcristharif.com/msgspec/) from the input fields and creates a **cached `msgspec.json.Decoder`** at initialization time. At runtime, the Agent validates the effective task mapping — named kwargs, `task={...}`, or a task extracted via `message_fields` — against this schema, checking types, required fields, and optional defaults before rendering the prompt.
+
 !!! tip "Best Practices"
     - **Start simple**: Begin with inline signatures and evolve to class-based as needed
     - **Be semantic**: Choose clear, meaningful field names (e.g., `question` not `q`)
     - **Use descriptions**: Add `desc` for ambiguous fields or specific constraints
     - **Docstrings matter**: The class docstring becomes the model's instruction
     - **Trust the system**: Avoid over-engineering prompts in descriptions
+    - **Enable validation in development**: Use `config={"validate_inputs": True}` to catch input errors early

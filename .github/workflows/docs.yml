@@ -1,10 +1,10 @@
 name: Deploy Documentation
 
 on:
-  push:
-    branches:
-      - main
+  release:
+    types: [published]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,15 +27,15 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Install dependencies
+      - name: Install documentation dependencies
         run: |
-          uv sync --group doc
+          uv pip install --system --group doc -e .
 
       - name: Build documentation
-        run: uv run --group doc mkdocs build --clean
+        run: mkdocs build --clean
 
       - name: Deploy to GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'release' && github.event.release.prerelease == false
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
