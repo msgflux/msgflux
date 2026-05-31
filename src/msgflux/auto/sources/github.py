@@ -36,9 +36,16 @@ class GitHubAutoModuleSource(AutoModuleSource):
 
     def download_file(self, filename: str, *, force_download: bool = False) -> Path:
         self.validate_filename(filename)
-        file_path = (
-            self.cache.module_path(self.name, self.repo_id, self.revision) / filename
-        )
+        module_path = self.cache.module_path(self.name, self.repo_id, self.revision)
+        file_path = module_path / filename
+        try:
+            file_path.resolve().relative_to(module_path.resolve())
+        except ValueError as exc:
+            raise AutoModuleDownloadError(
+                self.repo_id,
+                filename,
+                "resolved cache path escapes the AutoModule cache directory.",
+            ) from exc
         if file_path.exists() and not force_download:
             return file_path
         if self.local_files_only:
@@ -68,7 +75,9 @@ class GitHubAutoModuleSource(AutoModuleSource):
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 response = client.get(url)
                 response.raise_for_status()
-                file_path.write_bytes(response.content)
+                tmp_path = file_path.with_name(f"{file_path.name}.tmp")
+                tmp_path.write_bytes(response.content)
+                tmp_path.replace(file_path)
         except httpx.HTTPStatusError as exc:
             raise AutoModuleDownloadError(
                 self.repo_id,

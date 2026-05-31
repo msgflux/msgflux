@@ -18,13 +18,23 @@ class AutoModuleMetadata(msgspec.Struct, forbid_unknown_fields=True):
     tags: list[str] = msgspec.field(default_factory=list)
 
 
+class AutoModuleModelSlot(msgspec.Struct, forbid_unknown_fields=True):
+    path: str
+    provider: Optional[str] = None
+    model_type: Optional[str] = None
+    model_id: Optional[str] = None
+    state: dict[str, Any] = msgspec.field(default_factory=dict)
+    description: Optional[str] = None
+
+
 class AutoModuleConfig(msgspec.Struct, forbid_unknown_fields=True):
     schema_version: int
     msgflux_version: str
+    entrypoint: str = "module.py"
     factory: Optional[str] = None
     module_class: Optional[str] = msgspec.field(default=None, name="class")
     state: Optional[str] = None
-    models: dict[str, str] = msgspec.field(default_factory=dict)
+    models: dict[str, AutoModuleModelSlot] = msgspec.field(default_factory=dict)
     files: list[str] = msgspec.field(default_factory=list)
     metadata: AutoModuleMetadata = msgspec.field(default_factory=AutoModuleMetadata)
 
@@ -35,12 +45,24 @@ class AutoModuleConfig(msgspec.Struct, forbid_unknown_fields=True):
         *,
         repo_id: str,
     ) -> "AutoModuleConfig":
+        data = cls._normalize_mapping(data)
         try:
             config = msgspec.convert(data, type=cls)
         except msgspec.ValidationError as exc:
             raise AutoModuleConfigurationError(repo_id, str(exc)) from exc
         config.validate(repo_id)
         return config
+
+    @staticmethod
+    def _normalize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(data)
+        models = normalized.get("models")
+        if isinstance(models, Mapping):
+            normalized["models"] = {
+                alias: {"path": value} if isinstance(value, str) else value
+                for alias, value in models.items()
+            }
+        return normalized
 
     @classmethod
     def from_file(cls, path: Path, *, repo_id: str) -> "AutoModuleConfig":
@@ -62,11 +84,6 @@ class AutoModuleConfig(msgspec.Struct, forbid_unknown_fields=True):
                 repo_id,
                 f"`schema_version` must be 1, given {self.schema_version}.",
             )
-        if self.factory is None and self.module_class is None:
-            raise AutoModuleConfigurationError(
-                repo_id,
-                "`module.json` must define `factory` or `class`.",
-            )
         try:
             specifier = SpecifierSet(self.msgflux_version)
         except Exception as exc:
@@ -80,3 +97,25 @@ class AutoModuleConfig(msgspec.Struct, forbid_unknown_fields=True):
                 f"`msgflux_version` requires {self.msgflux_version}, "
                 f"current version is {__version__}.",
             )
+        self._validate_entrypoints(repo_id)
+        self._validate_model_slots(repo_id)
+
+    def _validate_entrypoints(self, repo_id: str) -> None:
+        if not self.entrypoint:
+            raise AutoModuleConfigurationError(
+                repo_id,
+                "`entrypoint` must be a non-empty path.",
+            )
+
+    def _validate_model_slots(self, repo_id: str) -> None:
+        for alias, slot in self.models.items():
+            if not alias:
+                raise AutoModuleConfigurationError(
+                    repo_id,
+                    "`models` aliases must be non-empty.",
+                )
+            if not slot.path:
+                raise AutoModuleConfigurationError(
+                    repo_id,
+                    f"`models.{alias}.path` must be non-empty.",
+                )

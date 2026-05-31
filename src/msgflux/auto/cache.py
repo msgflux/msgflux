@@ -1,7 +1,9 @@
 import os
 import shutil
+from hashlib import sha256
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from msgflux.envs import envs
 
@@ -22,8 +24,18 @@ class AutoModuleCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def module_path(self, source: str, repo_id: str, revision: str) -> Path:
-        safe_repo_id = repo_id.replace("/", "--")
-        return self.cache_dir / source / safe_repo_id / revision
+        return (
+            self.cache_dir
+            / source
+            / self._safe_component(repo_id)
+            / self._safe_component(revision)
+        )
+
+    @staticmethod
+    def _safe_component(value: str) -> str:
+        digest = sha256(value.encode("utf-8")).hexdigest()[:12]
+        quoted = quote(value, safe="")
+        return f"{quoted}-{digest}"
 
     def clear(self) -> None:
         if self.cache_dir.exists():

@@ -8,11 +8,14 @@ import pytest
 import msgflux as mf
 from msgflux import nn
 from msgflux.auto import AutoModule
+from msgflux.auto.cache import AutoModuleCache
 from msgflux.auto.exceptions import (
     AutoModuleConfigurationError,
     AutoModuleSecurityError,
 )
+from msgflux.models.base import BaseModel
 from msgflux.models.providers.fake import FakeChatCompletion, FakeModelExecutionError
+from msgflux.models.registry import model_registry
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -21,7 +24,7 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def _github_cache_path(cache_dir: Path, repo_id: str, revision: str = "main") -> Path:
-    return cache_dir / "github" / repo_id.replace("/", "--") / revision
+    return AutoModuleCache(cache_dir).module_path("github", repo_id, revision)
 
 
 def _write_auto_module(
@@ -75,6 +78,20 @@ def _agent_state() -> dict:
     return agent.state_dict()
 
 
+class ExplodingChatCompletion(BaseModel):
+    model_type = "chat_completion"
+    provider = "exploding_auto_module_test"
+
+    def __init__(self, model_id: str = "boom") -> None:
+        self.model_id = model_id
+
+    def _initialize(self):
+        raise RuntimeError("original provider should not initialize")
+
+    def __call__(self, *args, **kwargs):
+        raise RuntimeError("not expected")
+
+
 def test_fake_chat_completion_serializes_and_never_executes():
     model = mf.Model.chat_completion("fake/placeholder", reason="test")
 
@@ -105,7 +122,7 @@ def test_auto_module_create_loads_state_and_applies_model_overrides(tmp_path):
     assert str(agent.instructions) == "State instructions"
     assert agent.model.model_id == "override"
     assert agent.factory_module_path == module_root
-    assert agent.factory_config.models == {"default": "generator.model"}
+    assert agent.factory_config.models["default"].path == "generator.model"
 
 
 def test_auto_module_instance_create_supports_model_object_override(tmp_path):
@@ -117,6 +134,40 @@ def test_auto_module_instance_create_supports_model_object_override(tmp_path):
     agent = ref.create(trust_remote_code=True, models={"default": override})
 
     assert agent.model is override
+
+
+def test_auto_module_model_replacement_skips_original_provider_init(tmp_path):
+    original_chat_completion = model_registry.get("chat_completion")
+    model_registry["chat_completion"] = dict(original_chat_completion or {})
+    model_registry["chat_completion"][
+        "exploding_auto_module_test"
+    ] = ExplodingChatCompletion
+    try:
+        state = _agent_state()
+        state["generator.model"] = {
+            "msgflux_type": "model",
+            "provider": "exploding_auto_module_test",
+            "model_type": "chat_completion",
+            "state": {"model_id": "would-explode"},
+        }
+        module_root = _github_cache_path(tmp_path, "owner/repo")
+        _write_auto_module(module_root, state=state)
+
+        agent = AutoModule.create(
+            "owner/repo",
+            cache_dir=tmp_path,
+            local_files_only=True,
+            trust_remote_code=True,
+            models={"default": "fake/replacement"},
+        )
+
+        assert agent.model.provider == "fake"
+        assert agent.model.model_id == "replacement"
+    finally:
+        if original_chat_completion is None:
+            model_registry.pop("chat_completion", None)
+        else:
+            model_registry["chat_completion"] = original_chat_completion
 
 
 def test_auto_module_create_requires_trust_for_remote_factory(tmp_path):
@@ -148,6 +199,40 @@ class RemoteAgent:
 
     cls = ref.get_class(trust_remote_code=True)
     assert cls.__name__ == "RemoteAgent"
+
+
+def test_auto_module_get_class_uses_standard_module_hook(tmp_path):
+    module_root = _github_cache_path(tmp_path, "owner/repo")
+    _write_auto_module(
+        module_root,
+        manifest={
+            "schema_version": 1,
+            "msgflux_version": ">=0.0.0",
+            "entrypoint": "module.py",
+            "state": "state.json",
+        },
+        module_source="""
+class DefaultWorkflow:
+    pass
+
+
+class PlannerWorkflow:
+    pass
+
+
+def get_class(name=None):
+    if name == "planner":
+        return PlannerWorkflow
+    return DefaultWorkflow
+""",
+        state={},
+    )
+    ref = AutoModule("owner/repo", cache_dir=tmp_path, local_files_only=True)
+
+    assert ref.get_class(trust_remote_code=True).__name__ == "DefaultWorkflow"
+    assert ref.get_class("planner", trust_remote_code=True).__name__ == (
+        "PlannerWorkflow"
+    )
 
 
 def test_auto_module_get_class_allows_local_import_without_remote_trust(tmp_path):
@@ -205,6 +290,159 @@ def create(config=None, module_path=None):
     )
 
     assert result == {"marker": "from-helper"}
+
+
+def test_auto_module_sibling_imports_are_isolated_between_modules(tmp_path):
+    one_root = _github_cache_path(tmp_path, "owner/one")
+    two_root = _github_cache_path(tmp_path, "owner/two")
+    for root, marker in [(one_root, "one"), (two_root, "two")]:
+        _write_auto_module(
+            root,
+            manifest={
+                "schema_version": 1,
+                "msgflux_version": ">=0.0.0",
+                "factory": "module.py:create",
+                "files": ["helper.py"],
+            },
+            state=None,
+            module_source="""
+from helper import marker
+
+
+def create():
+    return marker
+""",
+        )
+        (root / "helper.py").write_text(f'marker = "{marker}"', encoding="utf-8")
+
+    assert AutoModule.create(
+        "owner/one",
+        cache_dir=tmp_path,
+        local_files_only=True,
+        trust_remote_code=True,
+    ) == "one"
+    assert AutoModule.create(
+        "owner/two",
+        cache_dir=tmp_path,
+        local_files_only=True,
+        trust_remote_code=True,
+    ) == "two"
+    assert "helper" not in sys.modules
+
+
+def test_auto_module_load_into_applies_state_and_replacements(tmp_path):
+    module_root = _github_cache_path(tmp_path, "owner/repo")
+    _write_auto_module(module_root, state=_agent_state())
+    target = nn.Agent(
+        name="target",
+        model=mf.Model.chat_completion("fake/placeholder"),
+        instructions="Target instructions",
+    )
+
+    result = AutoModule.load_into(
+        "owner/repo",
+        target,
+        cache_dir=tmp_path,
+        local_files_only=True,
+        models={"default": "fake/load-into"},
+    )
+
+    assert result is target
+    assert target.name == "exported-agent"
+    assert str(target.instructions) == "State instructions"
+    assert target.model.model_id == "load-into"
+
+
+def test_auto_module_export_writes_state_manifest_and_stub(tmp_path):
+    workflow = nn.Agent(
+        name="exported",
+        model=mf.Model.chat_completion("fake/default"),
+        instructions="Export me",
+    )
+
+    output_dir = AutoModule.export(workflow, tmp_path / "dist")
+
+    state = json.loads((output_dir / "state.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / "module.json").read_text(encoding="utf-8"))
+
+    assert (output_dir / "module.py").read_text(encoding="utf-8") == ""
+    assert state["instructions"] == "Export me"
+    assert state["generator.model"]["provider"] == "fake"
+    assert manifest["entrypoint"] == "module.py"
+    assert manifest["state"] == "state.json"
+    assert manifest["models"]["generator-model"]["path"] == "generator.model"
+    assert manifest["models"]["generator-model"]["provider"] == "fake"
+    assert manifest["models"]["generator-model"]["model_type"] == "chat_completion"
+    assert manifest["models"]["generator-model"]["model_id"] == "default"
+
+
+def test_auto_module_loads_exported_bundle_from_local_source(tmp_path):
+    workflow = nn.Agent(
+        name="exported",
+        model=mf.Model.chat_completion("fake/default"),
+        instructions="Export me",
+    )
+    output_dir = AutoModule.export(workflow, tmp_path / "dist")
+    (output_dir / "module.py").write_text(
+        """
+import msgflux as mf
+from msgflux import nn
+
+
+def create():
+    return nn.Agent(
+        name="placeholder",
+        model=mf.Model.chat_completion("fake/placeholder"),
+        instructions="Placeholder",
+    )
+""",
+        encoding="utf-8",
+    )
+
+    agent = AutoModule.create(
+        f"local://{output_dir}",
+        trust_remote_code=True,
+        models={"generator-model": "fake/local-user"},
+    )
+
+    assert agent.name == "exported"
+    assert str(agent.instructions) == "Export me"
+    assert agent.model.model_id == "local-user"
+
+
+def test_auto_module_load_into_exported_bundle_without_module_py_code(tmp_path):
+    workflow = nn.Agent(
+        name="exported",
+        model=mf.Model.chat_completion("fake/default"),
+        instructions="Export me",
+    )
+    output_dir = AutoModule.export(workflow, tmp_path / "dist")
+    target = nn.Agent(
+        name="target",
+        model=mf.Model.chat_completion("fake/placeholder"),
+        instructions="Target",
+    )
+
+    AutoModule.load_into(
+        f"local://{output_dir}",
+        target,
+        models={"generator-model": "fake/manual-load"},
+    )
+
+    assert target.name == "exported"
+    assert str(target.instructions) == "Export me"
+    assert target.model.model_id == "manual-load"
+
+
+def test_auto_module_cache_sanitizes_revision_paths(tmp_path):
+    cache_root = tmp_path / "cache"
+    module_path = AutoModuleCache(cache_root).module_path(
+        "github",
+        "owner/repo",
+        "../../../../outside",
+    )
+
+    assert module_path.resolve().is_relative_to(cache_root.resolve())
 
 
 def test_auto_module_check_requirements_does_not_download_declared_files(tmp_path):
@@ -273,7 +511,7 @@ def test_auto_module_import_failure_cleans_sys_modules(tmp_path):
             trust_remote_code=True,
         )
 
-    assert "msgflux_auto_owner_repo_main_module" not in sys.modules
+    assert "msgflux_auto_owner_repo_main.module" not in sys.modules
 
 
 def test_auto_module_supports_huggingface_source(monkeypatch, tmp_path):
