@@ -1207,6 +1207,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         model_id: str,
         voice: Optional[str] = "alloy",
         speed: Optional[float] = 1.0,
+        stream_chunk_size: int = 1024,
         base_url: Optional[str] = None,
         retry: Optional[Any] = None,
     ):
@@ -1218,13 +1219,18 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         speed:
             the speed of the generated audio. Select a value
             from 0.25 to 4.0. 1.0 is the default.
+        stream_chunk_size:
+            Number of bytes yielded per streaming audio chunk.
         base_url:
             URL to model provider.
         retry:
             Retry config. A tenacity decorator, False to disable, or None for default.
         """
         super().__init__()
+        if not isinstance(stream_chunk_size, int) or stream_chunk_size <= 0:
+            raise ValueError("`stream_chunk_size` must be a positive integer")
         self.model_id = model_id
+        self.stream_chunk_size = stream_chunk_size
         self.sampling_params = {"base_url": base_url or self._get_base_url()}
         self.sampling_run_params = {
             "voice": voice,
@@ -1283,7 +1289,7 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         stream_response.set_response_type("audio_generation")
 
         with self._execute_model(**kwargs) as model_output:
-            for chunk in model_output.iter_bytes(chunk_size=1024):
+            for chunk in model_output.iter_bytes(chunk_size=self.stream_chunk_size):
                 stream_response.add(chunk)
                 if not stream_response.first_chunk_event.is_set():
                     stream_response.first_chunk_event.set()
@@ -1295,7 +1301,9 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         stream_response.set_response_type("audio_generation")
 
         async with self._aexecute_model(**kwargs) as model_output:
-            async for chunk in model_output.iter_bytes(chunk_size=1024):
+            async for chunk in model_output.iter_bytes(
+                chunk_size=self.stream_chunk_size
+            ):
                 stream_response.add(chunk)
                 if not stream_response.first_chunk_event.is_set():
                     stream_response.first_chunk_event.set()

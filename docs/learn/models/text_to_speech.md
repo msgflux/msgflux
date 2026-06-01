@@ -148,7 +148,10 @@ Generate and play audio in real-time:
         import asyncio
         import msgflux as mf
 
-        model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+        model = mf.Model.text_to_speech(
+            "openai/gpt-4o-mini-tts",
+            stream_chunk_size=512,
+        )
 
         async def handle():
             response = await model.acall(
@@ -167,6 +170,8 @@ Generate and play audio in real-time:
 
         asyncio.run(handle())
         ```
+
+        `stream_chunk_size` controls the byte size requested from the SDK when msgFlux reads streaming audio. Smaller values can make local playback controls feel more responsive, but may add Python and queue overhead. It does not pause or resume generation on the remote provider.
 
     === "Basic"
 
