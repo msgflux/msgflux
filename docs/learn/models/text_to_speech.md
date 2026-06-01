@@ -140,6 +140,34 @@ Generate and play audio in real-time:
 
 ???+ example
 
+    === "Pull One Chunk"
+
+        Use `next_chunk()` when your application needs to decide exactly when the next audio chunk is delivered, such as a TUI that coordinates playback with user controls:
+
+        ```python
+        import asyncio
+        import msgflux as mf
+
+        model = mf.Model.text_to_speech("openai/gpt-4o-mini-tts")
+
+        async def handle():
+            response = await model.acall(
+                "This audio is pulled one chunk at a time.",
+                stream=True,
+                response_format="pcm"
+            )
+
+            while True:
+                chunk = await response.next_chunk()
+                if chunk is None:
+                    break
+
+                # chunk is bytes - play, buffer, or save when your app is ready
+                process_audio_chunk(chunk)
+
+        asyncio.run(handle())
+        ```
+
     === "Basic"
 
         ```python
@@ -156,8 +184,6 @@ Generate and play audio in real-time:
         # consume() returns an async generator
         async def handle():
             async for chunk in response.consume():
-                if chunk is None:  # End of stream
-                    break
                 # chunk is bytes - play or save incrementally
                 process_audio_chunk(chunk)
 
@@ -181,8 +207,6 @@ Generate and play audio in real-time:
 
             with open("output.mp3", "wb") as f:
                 async for chunk in response.consume():
-                    if chunk is None:
-                        break
                     f.write(chunk)
 
             print("Audio saved to output.mp3")
@@ -210,8 +234,6 @@ Generate and play audio in real-time:
 
             with open("output.mp3", "wb") as f:
                 async for chunk in response.consume():
-                    if chunk is None:
-                        break
                     f.write(chunk)
 
         asyncio.run(save())
@@ -242,8 +264,6 @@ Generate and play audio in real-time:
             )
 
             async for chunk in response.consume():
-                if chunk is None:
-                    break
                 stream.write(chunk)
 
             stream.stop_stream()
@@ -287,8 +307,6 @@ Generate audio asynchronously:
             response = await model.acall(text, stream=True)
 
             async for chunk in response.consume():
-                if chunk is None:
-                    break
                 # Process chunk asynchronously
                 await process_chunk(chunk)
 
