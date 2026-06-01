@@ -207,14 +207,21 @@ class BaseStreamResponse(CoreResponse):
                 )
             return self._reasoning_queue
 
+    async def next_chunk(self) -> Optional[Union[bytes, str]]:
+        """Return the next content chunk, or None when the stream is complete."""
+        queue = self._bind_consumer_queue()
+        chunk = await queue.get()
+        if chunk is None:
+            if self.error is not None:
+                raise self.error
+            return None
+        return chunk
+
     async def consume(self) -> AsyncGenerator[Union[bytes, str], None]:
         """Async generator that yields content chunks until None is received."""
-        queue = self._bind_consumer_queue()
         while True:
-            chunk = await queue.get()
+            chunk = await self.next_chunk()
             if chunk is None:
-                if self.error is not None:
-                    raise self.error
                 break
             yield chunk
 

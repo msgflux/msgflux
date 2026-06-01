@@ -72,6 +72,39 @@ class TestModelStreamResponse:
         assert response.data == "Hello world!"
 
     @pytest.mark.asyncio
+    async def test_model_stream_response_next_chunk_returns_one_chunk_at_a_time(self):
+        """next_chunk should expose pull-based single-chunk consumption."""
+        response = ModelStreamResponse()
+        chunks = ["Hello", " ", "world", "!"]
+
+        for chunk in chunks:
+            response.add(chunk)
+        response.add(None)
+
+        assert await response.next_chunk() == "Hello"
+        assert await response.next_chunk() == " "
+        assert await response.next_chunk() == "world"
+        assert await response.next_chunk() == "!"
+        assert await response.next_chunk() is None
+        assert response.data == "Hello world!"
+
+    @pytest.mark.asyncio
+    async def test_model_stream_response_next_chunk_supports_bytes(self):
+        """next_chunk should return one binary chunk per call."""
+        response = ModelStreamResponse()
+        chunks = [b"\x00\x01", b"\x02", b"\x03\x04"]
+
+        for chunk in chunks:
+            response.add(chunk)
+        response.add(None)
+
+        assert await response.next_chunk() == b"\x00\x01"
+        assert await response.next_chunk() == b"\x02"
+        assert await response.next_chunk() == b"\x03\x04"
+        assert await response.next_chunk() is None
+        assert response.data == b"\x00\x01\x02\x03\x04"
+
+    @pytest.mark.asyncio
     async def test_model_stream_response_accumulates_bytes_data(self):
         """Binary streaming should keep the full bytes payload in response.data."""
         response = ModelStreamResponse()
@@ -110,6 +143,16 @@ class TestModelStreamResponse:
         with pytest.raises(RuntimeError, match="stream failed"):
             async for _ in response.consume():
                 pass
+
+    @pytest.mark.asyncio
+    async def test_model_stream_response_next_chunk_raises_stored_error(self):
+        """next_chunk should raise stored stream errors at the sentinel."""
+        response = ModelStreamResponse()
+        response.set_error(RuntimeError("stream failed"))
+        response.add(None)
+
+        with pytest.raises(RuntimeError, match="stream failed"):
+            await response.next_chunk()
 
     def test_model_stream_response_rejects_non_text_or_bytes_chunks(self):
         """Streaming content should fail fast on unsupported chunk types."""

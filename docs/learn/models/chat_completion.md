@@ -343,6 +343,33 @@ Stream tokens as they're generated:
 
 ???+ example
 
+    === "Pull One Chunk"
+
+        Use `next_chunk()` when your application needs to decide exactly when the next token is delivered, such as a TUI that can pause rendering or synchronize text with another stream:
+
+        ```python
+        import asyncio
+        import msgflux as mf
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        async def main():
+            response = await model.acall(
+                messages=[{"role": "user", "content": "Count to 10"}],
+                stream=True
+            )
+
+            while True:
+                chunk = await response.next_chunk()
+                if chunk is None:
+                    break
+
+                print(chunk, end="", flush=True)
+                await asyncio.sleep(0.05)  # application-controlled pacing
+
+        asyncio.run(main())
+        ```
+
     === "Basic Streaming"
 
         ```python
@@ -1208,7 +1235,34 @@ Timeline:
 
 The `consume()` and `consume_reasoning()` methods become async generators in streaming mode:
 
+For content streams, `next_chunk()` is also available when you want pull-based delivery. Each call returns one content chunk (`str` for chat completion) or `None` when the stream is complete. This controls when your application receives the next chunk; it does not pause the remote provider, which may continue producing chunks in the background.
+
 ???+ example
+
+    === "Pull-Based Content"
+
+        ```python
+        import asyncio
+        import msgflux as mf
+
+        model = mf.Model.chat_completion(
+            "groq/openai/gpt-oss-120b",
+            reasoning_effort="low",
+            return_reasoning=True,
+        )
+
+        response = await model.acall(
+            "What is 2+2? Explain your reasoning.", stream=True
+        )
+
+        while True:
+            chunk = await response.next_chunk()
+            if chunk is None:
+                break
+
+            print(chunk, end="", flush=True)
+            await asyncio.sleep(0.05)
+        ```
 
     === "Async Streaming — Content + Reasoning"
 
@@ -1500,7 +1554,7 @@ model("prompt", stream=True)
   └── returns stream_response immediately (stream runs in background)
 ```
 
-The `None` sentinels signal end-of-stream to the `consume()` / `consume_reasoning()` async generators. The safety net `_response_type_event.set()` in the `finally` block ensures the event is always fired, even if the stream errors out or the model returns no content chunks (e.g., a pure tool call response).
+The `None` sentinels signal end-of-stream to `next_chunk()`, `consume()`, and `consume_reasoning()`. `consume()` is implemented as a convenience async generator over repeated `next_chunk()` calls. The safety net `_response_type_event.set()` in the `finally` block ensures the event is always fired, even if the stream errors out or the model returns no content chunks (e.g., a pure tool call response).
 
 #### Agent integration
 
