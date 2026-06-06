@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from msgspec_ext import load_dotenv
 
     from msgflux.cache import response_cache
+    from msgflux.chat_messages import ChatMessages
     from msgflux.core.dotdict import dotdict
     from msgflux.core.examples import Example
     from msgflux.core.message import Message
@@ -12,6 +13,12 @@ if TYPE_CHECKING:
     from msgflux.data.dbs import DB
     from msgflux.data.parsers import Parser
     from msgflux.data.retrievers import Retriever
+    from msgflux.data.stores import (
+        CheckpointStore,
+        InMemoryCheckpointStore,
+        SQLiteCheckpointStore,
+        Store,
+    )
     from msgflux.data.types import Audio, File, Image, Video
     from msgflux.dsl.inline import Inline
     from msgflux.dsl.signature import InputField, OutputField, Signature
@@ -20,10 +27,19 @@ if TYPE_CHECKING:
     from msgflux.models import Model
     from msgflux.models.gateway import ModelGateway
     from msgflux.runtime import (
+        AgentControlMessage,
+        AgentInbox,
+        AgentInboxStore,
+        AgentNotification,
         AgentSkill,
         AgentSkillManager,
+        ExecutionScope,
+        InMemoryAgentInboxStore,
         SkillsConfig,
+        SQLiteAgentInboxStore,
         default_skill_paths,
+        execution_context,
+        get_execution_scope,
         parse_skill_file,
     )
     from msgflux.telemetry import Spans
@@ -38,11 +54,20 @@ __all__ = [
     "Audio",
     "AgentSkill",
     "AgentSkillManager",
+    "AgentInbox",
+    "AgentInboxStore",
+    "AgentControlMessage",
+    "AgentNotification",
+    "ChatMessages",
     "ChatBlock",
     "ChatML",
+    "CheckpointStore",
     "Example",
+    "ExecutionScope",
     "File",
     "Image",
+    "InMemoryCheckpointStore",
+    "InMemoryAgentInboxStore",
     "Inline",
     "InputField",
     "Message",
@@ -52,15 +77,20 @@ __all__ = [
     "Parser",
     "Registry",
     "Retriever",
+    "SQLiteCheckpointStore",
+    "SQLiteAgentInboxStore",
     "Signature",
     "Spans",
     "SkillsConfig",
+    "Store",
     "TaskError",
     "Video",
     "cprint",
     "default_skill_paths",
     "dotdict",
+    "execution_context",
     "get_fn_name",
+    "get_execution_scope",
     "load",
     "load_dotenv",
     "msgspec_dumps",
@@ -75,12 +105,21 @@ _LAZY_IMPORTS = {
     "Audio": ("msgflux.data.types", "Audio"),
     "AgentSkill": ("msgflux.runtime", "AgentSkill"),
     "AgentSkillManager": ("msgflux.runtime", "AgentSkillManager"),
+    "AgentInbox": ("msgflux.runtime", "AgentInbox"),
+    "AgentInboxStore": ("msgflux.runtime", "AgentInboxStore"),
+    "AgentControlMessage": ("msgflux.runtime", "AgentControlMessage"),
+    "AgentNotification": ("msgflux.runtime", "AgentNotification"),
+    "InMemoryAgentInboxStore": ("msgflux.runtime", "InMemoryAgentInboxStore"),
+    "ChatMessages": ("msgflux.chat_messages", "ChatMessages"),
+    "ExecutionScope": ("msgflux.runtime", "ExecutionScope"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),
+    "CheckpointStore": ("msgflux.data.stores", "CheckpointStore"),
     "DB": ("msgflux.data.dbs", "DB"),
     "Example": ("msgflux.core.examples", "Example"),
     "File": ("msgflux.data.types", "File"),
     "Image": ("msgflux.data.types", "Image"),
+    "InMemoryCheckpointStore": ("msgflux.data.stores", "InMemoryCheckpointStore"),
     "Inline": ("msgflux.dsl.inline", "Inline"),
     "InputField": ("msgflux.dsl.signature", "InputField"),
     "Message": ("msgflux.core.message", "Message"),
@@ -98,7 +137,9 @@ _LAZY_IMPORTS = {
     "cprint": ("msgflux.utils.console", "cprint"),
     "default_skill_paths": ("msgflux.runtime", "default_skill_paths"),
     "dotdict": ("msgflux.core.dotdict", "dotdict"),
+    "execution_context": ("msgflux.runtime", "execution_context"),
     "get_fn_name": ("msgflux.utils.inspect", "get_fn_name"),
+    "get_execution_scope": ("msgflux.runtime", "get_execution_scope"),
     "load": ("msgflux.utils.msgspec", "load"),
     "load_dotenv": ("msgspec_ext", "load_dotenv"),
     "msgspec_dumps": ("msgflux.utils.msgspec", "msgspec_dumps"),
@@ -106,6 +147,9 @@ _LAZY_IMPORTS = {
     "response_cache": ("msgflux.cache", "response_cache"),
     "save": ("msgflux.utils.msgspec", "save"),
     "set_envs": ("msgflux.envs", "set_envs"),
+    "SQLiteCheckpointStore": ("msgflux.data.stores", "SQLiteCheckpointStore"),
+    "SQLiteAgentInboxStore": ("msgflux.runtime", "SQLiteAgentInboxStore"),
+    "Store": ("msgflux.data.stores", "Store"),
     "tool_config": ("msgflux.tools.config", "tool_config"),
 }
 

@@ -122,6 +122,10 @@ markdown_extensions:
 nav:
   - Home: 
     - index.md
+  - Anatomy:
+    - anatomy/index.md
+    - anatomy/agent-inbox.md
+    - anatomy/checkpoints-and-replay.md
   - Learn:
     - ✧ Models:
       - learn/models/model.md
@@ -167,9 +171,11 @@ nav:
         - learn/nn/agent/system-prompt.md
         - learn/nn/agent/generation-schemas.md
         - learn/nn/agent/task-and-context.md
+        - learn/nn/agent/execution-control.md
         - learn/nn/agent/vars.md
         - learn/nn/agent/tools.md
         - learn/nn/agent/skills.md
+        - learn/nn/agent/background-tasks.md
         - learn/nn/agent/signatures.md
         - learn/nn/agent/hooks.md
         - learn/nn/agent/model-gateway.md

@@ -60,9 +60,14 @@ class TestToolConfig:
         config = sample_function.tool_config
         assert config.return_direct is False
         assert config.spawn is False
+        assert config.background is False
         assert config.handoff is False
         assert config.call_as_response is False
         assert config.disable_input is False
+        assert config.inject_task is False
+        assert config.inject_notification is False
+        assert config.inject_library is False
+        assert config.on_demand is False
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
@@ -122,6 +127,22 @@ class TestToolConfig:
             def sample_function():
                 pass
 
+    def test_tool_config_background_incompatible_with_spawn(self):
+        """Test that background=True is incompatible with spawn=True."""
+        with pytest.raises(ValueError, match="`background=True` is not compatible"):
+
+            @tool_config(background=True, spawn=True)
+            def sample_function():
+                pass
+
+    def test_tool_config_inject_task_requires_background(self):
+        """Test that inject_task=True requires background=True."""
+        with pytest.raises(ValueError, match="requires `background=True`"):
+
+            @tool_config(inject_task=True)
+            def sample_function():
+                pass
+
     def test_tool_config_inject_vars_incompatible_with_call_as_response(self):
         """Test that inject_vars is incompatible with call_as_response=True."""
         with pytest.raises(ValueError, match="`inject_vars` is not compatible"):
@@ -153,6 +174,24 @@ class TestToolConfig:
             pass
 
         assert sample_function.tool_config.inject_vars is True
+
+    def test_tool_config_inject_library_true(self):
+        """Test that inject_library=True is stored correctly."""
+
+        @tool_config(inject_library=True)
+        def sample_function():
+            pass
+
+        assert sample_function.tool_config.inject_library is True
+
+    def test_tool_config_on_demand_true(self):
+        """Test that on_demand=True is stored correctly."""
+
+        @tool_config(on_demand=True)
+        def sample_function():
+            pass
+
+        assert sample_function.tool_config.on_demand is True
 
     def test_tool_config_name_override(self):
         """Test that name_override changes the function name."""
@@ -322,6 +361,7 @@ class TestToolConfigCombinations:
             handoff=False,
             call_as_response=False,
             disable_input=False,
+            on_demand=False,
             inject_vars=False,
             inject_message=False,
             inject_messages=False,
@@ -335,6 +375,7 @@ class TestToolConfigCombinations:
         assert config.handoff is False
         assert config.call_as_response is False
         assert config.disable_input is False
+        assert config.on_demand is False
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False

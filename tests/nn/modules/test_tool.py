@@ -1,5 +1,6 @@
 """Tests for msgflux.nn.modules.tool module."""
 
+import msgflux as mf
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Optional
@@ -523,6 +524,21 @@ class TestToolLibrary:
         with pytest.raises(ValueError, match="already in tool library"):
             library.add(my_tool)
 
+    def test_runtime_tool_conflict_raises_error(self):
+        """Test that runtime tools cannot overwrite user tools."""
+
+        def task_status(task_id: str) -> str:
+            """User-defined task status."""
+            return task_id
+
+        @mf.tool_config(background=True)
+        def background_tool() -> str:
+            """Run in the background."""
+            return "ok"
+
+        with pytest.raises(ValueError, match="runtime tool `task_status` conflicts"):
+            ToolLibrary(name="lib", tools=[task_status, background_tool])
+
     def test_tool_library_add_already_tool_instance(self):
         """Test adding Tool instance directly."""
 
@@ -535,6 +551,18 @@ class TestToolLibrary:
         library.add(tool)
 
         assert "my_func" in library.library
+
+    def test_tool_library_rejects_non_mapping_tool_params(self):
+        """Test that tool call params must be mappings."""
+
+        def my_tool(x: int) -> int:
+            """My tool."""
+            return x
+
+        library = ToolLibrary(name="lib", tools=[my_tool])
+
+        with pytest.raises(TypeError, match="parameters must be a mapping"):
+            library([("call_1", "my_tool", "not-a-mapping")])
 
     def test_tool_library_remove_tool(self):
         """Test removing a tool from library."""
@@ -704,6 +732,103 @@ class TestToolLibrary:
 
         assert len(schemas) == 1
         assert isinstance(schemas[0], dict)
+
+    def test_tool_library_hides_on_demand_tools_from_schemas(self):
+        """Test that on-demand tools are hidden until loaded."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        names = library.get_tool_names()
+        schemas = library.get_tool_json_schemas()
+
+        assert "remote_lookup" in names
+        assert "tool_search" in names
+        assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
+
+    def test_tool_search_loads_matching_on_demand_tools(self):
+        """Test that tool_search exposes matching on-demand tools."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        result = library(
+            [("call_1", "tool_search", {"query": "remote lookup"})]
+        ).tool_calls[0].result
+        schemas = library.get_tool_json_schemas()
+        schema_names = [schema["function"]["name"] for schema in schemas]
+
+        assert result["matches"] == ["remote_lookup"]
+        assert result["loaded"] == ["remote_lookup"]
+        assert "tool_search" in schema_names
+        assert "remote_lookup" in schema_names
+
+    def test_tool_search_select_supports_exact_names(self):
+        """Test that tool_search supports select:name syntax."""
+
+        @mf.tool_config(on_demand=True)
+        def read_cloud_file(path: str) -> str:
+            """Read a cloud file."""
+            return path
+
+        library = ToolLibrary(name="lib", tools=[read_cloud_file])
+
+        result = library(
+            [("call_1", "tool_search", {"query": "select:read_cloud_file"})]
+        ).tool_calls[0].result
+
+        assert result["matches"] == ["read_cloud_file"]
+        assert result["loaded"] == ["read_cloud_file"]
+
+    def test_tool_search_is_removed_when_last_on_demand_tool_is_removed(self):
+        """Test runtime tool cleanup when on-demand tools disappear."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        assert "tool_search" in library.get_tool_names()
+
+        library.remove("remote_lookup")
+
+        assert "tool_search" not in library.get_tool_names()
+
+    def test_inject_library_can_add_on_demand_tool(self):
+        """Test that inject_library can register on-demand tools."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        @mf.tool_config(inject_library=True)
+        def enable_remote_lookup(tool_library) -> list[str]:
+            """Register an on-demand tool."""
+            tool_library.add(remote_lookup)
+            return tool_library.list_tools()
+
+        library = ToolLibrary(name="lib", tools=[enable_remote_lookup])
+
+        add_result = library([("call_1", "enable_remote_lookup", {})]).tool_calls[0].result
+        schema_names = [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ]
+
+        assert "remote_lookup" in add_result
+        assert "tool_search" in add_result
+        assert "tool_search" in schema_names
+        assert "remote_lookup" not in schema_names
 
     def test_tool_library_forward_basic(self):
         """Test ToolLibrary forward execution."""

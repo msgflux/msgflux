@@ -34,6 +34,23 @@ class _GuardInterrupt(Exception):  # noqa: N818
         self.response = response
 
 
+class TaskStopRequestedError(Exception):
+    """Raised when a cooperative background task receives a stop request."""
+
+    def __init__(self, task_id: str, message: Optional[str] = None):
+        self.task_id = task_id
+        super().__init__(message or f"Task `{task_id}` stop requested.")
+
+
+class TaskPauseRequestedError(Exception):
+    """Raised when a cooperative task or agent receives a pause request."""
+
+    def __init__(self, task_id: Optional[str] = None, message: Optional[str] = None):
+        self.task_id = task_id
+        label = f"`{task_id}`" if task_id else "execution"
+        super().__init__(message or f"Task {label} pause requested.")
+
+
 class UnsafeUserInputError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe user input detected")
