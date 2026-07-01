@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import msgspec
 import pytest
 
+from msgflux.exceptions import AbortRequestedError
 from msgflux.generation.reasoning.react import ReAct
+from msgflux.runtime import AbortSignal
+from msgflux.runtime.context import execution_context
 from msgflux.tools.definitions import ToolDefinitions
 
 
@@ -121,6 +124,23 @@ class TestOpenAIChatCompletion:
             "enable_entities": True,
             "enable_citations": True,
         }
+
+    def test_chat_completion_aborts_from_execution_context(self, mock_openai_client):
+        """AbortSignal is ambient runtime control, not request payload."""
+        pytest.importorskip("openai")
+
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        mock_client, _mock_async_client = mock_openai_client
+        model = OpenAIChatCompletion(model_id="gpt-4")
+        abort_signal = AbortSignal()
+        abort_signal.abort("user pressed esc")
+
+        with execution_context(abort_signal=abort_signal):
+            with pytest.raises(AbortRequestedError, match="user pressed esc"):
+                model("hello")
+
+        mock_client.return_value.chat.completions.create.assert_not_called()
 
     def test_chat_completion_merges_extra_body_and_kwargs(self, mock_openai_client):
         """Test init merges extra_body dict with direct provider kwargs."""

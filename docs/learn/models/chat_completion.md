@@ -1201,14 +1201,28 @@ Provider stream thread
 │
 ├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
 ├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
+├── stream_response.finish_reasoning()                     → closes reasoning queue
 ├── content chunk   → stream_response.add(chunk)           → content queue
 ├── content chunk   → stream_response.add(chunk)           → content queue
 ├── ...
-├── stream_response.add_reasoning(None)  ← reasoning sentinel (end of reasoning)
-└── stream_response.add(None)            ← content sentinel (end of content)
+└── stream_response.finish(status="completed")
+    ├── closes any still-open queues
+    ├── records final status
+    └── runs finalizers
 ```
 
-At the end of the stream, the provider also sets `stream_response.reasoning` with the full accumulated reasoning text, so it is available as a single string after the stream completes.
+Reasoning has its own channel lifecycle. When a provider knows the reasoning
+phase has ended, it can call `finish_reasoning()` before normal content
+streaming completes. At the end of the full stream, the provider calls
+`finish()` to close any still-open queues, set the final status, and run any
+finalizers attached by higher-level runtime components. The queue sentinels are
+internal details; providers should publish real chunks with `add()` /
+`add_reasoning()`, close reasoning with `finish_reasoning()` when that channel
+is done, and close the full stream with `finish()`.
+
+The provider also sets `stream_response.reasoning` with the full accumulated
+reasoning text, so it is available as a single string after the stream
+completes.
 
 #### The two-event system
 
@@ -1539,22 +1553,31 @@ model("prompt", stream=True)
   │           │                      ├── has_reasoning = True (first time)
   │           │                      └── first_chunk_event.set() (first time)
   │           │
-  │           └── content_chunk?   → stream_response.add(chunk)
+  │           └── content_chunk?   → stream_response.finish_reasoning()
+  │                                  stream_response.add(chunk)
   │                                  ├── set_response_type("text_generation")
   │                                  │   └── _response_type_event.set()
   │                                  └── first_chunk_event.set() (if not already)
   │
   │     finally:
   │           ├── stream_response.reasoning = accumulated_reasoning
-  │           ├── stream_response.add_reasoning(None)  # sentinel
-  │           ├── stream_response.add(None)             # sentinel
+  │           ├── stream_response.set_metadata(usage)
   │           ├── _response_type_event.set()            # safety net
-  │           └── stream_response.set_metadata(usage)
+  │           └── stream_response.finish(status=final_status)
   │
   └── returns stream_response immediately (stream runs in background)
 ```
 
-The `None` sentinels signal end-of-stream to `next_chunk()`, `consume()`, and `consume_reasoning()`. `consume()` is implemented as a convenience async generator over repeated `next_chunk()` calls. The safety net `_response_type_event.set()` in the `finally` block ensures the event is always fired, even if the stream errors out or the model returns no content chunks (e.g., a pure tool call response).
+`finish_reasoning()` lets a consumer observe the end of the reasoning channel
+before the content channel is done. `finish()` signals end-of-stream to any
+remaining `next_chunk()`, `consume()`, and `consume_reasoning()` consumers by
+closing still-open queues. `consume()` is implemented as a convenience async
+generator over repeated `next_chunk()` calls. `finish()` also records the final
+stream status (`completed`, `failed`, or `interrupted`) and runs registered
+finalizers, which durable runtimes use to checkpoint streamed output after the
+consumer finishes reading it. The safety net `_response_type_event.set()` in
+the `finally` block ensures the event is always fired, even if the stream errors
+out or the model returns no content chunks (e.g., a pure tool call response).
 
 #### Agent integration
 
