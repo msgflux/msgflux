@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from msgspec_ext import load_dotenv
 
     from msgflux.cache import response_cache
+    from msgflux.chat_messages import ChatMessages
     from msgflux.core.dotdict import dotdict
     from msgflux.core.examples import Example
     from msgflux.core.message import Message
@@ -20,10 +21,14 @@ if TYPE_CHECKING:
     from msgflux.models import Model
     from msgflux.models.gateway import ModelGateway
     from msgflux.runtime import (
+        AbortSignal,
         AgentSkill,
         AgentSkillManager,
+        ExecutionScope,
         SkillsConfig,
         default_skill_paths,
+        execution_context,
+        get_execution_scope,
         parse_skill_file,
     )
     from msgflux.telemetry import Spans
@@ -38,9 +43,12 @@ __all__ = [
     "Audio",
     "AgentSkill",
     "AgentSkillManager",
+    "AbortSignal",
+    "ChatMessages",
     "ChatBlock",
     "ChatML",
     "Example",
+    "ExecutionScope",
     "File",
     "Image",
     "Inline",
@@ -60,7 +68,9 @@ __all__ = [
     "cprint",
     "default_skill_paths",
     "dotdict",
+    "execution_context",
     "get_fn_name",
+    "get_execution_scope",
     "load",
     "load_dotenv",
     "msgspec_dumps",
@@ -75,10 +85,13 @@ _LAZY_IMPORTS = {
     "Audio": ("msgflux.data.types", "Audio"),
     "AgentSkill": ("msgflux.runtime", "AgentSkill"),
     "AgentSkillManager": ("msgflux.runtime", "AgentSkillManager"),
+    "AbortSignal": ("msgflux.runtime", "AbortSignal"),
+    "ChatMessages": ("msgflux.chat_messages", "ChatMessages"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),
     "DB": ("msgflux.data.dbs", "DB"),
     "Example": ("msgflux.core.examples", "Example"),
+    "ExecutionScope": ("msgflux.runtime", "ExecutionScope"),
     "File": ("msgflux.data.types", "File"),
     "Image": ("msgflux.data.types", "Image"),
     "Inline": ("msgflux.dsl.inline", "Inline"),
@@ -98,7 +111,9 @@ _LAZY_IMPORTS = {
     "cprint": ("msgflux.utils.console", "cprint"),
     "default_skill_paths": ("msgflux.runtime", "default_skill_paths"),
     "dotdict": ("msgflux.core.dotdict", "dotdict"),
+    "execution_context": ("msgflux.runtime", "execution_context"),
     "get_fn_name": ("msgflux.utils.inspect", "get_fn_name"),
+    "get_execution_scope": ("msgflux.runtime", "get_execution_scope"),
     "load": ("msgflux.utils.msgspec", "load"),
     "load_dotenv": ("msgspec_ext", "load_dotenv"),
     "msgspec_dumps": ("msgflux.utils.msgspec", "msgspec_dumps"),
