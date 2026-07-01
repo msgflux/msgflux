@@ -463,6 +463,53 @@ def test_task_wait_returns_failed_payload():
     assert "boom" in payload["error"]
 
 
+def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
+    slow_tool_started = threading.Event()
+    release_tool = threading.Event()
+
+    def slow_tool() -> str:
+        """Block until released."""
+        slow_tool_started.set()
+        release_tool.wait(timeout=2.0)
+        return "tool finished"
+
+    worker_model = _ScriptedModel(
+        [
+            _tool_call_response("slow_tool", {}),
+            _text_response("should not happen"),
+        ]
+    )
+    worker = Agent(name="worker", model=worker_model, tools=[slow_tool])
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[worker])
+    dispatch = library([("call_1", "worker", {"task": "Start worker."})])
+    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+
+    assert slow_tool_started.wait(timeout=1.0)
+    interrupt_result = (
+        library([("call_2", "task_interrupt", {"task_id": task_id})]).tool_calls[0].result
+    )
+    assert interrupt_result["status"] == "interrupt_requested"
+
+    release_tool.set()
+    _wait_until(
+        lambda: (
+            library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "interrupted"
+        )
+    )
+
+    status = (
+        library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
+    )
+    assert status["status"] == "interrupted"
+    assert status["metadata"]["supports_activity"] is True
+    assert status["last_activity_summary"] == "Status: Task interrupted."
+
+
 def test_cancelled_background_future_is_not_logged_as_error():
     library = ToolLibrary(name="lib", tools=[])
     future = Mock()
@@ -499,6 +546,475 @@ def test_task_wait_falls_back_to_task_store_polling_without_future():
     assert wait_result.tool_calls[0].result == 99
 
 
+def test_agent_injects_pending_task_notifications_as_system_note_messages():
+    release = threading.Event()
+
+    @mf.tool_config(background=True)
+    def long_job(value: int) -> int:
+        """Run a long job in the background."""
+        release.wait(timeout=2.0)
+        return value * 2
+
+    agent = Agent(name="Assistant", model=_mock_model(), tools=[long_job])
+
+    agent.tool_library([("call_1", "long_job", {"value": 5})])
+    task_id = (
+        agent.tool_library([("call_2", "task_list", {})])
+        .tool_calls[0]
+        .result[0]["task_id"]
+    )
+
+    release.set()
+    _wait_until(
+        lambda: (
+            agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "completed"
+        )
+    )
+
+    _wait_until(
+        lambda: bool(
+            _notification_messages(
+                agent.inspect_model_execution_params("Continue.")["messages"],
+                source="task",
+                status="completed",
+            )
+        )
+    )
+    params = agent.inspect_model_execution_params("Continue.")
+    notification_messages = _notification_messages(
+        params["messages"],
+        source="task",
+        status="completed",
+    )
+
+    assert len(notification_messages) == 1
+    assert notification_messages[0]["role"] == "system"
+    content = notification_messages[0]["content"]
+    assert "<system_note>" in content
+    assert "<notification>" in content
+    assert f"ref: {task_id}" in content
+    assert "tool: long_job" in content
+    assert f"task_output(task_id='{task_id}')" in content
+
+
+def test_inspect_model_execution_params_does_not_consume_notifications():
+    release = threading.Event()
+
+    @mf.tool_config(background=True)
+    def long_job(value: int) -> int:
+        """Run a long job in the background."""
+        release.wait(timeout=2.0)
+        return value * 2
+
+    model = _mock_model()
+    agent = Agent(name="Assistant", model=model, tools=[long_job])
+
+    agent.tool_library([("call_1", "long_job", {"value": 5})])
+    task_id = (
+        agent.tool_library([("call_2", "task_list", {})])
+        .tool_calls[0]
+        .result[0]["task_id"]
+    )
+
+    release.set()
+    _wait_until(
+        lambda: (
+            agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "completed"
+        )
+    )
+
+    _wait_until(
+        lambda: bool(
+            _notification_messages(
+                agent.inspect_model_execution_params("Continue.")["messages"],
+                source="task",
+                status="completed",
+            )
+        )
+    )
+    params = agent.inspect_model_execution_params("Continue.")
+    notification_messages = _notification_messages(
+        params["messages"],
+        source="task",
+        status="completed",
+    )
+    assert len(notification_messages) == 1
+
+    params = agent.inspect_model_execution_params("Continue again.")
+    notification_messages = _notification_messages(
+        params["messages"],
+        source="task",
+        status="completed",
+    )
+    assert len(notification_messages) == 1
+
+    messages = ChatMessages()
+    agent("Continue now.", messages=messages)
+
+    model_messages = model.call_args.kwargs["messages"]
+    notification_messages = _notification_messages(
+        model_messages,
+        source="task",
+        status="completed",
+    )
+    assert len(notification_messages) == 1
+    assert notification_messages[0]["role"] == "system"
+
+    history_messages = messages.to_chatml()
+    persisted_notifications = _notification_messages(
+        history_messages,
+        source="task",
+        status="completed",
+    )
+    assert len(persisted_notifications) == 1
+    assert persisted_notifications[0]["role"] == "system"
+    notification_index = history_messages.index(persisted_notifications[0])
+    user_index = next(
+        index
+        for index, message in enumerate(history_messages)
+        if message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and "Continue now." in message["content"]
+    )
+    assert notification_index < user_index
+
+    params = agent.inspect_model_execution_params("Continue once more.")
+    notification_messages = _notification_messages(params["messages"])
+    assert notification_messages == []
+
+
+def test_agent_control_interrupts_before_model_call():
+    inbox = mf.AgentInbox()
+    model = _mock_model()
+    agent = Agent(name="Assistant", model=model)
+    agent.set_agent_inbox(inbox)
+
+    inbox.interrupt(reason="operator requested interrupt")
+
+    with pytest.raises(TaskInterruptRequestedError, match="operator requested interrupt"):
+        agent("Continue.")
+
+    assert not model.called
+
+
+def test_agent_control_pause_saves_checkpoint_before_model_call():
+    inbox = mf.AgentInbox()
+    store = InMemoryCheckpointStore()
+    model = _mock_model()
+    agent = Agent(name="Assistant", model=model, checkpointer=store)
+    agent.set_agent_inbox(inbox)
+    scope = mf.ExecutionScope(thread_id="user_42", run_id="run_pause")
+
+    inbox.pause(reason="wait for user input")
+
+    with pytest.raises(TaskPauseRequestedError, match="wait for user input"):
+        agent("Continue.", scope=scope)
+
+    state = store.load_state("Assistant", "user_42", "run_pause")
+    assert state is not None
+    assert state["status"] == "paused"
+    assert not model.called
+
+
+def test_agent_incoming_user_message_is_injected_before_model_call():
+    inbox = mf.AgentInbox()
+    model = _mock_model()
+    agent = Agent(name="Assistant", model=model)
+    agent.set_agent_inbox(inbox)
+
+    inbox.user_message("I changed my mind.")
+    agent("Continue.")
+
+    incoming = _incoming_user_messages(model.call_args.kwargs["messages"])
+    assert len(incoming) == 1
+    assert incoming[0]["role"] == "user"
+    assert "I changed my mind." in incoming[0]["content"]
+    assert "<system_note>" not in incoming[0]["content"]
+
+
+def test_agent_consumes_persisted_incoming_user_message_for_scope():
+    store = mf.InMemoryAgentInboxStore()
+    inbox = mf.AgentInbox(store=store)
+    model = _mock_model()
+    agent = Agent(name="Assistant", model=model, agent_inbox=inbox)
+    scope = mf.ExecutionScope(thread_id="user_42", run_id="run_42")
+    external_inbox = mf.AgentInbox(
+        store=store,
+        namespace="Assistant",
+        thread_id="user_42",
+        run_id="run_42",
+    )
+
+    external_inbox.user_message("Use the customer-visible tone.")
+    agent("Continue.", scope=scope)
+
+    incoming = _incoming_user_messages(model.call_args.kwargs["messages"])
+    assert len(incoming) == 1
+    assert incoming[0]["role"] == "user"
+    assert "Use the customer-visible tone." in incoming[0]["content"]
+    assert "<system_note>" not in incoming[0]["content"]
+    assert external_inbox.peek() == []
+
+
+def test_agent_drains_notifications_after_tool_call_before_next_model_call():
+    @mf.tool_config(inject_notification=True)
+    def publish_status(notification) -> str:
+        """Publish an in-loop status update."""
+        notification.update(status="progress", hint="Tool completed.")
+        return "ok"
+
+    model = _ScriptedModel(
+        [
+            _tool_call_response("publish_status", {}),
+            _text_response("done"),
+        ]
+    )
+    agent = Agent(name="Assistant", model=model, tools=[publish_status])
+
+    agent("Run tool.")
+
+    assert len(model.calls) == 2
+    notifications = _notification_messages(
+        model.calls[1]["messages"],
+        source="tool_status",
+        status="progress",
+    )
+    assert len(notifications) == 1
+    assert notifications[0]["role"] == "system"
+    assert "Tool completed." in notifications[0]["content"]
+
+
+def test_task_progress_notifications_are_persisted():
+    started = threading.Event()
+    release = threading.Event()
+
+    @mf.tool_config(background=True, inject_task=True)
+    def long_job(value: int, task) -> int:
+        """Emit progress updates while running in the background."""
+        task.notify(
+            source="task_progress",
+            status="update",
+            hint="Wait for the final completion notification before consuming output.",
+            metadata={"tool_stage": "prepare"},
+            dedupe_key=f"progress:{task.task_id}",
+        )
+        started.set()
+        release.wait(timeout=2.0)
+        return value * 2
+
+    model = _mock_model()
+    agent = Agent(
+        name="Assistant",
+        model=model,
+        tools=[long_job],
+    )
+
+    agent.tool_library([("call_1", "long_job", {"value": 5})])
+    task_id = (
+        agent.tool_library([("call_2", "task_list", {})])
+        .tool_calls[0]
+        .result[0]["task_id"]
+    )
+    assert started.wait(timeout=1.0)
+
+    messages = ChatMessages()
+    agent("Continue.", messages=messages)
+
+    model_messages = model.call_args.kwargs["messages"]
+    progress_notifications = _notification_messages(
+        model_messages,
+        source="task_progress",
+        status="update",
+    )
+    assert len(progress_notifications) == 1
+    assert progress_notifications[0]["role"] == "system"
+    assert f"ref: {task_id}" in progress_notifications[0]["content"]
+    assert "tool_stage: prepare" in progress_notifications[0]["content"]
+
+    persisted_notifications = _notification_messages(
+        messages.to_chatml(),
+        source="task_progress",
+        status="update",
+    )
+    assert len(persisted_notifications) == 1
+    assert persisted_notifications[0]["role"] == "system"
+
+    release.set()
+    _wait_until(
+        lambda: (
+            agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "completed"
+        )
+    )
+
+
+def test_injected_notification_handle_publishes_task_status_updates():
+    started = threading.Event()
+    release = threading.Event()
+
+    @mf.tool_config(background=True, inject_notification=True)
+    def long_job(value: int, notification) -> int:
+        """Emit task status updates through the injected notification handle."""
+        notification.update(
+            "prepare",
+            hint="Background work has started.",
+            metadata={"step": 1},
+            dedupe_key="job-status",
+        )
+        started.set()
+        release.wait(timeout=2.0)
+        notification.update(
+            "process",
+            metadata={"step": 2},
+            dedupe_key="job-status",
+        )
+        return value * 3
+
+    model = _mock_model()
+    agent = Agent(
+        name="Assistant",
+        model=model,
+        tools=[long_job],
+    )
+
+    agent.tool_library([("call_1", "long_job", {"value": 7})])
+    task_id = (
+        agent.tool_library([("call_2", "task_list", {})])
+        .tool_calls[0]
+        .result[0]["task_id"]
+    )
+    assert started.wait(timeout=1.0)
+
+    messages = ChatMessages()
+    agent("Continue.", messages=messages)
+
+    status_notifications = _notification_messages(
+        model.call_args.kwargs["messages"],
+        source="tool_status",
+        status="prepare",
+    )
+    assert len(status_notifications) == 1
+    assert f"ref: {task_id}" in status_notifications[0]["content"]
+    assert "tool: long_job" in status_notifications[0]["content"]
+    assert "step: 1" in status_notifications[0]["content"]
+
+    release.set()
+    _wait_until(
+        lambda: (
+            agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "completed"
+        )
+    )
+
+    agent("Continue again.", messages=messages)
+    process_notifications = _notification_messages(
+        model.call_args.kwargs["messages"],
+        source="tool_status",
+        status="process",
+    )
+    assert len(process_notifications) == 1
+
+
+def test_nested_agent_uses_inherited_inbox_from_execution_context():
+    parent_inbox = mf.AgentInbox()
+    child = Agent(name="child", model=_mock_model())
+
+    with execution_context(agent_inbox=parent_inbox):
+        effective_inbox = child._get_effective_agent_inbox()
+
+    assert effective_inbox is parent_inbox
+
+
+def test_background_agent_inherits_context_and_checkpoint_run_id():
+    store = InMemoryCheckpointStore()
+    worker = Agent(name="worker", model=_mock_model("worker-done"))
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[worker])
+
+    with execution_context(
+        thread_id="user_42",
+        namespace="root_agent",
+        run_id="run_root",
+        root_run_id="run_root",
+        checkpoint_store=store,
+    ):
+        dispatch = library([("call_1", "worker", {"task": "Solve this"})])
+
+    assert "task_id='" in dispatch.tool_calls[0].result
+    task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
+
+    _wait_until(
+        lambda: (
+            library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "completed"
+        )
+    )
+
+    task_state = (
+        library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
+    )
+    assert task_state["metadata"]["thread_id"] == "user_42"
+    assert task_state["metadata"]["parent_run_id"] == "run_root"
+    assert task_state["metadata"]["root_run_id"] == "run_root"
+    assert task_state["metadata"]["checkpoint_thread_id"] == "user_42"
+    assert task_state["metadata"]["checkpoint_run_id"] == task_id
+
+
+def test_background_agent_dispatch_mentions_task_message_and_activity():
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[worker])
+
+    dispatch = library([("call_1", "worker", {"task": "Solve this"})])
+    result = dispatch.tool_calls[0].result
+
+    assert "`task_activity`" in result
+    assert "`task_message`" in result
+    assert "`task_interrupt`" in result
+    assert "`task_wait`" in result
+    assert "`task_output`" in result
+    assert "task_message" in library.get_tool_names()
+    assert "task_activity" in library.get_tool_names()
+    assert "task_interrupt" in library.get_tool_names()
+
+
+def test_inject_handle_can_add_background_agent_with_agent_task_tools():
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+
+    @mf.tool_config(inject_handle=True)
+    def add_worker(handle) -> list[str]:
+        """Register a background agent."""
+        handle.add(worker)
+        return handle.list_tools()
+
+    library = ToolLibrary(name="lib", tools=[add_worker])
+
+    add_result = library([("call_1", "add_worker", {})]).tool_calls[0].result
+
+    assert "worker" in add_result
+    assert "task_status" in add_result
+    assert "task_interrupt" in add_result
+    assert "task_wait" in add_result
+    assert "task_output" in add_result
+    assert "task_activity" in add_result
+    assert "task_message" in add_result
+
+
 def test_background_tool_dispatch_does_not_mention_task_activity():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
@@ -518,3 +1034,230 @@ def test_background_tool_dispatch_does_not_mention_task_activity():
     assert "`task_message`" not in result
     assert "task_activity" not in library.get_tool_names()
 
+
+def test_task_activity_is_unsupported_for_non_agent_task():
+    @mf.tool_config(background=True)
+    def slow_pipeline(value: int) -> int:
+        """Run a simple background tool."""
+        return value * 2
+
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[slow_pipeline, worker])
+
+    dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
+    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+
+    activity = (
+        library([("call_2", "task_activity", {"task_id": task_id})])
+        .tool_calls[0]
+        .result
+    )
+
+    assert activity["status"] == "unsupported"
+    assert "background agent tasks" in activity["error"]
+
+
+def test_task_activity_tracks_compact_subagent_tool_calls():
+    def multiply(x: int) -> int:
+        """Multiply by two."""
+        return x * 2
+
+    worker_model = _ScriptedModel(
+        [
+            _tool_call_response("multiply", {"x": 4}),
+            _text_response("done"),
+        ]
+    )
+    worker = Agent(name="worker", model=worker_model, tools=[multiply])
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[worker])
+    dispatch = library([("call_1", "worker", {"task": "Multiply 4 by 2."})])
+    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+
+    _wait_until(
+        lambda: (
+            library([("call_2", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result["status"]
+            == "completed"
+        )
+    )
+
+    activity = (
+        library([("call_3", "task_activity", {"task_id": task_id})])
+        .tool_calls[0]
+        .result
+    )
+
+    assert any(entry == "Status: Task queued." for entry in activity)
+    assert any(entry == "Status: Task running." for entry in activity)
+    assert any("ToolCall: multiply({" in entry for entry in activity)
+    assert all("ToolResult:" not in entry for entry in activity)
+
+
+def test_task_message_resumes_completed_background_agent():
+    store = InMemoryCheckpointStore()
+    worker_model = _ScriptedModel(
+        [
+            _text_response("first pass"),
+            _text_response("resumed pass"),
+        ]
+    )
+    worker = Agent(name="worker", model=worker_model)
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[worker])
+    with execution_context(
+        thread_id="user_42",
+        namespace="root_agent",
+        run_id="run_root",
+        root_run_id="run_root",
+        checkpoint_store=store,
+    ):
+        dispatch = library([("call_1", "worker", {"task": "Start worker."})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        _wait_until(
+            lambda: (
+                library([("call_2", "task_status", {"task_id": task_id})])
+                .tool_calls[0]
+                .result["status"]
+                == "completed"
+            )
+        )
+
+        message_result = (
+            library(
+                [
+                    (
+                        "call_3",
+                        "task_message",
+                        {"task_id": task_id, "message": "Continue."},
+                    )
+                ]
+            )
+            .tool_calls[0]
+            .result
+        )
+
+        assert message_result["status"] == "resumed"
+
+        _wait_until(
+            lambda: (
+                library([("call_4", "task_status", {"task_id": task_id})])
+                .tool_calls[0]
+                .result["status"]
+                == "completed"
+            )
+        )
+        output = (
+            library([("call_5", "task_output", {"task_id": task_id})])
+            .tool_calls[0]
+            .result
+        )
+
+        assert output == "resumed pass"
+        task_state = (
+            library([("call_6", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result
+        )
+        resumed_run_id = task_state["metadata"]["checkpoint_run_id"]
+        assert resumed_run_id != task_id
+        assert store.load_state("worker", "user_42", task_id)["status"] == "completed"
+        assert store.load_state("worker", "user_42", resumed_run_id)[
+            "status"
+        ] == "completed"
+
+
+def test_task_message_resume_clears_previous_interrupt_reason():
+    slow_tool_started = threading.Event()
+    release_tool = threading.Event()
+
+    def slow_tool() -> str:
+        """Block until released."""
+        slow_tool_started.set()
+        release_tool.wait(timeout=2.0)
+        return "tool finished"
+
+    store = InMemoryCheckpointStore()
+    worker_model = _ScriptedModel(
+        [
+            _tool_call_response("slow_tool", {}),
+            _text_response("resumed pass"),
+        ]
+    )
+    worker = Agent(name="worker", model=worker_model, tools=[slow_tool])
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[worker])
+    with execution_context(
+        thread_id="user_42",
+        namespace="root_agent",
+        run_id="run_root",
+        root_run_id="run_root",
+        checkpoint_store=store,
+    ):
+        dispatch = library([("call_1", "worker", {"task": "Start worker."})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+
+        assert slow_tool_started.wait(timeout=1.0)
+        interrupt_result = (
+            library([("call_2", "task_interrupt", {"task_id": task_id})])
+            .tool_calls[0]
+            .result
+        )
+        assert interrupt_result["status"] == "interrupt_requested"
+
+        release_tool.set()
+        _wait_until(
+            lambda: (
+                library([("call_3", "task_status", {"task_id": task_id})])
+                .tool_calls[0]
+                .result["status"]
+                == "interrupted"
+            )
+        )
+
+        interrupted_state = (
+            library([("call_4", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result
+        )
+        assert "interrupt_reason" in interrupted_state["metadata"]
+
+        message_result = (
+            library(
+                [
+                    (
+                        "call_5",
+                        "task_message",
+                        {"task_id": task_id, "message": "Continue."},
+                    )
+                ]
+            )
+            .tool_calls[0]
+            .result
+        )
+        assert message_result["status"] == "resumed"
+
+        _wait_until(
+            lambda: (
+                library([("call_6", "task_status", {"task_id": task_id})])
+                .tool_calls[0]
+                .result["status"]
+                == "completed"
+            )
+        )
+
+        resumed_state = (
+            library([("call_7", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result
+        )
+        assert "interrupt_reason" not in resumed_state["metadata"]
+
+    state = store.load_state("worker", "user_42", task_id)
+    assert state is not None

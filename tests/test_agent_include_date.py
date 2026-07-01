@@ -24,7 +24,7 @@ def test_agent_include_date_with_weekday():
     # Mock datetime to have a predictable date
     mock_datetime = datetime(2025, 12, 9, 10, 30, 0, tzinfo=timezone.utc)  # Tuesday
 
-    with patch("msgflux.nn.modules.agent.datetime") as mock_dt:
+    with patch("msgflux.utils.time.datetime") as mock_dt:
         mock_dt.now.return_value = mock_datetime
         mock_dt.strftime = datetime.strftime  # Keep strftime working
 
@@ -113,7 +113,7 @@ def test_agent_include_date_format_consistency():
     ]
 
     for mock_datetime, expected_date in test_dates:
-        with patch("msgflux.nn.modules.agent.datetime") as mock_dt:
+        with patch("msgflux.utils.time.datetime") as mock_dt:
             mock_dt.now.return_value = mock_datetime
 
             # Get the system prompt
