@@ -13,9 +13,10 @@ meet here.
 
 ## What It Owns
 
-`ToolLibrary` owns four responsibilities:
+`ToolLibrary` owns five responsibilities:
 
 - registering local and remote tools
+- routing tools into buckets when a bucket captures their kind
 - exposing tool schemas to other modules
 - executing prepared tool calls
 - collecting results into a uniform `ToolResponses` object
@@ -103,6 +104,88 @@ That means the caller does not need different orchestration logic for:
 - a proxied MCP tool
 
 The library normalizes all of them into a single execution surface.
+
+## On-Demand Tools
+
+`ToolLibrary` can also keep tools registered without exposing them immediately
+to the model.
+
+The contract is intentionally small:
+
+- `@tool_config(on_demand=True)` keeps the tool out of
+  `get_tool_json_schemas()` and `get_tool_annotations()`
+- the tool is stored in `ToolLibrary.on_demand_tools` and can still be found by
+  `tool_search`
+- if at least one on-demand tool exists, `ToolLibrary` injects `tool_search`
+- `tool_search` can search both local and MCP-backed on-demand tools
+- keyword searches return matching tool names, and `description=True` includes
+  tool metadata
+- `select:tool_name` promotes matching tools by calling `ToolLibrary.add(...)`
+  again without the `on_demand` flag
+
+This is useful when a session can register a large number of tools but should
+keep the active tool context small.
+
+`inject_handle=True` is the natural companion feature here: a tool can add a
+new on-demand tool at runtime, and `ToolLibrary` will expose `tool_search`
+automatically if needed.
+
+`tool_search` itself is a builtin tool, not a method implemented inside
+`ToolLibrary`. Runtime-aware tools inherit `ToolLibraryOperator`, receive a
+`ToolLibraryHandle`, and use that handle to search, describe, select, or add
+tools. This keeps `ToolLibrary` focused on registration, removal, schema
+exposure, and execution, while operational behavior lives in builtin/runtime
+components.
+
+## Tool Buckets
+
+Some tools are not independent public tools. They are better represented as
+members of another tool.
+
+`ToolBucket` is the base type for that pattern:
+
+```python
+class ToolBucket:
+    tool_kind = "bucket"
+    capture_kind: str
+
+    def add(self, tool: ToolMetadata) -> None:
+        ...
+```
+
+The registration rule is:
+
+- if a tool has `on_demand=True`, it goes to `on_demand_tools`
+- otherwise, if a bucket exists for its `tool_kind`, the bucket captures it
+- otherwise, the tool is registered normally
+
+For agents, `nn.Agent` exposes `tool_kind="agent"`. `AgentTool` is a bucket
+with `capture_kind="agent"`, so adding an agent to a library that already has
+`AgentTool` updates the single public `agent(name, message)` tool instead of
+exposing the agent as a separate tool.
+
+```python
+library = ToolLibrary(
+    name="team",
+    tools=[
+        AgentTool(),
+        reviewer_agent,
+        planner_agent,
+    ],
+)
+```
+
+The model only sees `agent(...)`. The bucket description and usage guidance are
+refreshed on the wrapping `LocalTool`, so provider schemas and prompt guidance
+reflect the captured agents.
+
+`AgentTool` still receives runtime context through normal injection. The public
+schema stays as `agent(name, message)`, while `ToolLibrary` injects the current
+`messages` and `vars` arguments before dispatching to the selected subagent.
+
+On-demand tools use the same path. An on-demand agent first lives in
+`on_demand_tools`; when `tool_search` receives `select:agent_name`,
+`ToolLibrary.add(...)` runs again and the agent is captured by `AgentTool`.
 
 ## Typed Restoration
 
