@@ -13,6 +13,12 @@ if TYPE_CHECKING:
     from msgflux.data.dbs import DB
     from msgflux.data.parsers import Parser
     from msgflux.data.retrievers import Retriever
+    from msgflux.data.stores import (
+        CheckpointStore,
+        InMemoryCheckpointStore,
+        SQLiteCheckpointStore,
+        Store,
+    )
     from msgflux.data.types import Audio, File, Image, Video
     from msgflux.dsl.inline import Inline
     from msgflux.dsl.signature import InputField, OutputField, Signature
@@ -47,10 +53,12 @@ __all__ = [
     "ChatMessages",
     "ChatBlock",
     "ChatML",
+    "CheckpointStore",
     "Example",
     "ExecutionScope",
     "File",
     "Image",
+    "InMemoryCheckpointStore",
     "Inline",
     "InputField",
     "Message",
@@ -60,9 +68,11 @@ __all__ = [
     "Parser",
     "Registry",
     "Retriever",
+    "SQLiteCheckpointStore",
     "Signature",
     "Spans",
     "SkillsConfig",
+    "Store",
     "TaskError",
     "Video",
     "cprint",
@@ -89,11 +99,13 @@ _LAZY_IMPORTS = {
     "ChatMessages": ("msgflux.chat_messages", "ChatMessages"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),
+    "CheckpointStore": ("msgflux.data.stores", "CheckpointStore"),
     "DB": ("msgflux.data.dbs", "DB"),
     "Example": ("msgflux.core.examples", "Example"),
     "ExecutionScope": ("msgflux.runtime", "ExecutionScope"),
     "File": ("msgflux.data.types", "File"),
     "Image": ("msgflux.data.types", "Image"),
+    "InMemoryCheckpointStore": ("msgflux.data.stores", "InMemoryCheckpointStore"),
     "Inline": ("msgflux.dsl.inline", "Inline"),
     "InputField": ("msgflux.dsl.signature", "InputField"),
     "Message": ("msgflux.core.message", "Message"),
@@ -103,9 +115,11 @@ _LAZY_IMPORTS = {
     "Parser": ("msgflux.data.parsers", "Parser"),
     "Registry": ("msgflux.core.registry", "Registry"),
     "Retriever": ("msgflux.data.retrievers", "Retriever"),
+    "SQLiteCheckpointStore": ("msgflux.data.stores", "SQLiteCheckpointStore"),
     "Signature": ("msgflux.dsl.signature", "Signature"),
     "SkillsConfig": ("msgflux.runtime", "SkillsConfig"),
     "Spans": ("msgflux.telemetry", "Spans"),
+    "Store": ("msgflux.data.stores", "Store"),
     "TaskError": ("msgflux.exceptions", "TaskError"),
     "Video": ("msgflux.data.types", "Video"),
     "cprint": ("msgflux.utils.console", "cprint"),
