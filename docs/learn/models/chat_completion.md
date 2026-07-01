@@ -236,6 +236,7 @@ Response caching avoids redundant API calls by caching identical requests:
 ### 3.1 **Cache Behavior**
 
 The cache is sensitive to:
+
 - Message content
 - System prompt
 - Temperature and sampling parameters
@@ -317,6 +318,21 @@ This is separate from `enable_cache`: response caching is local/in-process, whil
         ]
 
         response = model(messages=messages)
+        ```
+
+    === "ChatMessages"
+
+        ```python
+        import msgflux as mf
+
+        messages = mf.ChatMessages(thread_id="support_42")
+        messages.add_system("You are a concise support assistant.")
+        messages.add_user("My invoice total looks wrong.")
+        messages.add_assistant("I can help check it.")
+        messages.add_user("The tax line seems duplicated.")
+
+        response = model(messages=messages)
+        print(response.consume())
         ```
 
 ## 5. **Async Support**
@@ -468,6 +484,25 @@ Modern models support multiple input modalities:
                 media=mf.ChatBlock.image("https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg")
             )
         ]
+
+        response = model(messages=messages)
+        print(response.consume())
+        ```
+
+    === "ChatMessages"
+
+        ```python
+        import msgflux as mf
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        messages = mf.ChatMessages(thread_id="image_review_42")
+        messages.add_user_multimodal(
+            text="Describe this image",
+            media={
+                "image": "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"
+            },
+        )
 
         response = model(messages=messages)
         print(response.consume())
@@ -1038,9 +1073,6 @@ The key methods on a non-streaming response:
 | `response.reasoning` | `str` or `None` | Same as `consume_reasoning()` — direct attribute access. |
 | `response.has_reasoning` | `bool` | `True` when `reasoning is not None`. Useful for conditional logic without inspecting the string. |
 
-!!! info "Why `consume()` never changes type"
-    In earlier versions, when a model reasoned, `consume()` returned a `dotdict(answer=..., reasoning=...)` instead of a plain `str`. This caused silent type changes that broke downstream code. Now `consume()` always returns the answer and `consume_reasoning()` returns the reasoning — two separate channels, predictable types.
-
 ### 12.3 **Provider Behaviour**
 
 Not all reasoning providers behave the same way:
@@ -1048,7 +1080,7 @@ Not all reasoning providers behave the same way:
 | Provider | Exposes trace via `return_reasoning` | Reasoning tokens in metadata | Notes |
 |---|---|---|---|
 | **Groq** (`groq/openai/gpt-oss-*`) | Yes — `response.reasoning` | Yes | Reasoning returned as raw text in API response |
-| **OpenAI** (`openai/o*`, `openai/gpt-5-*`) | No — reasoning is fully internal | Yes | Only token counts available via `response.metadata` |
+| **OpenAI** (`openai/gpt-5.x`) | No — reasoning is fully internal | Yes | Only token counts available via `response.metadata` |
 | **Anthropic** (via `enable_thinking`) | Yes — `response.reasoning` | Yes | Uses `enable_thinking=True` instead of `reasoning_effort` |
 
 All providers that inherit from `OpenAIChatCompletion` (Groq, vLLM, Ollama, OpenRouter, Together, SambaNova, Cerebras) share the same reasoning extraction logic. When the provider returns a reasoning field, it is automatically separated from the content and placed in `response.reasoning`.
@@ -1177,7 +1209,7 @@ Providers that keep reasoning internal (like OpenAI) still report how many token
     import msgflux as mf
 
     model = mf.Model.chat_completion(
-        "openrouter/anthropic/claude-sonnet-4.5",
+        "openrouter/anthropic/claude-sonnet-5",
         reasoning_max_tokens=2000,
     )
 
@@ -1192,37 +1224,38 @@ OpenRouter's own API examples pass the reasoning budget inside `extra_body={"rea
 
 Streaming introduces a dual-queue architecture. Content and reasoning flow through independent queues, allowing consumers to process them in parallel or sequentially.
 
-#### How it works internally
+??? info "How it works internally"
 
-When `stream=True`, the model returns a `ModelStreamResponse` instead of a `ModelResponse`. Internally, two separate `asyncio.Queue` instances handle the data flow:
+    When `stream=True`, the model returns a `ModelStreamResponse` instead of a
+    `ModelResponse`. Internally, separate queues handle content and reasoning:
 
-```
-Provider stream thread
-│
-├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
-├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
-├── stream_response.finish_reasoning()                     → closes reasoning queue
-├── content chunk   → stream_response.add(chunk)           → content queue
-├── content chunk   → stream_response.add(chunk)           → content queue
-├── ...
-└── stream_response.finish(status="completed")
-    ├── closes any still-open queues
-    ├── records final status
-    └── runs finalizers
-```
+    ```text
+    Provider stream thread
+    │
+    ├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
+    ├── reasoning chunk → stream_response.add_reasoning(chunk) → reasoning queue
+    ├── stream_response.finish_reasoning()                     → closes reasoning queue
+    ├── content chunk   → stream_response.add(chunk)           → content queue
+    ├── content chunk   → stream_response.add(chunk)           → content queue
+    ├── ...
+    └── stream_response.finish(status="completed")
+        ├── closes any still-open queues
+        ├── records final status
+        └── runs finalizers
+    ```
 
-Reasoning has its own channel lifecycle. When a provider knows the reasoning
-phase has ended, it can call `finish_reasoning()` before normal content
-streaming completes. At the end of the full stream, the provider calls
-`finish()` to close any still-open queues, set the final status, and run any
-finalizers attached by higher-level runtime components. The queue sentinels are
-internal details; providers should publish real chunks with `add()` /
-`add_reasoning()`, close reasoning with `finish_reasoning()` when that channel
-is done, and close the full stream with `finish()`.
+    Reasoning has its own channel lifecycle. When a provider knows the reasoning
+    phase has ended, it can call `finish_reasoning()` before normal content
+    streaming completes. At the end of the full stream, the provider calls
+    `finish()` to close any still-open queues, set the final status, and run any
+    finalizers attached by higher-level runtime components. The queue sentinels
+    are internal details; providers should publish real chunks with `add()` /
+    `add_reasoning()`, close reasoning with `finish_reasoning()` when that
+    channel is done, and close the full stream with `finish()`.
 
-The provider also sets `stream_response.reasoning` with the full accumulated
-reasoning text, so it is available as a single string after the stream
-completes.
+    The provider also sets `stream_response.reasoning` with the full accumulated
+    reasoning text, so it is available as a single string after the stream
+    completes.
 
 #### The two-event system
 
@@ -1401,9 +1434,14 @@ For content streams, `next_chunk()` is also available when you want pull-based d
             )
         ```
 
-#### Thread safety
+??? tip "Thread safety"
 
-Both queues use `threading.Lock` to protect the bind/pending-flush operations. The producer (provider stream thread) calls `add()` / `add_reasoning()` safely from any thread via `loop.call_soon_threadsafe()`. Pending chunks are buffered in a `deque` until a consumer binds the queue to an event loop — at that point all pending chunks are flushed into the `asyncio.Queue` atomically under the lock.
+    Both queues use `threading.Lock` to protect the bind/pending-flush
+    operations. The producer (provider stream thread) calls `add()` /
+    `add_reasoning()` safely from any thread via `loop.call_soon_threadsafe()`.
+    Pending chunks are buffered in a `deque` until a consumer binds the queue to
+    an event loop; at that point all pending chunks are flushed into the
+    `asyncio.Queue` atomically under the lock.
 
 ### 12.8 **Reasoning Across Tool Calls**
 
