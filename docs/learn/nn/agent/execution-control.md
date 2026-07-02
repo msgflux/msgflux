@@ -70,8 +70,7 @@ force a specific execution identity.
 `AbortSignal` is local runtime cancellation for the currently active process.
 It is useful for UI and CLI controls such as pressing `Esc` while a model is
 generating. It is carried by `ExecutionScope` and exposed through
-`get_execution_context().get("abort_signal")`; it is not sent to providers as a
-request body field and is not stored in checkpoints.
+`get_execution_context().get("abort_signal")`.
 
 ```python
 abort_signal = mf.AbortSignal()
