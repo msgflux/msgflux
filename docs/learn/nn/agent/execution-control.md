@@ -8,7 +8,9 @@ The core pieces are:
 | Piece | Purpose |
 |-------|---------|
 | `ExecutionScope` | Identifies the active execution with `thread_id`, `run_id`, and `namespace`. |
+| `AbortSignal` | Carries local cancellation requests to the active runtime before safe interruption points. |
 | `checkpointer` | Persists the agent snapshot so a run can resume. |
+| `TaskStore` | Persists background task records, activity, outputs, and routing metadata. |
 | `AgentInbox` | Holds pending messages, notifications, and control signals for the agent loop. |
 | `AgentInboxStore` | Optional persistence boundary for the inbox. Without one, the inbox is in memory. |
 
