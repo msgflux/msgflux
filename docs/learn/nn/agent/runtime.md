@@ -1,7 +1,7 @@
-# Execution Control
+# Runtime
 
-Execution control is the runtime layer used to identify, resume, interrupt, and
-feed an agent while it is executing.
+Runtime is the layer used to identify, resume, interrupt, and feed an agent
+while it is executing.
 
 The core pieces are:
 
@@ -35,6 +35,15 @@ scope = mf.ExecutionScope(
 result = agent("Investigate this ticket.", scope=scope)
 ```
 
+You can also bind the same scope as ambient runtime context. This is useful
+when nested calls should inherit the same thread/run identity without passing
+`scope=...` through every call:
+
+```python
+with mf.execution_context(scope=scope):
+    result = agent("Investigate this ticket.")
+```
+
 - `thread_id`: identifies the conversation thread. In a chat UI, this is the
   conversation id. In a workflow, it is the root workflow id. Every execution
   that should share history and durable context should keep the same
@@ -64,6 +73,27 @@ Resolution prefers explicit values, then existing message state, then inherited
 runtime context, and only then generates a fallback. Omit an ID when you want
 msgFlux to inherit it from the current context; pass an ID when you want to
 force a specific execution identity.
+
+Runtime resources can be attached to the same context. For example, this makes
+the checkpointer available to any agent call made inside the block:
+
+```python
+checkpointer = mf.Store.checkpoint(
+    "sqlite",
+    path=".msgflux/checkpoints.sqlite3",
+)
+
+with mf.execution_context(scope=scope, checkpoint_store=checkpointer):
+    result = agent("Investigate this ticket.")
+```
+
+`ExecutionScope` carries identity. Runtime resources such as `checkpoint_store`,
+`task_store`, and `agent_inbox` are passed to `execution_context(...)` or to the
+agent/runtime objects that own them. When an agent runs inside this context, it
+reads the active scope for `thread_id`, `run_id`, and `namespace`, then reads
+the active `checkpoint_store` from the same runtime context. The checkpointer is
+therefore applied to the scoped execution without being stored inside the
+`ExecutionScope` object itself.
 
 ## Abort Signal
 
@@ -117,10 +147,27 @@ scope = mf.ExecutionScope(
 agent("Investigate this ticket.", scope=scope)
 ```
 
-Available checkpoint stores:
+If you do not want to attach the checkpointer to the agent instance, provide it
+through runtime context together with the execution scope:
 
-- `mf.Store.checkpoint("in_memory")`
-- `mf.Store.checkpoint("sqlite", path=".msgflux/checkpoints.sqlite3")`
+```python
+agent = nn.Agent(
+    name="support_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+)
+
+with mf.execution_context(scope=scope, checkpoint_store=checkpointer):
+    agent("Investigate this ticket.")
+```
+
+Inside the call, the agent resolves the effective scope first. It then uses the
+active checkpointer to load or save state under the effective
+`(namespace, thread_id, run_id)` key.
+
+??? tip "Available checkpoint stores"
+
+    - `mf.Store.checkpoint("in_memory")`
+    - `mf.Store.checkpoint("sqlite", path=".msgflux/checkpoints.sqlite3")`
 
 When you call an agent with a `scope.run_id`, msgFlux first checks whether a
 checkpoint already exists for `(namespace, thread_id, run_id)`.
@@ -143,59 +190,81 @@ For background subagents, the task id is used as the subagent `run_id`. Reusing
 that task id resumes or continues the same subagent. Creating a new task id
 starts a separate subagent within the same thread.
 
-## Background Tasks And `task_message`
-
-When a tool is allowed to run in the background, msgFlux creates a task record
-and returns a task id to the model. The task record lives in the task store and
-tracks lifecycle state such as queued, running, paused, completed, failed, and
-interrupted.
-
-For normal background tools, the task id is mostly an operational handle:
-
-- `task_status(task_id=...)` reads lifecycle and progress.
-- `task_output(task_id=...)` reads the final result once available.
-- `task_wait(task_id=...)` waits for completion.
-- `task_interrupt(task_id=...)` requests interruption.
-
-Some background tools also support messages after dispatch. The built-in
-`AgentTool` does this for subagents. In that case, `task_message` is the way
-for the root model to send another message to the same running or resumable
-task:
+The checkpointer can also be used directly when you need to inspect or manage
+durable runs outside the agent loop. The lookup key is always
+`(namespace, thread_id, run_id)`. For an agent, `namespace` is normally the
+agent name:
 
 ```python
-task_message(
-    task_id="ab12cd34",
-    message="The user clarified that the payment already cleared.",
+namespace = "support_agent"
+thread_id = "customer_42"
+run_id = "ticket_9001"
+
+state = checkpointer.load_state(namespace, thread_id, run_id)
+print(state["status"] if state else "missing")
+```
+
+List recent runs for a thread:
+
+```python
+runs = checkpointer.list_runs(namespace, thread_id, limit=10)
+for run in runs:
+    print(run["run_id"], run["status"], run["updated_at"])
+```
+
+Find runs that may still need recovery:
+
+```python
+incomplete = checkpointer.find_incomplete_runs(namespace, thread_id)
+```
+
+Load the newest checkpointed run in a thread. This is useful when the caller
+has a `thread_id` but did not persist the latest `run_id` separately:
+
+```python
+latest = checkpointer.load_latest_run(namespace, thread_id)
+```
+
+Fork a checkpoint into a new thread/run. This copies the checkpoint state while
+preserving the original run:
+
+```python
+forked = checkpointer.fork_run(
+    namespace,
+    source_thread_id="customer_42",
+    source_run_id="ticket_9001",
+    target_thread_id="customer_42_review",
+    target_run_id="ticket_9001_review",
+    status="paused",
 )
 ```
 
-The task metadata records enough routing information to reconstruct the call:
+Delete a single run when it is no longer needed:
 
-- which tool owns the task
-- which child agent or tool target was selected
-- the checkpoint namespace for that child execution
-- the parent/root run lineage
-- the `thread_id` shared with the root conversation
-- the task id used as the child `run_id`
-
-For an agent task, `task_message` re-dispatches the same tool with the saved
-routing parameters and a scope like:
-
-```text
-thread_id = original root thread
-run_id = task_id
-parent_run_id = root run that launched the task
-root_run_id = root run of the whole execution tree
+```python
+deleted = checkpointer.delete_run(namespace, thread_id, run_id)
 ```
 
-That means the child agent can recover through the normal checkpoint rule:
-same `(namespace, thread_id, run_id)` resumes a non-terminal checkpoint. If the
-child had completed and you want a new independent subagent conversation, call
-the `agent` tool again so a new task id/run id is created. If you want to keep
-talking to the same subagent task, use `task_message` with the existing
-`task_id`.
+Clear a broader set of checkpoints:
 
-## Persisting The Inbox
+```python
+removed = checkpointer.clear(namespace=namespace, thread_id=thread_id)
+```
+
+Stores also expose low-level event methods for append-only audit entries:
+
+```python
+checkpointer.append_event(
+    namespace,
+    thread_id,
+    run_id,
+    {"type": "operator_note", "message": "Reviewed by support lead."},
+)
+
+events = checkpointer.load_events(namespace, thread_id, run_id)
+```
+
+## Agent Inbox
 
 `AgentInbox` is in-memory by default:
 
@@ -211,86 +280,114 @@ inbox_store = mf.Store.agent_inbox(
     "sqlite",
     path=".msgflux/inbox.sqlite3",
 )
+agent_inbox = mf.AgentInbox(store=inbox_store)
 
 agent = nn.Agent(
     name="support_agent",
     model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    agent_inbox=mf.AgentInbox(store=inbox_store),
+    agent_inbox=agent_inbox,
 )
 ```
 
-Available inbox stores:
+You can also provide the inbox through runtime context instead of binding it to
+the agent instance:
 
-- `mf.Store.agent_inbox("in_memory")`
-- `mf.Store.agent_inbox("sqlite", path=".msgflux/inbox.sqlite3")`
+```python
+scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
+
+with mf.execution_context(scope=scope, agent_inbox=agent_inbox):
+    agent("Investigate this ticket.")
+```
+
+??? tip "Available inbox stores"
+
+    - `mf.Store.agent_inbox("in_memory")`
+    - `mf.Store.agent_inbox("sqlite", path=".msgflux/inbox.sqlite3")`
 
 You can also instantiate concrete classes directly, but the `Store` factory is
 the preferred public interface for application code.
 
-## Full Persistent Runtime
-
-Use both stores when you want resumable execution and durable inbox delivery.
+Bind an inbox to a runtime identity when you want to write to the same pending
+message queue that an agent will drain:
 
 ```python
-checkpointer = mf.Store.checkpoint(
-    "sqlite",
-    path=".msgflux/checkpoints.sqlite3",
-)
-inbox_store = mf.Store.agent_inbox(
-    "sqlite",
-    path=".msgflux/inbox.sqlite3",
-)
+scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
 
-agent = nn.Agent(
-    name="support_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    checkpointer=checkpointer,
-    agent_inbox=mf.AgentInbox(store=inbox_store),
-)
-
-scope = mf.ExecutionScope(
-    thread_id="customer_42",
-    run_id="ticket_9001",
-)
-
-agent("Investigate this ticket.", scope=scope)
+agent_inbox = mf.AgentInbox(store=inbox_store)
+agent_inbox.bind_scope(scope, namespace="support_agent")
 ```
 
-When the agent starts, it binds the inbox to the active `ExecutionScope` using
-the agent module name as namespace. For the example above, pending inbox data is
-stored under:
+Use `fork(...)` to create another handle over the same store with a different
+runtime key. This is useful when a root agent launches child work but you still
+want a shared store:
 
 ```python
-namespace = "support_agent"
-thread_id = "customer_42"
-run_id = "ticket_9001"
-```
-
-For tests and local shared-memory scenarios, use `InMemoryAgentInboxStore`:
-
-```python
-store = mf.Store.agent_inbox("in_memory")
-agent = nn.Agent(
-    name="support_agent",
-    model=model,
-    agent_inbox=mf.AgentInbox(store=store),
+child_inbox = agent_inbox.fork(
+    owner="research_agent",
+    namespace="research_agent",
+    run_id="task_123",
 )
 ```
 
-## Sending Messages While The Agent Is Running
+### Inspecting And Rendering Inbox Items
+
+`peek()` reads pending notifications without removing them:
+
+```python
+pending = agent_inbox.peek()
+```
+
+`drain()` reads and clears the pending notifications for the inbox key:
+
+```python
+notifications = agent_inbox.drain()
+```
+
+If you used `peek()` and processed only some items, acknowledge them explicitly
+by id:
+
+```python
+agent_inbox.ack([notification.notification_id for notification in notifications])
+```
+
+`render_messages(...)` converts inbox items into provider-ready chat messages.
+System notifications become a `system` message, while incoming user messages
+become a `user` message:
+
+```python
+messages = agent_inbox.render_messages(notifications)
+```
+
+`render(...)` is a convenience wrapper: it returns `None` for an empty list, one
+message dict for a single rendered message, or a list when multiple messages are
+needed:
+
+```python
+rendered = agent_inbox.render(notifications)
+```
+
+### Sending Messages While The Agent Is Running
 
 To feed a running agent, write an incoming user message to the same inbox. The
 agent drains the inbox before each provider call and after tool calls, before
 the next provider call.
 
 ```python
+inbox_store = mf.Store.agent_inbox("sqlite", path=".msgflux/inbox.sqlite3")
+agent_inbox = mf.AgentInbox(store=inbox_store)
 scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
+
+agent = nn.Agent(
+    name="support_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    agent_inbox=agent_inbox,
+)
 
 # In one thread/task:
 agent("Work on the ticket until finished.", scope=scope)
 
 # In another thread/task while the agent is still processing:
-agent.agent_inbox.user_message("The user added that the payment already cleared.")
+agent_inbox.user_message("The user added that the payment already cleared.")
 ```
 
 The model receives the message as a synthetic user block:
@@ -317,6 +414,14 @@ external_inbox = mf.AgentInbox(
 external_inbox.user_message("Ask for the latest invoice number before deciding.")
 ```
 
+If the pending user messages become stale, clear only those messages while
+preserving runtime notifications and control signals:
+
+```python
+removed = external_inbox.clear_user_messages()
+print(f"Removed {removed} pending user message(s).")
+```
+
 You can also publish directly:
 
 ```python
@@ -329,13 +434,13 @@ external_inbox.publish(
 )
 ```
 
-## Control Messages
+### Control Messages
 
 Control messages interrupt execution at safe provider boundaries.
 
 ```python
-agent.agent_inbox.pause(reason="Wait for user approval.")
-agent.agent_inbox.interrupt(reason="Operator interrupted the run.")
+agent_inbox.pause(reason="Wait for user approval.")
+agent_inbox.interrupt(reason="Operator interrupted the run.")
 ```
 
 Behavior:
@@ -353,12 +458,12 @@ For a persistent writer:
 external_inbox.pause(reason="Need human review before continuing.")
 ```
 
-## System Notifications
+### System Notifications
 
 Non-user inbox items are delivered as `system_note`:
 
 ```python
-agent.agent_inbox.publish(
+agent_inbox.publish(
     {
         "source": "system_note",
         "status": "policy_update",

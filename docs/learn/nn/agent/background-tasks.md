@@ -31,6 +31,58 @@ tool call
   -> result is consumed later through task tools or notifications
 ```
 
+## Task Messaging And Subagent Continuation
+
+When a tool is allowed to run in the background, msgFlux creates a task record
+and returns a task id to the model. The task record lives in the task store and
+tracks lifecycle state such as queued, running, paused, completed, failed, and
+interrupted.
+
+For normal background tools, the task id is mostly an operational handle:
+
+- `task_status(task_id=...)` reads lifecycle and progress.
+- `task_output(task_id=...)` reads the final result once available.
+- `task_wait(task_id=...)` waits for completion.
+- `task_interrupt(task_id=...)` requests interruption.
+
+Some background tools also support messages after dispatch. The built-in
+`AgentTool` does this for subagents. In that case, `task_message` is the way
+for the root model to send another message to the same running or resumable
+task:
+
+```python
+task_message(
+    task_id="ab12cd34",
+    message="The user clarified that the payment already cleared.",
+)
+```
+
+The task metadata records enough routing information to reconstruct the call:
+
+- which tool owns the task
+- which child agent or tool target was selected
+- the checkpoint namespace for that child execution
+- the parent/root run lineage
+- the `thread_id` shared with the root conversation
+- the task id used as the child `run_id`
+
+For an agent task, `task_message` re-dispatches the same tool with the saved
+routing parameters and a scope like:
+
+```text
+thread_id = original root thread
+run_id = task_id
+parent_run_id = root run that launched the task
+root_run_id = root run of the whole execution tree
+```
+
+That means the child agent can recover through the normal checkpoint rule:
+same `(namespace, thread_id, run_id)` resumes a non-terminal checkpoint. If the
+child had completed and you want a new independent subagent conversation, call
+the `agent` tool again so a new task id/run id is created. If you want to keep
+talking to the same subagent task, use `task_message` with the existing
+`task_id`.
+
 ## Example 1: Basic Background Tool
 
 ```python

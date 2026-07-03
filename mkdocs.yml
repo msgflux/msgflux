@@ -167,7 +167,7 @@ nav:
         - learn/nn/agent/system-prompt.md
         - learn/nn/agent/generation-schemas.md
         - learn/nn/agent/task-and-context.md
-        - learn/nn/agent/execution-control.md
+        - learn/nn/agent/runtime.md
         - learn/nn/agent/vars.md
         - learn/nn/agent/tools.md
         - learn/nn/agent/skills.md

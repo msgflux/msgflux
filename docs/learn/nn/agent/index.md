@@ -31,7 +31,7 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [System Prompt Components](system-prompt.md) | Compose system prompts from components |
 | [Generation Schemas](generation-schemas.md) | Structured outputs and reasoning strategies |
 | [Task and Context](task-and-context.md) | Input handling, templates, multimodal, chat history |
-| [Execution Control](execution-control.md) | Threads, runs, checkpoints, inbox controls, and abort signals |
+| [Runtime](runtime.md) | Threads, runs, checkpoints, inbox controls, and abort signals |
 | [Vars](vars.md) | Unified execution variable space |
 | [Tools](tools.md) | Tool calling, configuration, MCP, agent-as-tool |
 | [Agent Skills](skills.md) | Reusable `SKILL.md` workflows loaded through progressive disclosure |
