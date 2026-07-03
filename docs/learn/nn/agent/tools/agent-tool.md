@@ -1,6 +1,6 @@
 # Agent Tool
 
-Agents can be used as tools for other agents, enabling hierarchical task delegation, also known as **SubAgents**. Using AutoParams makes this pattern especially clean: the class name becomes the tool name, and the docstring becomes the tool description.
+Agents can be used as tools for other agents, enabling hierarchical task delegation, also known as **SubAgents**.
 
 The Coordinator calls the Specialist as any other tool. The result returns to the Coordinator's model, which synthesizes it into the final response.
 
