@@ -771,6 +771,30 @@ class TestToolLibrary:
         assert "tool_search" in names
         assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
 
+    def test_tool_search_has_default_usage_guidance(self):
+        """Test tool_search exposes default guidance when on-demand tools exist."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        guidance = library.get_tool_usage_guidance()
+
+        assert guidance == [
+            {
+                "name": "tool_search",
+                "display_name": "Tool Search",
+                "guidance": (
+                    "Use when the current tools may not cover the task. "
+                    "Search first, then activate exact matches with "
+                    "`select:<tool_name>`."
+                ),
+            }
+        ]
+
     def test_tool_search_returns_matching_on_demand_tools_without_loading(self):
         """Test that keyword search describes matches without exposing them."""
 
