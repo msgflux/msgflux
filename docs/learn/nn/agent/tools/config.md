@@ -248,14 +248,35 @@ Use cases:
 
 ???+ example
 
-    ```python
-    @mf.tool_config(inject_message=True)
-    def inspect_original_message(message, **kwargs) -> str:
-        """Inspect the original message envelope."""
-        if isinstance(message, mf.Message):
-            return str(message.get("meta.trace_id"))
-        return "No structured message available."
-    ```
+    === "Hidden parameter"
+
+        Use this when the function should explicitly name the injected
+        `message` argument. `disable_input=True` hides all public parameters, so
+        the model does not see or fill `message`.
+
+        ```python
+        @mf.tool_config(inject_message=True, disable_input=True)
+        def inspect_original_message(message) -> str:
+            """Inspect the original message envelope."""
+            if isinstance(message, mf.Message):
+                return str(message.get("meta.trace_id"))
+            return "No structured message available."
+        ```
+
+    === "From kwargs"
+
+        Use this when the public signature should not include `message`.
+        msgFlux injects it through `kwargs`.
+
+        ```python
+        @mf.tool_config(inject_message=True)
+        def inspect_original_message(**kwargs) -> str:
+            """Inspect the original message envelope."""
+            message = kwargs.get("message")
+            if isinstance(message, mf.Message):
+                return str(message.get("meta.trace_id"))
+            return "No structured message available."
+        ```
 
 ## inject_messages
 
