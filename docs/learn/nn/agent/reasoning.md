@@ -622,5 +622,5 @@ This is useful for debugging the relationship between the model's thinking and i
 
 - [Chat Completion — Reasoning Models](../../models/chat_completion.md#12-reasoning-models) — Model-level reasoning reference with internal architecture details
 - [Generation Schemas — Reasoning Schemas](generation-schemas.md#reasoning-schemas) — CoT, ReAct, SelfConsistency
-- [Tools](tools.md) — Tool calling overview
+- [Tools](tools/index.md) — Tool calling overview
 - [Streaming](streaming.md) — General streaming overview

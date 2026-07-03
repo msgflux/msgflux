@@ -58,7 +58,7 @@ from msgflux.runtime.context import (
     new_thread_id,
 )
 from msgflux.runtime.skills import AgentSkillManager, SkillsConfig
-from msgflux.tools.builtin import ActivateSkill, SkillSearch
+from msgflux.tools.builtin import ActivateSkillTool, SkillSearchTool
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.common import has_format_placeholder, is_jinja_template
@@ -2987,9 +2987,9 @@ class Agent(Module, metaclass=AutoParams):
     ):
         tools = list(tools or [])
         if self.agent_skill_manager.has_activatable_skills():
-            tools.append(ActivateSkill(self.agent_skill_manager))
+            tools.append(ActivateSkillTool(self.agent_skill_manager))
             if self.agent_skill_manager.has_searchable_skills():
-                tools.append(SkillSearch(self.agent_skill_manager))
+                tools.append(SkillSearchTool(self.agent_skill_manager))
         self.tool_library = ToolLibrary(
             self.get_module_name(),
             tools,

@@ -66,7 +66,7 @@ print(response)  # "O clima está lindo hoje."
 
 Any `__init__` parameter can be set as a class attribute: `model`, `system_message`, `instructions`, `expected_output`, `examples`, `tools`, `config`, `templates`, `generation_schema`, `signature`, and others.
 
-The `description` is especially useful when using an [agent as a tool](tools.md#agent-as-tool) — the calling agent uses it to understand what the tool-agent does.
+The `description` is especially useful when using an [agent as a tool](tools/agent-tool.md) — the calling agent uses it to understand what the tool-agent does.
 
 ## String shorthand
 
@@ -124,7 +124,7 @@ print(response)
 # "You have 142 GB available out of 256 GB on your main disk."
 ```
 
-The model decides when and how to call the tool. The Agent handles the full loop: model suggests a call, the function executes, the result goes back to the model, and the model produces the final answer. See [Tools](tools.md) for advanced usage.
+The model decides when and how to call the tool. The Agent handles the full loop: model suggests a call, the function executes, the result goes back to the model, and the model produces the final answer. See [Tools](tools/index.md) for advanced usage.
 
 ## What's Next
 
@@ -133,6 +133,6 @@ The model decides when and how to call the tool. The Agent handles the full loop
 | [System Prompt Components](system-prompt.md) | Customize behavior with system_message, instructions, examples |
 | [Async](async.md) | Non-blocking execution with `acall` |
 | [Streaming](streaming.md) | Real-time token-by-token output |
-| [Tools](tools.md) | Function calling, MCP, agent-as-tool |
+| [Tools](tools/index.md) | Function calling, MCP, agent-as-tool |
 | [Generation Schemas](generation-schemas.md) | Structured output and reasoning strategies |
 | [Reasoning](reasoning.md) | Model-level reasoning with `response.reasoning` |

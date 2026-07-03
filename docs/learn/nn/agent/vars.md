@@ -78,7 +78,7 @@ Three use cases drive its design:
         response = agent("What discount do I have?", vars=vars)
         ```
 
-        See [inject_vars](tools.md#inject_vars) for more details.
+        See [inject_vars](tools/config.md#inject_vars) for more details.
 
     === "Skills"
 

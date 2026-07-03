@@ -33,9 +33,14 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [Task and Context](task-and-context.md) | Input handling, templates, multimodal, chat history |
 | [Runtime](runtime.md) | Threads, runs, checkpoints, inbox controls, and abort signals |
 | [Vars](vars.md) | Unified execution variable space |
-| [Tools](tools.md) | Tool calling, configuration, MCP, agent-as-tool |
+| [Tools](tools/index.md) | Tool calling overview |
+| [Builtin Tools](tools/builtin.md) | Built-in web, weather, agent, skill, and runtime tools |
+| [Tool Config](tools/config.md) | Per-tool behavior, runtime injection, retries, display names, and usage guidance |
+| [Tool Search](tools/tool-search.md) | On-demand tools and `tool_search` activation |
 | [Agent Skills](skills.md) | Reusable `SKILL.md` workflows loaded through progressive disclosure |
-| [Background Tasks](background-tasks.md) | Async tool dispatch, task polling, progress, and notifications |
+| [Background Tasks](tools/background-tasks.md) | Async tool dispatch, task polling, progress, and notifications |
+| [Agent Tool](tools/agent-tool.md) | Subagents, `AgentTool`, and tool buckets |
+| [MCP Tools](tools/mcp.md) | Connect external Model Context Protocol servers |
 | [Signatures](signatures.md) | Declarative input/output specifications |
 | [Hooks & Guards](hooks.md) | Input and output safety checks with configurable policy |
 | [Model Gateway](model-gateway.md) | Multi-model routing |

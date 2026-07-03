@@ -382,20 +382,10 @@ def disable_tool(handle, name: str) -> list[str]:
 If the injected tool adds a new background tool, the task tools are registered
 automatically in the same library.
 
-## Current Limits
-
-This is the current scope of the implementation:
-
-- task state is in-memory
-- notifications are injected from `_prepare_model_execution()`
-- `inspect_model_execution_params()` peeks notifications without consuming them
-- there is no checkpoint resume yet
-- there is no mailbox or agent-to-agent messaging yet
-
 ## Related Pages
 
-- [Tools](tools.md)
-- [Task Runtime](../../../anatomy/task-runtime.md)
+- [Tools](index.md)
+- [Task Runtime](../../../../anatomy/task-runtime.md)
 
 ## Example Scripts
 
