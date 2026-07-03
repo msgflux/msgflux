@@ -1,25 +1,23 @@
 # Background Tasks
 
-Background tasks let a tool start work now and return the final result later.
+Background tasks let tools start work immediately while the agent continues with a
+`task_id` handle. The result can be checked later through task tools, delivered
+back through notifications, or continued through `task_message` when the task is
+a background subagent.
 
-The current design is intentionally small:
+Use background tasks when a tool may be slow, long-running, interruptible, or
+useful to monitor separately from the current model turn.
 
-- `background=True` dispatches the tool and returns a `task_id`
-- `allow_background=True` lets the model choose background execution per call
-  through the reserved `run_in_background` tool argument
-- `task_status(task_id)` returns task state and progress
-- `task_wait(task_id)` blocks until the task completes, fails, or times out
-- `task_output(task_id)` returns the final output
-- `task_list()` lists tasks visible in the current `ToolLibrary`
-- `task_interrupt(task_id)` requests a cooperative interrupt
-- completed and failed tasks can also be delivered back to the agent as a
-  passive notification
-- `inject_notification=True` lets a tool publish agent-visible status updates
-- `inject_handle=True` lets a tool add or remove tools dynamically
-- `task_activity(task_id)` and `task_message(task_id, message)` are only
-  exposed when the library contains a background subagent
+The main pieces are:
 
-This page focuses on the current behavior, not future multi-agent planning.
+| Piece | Purpose |
+|-------|---------|
+| `background=True` | Always dispatch this tool in the background. |
+| `allow_background=True` | Let the model choose background execution with `run_in_background`. |
+| `TaskStore` | Stores task state, progress, output, activity, and routing metadata. |
+| Task tools | `task_status`, `task_wait`, `task_output`, `task_list`, and `task_interrupt`. |
+| Notifications | Completed, failed, and progress updates can be delivered back to the agent inbox. |
+| Subagent messaging | `task_activity` and `task_message` appear when a background subagent is available. |
 
 ## Mental Model
 
@@ -31,59 +29,39 @@ tool call
   -> result is consumed later through task tools or notifications
 ```
 
-## Task Messaging And Subagent Continuation
+## Execution Scope And Task Store
 
-When a tool is allowed to run in the background, msgFlux creates a task record
-and returns a task id to the model. The task record lives in the task store and
-tracks lifecycle state such as queued, running, paused, completed, failed, and
-interrupted.
-
-For normal background tools, the task id is mostly an operational handle:
-
-- `task_status(task_id=...)` reads lifecycle and progress.
-- `task_output(task_id=...)` reads the final result once available.
-- `task_wait(task_id=...)` waits for completion.
-- `task_interrupt(task_id=...)` requests interruption.
-
-Some background tools also support messages after dispatch. The built-in
-`AgentTool` does this for subagents. In that case, `task_message` is the way
-for the root model to send another message to the same running or resumable
-task:
+Pass a `TaskStore` through runtime context when task state should be shared by
+the active execution scope. The scope supplies the thread/run identity; the task
+store supplies the persistence boundary for background task records.
 
 ```python
-task_message(
-    task_id="ab12cd34",
-    message="The user clarified that the payment already cleared.",
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tasks import TaskStore
+
+task_store = TaskStore.sqlite(path=".msgflux/tasks.sqlite3")
+scope = mf.ExecutionScope(
+    thread_id="customer_42",
+    run_id="ticket_9001",
 )
+
+agent = nn.Agent(
+    name="assistant",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    tools=[long_sum],
+)
+
+with mf.execution_context(scope=scope, task_store=task_store):
+    dispatch = agent.tool_library([("call_1", "long_sum", {"a": 20, "b": 22})])
 ```
 
-The task metadata records enough routing information to reconstruct the call:
+When the tool library runs inside this context, it reads the active
+`task_store` and uses it for task creation, status, activity, output, and
+interrupt requests. If no task store is provided, msgFlux creates an in-memory
+store when background tools are used.
 
-- which tool owns the task
-- which child agent or tool target was selected
-- the checkpoint namespace for that child execution
-- the parent/root run lineage
-- the `thread_id` shared with the root conversation
-- the task id used as the child `run_id`
-
-For an agent task, `task_message` re-dispatches the same tool with the saved
-routing parameters and a scope like:
-
-```text
-thread_id = original root thread
-run_id = task_id
-parent_run_id = root run that launched the task
-root_run_id = root run of the whole execution tree
-```
-
-That means the child agent can recover through the normal checkpoint rule:
-same `(namespace, thread_id, run_id)` resumes a non-terminal checkpoint. If the
-child had completed and you want a new independent subagent conversation, call
-the `agent` tool again so a new task id/run id is created. If you want to keep
-talking to the same subagent task, use `task_message` with the existing
-`task_id`.
-
-## Example 1: Basic Background Tool
+## Basic Background Tool
 
 ```python
 import time
@@ -122,7 +100,7 @@ result = agent.tool_library([("call_4", "task_output", {"task_id": task_id})])
 print(result.tool_calls[0].result)
 ```
 
-## Example 1B: Waiting For A Background Task
+## Waiting For A Task
 
 Sometimes the agent has nothing useful to do until the task finishes.
 
@@ -138,7 +116,7 @@ When the task completes, `task_wait` returns the same payload as
 the timeout is reached first, it returns a timeout payload with the current
 task status and progress.
 
-## Example 1C: Letting The Model Choose Background Execution
+## Model-Chosen Background Execution
 
 Use `allow_background=True` when a tool is useful both inline and in the
 background. msgFlux exposes a reserved boolean argument named
@@ -160,7 +138,7 @@ argument, which is treated the same as `false`.
 `background=True` still means the developer has forced every call to run in the
 background. Use `allow_background=True` only when the model should decide.
 
-## Example 1D: Stopping A Background Task
+## Interrupting A Task
 
 `task_interrupt(task_id)` requests a cooperative interrupt.
 
@@ -173,7 +151,7 @@ If the task has not started yet, msgFlux may interrupt it immediately. If it is
 already running, the interrupt is observed at the next cooperative checkpoint. For
 background subagents, that means before the next provider call.
 
-## Example 1E: Reading Subagent Activity
+## Reading Subagent Activity
 
 `task_activity(task_id)` returns a compact list of activity entries, but only
 for background subagent tasks.
@@ -193,7 +171,47 @@ For background subagents it can include compact tool call entries such as:
 ]
 ```
 
-## Example 2: Reporting Progress
+## Task Messaging And Subagent Continuation
+
+For normal background tools, the task id is an operational handle. Background
+subagents can also receive follow-up messages after dispatch. The built-in
+`AgentTool` supports this with `task_message`, which lets the root model send
+another message to the same running or resumable subagent task:
+
+```python
+task_message(
+    task_id="ab12cd34",
+    message="The user clarified that the payment already cleared.",
+)
+```
+
+The task metadata records enough routing information to reconstruct the call:
+
+- which tool owns the task
+- which child agent or tool target was selected
+- the checkpoint namespace for that child execution
+- the parent/root run lineage
+- the `thread_id` shared with the root conversation
+- the task id used as the child `run_id`
+
+For an agent task, `task_message` re-dispatches the same tool with the saved
+routing parameters and a scope like:
+
+```text
+thread_id = original root thread
+run_id = task_id
+parent_run_id = root run that launched the task
+root_run_id = root run of the whole execution tree
+```
+
+That means the child agent can recover through the normal checkpoint rule:
+same `(namespace, thread_id, run_id)` resumes a non-terminal checkpoint. If the
+child had completed and you want a new independent subagent conversation, call
+the `agent` tool again so a new task id/run id is created. If you want to keep
+talking to the same subagent task, use `task_message` with the existing
+`task_id`.
+
+## Reporting Progress
 
 Use `inject_task=True` when the tool should update its own progress.
 
@@ -247,7 +265,7 @@ It also includes timing helpers such as:
 }
 ```
 
-## Example 3: Passive Notification Back Into The Agent
+## Passive Notifications Back Into The Agent
 
 Completed and failed tasks are injected back into the next provider call as a
 synthetic system message:
@@ -279,7 +297,7 @@ agent = nn.Agent(
 )
 ```
 
-## Example 3B: Progress Notifications
+## Progress Notifications
 
 The same injected `task` handle can publish lightweight agent-visible updates.
 
@@ -302,7 +320,7 @@ These notifications are persisted when the agent inbox uses an
 `AgentInboxStore`. `dedupe_key` keeps the newest progress update for the same
 task visible to the model.
 
-## Example 3D: Sending A Message To A Background Subagent
+## Sending A Message To A Background Subagent
 
 When the background task is itself an `Agent`, the dispatch response also
 advertises `task_activity` and `task_message(task_id=..., message=...)`.
@@ -318,7 +336,7 @@ If the subagent is still running, the message is delivered into its local
 inbox and will be consumed on the next provider boundary. If it already interrupted
 but has a checkpoint, msgFlux resumes it with the same `task_id`.
 
-## Example 3C: Status Updates With `inject_notification`
+## Status Updates With `inject_notification`
 
 Use `inject_notification=True` when the tool should publish lightweight status
 updates without depending on the full `task` handle.
@@ -346,7 +364,7 @@ For background tools, the injected `notification` handle is automatically bound
 to the current `task_id`, so the agent sees a normal notification block with
 `ref: <task_id>`.
 
-## Example 4: Dynamic Tool Mutation With `inject_handle`
+## Dynamic Tool Mutation With `inject_handle`
 
 `inject_handle=True` exposes a small `handle` to the tool.
 
