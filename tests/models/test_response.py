@@ -2,6 +2,7 @@
 
 import pytest
 
+from msgflux.exceptions import AbortRequestedError
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 
 
@@ -62,7 +63,7 @@ class TestModelStreamResponse:
 
         for chunk in chunks:
             response.add(chunk)
-        response.add(None)
+        response.finish()
 
         consumed_chunks = []
         async for chunk in response.consume():
@@ -79,7 +80,7 @@ class TestModelStreamResponse:
 
         for chunk in chunks:
             response.add(chunk)
-        response.add(None)
+        response.finish()
 
         assert await response.next_chunk() == "Hello"
         assert await response.next_chunk() == " "
@@ -96,7 +97,7 @@ class TestModelStreamResponse:
 
         for chunk in chunks:
             response.add(chunk)
-        response.add(None)
+        response.finish()
 
         assert await response.next_chunk() == b"\x00\x01"
         assert await response.next_chunk() == b"\x02"
@@ -112,7 +113,7 @@ class TestModelStreamResponse:
 
         for chunk in chunks:
             response.add(chunk)
-        response.add(None)
+        response.finish()
 
         consumed_chunks = []
         async for chunk in response.consume():
@@ -125,7 +126,7 @@ class TestModelStreamResponse:
     async def test_model_stream_response_empty_stream(self):
         """Test consuming from empty ModelStreamResponse."""
         response = ModelStreamResponse()
-        response.add(None)
+        response.finish()
 
         consumed_chunks = []
         async for chunk in response.consume():
@@ -137,8 +138,7 @@ class TestModelStreamResponse:
     async def test_model_stream_response_raises_stored_error_on_consume(self):
         """Stored stream errors should be raised to the consumer."""
         response = ModelStreamResponse()
-        response.set_error(RuntimeError("stream failed"))
-        response.add(None)
+        response.finish(error=RuntimeError("stream failed"))
 
         with pytest.raises(RuntimeError, match="stream failed"):
             async for _ in response.consume():
@@ -148,8 +148,7 @@ class TestModelStreamResponse:
     async def test_model_stream_response_next_chunk_raises_stored_error(self):
         """next_chunk should raise stored stream errors at the sentinel."""
         response = ModelStreamResponse()
-        response.set_error(RuntimeError("stream failed"))
-        response.add(None)
+        response.finish(error=RuntimeError("stream failed"))
 
         with pytest.raises(RuntimeError, match="stream failed"):
             await response.next_chunk()
@@ -184,3 +183,85 @@ class TestModelStreamResponse:
         ):
             async for _ in response.consume():
                 pass
+
+    def test_model_stream_response_finalizer_runs_once(self):
+        stream = ModelStreamResponse(mode="sync")
+        final_states = []
+
+        stream.add_finalizer(final_states.append)
+        stream.set_response_type("text_generation")
+        stream.add("hello")
+        stream.finish()
+        stream.finish()
+
+        assert len(final_states) == 1
+        assert final_states[0].status == "completed"
+        assert final_states[0].response_type == "text_generation"
+        assert final_states[0].output == "hello"
+        assert list(stream._pending_chunks) == ["hello", None]
+
+    def test_model_stream_response_finish_closes_without_public_add(self):
+        stream = ModelStreamResponse(mode="sync")
+        stream.set_response_type("text_generation")
+        stream.add("hello")
+        stream.add = lambda data: (_ for _ in ()).throw(AssertionError(data))
+
+        stream.finish()
+
+        assert stream.data == "hello"
+        assert list(stream._pending_chunks) == ["hello", None]
+        assert list(stream._reasoning_pending_chunks) == [None]
+
+    def test_model_stream_response_can_finish_reasoning_before_content(self):
+        stream = ModelStreamResponse(mode="sync")
+        stream.add_reasoning("thinking")
+
+        stream.finish_reasoning()
+        stream.add("answer")
+        stream.finish()
+
+        assert stream.reasoning is None
+        assert stream.data == "answer"
+        assert list(stream._reasoning_pending_chunks) == ["thinking", None]
+        assert list(stream._pending_chunks) == ["answer", None]
+
+    def test_model_stream_response_rejects_chunks_after_channel_close(self):
+        stream = ModelStreamResponse(mode="sync")
+        stream.add_reasoning("thinking")
+        stream.finish_reasoning()
+
+        with pytest.raises(RuntimeError, match="closed stream"):
+            stream.add_reasoning("late thinking")
+
+        stream.add("answer")
+        stream.finish()
+
+        with pytest.raises(RuntimeError, match="closed stream"):
+            stream.add("late answer")
+
+    def test_model_stream_response_finalizer_added_after_finish_runs_once(self):
+        stream = ModelStreamResponse(mode="sync")
+        stream.set_response_type("text_generation")
+        stream.add("done")
+        stream.finish()
+        final_states = []
+
+        stream.add_finalizer(final_states.append)
+
+        assert len(final_states) == 1
+        assert final_states[0].status == "completed"
+        assert final_states[0].output == "done"
+
+    def test_model_stream_response_finish_with_abort_sets_interrupted_state(self):
+        stream = ModelStreamResponse(mode="sync")
+        final_states = []
+        stream.add_finalizer(final_states.append)
+
+        stream.finish(
+            error=AbortRequestedError("user pressed esc"),
+            status="interrupted",
+        )
+
+        assert len(final_states) == 1
+        assert final_states[0].status == "interrupted"
+        assert isinstance(final_states[0].error, AbortRequestedError)
