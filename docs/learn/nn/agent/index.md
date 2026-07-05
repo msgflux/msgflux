@@ -1,11 +1,13 @@
 # nn.Agent
 
-
-The `Agent` is a `Module` that uses language models to solve tasks. It can handle multimodal data, interact with environments through tool calls, and manage complex workflows with structured outputs.
-
 ## ✦₊⁺ Overview
 
-An `Agent` combines a language model with instructions and tools to accomplish tasks. The Agent module adopts a task decomposition strategy, allowing each part of a task to be treated in isolation.
+The `Agent` is a `Module` that uses language models to solve tasks. It can
+handle multimodal data, interact with environments through tool calls, and
+manage complex workflows with structured outputs.
+
+The Agent module adopts a task decomposition strategy, allowing each part of a
+task to be treated in isolation.
 
 ### Key Features
 
