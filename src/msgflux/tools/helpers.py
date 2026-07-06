@@ -12,10 +12,6 @@ def should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> 
     return isinstance(getattr(tool, "impl", tool), agent_type)
 
 
-def uses_handle_injection(config: Mapping[str, Any]) -> bool:
-    return config.get("inject_handle", False)
-
-
 def is_agent_tool_impl(impl: Any) -> bool:
     if getattr(impl, "is_agent_tool", False):
         return True

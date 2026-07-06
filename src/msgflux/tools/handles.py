@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, List, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping
 
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
 from msgflux.runtime.context import get_execution_context
@@ -15,8 +15,28 @@ if TYPE_CHECKING:
 class ToolLibraryHandle:
     """Controlled handle exposed to runtime-aware tools."""
 
-    def __init__(self, library: ToolLibrary):
+    def __init__(
+        self,
+        library: ToolLibrary,
+        *,
+        tool_name: str | None = None,
+        agent_inbox: AgentInbox | None = None,
+    ):
         self._library = library
+        self._tool_name = tool_name
+        self._agent_inbox = agent_inbox
+
+    def for_tool(
+        self,
+        *,
+        tool_name: str,
+        agent_inbox: AgentInbox | None = None,
+    ) -> ToolLibraryHandle:
+        return ToolLibraryHandle(
+            self._library,
+            tool_name=tool_name,
+            agent_inbox=agent_inbox or self._agent_inbox,
+        )
 
     def add(self, tool: Callable) -> str:
         return self._library.add(tool)
@@ -56,7 +76,7 @@ class ToolLibraryHandle:
 
     @property
     def agent_inbox(self) -> AgentInbox:
-        return self._library.agent_inbox
+        return self._agent_inbox or self._library.agent_inbox
 
     @property
     def task_store(self) -> Any:
@@ -79,6 +99,79 @@ class ToolLibraryHandle:
 
     def get_task_inbox(self, task_id: str) -> AgentInbox | None:
         return self._library.background_dispatcher.get_task_inbox(task_id)
+
+    @property
+    def task(self) -> Any:
+        task_handle = get_execution_context().get("task_handle")
+        if task_handle is None:
+            raise RuntimeError("`handle.task` is only available in background tools.")
+        return task_handle
+
+    @property
+    def task_id(self) -> str:
+        return self.task.task_id
+
+    @property
+    def notification(self) -> ToolNotificationHandle:
+        if self._tool_name is None:
+            raise RuntimeError(
+                "`handle.notification` is only available on a tool-scoped handle."
+            )
+        task_handle = get_execution_context().get("task_handle")
+        ref = getattr(task_handle, "task_id", None)
+        return self.build_notification_handle(
+            tool_name=self._tool_name,
+            ref=ref,
+            agent_inbox=self.agent_inbox,
+        )
+
+    def set_running(
+        self,
+        *,
+        stage: str | None = None,
+        message: str | None = None,
+    ) -> Any:
+        return self.task.set_running(stage=stage, message=message)
+
+    def update_progress(
+        self,
+        *,
+        stage: str | None = None,
+        message: str | None = None,
+        current: int | None = None,
+        total: int | None = None,
+        percent: float | None = None,
+    ) -> Any:
+        return self.task.update_progress(
+            stage=stage,
+            message=message,
+            current=current,
+            total=total,
+            percent=percent,
+        )
+
+    def notify(
+        self,
+        *,
+        status: str,
+        hint: str | None = None,
+        metadata: Dict[str, Any] | None = None,
+        dedupe_key: str | None = None,
+        source: str | None = None,
+    ) -> Any:
+        return self.notification.update(
+            status,
+            hint=hint,
+            metadata=metadata,
+            dedupe_key=dedupe_key,
+            source=source,
+        )
+
+    def raise_if_interrupted(self) -> None:
+        self.task.raise_if_interrupted()
+
+    def raise_if_paused(self) -> None:
+        self.task.raise_if_paused()
 
     def resume_background_agent_task(self, *, task: Any, message: str) -> str:
         return self._library.background_dispatcher.resume_agent_task(

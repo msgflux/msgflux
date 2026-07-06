@@ -64,9 +64,6 @@ class TestToolConfig:
         assert config.handoff is False
         assert config.call_as_response is False
         assert config.disable_input is False
-        assert config.inject_task is False
-        assert config.inject_notification is False
-        assert config.inject_handle is False
         assert config.on_demand is False
         assert config.inject_vars is False
         assert config.inject_message is False
@@ -135,14 +132,6 @@ class TestToolConfig:
             def sample_function():
                 pass
 
-    def test_tool_config_inject_task_requires_background(self):
-        """Test that inject_task=True requires background=True."""
-        with pytest.raises(ValueError, match="requires `background=True`"):
-
-            @tool_config(inject_task=True)
-            def sample_function():
-                pass
-
     def test_tool_config_inject_vars_incompatible_with_call_as_response(self):
         """Test that inject_vars is incompatible with call_as_response=True."""
         with pytest.raises(ValueError, match="`inject_vars` is not compatible"):
@@ -174,15 +163,6 @@ class TestToolConfig:
             pass
 
         assert sample_function.tool_config.inject_vars is True
-
-    def test_tool_config_inject_handle_true(self):
-        """Test that inject_handle=True is stored correctly."""
-
-        @tool_config(inject_handle=True)
-        def sample_function():
-            pass
-
-        assert sample_function.tool_config.inject_handle is True
 
     def test_tool_config_on_demand_true(self):
         """Test that on_demand=True is stored correctly."""

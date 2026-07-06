@@ -236,19 +236,16 @@ This is useful for:
 
 ## Runtime Injection Options
 
-Tool config supports several `inject_*` flags. This page documents injections
-that apply to regular tool calls. Background task injections are documented with
-the background runtime because they depend on task dispatch and notification
-delivery.
+Tool config supports several `inject_*` flags for common agent state. Use
+`mf.Hidden` for runtime handle access, including tool
+mutation, background task progress, and notifications.
 
-| Option | Injected argument | Documentation |
-|--------|-------------------|---------------|
+| API | Runtime argument | Documentation |
+|-----|------------------|---------------|
 | `inject_vars=True` | `vars` | [inject_vars](#inject_vars) |
 | `inject_message=True` | `message` | [inject_message](#inject_message) |
 | `inject_messages=True` | `messages` | [inject_messages](#inject_messages) |
-| `inject_task=True` | `task` | [Background Tasks: Reporting Progress](background-tasks.md#reporting-progress) |
-| `inject_notification=True` | `notification` | [Background Tasks: Status Updates](background-tasks.md#status-updates-with-inject_notification) |
-| `inject_handle=True` | `handle` | [Background Tasks: Dynamic Tool Mutation](background-tasks.md#dynamic-tool-mutation-with-inject_handle) |
+| `mf.Hidden` | `handle` | [Tools: Hidden Runtime Parameters](index.md#hidden-runtime-parameters) |
 
 ## inject_message
 

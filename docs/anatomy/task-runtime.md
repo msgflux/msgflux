@@ -78,7 +78,8 @@ percent
 
 ### `TaskHandle`
 
-`TaskHandle` is the controlled object injected into a background tool.
+`TaskHandle` is the controlled object exposed through `handle.task` inside a
+background tool.
 
 It exists so the tool can report progress without mutating the store directly.
 
@@ -203,15 +204,14 @@ not the business result itself.
 
 ## Tool Config Shape
 
-The first implementation can stay close to the current tool config model.
+The first implementation can stay close to the current tool config model while
+keeping runtime-only handles out of the model schema.
 
-Recommended additions:
+Recommended public configuration:
 
 - `background=True`
 - `allow_background=True`
-- `inject_task=True`
-- `inject_notification=True`
-- `inject_handle=True`
+- `mf.Hidden` for runtime-only handle parameters
 
 `background=True` means the developer has chosen background execution for every
 call. The model never receives a choice parameter for that tool.
@@ -223,16 +223,17 @@ payload and dispatches the tool through the background task runtime. When the
 argument is `false` or `null`, the tool runs normally. Manual callers may also
 omit the argument, which is treated the same as `false`.
 
-The important detail is that `inject_task=True` should inject a `TaskHandle`,
-not the store and not the full `ToolLibrary`.
+The important detail is that `Hidden` only removes the parameter from the
+model-facing schema. `ToolLibrary` remains responsible for mounting the actual
+runtime kwargs.
 
-`inject_handle=True` injects a controlled `handle`. The handle
-can add, remove, and list tools without exposing the whole `ToolLibrary`
-object.
+A hidden `ToolLibraryHandle` can add, remove, and list tools without exposing
+the whole `ToolLibrary` object.
 
-`inject_notification=True` injects a small `notification` handle that can
-publish agent-visible status updates. For background tools, that handle is
-automatically bound to the current `task_id`.
+For background tools, the same handle exposes task helpers such as
+`set_running`, `update_progress`, `task`, and `task_id`. It also exposes
+`notification` and `notify(...)` for agent-visible status updates. Background
+notifications are automatically bound to the current `task_id`.
 
 When the background tool is itself an `Agent`, the runtime also exposes
 `task_activity(task_id=...)` and `task_message(task_id=..., message=...)` so

@@ -15,9 +15,6 @@ def tool_config(  # noqa: C901
     background: Optional[bool] = False,
     allow_background: Optional[bool] = False,
     disable_input: Optional[bool] = False,
-    inject_task: Optional[bool] = False,
-    inject_notification: Optional[bool] = False,
-    inject_handle: Optional[bool] = False,
     on_demand: Optional[bool] = False,
     inject_message: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
@@ -68,17 +65,6 @@ def tool_config(  # noqa: C901
             will call the tool with no explicit arguments, and any arguments supplied
             by the model are ignored at runtime. This does not inject any runtime
             context by itself.
-        inject_task:
-            If True, inject a runtime `task` handle into the tool. This is only
-            valid together with `background=True`.
-        inject_notification:
-            If True, inject a runtime `notification` handle into the tool so it
-            can publish agent-visible status updates.
-        inject_handle:
-            If True, inject a controlled library handle into the tool so it can
-            add, remove, or list tools at runtime. The handle is passed to a
-            `handle` parameter when present, otherwise to the legacy
-            `tool_library` parameter.
         on_demand:
             If True, keep the tool registered in the library but hide its schema
             from the model until it is loaded through `tool_search`.
@@ -121,8 +107,6 @@ def tool_config(  # noqa: C901
         ValueError:
            `allow_background=True` is not compatible with `return_direct=True`,
            `call_as_response=True`, `spawn=True`, and `handoff=True`.
-        ValueError:
-           `inject_task=True` requires `background=True`.
         ValueError:
            `inject_vars=True` is not compatible with `call_as_response=True`.
 
@@ -183,9 +167,6 @@ def tool_config(  # noqa: C901
                 "and `handoff=True`."
             )
 
-        if inject_task and not background:
-            raise ValueError("`inject_task=True` requires `background=True`.")
-
         if inject_vars is not False and call_as_response is True:
             raise ValueError(
                 "`inject_vars` is not compatible with `call_as_response=True`"
@@ -202,9 +183,6 @@ def tool_config(  # noqa: C901
                     "call_as_response": call_as_response,
                     "handoff": handoff,
                     "disable_input": disable_input,
-                    "inject_task": inject_task,
-                    "inject_notification": inject_notification,
-                    "inject_handle": inject_handle,
                     "on_demand": on_demand,
                     "inject_message": _inject_message,
                     "inject_messages": _inject_messages,

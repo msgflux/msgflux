@@ -850,16 +850,17 @@ class TestToolLibrary:
 
         assert "tool_search" not in library.get_tool_names()
 
-    def test_inject_handle_can_add_on_demand_tool(self):
-        """Test that inject_handle can register on-demand tools."""
+    def test_hidden_handle_can_add_on_demand_tool(self):
+        """Test that hidden handle can register on-demand tools."""
 
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
             """Look up external information."""
             return query
 
-        @mf.tool_config(inject_handle=True)
-        def enable_remote_lookup(handle) -> list[str]:
+        def enable_remote_lookup(
+            handle: mf.Hidden,
+        ) -> list[str]:
             """Register an on-demand tool."""
             handle.add(remote_lookup)
             return handle.list_tools()
@@ -876,7 +877,7 @@ class TestToolLibrary:
         assert "tool_search" in schema_names
         assert "remote_lookup" not in schema_names
 
-    def test_inject_handle_add_returns_normalized_tool_name(self):
+    def test_hidden_handle_add_returns_normalized_tool_name(self):
         """Test that ToolLibraryHandle.add returns the registered tool name."""
 
         @mf.tool_config(name_override="remote_lookup")
@@ -884,8 +885,7 @@ class TestToolLibrary:
             """Look up external information."""
             return query
 
-        @mf.tool_config(inject_handle=True)
-        def enable_lookup(handle) -> str:
+        def enable_lookup(handle: mf.Hidden) -> str:
             """Register a tool."""
             return handle.add(lookup)
 

@@ -2,7 +2,17 @@ import asyncio
 import inspect
 from copy import deepcopy
 from functools import partial
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+    get_type_hints,
+)
 
 import msgflux.nn.functional as F
 from msgflux.auto import AutoParams
@@ -37,11 +47,11 @@ from msgflux.tools.helpers import (
 from msgflux.tools.helpers import (
     should_copy_injected_messages as _should_copy_injected_messages,
 )
-from msgflux.tools.helpers import (
-    uses_handle_injection as _uses_handle_injection,
-)
 from msgflux.tools.responses import ToolCall, ToolResponses
-from msgflux.tools.types import ToolLibraryOperator, ToolMetadata
+from msgflux.tools.types import (
+    ToolMetadata,
+    unwrap_hidden_annotation,
+)
 from msgflux.utils.chat import generate_tool_json_schema
 from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
 from msgflux.utils.msgspec import restore_transport_value
@@ -287,17 +297,23 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
         )
 
         # Instantiate class first if needed, so we can get instance attributes
+        class_annotation_source = impl if inspect.isclass(impl) else None
         if inspect.isclass(impl):
             impl = impl()  # Initialized
             display_name = display_name or getattr(impl, "display_name", None)
             usage_guidance = usage_guidance or getattr(impl, "usage_guidance", None)
 
         # Now extract annotations (after instantiation for classes)
-        annotations = (
-            getattr(impl, "annotations", None)
-            or getattr(impl, "__annotations__", None)
-            or getattr(impl.__call__, "__annotations__", None)
-        )
+        annotation_source = None
+        annotations = getattr(impl, "annotations", None)
+        if annotations is None:
+            annotations = getattr(impl, "__annotations__", None)
+            if annotations is not None:
+                annotation_source = class_annotation_source or impl
+        if annotations is None:
+            annotations = getattr(impl.__call__, "__annotations__", None)
+            if annotations is not None:
+                annotation_source = impl.__call__
         if annotations is None:
             if fn_has_parameters(impl.__call__):
                 raise NotImplementedError(
@@ -306,6 +322,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
                     "`self.annotations`, `self.__annotations__` or in `def __call__`"
                 )
             annotations = {}
+        annotations = _resolve_tool_annotations(annotation_source, annotations)
 
     # Case 2: Function
     elif inspect.isfunction(impl) or inspect.iscoroutinefunction(impl):
@@ -318,6 +335,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
             )
 
         annotations = impl.__annotations__
+        annotation_source = impl
 
         if annotations is None:
             if fn_has_parameters(impl):
@@ -327,6 +345,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
                     "annotations of types hint "
                 )
             annotations = {}
+        annotations = _resolve_tool_annotations(annotation_source, annotations)
 
         name = name_overridden or impl.__name__
         display_name = configured_display_name or getattr(impl, "display_name", None)
@@ -343,13 +362,11 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
         name = "transfer_to_" + name
 
     tool_config["tool_kind"] = getattr(impl, "tool_kind", None) or "tool"
-    if (
-        isinstance(impl, ToolLibraryOperator)
-        or getattr(impl, "inject_handle", False)
-    ):
-        tool_config["inject_handle"] = True
 
-    annotations = dict(annotations)
+    annotations, hidden_params = _split_hidden_annotations(annotations)
+    if hidden_params:
+        _validate_hidden_params(hidden_params)
+        tool_config["_hidden_params"] = hidden_params
 
     if tool_config.get("handoff", False) or tool_config.get("disable_input", False):
         annotations = {}  # pass only the model state
@@ -360,12 +377,6 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
             annotations.pop("messages", None)
         if tool_config.get("inject_vars", False):
             annotations.pop("vars", None)
-        if tool_config.get("inject_task", False):
-            annotations.pop("task", None)
-        if tool_config.get("inject_notification", False):
-            annotations.pop("notification", None)
-        if _uses_handle_injection(tool_config):
-            annotations.pop("handle", None)
         if (
             tool_config.get("allow_background", False)
             and not tool_config.get("background", False)
@@ -404,6 +415,63 @@ def _convert_metadata_to_local_tool(metadata: ToolMetadata) -> LocalTool:
         display_name=metadata.display_name,
         usage_guidance=metadata.usage_guidance,
     )
+
+
+def _resolve_tool_annotations(
+    annotation_source: Callable | None,
+    annotations: Mapping[str, Any],
+) -> Dict[str, Any]:
+    resolved = dict(annotations)
+    if annotation_source is None:
+        return resolved
+    try:
+        type_hints = get_type_hints(annotation_source)
+    except Exception:
+        return resolved
+    if not type_hints:
+        return resolved
+    resolved.update(type_hints)
+    return resolved
+
+
+def _split_hidden_annotations(
+    annotations: Mapping[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    public_annotations: Dict[str, Any] = {}
+    hidden_params: Dict[str, Any] = {}
+    for name, annotation in annotations.items():
+        hidden_type = unwrap_hidden_annotation(annotation)
+        if hidden_type is not None:
+            if name == "return":
+                raise ValueError("`Hidden[...]` cannot be used as a return type.")
+            hidden_params[name] = hidden_type
+            continue
+        public_annotations[name] = annotation
+    return public_annotations, hidden_params
+
+
+def _is_tool_handle_type(type_hint: Any) -> bool:
+    try:
+        return type_hint is ToolLibraryHandle or issubclass(type_hint, ToolLibraryHandle)
+    except TypeError:
+        return False
+
+
+def _is_tool_handle_param(name: str, type_hint: Any) -> bool:
+    return _is_tool_handle_type(type_hint) or (
+        name == "handle" and type_hint is Any
+    )
+
+
+def _validate_hidden_params(hidden_params: Mapping[str, Any]) -> None:
+    for name, type_hint in hidden_params.items():
+        if _is_tool_handle_param(name, type_hint):
+            continue
+        raise ValueError(
+            f"Hidden tool parameter `{name}` uses unsupported type "
+            f"`{type_hint}`. Use `handle: Hidden` or "
+            "`Hidden[ToolLibraryHandle]`."
+        )
 
 
 def _convert_module_to_nn_tool(impl: Callable) -> Tool:
@@ -965,16 +1033,14 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("inject_message", False):
             call_params["message"] = message
 
-        if (
-            config.get("inject_notification", False)
-            and config.get("tool_kind") != "agent"
-        ):
-            call_params["notification"] = self.handle.build_notification_handle(
-                tool_name=tool_name
+        for param_name, hidden_type in (config.get("_hidden_params") or {}).items():
+            if _is_tool_handle_param(param_name, hidden_type):
+                call_params[param_name] = self.handle.for_tool(tool_name=tool_name)
+                continue
+            raise ValueError(
+                f"Hidden tool parameter `{param_name}` uses unsupported type "
+                f"`{hidden_type}`."
             )
-
-        if _uses_handle_injection(config):
-            call_params["handle"] = self.handle
 
         return call_params
 

@@ -353,20 +353,6 @@ class BackgroundTaskDispatcher:
             },
         )
         runner_params = dict(call_params)
-        if config.get("inject_task", False) and not is_agent_task:
-            runner_params["task"] = TaskHandle(
-                task.task_id,
-                self.library_handle.task_store,
-                tool_name=tool_name,
-                agent_inbox=root_agent_inbox,
-            )
-        if config.get("inject_notification", False) and not is_agent_task:
-            notification = self.library_handle.build_notification_handle(
-                tool_name=tool_name,
-                ref=task.task_id,
-                agent_inbox=root_agent_inbox,
-            )
-            runner_params["notification"] = notification
         if task_kind == "agent":
             runner_params["scope"] = ExecutionScope(
                 thread_id=thread_id,

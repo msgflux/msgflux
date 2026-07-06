@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from msgflux.tools.types import ToolLibraryOperator
+from msgflux.tools.types import Hidden, ToolLibraryOperator
 
 
 class ToolSearchTool(ToolLibraryOperator):
@@ -22,6 +22,7 @@ class ToolSearchTool(ToolLibraryOperator):
         "query": str,
         "description": bool,
         "max_results": Optional[int],
+        "handle": Hidden,
         "return": dict,
     }
 

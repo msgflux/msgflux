@@ -126,8 +126,8 @@ The contract is intentionally small:
 This is useful when a session can register a large number of tools but should
 keep the active tool context small.
 
-`inject_handle=True` is the natural companion feature here: a tool can add a
-new on-demand tool at runtime, and `ToolLibrary` will expose `tool_search`
+A hidden `ToolLibraryHandle` is the natural companion feature here: a tool can
+add a new on-demand tool at runtime, and `ToolLibrary` will expose `tool_search`
 automatically if needed.
 
 `tool_search` itself is a builtin tool, not a method implemented inside

@@ -346,7 +346,6 @@ Poor tool definitions lead to:
             pass  # No docstring, no parameter description
         ```
 
-
 #### Tool Returns
 
 The way a tool returns information affects how well the model interprets and uses the result.
@@ -550,6 +549,23 @@ Control how the model selects tools.
 
     - If `tool_filter` removes a specific tool configured in `tool_choice`, the Agent falls back to `"auto"` for that request
     - If `tool_filter` removes all tools, tool usage is disabled for that request
+
+### Hidden Runtime Parameters
+
+Use `mf.Hidden` when a Python tool parameter should not be included in the
+model-facing schema. This is useful with `@mf.tool_config(...)` when a tool
+needs implementation-only runtime values.
+
+```python
+import msgflux as mf
+
+
+@mf.tool_config(background=True)
+def rebuild_index(index_name: str, handle: mf.Hidden) -> str:
+    """Rebuild a search index in the background."""
+    handle.notify(status="started", hint=f"Rebuilding {index_name}.")
+    return "started"
+```
 
 ### Structured Tool Parameters
 
