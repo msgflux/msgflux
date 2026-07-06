@@ -1,5 +1,5 @@
 import asyncio
-import sys
+import contextvars
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
@@ -23,7 +23,6 @@ class AsyncWorker:
         """Initializes a worker with its own event loop in a separate thread."""
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
-        self._shutdown = False
         self.thread.start()
 
     def submit(self, coro):
@@ -32,15 +31,8 @@ class AsyncWorker:
 
     def shutdown(self):
         """Terminates the event loop and worker thread."""
-        if self._shutdown:
-            return
-        self._shutdown = True
-        if not self.loop.is_closed():
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        if not sys.is_finalizing() and self.thread.is_alive():
-            self.thread.join()
-        if not self.thread.is_alive() and not self.loop.is_closed():
-            self.loop.close()
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join()
 
 
 class Executor:
@@ -56,8 +48,6 @@ class Executor:
         self.num_async_workers = envs.executor_num_async_workers
         self.async_worker_index = 0
         self._thread_local = threading.local()
-        self._shutdown = False
-        self._shutdown_lock = threading.Lock()
         self.thread_pool = ThreadPoolExecutor(
             max_workers=self.num_threads,
             initializer=self._mark_thread_pool_worker,
@@ -82,6 +72,8 @@ class Executor:
             return self._submit_to_async_worker(target)
 
         sync_callable, sync_args, sync_kwargs = target
+        context = contextvars.copy_context()
+        sync_callable = partial(context.run, sync_callable)
         if self._is_in_thread_pool_worker():
             return self._execute_inline(sync_callable, *sync_args, **sync_kwargs)
 
@@ -137,17 +129,9 @@ class Executor:
 
     def shutdown(self):
         """Shutdown the executor, closing the pools."""
-        with self._shutdown_lock:
-            if self._shutdown:
-                return
-            self._shutdown = True
-
-        self.thread_pool.shutdown(wait=not sys.is_finalizing())
+        self.thread_pool.shutdown()
         for worker in self.async_workers:
             worker.shutdown()
 
     def __del__(self):
-        try:
-            self.shutdown()
-        except Exception:
-            return
+        self.shutdown()

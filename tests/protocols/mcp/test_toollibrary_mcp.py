@@ -249,6 +249,60 @@ class TestToolLibraryMCPIntegration:
         assert len(schemas) >= 1
         mock_convert_schema.assert_called()
 
+    @patch("msgflux.nn.modules.tool.MCPClient")
+    @patch("msgflux.nn.modules.tool.filter_tools")
+    @patch("msgflux.nn.modules.tool.F")
+    @patch("msgflux.nn.modules.tool.convert_mcp_schema_to_tool_schema")
+    def test_on_demand_mcp_tools_are_hidden_until_loaded(
+        self, mock_convert_schema, mock_F, mock_filter_tools, mock_mcp_client
+    ):
+        """Test that on-demand MCP tools are exposed only after tool_search."""
+        from msgflux.nn.modules.tool import ToolLibrary
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.connect = AsyncMock()
+        mock_client_instance.list_tools = AsyncMock()
+        mock_mcp_client.from_stdio.return_value = mock_client_instance
+
+        mock_tools = [MCPTool(name="read_file", description="Read", inputSchema={})]
+        mock_filter_tools.return_value = mock_tools
+        mock_F.wait_for.side_effect = [None, mock_tools]
+        mock_F.scatter_gather.side_effect = lambda prepared: [call() for call in prepared]
+        mock_convert_schema.return_value = {
+            "type": "function",
+            "function": {"name": "fs__read_file", "description": "Read"},
+        }
+
+        library = ToolLibrary(
+            name="test",
+            tools=[],
+            mcp_servers=[
+                {
+                    "name": "fs",
+                    "transport": "stdio",
+                    "command": "mcp-server-fs",
+                    "tool_config": {"read_file": {"on_demand": True}},
+                }
+            ],
+        )
+
+        initial_schema_names = [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ]
+        assert initial_schema_names == ["tool_search"]
+
+        result = library(
+            [("call_1", "tool_search", {"query": "select:fs__read_file"})]
+        ).tool_calls[0].result
+
+        loaded_schema_names = [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ]
+        assert result["matches"] == ["fs__read_file"]
+        assert result["loaded"] == ["fs__read_file"]
+        assert "tool_search" not in loaded_schema_names
+        assert "fs__read_file" in loaded_schema_names
+
     def test_mcp_servers_none(self):
         """Test ToolLibrary with no MCP servers."""
         from msgflux.nn.modules.tool import ToolLibrary

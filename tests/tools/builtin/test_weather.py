@@ -9,7 +9,7 @@ import pytest
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.providers.open_meteo import ResolvedWhen
 from msgflux.nn.modules.tool import ToolLibrary
-from msgflux.tools.builtin.weather import Weather
+from msgflux.tools.builtin.weather import WeatherTool
 
 
 def response(payload):
@@ -72,12 +72,12 @@ def archive_payload():
     }
 
 
-class TestWeatherInit:
+class TestWeatherToolInit:
     def test_name_attribute(self):
-        assert Weather.name == "weather"
+        assert WeatherTool.name == "weather"
 
     def test_defaults(self):
-        tool = Weather()
+        tool = WeatherTool()
 
         assert tool.engine == "open_meteo"
         assert tool.retriever.max_future_days == 7
@@ -98,7 +98,7 @@ class TestWeatherInit:
             clear=True,
         )
 
-        tool = Weather(timeout=3)
+        tool = WeatherTool(timeout=3)
 
         assert tool.engine == "custom_weather"
         assert tool.retriever is mock_weather
@@ -116,13 +116,13 @@ class TestWeatherInit:
             clear=True,
         )
 
-        tool = Weather(engine="init_weather")
+        tool = WeatherTool(engine="init_weather")
 
         assert tool.engine == "init_weather"
         factory.assert_called_once_with("init_weather")
 
 
-class TestWeatherCall:
+class TestWeatherToolCall:
     def test_current_weather_for_city_returns_structured_result(self, mocker):
         mock_client = MagicMock()
         mock_client.get.side_effect = [
@@ -146,7 +146,7 @@ class TestWeatherCall:
             return_value=mock_client,
         )
 
-        result = Weather(forecast_hours_when_now=2)("Fortaleza")
+        result = WeatherTool(forecast_hours_when_now=2)("Fortaleza")
 
         assert isinstance(result, dotdict)
         assert result["location"] == {
@@ -175,7 +175,7 @@ class TestWeatherCall:
             return_value=mock_client,
         )
 
-        result = Weather()("-3.71722;-38.54306")
+        result = WeatherTool()("-3.71722;-38.54306")
 
         assert result["location"]["source"] == "coordinates"
         assert result["location"]["latitude"] == -3.71722
@@ -192,12 +192,12 @@ class TestWeatherCall:
 
         target = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
         mocker.patch.object(
-            type(Weather().retriever),
+            type(WeatherTool().retriever),
             "_resolve_when",
             return_value=ResolvedWhen("-1d", target, "past"),
         )
 
-        result = Weather()("-3.71722,-38.54306", when="-1d")
+        result = WeatherTool()("-3.71722,-38.54306", when="-1d")
 
         assert result["source"]["endpoint"] == "archive"
         assert result["weather"]["time"] == "2026-05-04T09:00"
@@ -215,12 +215,12 @@ class TestWeatherCall:
 
         target = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
         mocker.patch.object(
-            type(Weather().retriever),
+            type(WeatherTool().retriever),
             "_resolve_when",
             return_value=ResolvedWhen("+2h", target, "future"),
         )
 
-        result = Weather()("-3.71722,-38.54306", when="+2h")
+        result = WeatherTool()("-3.71722,-38.54306", when="+2h")
 
         assert result["weather"]["time"] == "2026-05-05T11:00"
         assert result["weather"]["temperature_c"] == 30.0
@@ -235,26 +235,26 @@ class TestWeatherCall:
         )
 
         with pytest.raises(RuntimeError, match="Failed to resolve location"):
-            Weather()("Fortaleza")
+            WeatherTool()("Fortaleza")
 
 
-class TestWeatherValidation:
+class TestWeatherToolValidation:
     def test_invalid_location_raises(self):
         with pytest.raises(ValueError, match="location"):
-            Weather()("")
+            WeatherTool()("")
 
     def test_invalid_when_raises(self):
         with pytest.raises(ValueError, match="when must be"):
-            Weather().retriever._resolve_when("tomorrow morning")
+            WeatherTool().retriever._resolve_when("tomorrow morning")
 
     def test_out_of_range_coordinates_raise(self):
         with pytest.raises(ValueError, match="Latitude"):
-            Weather()("91,0")
+            WeatherTool()("91,0")
 
 
 class TestWeatherToolLibraryIntegration:
     def test_schema_exposes_location_and_when(self):
-        tool = Weather()
+        tool = WeatherTool()
         library = ToolLibrary(name="weather", tools=[tool])
 
         schema = library.get_tool_json_schemas()[0]["function"]
@@ -267,7 +267,7 @@ class TestWeatherToolLibraryIntegration:
         assert "output_mode" not in props
 
     def test_schema_can_be_generated_from_class(self):
-        library = ToolLibrary(name="weather", tools=[Weather])
+        library = ToolLibrary(name="weather", tools=[WeatherTool])
 
         schema = library.get_tool_json_schemas()[0]["function"]
 
@@ -284,7 +284,7 @@ async def test_weather_async_call_with_coordinates(mocker):
         return_value=mock_client,
     )
 
-    result = await Weather().acall("-3.71722,-38.54306")
+    result = await WeatherTool().acall("-3.71722,-38.54306")
 
     assert result["location"]["source"] == "coordinates"
     assert result["weather"]["temperature_c"] == 28.0

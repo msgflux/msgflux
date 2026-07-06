@@ -1,11 +1,13 @@
 # nn.Agent
 
-
-The `Agent` is a `Module` that uses language models to solve tasks. It can handle multimodal data, interact with environments through tool calls, and manage complex workflows with structured outputs.
-
 ## ✦₊⁺ Overview
 
-An `Agent` combines a language model with instructions and tools to accomplish tasks. The Agent module adopts a task decomposition strategy, allowing each part of a task to be treated in isolation.
+The `Agent` is a `Module` that uses language models to solve tasks. It can
+handle multimodal data, interact with environments through tool calls, and
+manage complex workflows with structured outputs.
+
+The Agent module adopts a task decomposition strategy, allowing each part of a
+task to be treated in isolation.
 
 ### Key Features
 
@@ -31,9 +33,16 @@ An `Agent` combines a language model with instructions and tools to accomplish t
 | [System Prompt Components](system-prompt.md) | Compose system prompts from components |
 | [Generation Schemas](generation-schemas.md) | Structured outputs and reasoning strategies |
 | [Task and Context](task-and-context.md) | Input handling, templates, multimodal, chat history |
+| [Runtime](runtime.md) | Threads, runs, checkpoints, inbox controls, and abort signals |
 | [Vars](vars.md) | Unified execution variable space |
-| [Tools](tools.md) | Tool calling, configuration, MCP, agent-as-tool |
+| [Tools](tools/index.md) | Tool calling overview |
+| [Builtin Tools](tools/builtin.md) | Built-in web, weather, agent, skill, and runtime tools |
+| [Tool Config](tools/config.md) | Per-tool behavior, runtime injection, retries, display names, and usage guidance |
+| [Tool Search](tools/tool-search.md) | On-demand tools and `tool_search` activation |
 | [Agent Skills](skills.md) | Reusable `SKILL.md` workflows loaded through progressive disclosure |
+| [Background Tasks](tools/background-tasks.md) | Async tool dispatch, task polling, progress, and notifications |
+| [Agent Tool](tools/agent-tool.md) | Subagents, `AgentTool`, and tool buckets |
+| [MCP Tools](tools/mcp.md) | Connect external Model Context Protocol servers |
 | [Signatures](signatures.md) | Declarative input/output specifications |
 | [Hooks & Guards](hooks.md) | Input and output safety checks with configurable policy |
 | [Model Gateway](model-gateway.md) | Multi-model routing |

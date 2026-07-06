@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
 from inspect import cleandoc
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -16,6 +16,7 @@ from typing import (
 import msgspec
 
 from msgflux.auto import AutoParams
+from msgflux.chat_messages import ChatMessages
 from msgflux.core.dotdict import dotdict
 from msgflux.core.examples import Example, ExampleCollection
 from msgflux.core.message import Message
@@ -26,7 +27,12 @@ from msgflux.dsl.signature import (
     generate_annotations_from_signature,
 )
 from msgflux.dsl.typed_parsers.registry import typed_parser_registry
-from msgflux.exceptions import _GuardInterrupt
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+    _GuardInterrupt,
+)
 from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.generation.templates import (
     EXPECTED_OUTPUTS_TEMPLATE,
@@ -43,15 +49,27 @@ from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
+from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
+from msgflux.runtime.context import (
+    ExecutionScope,
+    execution_context,
+    get_execution_context,
+    new_run_id,
+    new_thread_id,
+)
 from msgflux.runtime.skills import AgentSkillManager, SkillsConfig
-from msgflux.tools.builtin import ActivateSkill, SkillSearch
+from msgflux.tools.builtin import ActivateSkillTool, SkillSearchTool
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.common import has_format_placeholder, is_jinja_template
 from msgflux.utils.console import cprint
 from msgflux.utils.msgspec import StructFactory, is_optional_field, msgspec_dumps
+from msgflux.utils.time import utc_current_date, utc_now_isoformat
 from msgflux.utils.validation import is_subclass_of
 from msgflux.utils.xml import apply_xml_tags
+
+if TYPE_CHECKING:
+    from msgflux.data.stores import CheckpointStore
 
 # Reserved kwargs that should not be treated as task inputs
 _RESERVED_KWARGS = {
@@ -62,6 +80,8 @@ _RESERVED_KWARGS = {
     "task_context",
     "model_preference",
     "tool_filter",
+    "scope",
+    "tool_call_id",
 }
 
 _UNSET = object()
@@ -114,6 +134,10 @@ class Agent(Module, metaclass=AutoParams):
         "tool_responses",
     ]
 
+    @property
+    def tool_kind(self) -> str:
+        return "agent"
+
     def __init__(  # noqa: C901
         self,
         name: str,
@@ -139,6 +163,8 @@ class Agent(Module, metaclass=AutoParams):
         signature: Optional[Union[str, Signature]] = None,
         description: Optional[str] = None,
         annotations: Optional[Mapping[str, type]] = None,
+        checkpointer: Optional["CheckpointStore"] = None,
+        agent_inbox: Optional[AgentInbox] = None,
     ):
         """Initialize the Agent module.
 
@@ -337,6 +363,16 @@ class Agent(Module, metaclass=AutoParams):
             self.set_annotations(_DEFAULT_AGENT_ANNOTATIONS.copy())
 
         self._set_config(config)
+        self.checkpointer = checkpointer
+        if agent_inbox is None:
+            self.agent_inbox = AgentInbox(
+                verbose=config.get("verbose", False) if config else False,
+                owner=name,
+            )
+        else:
+            self.agent_inbox = agent_inbox
+            if config and config.get("verbose", False):
+                self.agent_inbox.set_verbose(True)
 
         stream = config.get("stream", False) if config else False
 
@@ -393,6 +429,18 @@ class Agent(Module, metaclass=AutoParams):
             self._set_expected_output(expected_output)
             self._set_instructions(instructions)
             self._set_system_message(system_message)
+
+    def _get_requested_scope(
+        self, kwargs: Mapping[str, Any]
+    ) -> Optional[ExecutionScope]:
+        scope = kwargs.get("scope")
+        if scope is None:
+            return None
+        if not isinstance(scope, ExecutionScope):
+            raise TypeError(
+                f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
+            )
+        return scope
 
     def forward(
         self,
@@ -465,13 +513,59 @@ class Agent(Module, metaclass=AutoParams):
             >>> # Filter tools - block specific tools
             >>> agent("query", tool_filter={"block": ["browser"]})
         """
-        inputs = self._prepare_inputs(message, **kwargs)
-        try:
-            model_response = self._execute_model(prefilling=self.prefilling, **inputs)
-        except _GuardInterrupt as e:
-            return self._define_response_mode(e.response, message)
-        response = self._process_model_response(message, model_response, **inputs)
-        return response
+        requested_scope = self._get_requested_scope(kwargs)
+        resumed = self._try_resume_from_checkpoint(
+            kwargs.get("messages"),
+            scope=requested_scope,
+        )
+        if resumed is not None:
+            resumed["vars"] = kwargs.get("vars", {})
+        inputs = resumed or self._prepare_inputs(message, **kwargs)
+
+        effective_checkpointer = self._get_effective_checkpointer()
+        effective_task_store = self._get_effective_task_store()
+        effective_inbox = self._get_effective_agent_inbox()
+        if effective_task_store is not None:
+            self.tool_library.set_task_store(effective_task_store)
+        if effective_inbox is not None:
+            effective_inbox.bind_scope(
+                inputs.get("scope"),
+                namespace=self.get_module_name(),
+            )
+        with execution_context(
+            scope=inputs.get("scope"),
+            checkpoint_store=effective_checkpointer,
+            task_store=effective_task_store,
+            agent_inbox=effective_inbox,
+        ):
+            try:
+                model_response = self._execute_model(
+                    prefilling=self.prefilling,
+                    **inputs,
+                )
+            except _GuardInterrupt as e:
+                return self._define_response_mode(e.response, message)
+            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+                self._checkpoint_interrupted(inputs, exc)
+                self._raise_interrupted_from_abort(inputs, exc)
+            except TaskPauseRequestedError:
+                self._checkpoint_save(
+                    inputs.get("messages"), inputs.get("vars", {}), status="paused"
+                )
+                raise
+            except Exception:
+                self._checkpoint_save_on_error(inputs)
+                raise
+            try:
+                response = self._process_model_response(
+                    message,
+                    model_response,
+                    **inputs,
+                )
+            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+                self._checkpoint_interrupted(inputs, exc)
+                self._raise_interrupted_from_abort(inputs, exc)
+            return response
 
     async def aforward(
         self,
@@ -479,28 +573,74 @@ class Agent(Module, metaclass=AutoParams):
         **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
-        inputs = await self._aprepare_inputs(message, **kwargs)
-        try:
-            model_response = await self._aexecute_model(
-                prefilling=self.prefilling, **inputs
-            )
-        except _GuardInterrupt as e:
-            return self._define_response_mode(e.response, message)
-        response = await self._aprocess_model_response(
-            message, model_response, **inputs
+        requested_scope = self._get_requested_scope(kwargs)
+        resumed = await self._atry_resume_from_checkpoint(
+            kwargs.get("messages"),
+            scope=requested_scope,
         )
-        return response
+        if resumed is not None:
+            resumed["vars"] = kwargs.get("vars", {})
+        inputs = resumed or await self._aprepare_inputs(message, **kwargs)
+
+        effective_checkpointer = self._get_effective_checkpointer()
+        effective_task_store = self._get_effective_task_store()
+        effective_inbox = self._get_effective_agent_inbox()
+        if effective_task_store is not None:
+            self.tool_library.set_task_store(effective_task_store)
+        if effective_inbox is not None:
+            effective_inbox.bind_scope(
+                inputs.get("scope"),
+                namespace=self.get_module_name(),
+            )
+        with execution_context(
+            scope=inputs.get("scope"),
+            checkpoint_store=effective_checkpointer,
+            task_store=effective_task_store,
+            agent_inbox=effective_inbox,
+        ):
+            try:
+                model_response = await self._aexecute_model(
+                    prefilling=self.prefilling,
+                    **inputs,
+                )
+            except _GuardInterrupt as e:
+                return self._define_response_mode(e.response, message)
+            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+                await self._acheckpoint_interrupted(inputs, exc)
+                self._raise_interrupted_from_abort(inputs, exc)
+            except TaskPauseRequestedError:
+                await self._acheckpoint_save(
+                    inputs.get("messages"),
+                    inputs.get("vars", {}),
+                    status="paused",
+                )
+                raise
+            except Exception:
+                await self._acheckpoint_save_on_error(inputs)
+                raise
+            try:
+                response = await self._aprocess_model_response(
+                    message,
+                    model_response,
+                    **inputs,
+                )
+            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+                await self._acheckpoint_interrupted(inputs, exc)
+                self._raise_interrupted_from_abort(inputs, exc)
+            return response
 
     # --- Model Execution ---
 
     def _execute_model(
         self,
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        scope: Optional[ExecutionScope] = None,  # noqa: ARG002
     ) -> Union[ModelResponse, ModelStreamResponse]:
+        self._raise_if_background_task_interrupted()
         model_execution_params = self._prepare_model_execution(
             messages=messages,
             prefilling=prefilling,
@@ -514,12 +654,14 @@ class Agent(Module, metaclass=AutoParams):
 
     async def _aexecute_model(
         self,
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        scope: Optional[ExecutionScope] = None,  # noqa: ARG002
     ) -> Union[ModelResponse, ModelStreamResponse]:
+        self._raise_if_background_task_interrupted()
         model_execution_params = self._prepare_model_execution(
             messages=messages,
             prefilling=prefilling,
@@ -635,12 +777,20 @@ class Agent(Module, metaclass=AutoParams):
 
     def _prepare_model_execution(
         self,
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
+        *,
         prefilling: Optional[str] = None,
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        drain_notifications: bool = True,
+        scope: Optional[ExecutionScope] = None,  # noqa: ARG002
     ) -> Mapping[str, Any]:
+        model_messages = self._build_model_messages(
+            messages,
+            drain_notifications=drain_notifications,
+        )
+
         tool_schemas = self.tool_library.get_tool_json_schemas()
 
         tool_choice = self.config.get("tool_choice")
@@ -681,7 +831,7 @@ class Agent(Module, metaclass=AutoParams):
                 system_prompt = flow_control_tools
 
         model_execution_params = dotdict(
-            messages=messages,
+            messages=model_messages,
             system_prompt=system_prompt or None,
             prefilling=prefilling,
             stream=self.config.get("stream", False),
@@ -705,9 +855,7 @@ class Agent(Module, metaclass=AutoParams):
 
         error = getattr(model_response, "error", None)
         if error is not None:
-            raise RuntimeError(
-                f"Model stream failed before producing a response: {error}"
-            ) from error
+            raise error
 
         raise RuntimeError("Model stream ended before producing a response type.")
 
@@ -715,14 +863,30 @@ class Agent(Module, metaclass=AutoParams):
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        scope: Optional[ExecutionScope] = None,  # noqa: ARG002
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
         if isinstance(model_response, ModelStreamResponse):
             wait_for_event(model_response._response_type_event)
             self._ensure_stream_response_ready(model_response)
+            if model_response.response_type != "tool_call":
+                self._checkpoint_save(messages, vars, status="streaming")
+                self._attach_stream_checkpoint_finalizer(
+                    model_response,
+                    messages,
+                    vars,
+                )
+                return self._prepare_response(
+                    model_response,
+                    model_response.response_type,
+                    messages,
+                    message,
+                    vars,
+                    model_response.reasoning,
+                )
 
         if "tool_call" in model_response.response_type:
             model_response, messages = self._process_tool_call_response(
@@ -752,6 +916,24 @@ class Agent(Module, metaclass=AutoParams):
             response_type = "tool_responses"
             reasoning = None
 
+        self._append_response_to_chat_messages(
+            messages,
+            raw_response,
+            response_type,
+            getattr(model_response, "metadata", None)
+            if isinstance(model_response, (ModelResponse, ModelStreamResponse))
+            else None,
+        )
+        self._finalize_chat_turn(
+            messages,
+            raw_response,
+            response_type,
+            getattr(model_response, "metadata", None)
+            if isinstance(model_response, (ModelResponse, ModelStreamResponse))
+            else None,
+        )
+        self._checkpoint_save(messages, vars, status="completed")
+
         if response_type in self._supported_outputs:
             response = self._prepare_response(
                 raw_response, response_type, messages, message, vars, reasoning
@@ -764,14 +946,30 @@ class Agent(Module, metaclass=AutoParams):
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
+        scope: Optional[ExecutionScope] = None,  # noqa: ARG002
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
         if isinstance(model_response, ModelStreamResponse):
             await await_for_event(model_response._response_type_event)
             self._ensure_stream_response_ready(model_response)
+            if model_response.response_type != "tool_call":
+                await self._acheckpoint_save(messages, vars, status="streaming")
+                self._attach_stream_checkpoint_finalizer(
+                    model_response,
+                    messages,
+                    vars,
+                )
+                return self._prepare_response(
+                    model_response,
+                    model_response.response_type,
+                    messages,
+                    message,
+                    vars,
+                    model_response.reasoning,
+                )
 
         if "tool_call" in model_response.response_type:
             model_response, messages = await self._aprocess_tool_call_response(
@@ -804,6 +1002,24 @@ class Agent(Module, metaclass=AutoParams):
             response_type = "tool_responses"
             reasoning = None
 
+        self._append_response_to_chat_messages(
+            messages,
+            raw_response,
+            response_type,
+            getattr(model_response, "metadata", None)
+            if isinstance(model_response, (ModelResponse, ModelStreamResponse))
+            else None,
+        )
+        self._finalize_chat_turn(
+            messages,
+            raw_response,
+            response_type,
+            getattr(model_response, "metadata", None)
+            if isinstance(model_response, (ModelResponse, ModelStreamResponse))
+            else None,
+        )
+        await self._acheckpoint_save(messages, vars, status="completed")
+
         if response_type in self._supported_outputs:
             response = self._prepare_response(
                 raw_response, response_type, messages, message, vars, reasoning
@@ -818,11 +1034,14 @@ class Agent(Module, metaclass=AutoParams):
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        messages: Mapping[str, Any],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
-    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+    ) -> Tuple[
+        Union[str, Mapping[str, Any], ModelStreamResponse],
+        Union[ChatMessages, List[Mapping[str, Any]]],
+    ]:
         """Handle tool flow control responses using the ToolFlowControl interface."""
         max_tool_turns = self.config.get("max_tool_turns")
         completed_tool_turns = 0
@@ -876,6 +1095,8 @@ class Agent(Module, metaclass=AutoParams):
 
                 # Use interface to build history
                 messages = flow_control.build_history(raw_response, messages)
+                self._drain_inbox_into_messages(messages)
+                self._checkpoint_save(messages, vars)
 
             model_response = self._execute_model(
                 messages=messages,
@@ -888,11 +1109,14 @@ class Agent(Module, metaclass=AutoParams):
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        messages: Mapping[str, Any],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
-    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+    ) -> Tuple[
+        Union[str, Mapping[str, Any], ModelStreamResponse],
+        Union[ChatMessages, List[Mapping[str, Any]]],
+    ]:
         """Async version of _process_tool_flow_control_response.
         Handle tool flow control responses using the ToolFlowControl interface.
         """
@@ -950,6 +1174,8 @@ class Agent(Module, metaclass=AutoParams):
 
                 # Use interface to build history (async version)
                 messages = await flow_control.abuild_history(raw_response, messages)
+                self._drain_inbox_into_messages(messages)
+                await self._acheckpoint_save(messages, vars)
 
             model_response = await self._aexecute_model(
                 messages=messages,
@@ -962,11 +1188,14 @@ class Agent(Module, metaclass=AutoParams):
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        messages: Mapping[str, Any],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
-    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+    ) -> Tuple[
+        Union[str, Mapping[str, Any], ModelStreamResponse],
+        Union[ChatMessages, List[Mapping[str, Any]]],
+    ]:
         """ToolCall example:
         [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
         'type': 'function', 'function': {'arguments': '{"order_id":"order_12345"}',
@@ -1001,9 +1230,17 @@ class Agent(Module, metaclass=AutoParams):
                         cprint(repr_str, bc="br2", ls="b")
 
                 tool_callings = raw_response.get_calls()
-                tool_results = self._process_tool_call(
-                    tool_callings, message, messages, vars
-                )
+                try:
+                    tool_results = self._process_tool_call(
+                        tool_callings, message, messages, vars
+                    )
+                except TaskInterruptRequestedError as exc:
+                    self._append_interrupted_tool_response_messages(
+                        messages,
+                        raw_response,
+                        reason=str(exc),
+                    )
+                    raise
                 completed_tool_turns += 1
 
                 if tool_results.return_directly:
@@ -1020,6 +1257,8 @@ class Agent(Module, metaclass=AutoParams):
                 raw_response.insert_results(id_results)
                 tool_responses_message = raw_response.get_messages()
                 messages.extend(tool_responses_message)
+                self._drain_inbox_into_messages(messages)
+                self._checkpoint_save(messages, vars)
             else:
                 return model_response, messages
 
@@ -1034,11 +1273,14 @@ class Agent(Module, metaclass=AutoParams):
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
-        messages: Mapping[str, Any],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
         model_preference: Optional[str] = None,
         tool_filter: Optional[ToolFilter] = None,
-    ) -> Tuple[Union[str, Mapping[str, Any], ModelStreamResponse], Mapping[str, Any]]:
+    ) -> Tuple[
+        Union[str, Mapping[str, Any], ModelStreamResponse],
+        Union[ChatMessages, List[Mapping[str, Any]]],
+    ]:
         """Async version of _process_tool_call_response.
         ToolCall example: [{'role': 'assistant', 'tool_responses': [{'id': 'call_1YL',
         'type': 'function', 'function': {'arguments': '{"order_id":"order_12345"}',
@@ -1073,9 +1315,17 @@ class Agent(Module, metaclass=AutoParams):
                         cprint(repr_str, bc="br2", ls="b")
 
                 tool_callings = raw_response.get_calls()
-                tool_results = await self._aprocess_tool_call(
-                    tool_callings, message, messages, vars
-                )
+                try:
+                    tool_results = await self._aprocess_tool_call(
+                        tool_callings, message, messages, vars
+                    )
+                except TaskInterruptRequestedError as exc:
+                    self._append_interrupted_tool_response_messages(
+                        messages,
+                        raw_response,
+                        reason=str(exc),
+                    )
+                    raise
                 completed_tool_turns += 1
 
                 if tool_results.return_directly:
@@ -1092,6 +1342,8 @@ class Agent(Module, metaclass=AutoParams):
                 raw_response.insert_results(id_results)
                 tool_responses_message = raw_response.get_messages()
                 messages.extend(tool_responses_message)
+                self._drain_inbox_into_messages(messages)
+                await self._acheckpoint_save(messages, vars)
             else:
                 return model_response, messages
 
@@ -1106,7 +1358,7 @@ class Agent(Module, metaclass=AutoParams):
         self,
         tool_callings: Mapping[str, Any],
         message: Union[str, Mapping[str, Any], Message],
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
     ) -> ToolResponses:
         if self.config.get("verbose", False):
@@ -1134,7 +1386,7 @@ class Agent(Module, metaclass=AutoParams):
         self,
         tool_callings: Mapping[str, Any],
         message: Union[str, Mapping[str, Any], Message],
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
     ) -> ToolResponses:
         """Async version of _process_tool_call."""
@@ -1168,7 +1420,7 @@ class Agent(Module, metaclass=AutoParams):
         self,
         raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
         response_type: str,
-        messages: List[Mapping[str, Any]],
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
         message: Union[str, Mapping[str, Any], Message],
         vars: Mapping[str, Any],
         reasoning: Optional[str] = None,
@@ -1207,7 +1459,11 @@ class Agent(Module, metaclass=AutoParams):
     # --- Task Preparation ---
 
     def _prepare_inputs(  # noqa: C901
-        self, message: Optional[Union[str, Message, Mapping[str, Any]]] = None, **kwargs
+        self,
+        message: Optional[Union[str, Message, Mapping[str, Any]]] = None,
+        *,
+        start_turn: bool = True,
+        **kwargs,
     ) -> Mapping[str, Any]:
         """Prepare model input in ChatML format and execution params."""
         # Extract reserved kwargs
@@ -1216,6 +1472,12 @@ class Agent(Module, metaclass=AutoParams):
         messages = kwargs.pop("messages", None)
         model_preference = kwargs.pop("model_preference", None)
         tool_filter = kwargs.pop("tool_filter", None)
+        scope = kwargs.pop("scope", None)
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError(
+                f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
+            )
+        kwargs.pop("tool_call_id", None)
 
         # Get remaining kwargs (potential task inputs)
         remaining_kwargs = {
@@ -1271,6 +1533,22 @@ class Agent(Module, metaclass=AutoParams):
         validation_inputs = self._get_validation_inputs(message, task, vars)
         if validation_inputs is not None:
             self._validate_inputs(validation_inputs)
+
+        (
+            messages,
+            effective_scope,
+            effective_thread_id,
+            effective_run_id,
+        ) = self._prepare_messages_scope(messages=messages, scope=scope)
+        # A brand-new run in an existing thread continues from the latest
+        # checkpointed messages, but keeps vars from the current call.
+        messages, vars, model_preference = self._continue_thread_from_checkpoint(
+            messages=messages,
+            vars=vars,
+            model_preference=model_preference,
+            thread_id=effective_thread_id,
+            run_id=effective_run_id,
+        )
 
         content = self._render_task(message, task=task, vars=vars, **kwargs)
 
@@ -1284,7 +1562,24 @@ class Agent(Module, metaclass=AutoParams):
                 "  - agent(param1=..., param2=...)"
             )
 
-        if content is not None:
+        if isinstance(messages, ChatMessages):
+            messages.configure_thread(
+                thread_id=effective_thread_id,
+                namespace=self.get_module_name(),
+            )
+            if start_turn:
+                self._start_chat_turn_if_needed(
+                    messages=messages,
+                    content=content,
+                    task=task,
+                    vars=vars,
+                    turn_id=effective_run_id,
+                    kwargs=kwargs,
+                    message=message,
+                )
+            if content is not None:
+                messages.add_user(content)
+        elif content is not None:
             chat_content = [ChatBlock.user(content)]
             if messages is None:
                 messages = chat_content
@@ -1303,10 +1598,15 @@ class Agent(Module, metaclass=AutoParams):
             "model_preference": model_preference,
             "tool_filter": tool_filter,
             "vars": vars,
+            "scope": effective_scope,
         }
 
     async def _aprepare_inputs(  # noqa: C901
-        self, message: Optional[Union[str, Message, Mapping[str, Any]]] = None, **kwargs
+        self,
+        message: Optional[Union[str, Message, Mapping[str, Any]]] = None,
+        *,
+        start_turn: bool = True,
+        **kwargs,
     ) -> Mapping[str, Any]:
         """Async version of _prepare_inputs.
         Prepare model input in ChatML format and execution params.
@@ -1317,6 +1617,12 @@ class Agent(Module, metaclass=AutoParams):
         messages = kwargs.pop("messages", None)
         model_preference = kwargs.pop("model_preference", None)
         tool_filter = kwargs.pop("tool_filter", None)
+        scope = kwargs.pop("scope", None)
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError(
+                f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
+            )
+        kwargs.pop("tool_call_id", None)
 
         # Get remaining kwargs (potential task inputs)
         remaining_kwargs = {
@@ -1373,6 +1679,22 @@ class Agent(Module, metaclass=AutoParams):
         if validation_inputs is not None:
             self._validate_inputs(validation_inputs)
 
+        (
+            messages,
+            effective_scope,
+            effective_thread_id,
+            effective_run_id,
+        ) = self._prepare_messages_scope(messages=messages, scope=scope)
+        # A brand-new run in an existing thread continues from the latest
+        # checkpointed messages, but keeps vars from the current call.
+        messages, vars, model_preference = await self._acontinue_thread_from_checkpoint(
+            messages=messages,
+            vars=vars,
+            model_preference=model_preference,
+            thread_id=effective_thread_id,
+            run_id=effective_run_id,
+        )
+
         content = await self._arender_task(message, task=task, vars=vars, **kwargs)
 
         if content is None and not messages:
@@ -1385,13 +1707,29 @@ class Agent(Module, metaclass=AutoParams):
                 "  - agent(param1=..., param2=...)"
             )
 
-        if content is not None:
+        if isinstance(messages, ChatMessages):
+            messages.configure_thread(
+                thread_id=effective_thread_id,
+                namespace=self.get_module_name(),
+            )
+            if start_turn:
+                self._start_chat_turn_if_needed(
+                    messages=messages,
+                    content=content,
+                    task=task,
+                    vars=vars,
+                    turn_id=effective_run_id,
+                    kwargs=kwargs,
+                    message=message,
+                )
+            if content is not None:
+                messages.add_user(content)
+        elif content is not None:
             chat_content = [ChatBlock.user(content)]
             if messages is None:
                 messages = chat_content
             else:
                 messages.extend(chat_content)
-        # messages is already set when content is None
 
         if model_preference is None and isinstance(message, dotdict):
             model_preference = self.get_model_preference_from_message(message)
@@ -1405,6 +1743,7 @@ class Agent(Module, metaclass=AutoParams):
             "model_preference": model_preference,
             "tool_filter": tool_filter,
             "vars": vars,
+            "scope": effective_scope,
         }
 
     def _render_task(  # noqa: C901
@@ -1750,9 +2089,11 @@ class Agent(Module, metaclass=AutoParams):
         Accepts the same arguments as forward() to inspect what would be sent to
         the model.
         """
-        inputs = self._prepare_inputs(message, **kwargs)
+        inputs = self._prepare_inputs(message, start_turn=False, **kwargs)
         model_execution_params = self._prepare_model_execution(
-            prefilling=self.prefilling, **inputs
+            prefilling=self.prefilling,
+            drain_notifications=False,
+            **inputs,
         )
         return model_execution_params
 
@@ -1882,6 +2223,727 @@ class Agent(Module, metaclass=AutoParams):
             )
         return {"block": "*"}
 
+    # --- Message State Helpers ---
+
+    def _coerce_chat_messages(
+        self,
+        messages: Optional[Union[ChatMessages, List[Mapping[str, Any]]]] = None,
+    ) -> ChatMessages:
+        if messages is None:
+            return ChatMessages()
+        if isinstance(messages, ChatMessages):
+            return messages
+        if isinstance(messages, list):
+            return ChatMessages(messages)
+        raise TypeError(
+            "`messages` must be a `ChatMessages`, a list of mappings or None, "
+            f"given `{type(messages)}`"
+        )
+
+    # --- Execution Context Resolution ---
+
+    def _get_effective_checkpointer(self):
+        checkpointer = getattr(self, "checkpointer", None)
+        if checkpointer is not None:
+            return checkpointer
+        return get_execution_context().get("checkpoint_store")
+
+    def _get_effective_task_store(self):
+        return get_execution_context().get("task_store")
+
+    def _get_effective_agent_inbox(self):
+        inherited = get_execution_context().get("agent_inbox")
+        if inherited is not None:
+            return inherited
+        return getattr(self, "agent_inbox", None)
+
+    def set_agent_inbox(self, agent_inbox: AgentInbox) -> None:
+        self.agent_inbox = agent_inbox
+        self.tool_library.set_agent_inbox(agent_inbox)
+
+    def _raise_if_background_task_interrupted(self) -> None:
+        task_handle = get_execution_context().get("task_handle")
+        if task_handle is None:
+            return
+        if task_handle.is_interrupt_requested():
+            if self.config.get("verbose", False):
+                cprint(
+                    f"[{self.name}][task_interrupt] task_id={task_handle.task_id}",
+                    bc="b",
+                    ls="b",
+                )
+            raise TaskInterruptRequestedError(task_handle.task_id)
+
+    def _handle_control_notifications(
+        self,
+        notifications: List[AgentNotification],
+    ) -> List[AgentNotification]:
+        remaining = []
+        for notification in notifications:
+            if notification.source != "control":
+                remaining.append(notification)
+                continue
+
+            command = (notification.status or "").lower()
+            reason = notification.hint or notification.metadata.get("reason")
+            task_handle = get_execution_context().get("task_handle")
+            task_id = getattr(task_handle, "task_id", None)
+
+            if command == "interrupt":
+                raise TaskInterruptRequestedError(
+                    task_id or get_execution_context().get("run_id") or "unknown",
+                    str(reason) if reason else None,
+                )
+            if command == "pause":
+                raise TaskPauseRequestedError(
+                    task_id if isinstance(task_id, str) else None,
+                    str(reason) if reason else None,
+                )
+
+            remaining.append(notification)
+        return remaining
+
+    def _drain_inbox_into_messages(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        *,
+        drain_notifications: bool = True,
+    ) -> bool:
+        inbox = self._get_effective_agent_inbox()
+        if inbox is None:
+            return False
+
+        notifications = inbox.drain() if drain_notifications else inbox.peek()
+        notifications = self._handle_control_notifications(notifications)
+        if not notifications:
+            return False
+
+        notification_messages = inbox.render_messages(notifications)
+        self._persist_notification_messages(messages, notification_messages)
+        return bool(notification_messages)
+
+    # --- Inbox Delivery ---
+
+    def _build_model_messages(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        *,
+        drain_notifications: bool = True,
+    ) -> List[Mapping[str, Any]]:
+        if isinstance(messages, ChatMessages):
+            working_messages: Union[ChatMessages, List[Mapping[str, Any]]] = (
+                messages if drain_notifications else messages.copy()
+            )
+        else:
+            working_messages = messages if drain_notifications else list(messages)
+
+        self._drain_inbox_into_messages(
+            working_messages,
+            drain_notifications=drain_notifications,
+        )
+        if isinstance(working_messages, ChatMessages):
+            return working_messages.to_chatml()
+        return list(working_messages)
+
+    def _persist_notification_message(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        notification_message: Optional[Mapping[str, Any]],
+    ) -> None:
+        if notification_message is None:
+            return
+        if isinstance(messages, ChatMessages):
+            if messages.get_active_turn_size() <= 2:
+                messages.insert_before_active_turn(notification_message)
+            else:
+                messages.append(notification_message)
+            return
+        messages.append(notification_message)
+
+    def _persist_notification_messages(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        notification_messages: List[Mapping[str, Any]],
+    ) -> None:
+        for notification_message in notification_messages:
+            self._persist_notification_message(messages, notification_message)
+
+    # --- Thread And Run Resolution ---
+
+    def _prepare_messages_scope(
+        self,
+        *,
+        messages: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        scope: Optional[ExecutionScope],
+    ) -> Tuple[
+        Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        ExecutionScope,
+        str,
+        str,
+    ]:
+        effective_checkpointer = self._get_effective_checkpointer()
+        should_use_chat_messages = (
+            effective_checkpointer is not None
+            or isinstance(messages, ChatMessages)
+            or scope is not None
+        )
+        if should_use_chat_messages:
+            messages = self._coerce_chat_messages(messages)
+
+        effective_thread_id = self._resolve_thread_id(
+            messages=messages,
+            thread_id=scope.thread_id if scope is not None else None,
+        )
+        effective_run_id = self._resolve_run_id(
+            messages=messages,
+            run_id=scope.run_id if scope is not None else None,
+        )
+        effective_scope = (scope or get_execution_context()["scope"]).with_overrides(
+            thread_id=effective_thread_id,
+            namespace=self.get_module_name(),
+            run_id=effective_run_id,
+        )
+        return messages, effective_scope, effective_thread_id, effective_run_id
+
+    def _resolve_thread_id(
+        self,
+        *,
+        messages: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        thread_id: Optional[str],
+    ) -> str:
+        if isinstance(thread_id, str) and thread_id:
+            return thread_id
+        if isinstance(messages, ChatMessages) and messages.thread_id:
+            return messages.thread_id
+        inherited = get_execution_context().get("thread_id")
+        if isinstance(inherited, str) and inherited:
+            return inherited
+        return new_thread_id()
+
+    def _resolve_run_id(
+        self,
+        *,
+        messages: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        run_id: Optional[str],
+    ) -> str:
+        if isinstance(run_id, str) and run_id:
+            return run_id
+        if isinstance(messages, ChatMessages):
+            active_turn = messages.get_active_turn()
+            if active_turn and isinstance(active_turn.get("turn_id"), str):
+                return active_turn["turn_id"]
+        inherited = get_execution_context().get("run_id")
+        if isinstance(inherited, str) and inherited:
+            return inherited
+        return new_run_id()
+
+    # --- Chat Turn Tracking ---
+
+    def _start_chat_turn_if_needed(
+        self,
+        *,
+        messages: ChatMessages,
+        content: Optional[Union[str, Mapping[str, Any], List[Mapping[str, Any]]]],  # noqa: ARG002
+        task: Any,
+        vars: Mapping[str, Any],
+        turn_id: str,
+        kwargs: Mapping[str, Any],
+        message: Optional[Union[str, Message, Mapping[str, Any]]],
+    ) -> None:
+        active_turn = messages.get_active_turn()
+        if active_turn is not None:
+            if active_turn.get("turn_id") == turn_id:
+                return
+            messages.end_turn(status="interrupted")
+
+        raw_task_inputs = task
+        if raw_task_inputs is _UNSET:
+            if isinstance(message, dotdict):
+                raw_task_inputs = self._extract_message_values(self.task, message)
+            else:
+                raw_task_inputs = message
+
+        raw_context_inputs = kwargs.get("task_context")
+        if raw_context_inputs is None and isinstance(message, dotdict):
+            raw_context_inputs = self._extract_message_values(
+                self.task_context, message
+            )
+
+        messages.begin_turn(
+            inputs=raw_task_inputs,
+            context_inputs=raw_context_inputs,
+            vars=vars,
+            namespace=self.get_module_name(),
+            turn_id=turn_id,
+        )
+
+    def _append_response_to_chat_messages(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
+        response_type: str,
+        metadata: Optional[Mapping[str, Any]],  # noqa: ARG002
+    ) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+        if isinstance(raw_response, ModelStreamResponse):
+            return
+        if response_type != "text_generation" and "structured" not in response_type:
+            return
+
+        answer = None
+        reasoning_content = None
+        if isinstance(raw_response, str):
+            answer = raw_response
+        elif isinstance(raw_response, Mapping):
+            answer = raw_response.get("answer")
+            if answer is None and "answer" not in raw_response:
+                answer = raw_response.get("text")
+            reasoning_content = self._extract_reasoning_content(raw_response)
+        elif raw_response is not None:
+            answer = str(raw_response)
+
+        if reasoning_content is not None or answer is not None:
+            messages.add_assistant_response(
+                content=answer,
+                reasoning_content=reasoning_content,
+            )
+
+    # --- Response Extraction Helpers ---
+
+    def _extract_reasoning_content(
+        self,
+        payload: Mapping[str, Any],
+    ) -> Optional[str]:
+        for field in ("reasoning_content", "reasoning_text", "think", "reasoning"):
+            value = payload.get(field)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    def _finalize_chat_turn(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
+        response_type: str,
+        metadata: Optional[Mapping[str, Any]],
+    ) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+
+        status = "completed"
+        assistant_output: Any = raw_response
+        if isinstance(raw_response, ModelStreamResponse):
+            status = "streaming"
+            assistant_output = None
+        elif response_type == "tool_responses":
+            status = "tool_responses"
+
+        messages.end_turn(
+            assistant_output=assistant_output,
+            response_type=response_type,
+            response_metadata=metadata,
+            status=status,
+        )
+
+    def _attach_stream_checkpoint_finalizer(
+        self,
+        model_response: ModelStreamResponse,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        vars: Mapping[str, Any],
+    ) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+
+        stream_messages = messages.copy()
+
+        def finalize_stream(final_state) -> None:
+            response_type = final_state.response_type or "text_generation"
+            if final_state.status == "completed":
+                if final_state.output is not None:
+                    stream_messages.add_assistant_response(
+                        final_state.output,
+                        reasoning_content=final_state.reasoning,
+                    )
+                self._finalize_chat_turn(
+                    stream_messages,
+                    final_state.output,
+                    response_type,
+                    final_state.metadata,
+                )
+                self._checkpoint_save(stream_messages, vars, status="completed")
+                return
+
+            reason = str(final_state.error) if final_state.error is not None else None
+            if final_state.status == "interrupted":
+                self._close_interrupted_tool_calls(stream_messages, reason=reason)
+                self._checkpoint_save(stream_messages, vars, status="interrupted")
+                return
+
+            if final_state.output is not None:
+                stream_messages.add_assistant_response(
+                    final_state.output,
+                    reasoning_content=final_state.reasoning,
+                )
+            if stream_messages.get_active_turn() is not None:
+                stream_messages.end_turn(
+                    assistant_output=final_state.output,
+                    response_type=response_type,
+                    response_metadata=(
+                        {"error": reason}
+                        if reason is not None
+                        else final_state.metadata
+                    ),
+                    status="failed",
+                )
+            self._checkpoint_save(stream_messages, vars, status="failed")
+
+        model_response.add_finalizer(finalize_stream)
+
+    def _close_interrupted_tool_calls(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]], None],
+        *,
+        reason: str | None = None,
+    ) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+        messages.close_interrupted_tool_calls(reason=reason)
+        if messages.get_active_turn() is not None:
+            messages.end_turn(
+                assistant_output=None,
+                response_type="interrupted",
+                response_metadata={"reason": reason} if reason else None,
+                status="interrupted",
+            )
+
+    def _append_interrupted_tool_response_messages(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        raw_response: Any,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        if not hasattr(raw_response, "get_calls") or not hasattr(
+            raw_response,
+            "insert_results",
+        ):
+            self._close_interrupted_tool_calls(messages, reason=reason)
+            return
+
+        interrupted_output = ChatMessages._interrupted_tool_call_output(reason)
+        raw_response.insert_results(
+            {
+                call_id: interrupted_output
+                for call_id, _tool_name, _parameters in raw_response.get_calls()
+                if isinstance(call_id, str) and call_id
+            }
+        )
+        tool_response_messages = raw_response.get_messages()
+        messages.extend(tool_response_messages)
+        self._close_interrupted_tool_calls(messages, reason=reason)
+
+    # --- Checkpoint Persistence ---
+
+    def _checkpoint_save(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]], None],
+        _vars: Mapping[str, Any],
+        status: str = "running",
+    ) -> None:
+        checkpointer = self._get_effective_checkpointer()
+        if checkpointer is None or not isinstance(messages, ChatMessages):
+            return
+
+        turns = messages.turns
+        if not turns:
+            return
+
+        thread_id = messages.thread_id or new_thread_id()
+        run_id = turns[-1]["turn_id"]
+        state = self._build_checkpoint_state(messages, status=status)
+        checkpointer.save_state(self.get_module_name(), thread_id, run_id, state)
+
+    async def _acheckpoint_save(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]], None],
+        _vars: Mapping[str, Any],
+        status: str = "running",
+    ) -> None:
+        checkpointer = self._get_effective_checkpointer()
+        if checkpointer is None or not isinstance(messages, ChatMessages):
+            return
+
+        turns = messages.turns
+        if not turns:
+            return
+
+        thread_id = messages.thread_id or new_thread_id()
+        run_id = turns[-1]["turn_id"]
+        state = self._build_checkpoint_state(messages, status=status)
+        if hasattr(checkpointer, "asave_state"):
+            await checkpointer.asave_state(
+                self.get_module_name(),
+                thread_id,
+                run_id,
+                state,
+            )
+        else:
+            checkpointer.save_state(self.get_module_name(), thread_id, run_id, state)
+
+    def _checkpoint_interrupted(
+        self,
+        inputs: Mapping[str, Any],
+        exc: BaseException,
+    ) -> None:
+        self._close_interrupted_tool_calls(
+            inputs.get("messages"),
+            reason=str(exc),
+        )
+        self._checkpoint_save(
+            inputs.get("messages"),
+            inputs.get("vars", {}),
+            status="interrupted",
+        )
+
+    async def _acheckpoint_interrupted(
+        self,
+        inputs: Mapping[str, Any],
+        exc: BaseException,
+    ) -> None:
+        self._close_interrupted_tool_calls(
+            inputs.get("messages"),
+            reason=str(exc),
+        )
+        await self._acheckpoint_save(
+            inputs.get("messages"),
+            inputs.get("vars", {}),
+            status="interrupted",
+        )
+
+    @staticmethod
+    def _raise_interrupted_from_abort(
+        inputs: Mapping[str, Any],
+        exc: BaseException,
+    ) -> None:
+        if isinstance(exc, AbortRequestedError):
+            scope = inputs.get("scope")
+            raise TaskInterruptRequestedError(
+                scope.run_id if scope is not None else "unknown",
+                str(exc),
+            ) from exc
+        raise exc
+
+    def _build_checkpoint_state(
+        self,
+        messages: ChatMessages,
+        *,
+        status: str,
+    ) -> Mapping[str, Any]:
+        return {
+            "status": status,
+            "messages": messages._to_state(),
+            "metadata": {
+                "namespace": self.get_module_name(),
+                "saved_at": utc_now_isoformat(),
+            },
+        }
+
+    def _checkpoint_save_on_error(self, inputs: Mapping[str, Any]) -> None:
+        if self._get_effective_checkpointer() is None:
+            return
+        messages = inputs.get("messages")
+        vars = inputs.get("vars", {})
+        self._checkpoint_save(messages, vars, status="failed")
+
+    async def _acheckpoint_save_on_error(self, inputs: Mapping[str, Any]) -> None:
+        if self._get_effective_checkpointer() is None:
+            return
+        messages = inputs.get("messages")
+        vars = inputs.get("vars", {})
+        await self._acheckpoint_save(messages, vars, status="failed")
+
+    # --- Checkpoint Resume ---
+
+    def _continue_thread_from_checkpoint(
+        self,
+        *,
+        messages: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        vars: Mapping[str, Any],
+        model_preference: Optional[Union[str, List[str]]],
+        thread_id: str,
+        run_id: str,
+    ) -> Tuple[
+        Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        Mapping[str, Any],
+        Optional[Union[str, List[str]]],
+    ]:
+        checkpointer = self._get_effective_checkpointer()
+        if checkpointer is None or not isinstance(messages, ChatMessages):
+            return messages, vars, model_preference
+        if messages:
+            return messages, vars, model_preference
+
+        namespace = self.get_module_name()
+        if checkpointer.load_state(namespace, thread_id, run_id) is not None:
+            return messages, vars, model_preference
+
+        latest = checkpointer.load_latest_run(namespace, thread_id)
+        if latest is None:
+            return messages, vars, model_preference
+
+        restored = ChatMessages()
+        restored._hydrate_state(latest.get("messages", {}))
+        restored.configure_thread(thread_id=thread_id, namespace=namespace)
+
+        restored_model_preference = (
+            model_preference
+            if model_preference is not None
+            else latest.get("model_preference")
+        )
+        return restored, vars, restored_model_preference
+
+    async def _acontinue_thread_from_checkpoint(
+        self,
+        *,
+        messages: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        vars: Mapping[str, Any],
+        model_preference: Optional[Union[str, List[str]]],
+        thread_id: str,
+        run_id: str,
+    ) -> Tuple[
+        Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        Mapping[str, Any],
+        Optional[Union[str, List[str]]],
+    ]:
+        checkpointer = self._get_effective_checkpointer()
+        if checkpointer is None or not isinstance(messages, ChatMessages):
+            return messages, vars, model_preference
+        if messages:
+            return messages, vars, model_preference
+
+        namespace = self.get_module_name()
+        if hasattr(checkpointer, "aload_state"):
+            current = await checkpointer.aload_state(namespace, thread_id, run_id)
+        else:
+            current = checkpointer.load_state(namespace, thread_id, run_id)
+        if current is not None:
+            return messages, vars, model_preference
+
+        if hasattr(checkpointer, "aload_latest_run"):
+            latest = await checkpointer.aload_latest_run(namespace, thread_id)
+        else:
+            latest = checkpointer.load_latest_run(namespace, thread_id)
+        if latest is None:
+            return messages, vars, model_preference
+
+        restored = ChatMessages()
+        restored._hydrate_state(latest.get("messages", {}))
+        restored.configure_thread(thread_id=thread_id, namespace=namespace)
+
+        restored_model_preference = (
+            model_preference
+            if model_preference is not None
+            else latest.get("model_preference")
+        )
+        return restored, vars, restored_model_preference
+
+    def _try_resume_from_checkpoint(
+        self,
+        messages_kwarg: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        *,
+        scope: Optional[ExecutionScope] = None,
+    ) -> Optional[Mapping[str, Any]]:
+        checkpointer = self._get_effective_checkpointer()
+        if checkpointer is None:
+            return None
+        run_id = scope.run_id if scope is not None else None
+        if not isinstance(run_id, str) or not run_id:
+            return None
+
+        effective_thread_id = self._resolve_thread_id(
+            messages=messages_kwarg,
+            thread_id=scope.thread_id if scope is not None else None,
+        )
+        state = checkpointer.load_state(
+            self.get_module_name(),
+            effective_thread_id,
+            run_id,
+        )
+        if state is None:
+            return None
+        if state.get("status") in {"completed", "interrupted"}:
+            raise ValueError(
+                f"Run `{run_id}` already reached terminal status "
+                f"`{state.get('status')}`. Use a new run_id to continue thread "
+                f"`{effective_thread_id}`."
+            )
+
+        restored = ChatMessages()
+        restored._hydrate_state(state.get("messages", {}))
+        effective_scope = (scope or get_execution_context()["scope"]).with_overrides(
+            thread_id=effective_thread_id,
+            namespace=self.get_module_name(),
+            run_id=run_id,
+        )
+        return {
+            "messages": restored,
+            "model_preference": state.get("model_preference"),
+            "scope": effective_scope,
+        }
+
+    async def _atry_resume_from_checkpoint(
+        self,
+        messages_kwarg: Optional[Union[ChatMessages, List[Mapping[str, Any]]]],
+        *,
+        scope: Optional[ExecutionScope] = None,
+    ) -> Optional[Mapping[str, Any]]:
+        checkpointer = self._get_effective_checkpointer()
+        if checkpointer is None:
+            return None
+        run_id = scope.run_id if scope is not None else None
+        if not isinstance(run_id, str) or not run_id:
+            return None
+
+        effective_thread_id = self._resolve_thread_id(
+            messages=messages_kwarg,
+            thread_id=scope.thread_id if scope is not None else None,
+        )
+        if hasattr(checkpointer, "aload_state"):
+            state = await checkpointer.aload_state(
+                self.get_module_name(),
+                effective_thread_id,
+                run_id,
+            )
+        else:
+            state = checkpointer.load_state(
+                self.get_module_name(),
+                effective_thread_id,
+                run_id,
+            )
+
+        if state is None:
+            return None
+        if state.get("status") in {"completed", "interrupted"}:
+            raise ValueError(
+                f"Run `{run_id}` already reached terminal status "
+                f"`{state.get('status')}`. Use a new run_id to continue thread "
+                f"`{effective_thread_id}`."
+            )
+
+        restored = ChatMessages()
+        restored._hydrate_state(state.get("messages", {}))
+        effective_scope = (scope or get_execution_context()["scope"]).with_overrides(
+            thread_id=effective_thread_id,
+            namespace=self.get_module_name(),
+            run_id=run_id,
+        )
+        return {
+            "messages": restored,
+            "model_preference": state.get("model_preference"),
+            "scope": effective_scope,
+        }
+
     # --- Configuration ---
 
     def _set_task_context(self, task_context: Optional[Union[str, List[str]]] = None):
@@ -1925,12 +2987,15 @@ class Agent(Module, metaclass=AutoParams):
     ):
         tools = list(tools or [])
         if self.agent_skill_manager.has_activatable_skills():
-            tools.append(ActivateSkill(self.agent_skill_manager))
+            tools.append(ActivateSkillTool(self.agent_skill_manager))
             if self.agent_skill_manager.has_searchable_skills():
-                tools.append(SkillSearch(self.agent_skill_manager))
+                tools.append(SkillSearchTool(self.agent_skill_manager))
         self.tool_library = ToolLibrary(
-            self.get_module_name(), tools, mcp_servers=mcp_servers
+            self.get_module_name(),
+            tools,
+            mcp_servers=mcp_servers,
         )
+        self.tool_library.set_agent_inbox(self.agent_inbox)
 
     def _set_skills(self, skills: Optional[SkillsConfig] = None):
         self.agent_skill_manager = AgentSkillManager(skills)
@@ -2430,9 +3495,7 @@ class Agent(Module, metaclass=AutoParams):
         )
 
         if self.config.get("include_date", False):
-            now = datetime.now(tz=timezone.utc)
-            # Format: "Monday, December 09, 2025"
-            template_inputs.current_date = now.strftime("%A, %B %d, %Y")
+            template_inputs.current_date = utc_current_date()
 
         system_prompt = self._format_template(
             template_inputs, self.system_prompt_template

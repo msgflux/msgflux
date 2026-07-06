@@ -167,8 +167,16 @@ nav:
         - learn/nn/agent/system-prompt.md
         - learn/nn/agent/generation-schemas.md
         - learn/nn/agent/task-and-context.md
+        - learn/nn/agent/runtime.md
         - learn/nn/agent/vars.md
-        - learn/nn/agent/tools.md
+        - Tools:
+          - Intro: learn/nn/agent/tools/index.md
+          - learn/nn/agent/tools/builtin.md
+          - learn/nn/agent/tools/config.md
+          - learn/nn/agent/tools/tool-search.md
+          - learn/nn/agent/tools/background-tasks.md
+          - learn/nn/agent/tools/agent-tool.md
+          - learn/nn/agent/tools/mcp.md
         - learn/nn/agent/skills.md
         - learn/nn/agent/signatures.md
         - learn/nn/agent/hooks.md
