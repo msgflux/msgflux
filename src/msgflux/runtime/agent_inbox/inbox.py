@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from threading import RLock
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 from uuid import uuid4
 from xml.sax.saxutils import escape
 
@@ -35,7 +35,11 @@ class AgentInbox:
         run_id: str | None = None,
     ):
         self._lock = RLock()
-        self._notifications: List[AgentNotification] = []
+        self._notifications_by_scope: Dict[
+            Tuple[str, str, str],
+            List[AgentNotification],
+        ] = {}
+        self._scope_bound = thread_id is not None or run_id is not None
         self.verbose = verbose
         self.owner = owner
         self.store = store
@@ -53,12 +57,18 @@ class AgentInbox:
         run_id: str | None = None,
     ) -> AgentInbox:
         with self._lock:
+            previous_key = self._scope_key()
+            was_bound = self._scope_bound
             if namespace:
                 self.namespace = namespace
             if thread_id:
                 self.thread_id = thread_id
             if run_id:
                 self.run_id = run_id
+            self._scope_bound = True
+            current_key = self._scope_key()
+            if not was_bound or previous_key[:2] == current_key[:2]:
+                self._move_notifications(previous_key, current_key)
         return self
 
     def bind_scope(
@@ -353,7 +363,7 @@ class AgentInbox:
 
     def _load_notifications_locked(self) -> List[AgentNotification]:
         if self.store is None:
-            return deepcopy(self._notifications)
+            return deepcopy(self._notifications_by_scope.get(self._scope_key(), []))
         return [
             self._normalize(notification)
             for notification in self.store.load_notifications(
@@ -369,7 +379,7 @@ class AgentInbox:
     ) -> None:
         normalized = [self._normalize(notification) for notification in notifications]
         if self.store is None:
-            self._notifications = deepcopy(normalized)
+            self._notifications_by_scope[self._scope_key()] = deepcopy(normalized)
             return
         self.store.save_notifications(
             self.namespace,
@@ -377,6 +387,40 @@ class AgentInbox:
             self.run_id,
             [notification.to_dict() for notification in normalized],
         )
+
+    def _scope_key(self) -> Tuple[str, str, str]:
+        return (self.namespace, self.thread_id, self.run_id)
+
+    def _move_notifications(
+        self,
+        previous_key: Tuple[str, str, str],
+        current_key: Tuple[str, str, str],
+    ) -> None:
+        if previous_key == current_key:
+            return
+        if self.store is not None:
+            notifications = [
+                self._normalize(notification)
+                for notification in self.store.load_notifications(*previous_key)
+            ]
+            if not notifications:
+                return
+            current = [
+                self._normalize(notification)
+                for notification in self.store.load_notifications(*current_key)
+            ]
+            self.store.save_notifications(
+                *current_key,
+                [notification.to_dict() for notification in notifications + current],
+            )
+            self.store.clear(*previous_key)
+            return
+
+        notifications = self._notifications_by_scope.pop(previous_key, [])
+        if not notifications:
+            return
+        current = self._notifications_by_scope.setdefault(current_key, [])
+        self._notifications_by_scope[current_key] = notifications + current
 
     # --- Escaping Helpers ---
 

@@ -189,6 +189,115 @@ def test_agent_inbox_clear_user_messages_updates_store():
     assert notifications[0].source == "task"
 
 
+def test_agent_inbox_local_drain_is_scoped_by_thread_id():
+    inbox = AgentInbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+
+    inbox.user_message("Only user 1 should see this.")
+    inbox.bind(thread_id="user_2", run_id="run_2")
+
+    assert inbox.drain() == []
+
+    inbox.bind(thread_id="user_1", run_id="run_1")
+    drained = inbox.drain()
+
+    assert len(drained) == 1
+    assert drained[0].hint == "Only user 1 should see this."
+
+
+def test_agent_inbox_local_first_bind_keeps_prebound_notifications():
+    inbox = AgentInbox()
+
+    inbox.user_message("Deliver on first scope bind.")
+    inbox.bind(namespace="assistant", thread_id="user_1", run_id="run_1")
+
+    drained = inbox.drain()
+
+    assert len(drained) == 1
+    assert drained[0].hint == "Deliver on first scope bind."
+
+
+def test_agent_inbox_local_moves_pending_notifications_between_runs_same_thread():
+    inbox = AgentInbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+
+    inbox.user_message("Deliver on next turn.")
+    inbox.bind(run_id="run_2")
+
+    drained = inbox.drain()
+
+    assert len(drained) == 1
+    assert drained[0].hint == "Deliver on next turn."
+
+
+def test_agent_inbox_memory_store_drain_is_scoped_by_thread_id():
+    store = InMemoryAgentInboxStore()
+    writer = AgentInbox(
+        store=store,
+        namespace="assistant",
+        thread_id="user_1",
+        run_id="run_1",
+    )
+    other_thread = AgentInbox(
+        store=store,
+        namespace="assistant",
+        thread_id="user_2",
+        run_id="run_2",
+    )
+    original_thread = AgentInbox(
+        store=store,
+        namespace="assistant",
+        thread_id="user_1",
+        run_id="run_1",
+    )
+
+    writer.user_message("Only user 1 should see this.")
+
+    assert other_thread.drain() == []
+
+    drained = original_thread.drain()
+    assert len(drained) == 1
+    assert drained[0].hint == "Only user 1 should see this."
+
+
+def test_agent_inbox_memory_store_moves_pending_notifications_between_runs_same_thread():
+    store = InMemoryAgentInboxStore()
+    inbox = AgentInbox(
+        store=store,
+        namespace="assistant",
+        thread_id="user_1",
+        run_id="run_1",
+    )
+
+    inbox.user_message("Deliver on next turn.")
+    inbox.bind(run_id="run_2")
+
+    drained = inbox.drain()
+
+    assert len(drained) == 1
+    assert drained[0].hint == "Deliver on next turn."
+
+
+def test_agent_inbox_sqlite_store_moves_pending_notifications_between_runs_same_thread(
+    tmp_path,
+):
+    store = SQLiteAgentInboxStore(path=str(tmp_path / "agent-inboxes.sqlite3"))
+    inbox = AgentInbox(
+        store=store,
+        namespace="assistant",
+        thread_id="user_1",
+        run_id="run_1",
+    )
+
+    inbox.user_message("Deliver on next turn.")
+    inbox.bind(run_id="run_2")
+
+    drained = inbox.drain()
+
+    assert len(drained) == 1
+    assert drained[0].hint == "Deliver on next turn."
+
+    store.close()
+
+
 def test_store_factory_creates_agent_inbox_stores(tmp_path):
     memory_store = Store.agent_inbox("in_memory")
     sqlite_store = Store.agent_inbox(
