@@ -27,6 +27,13 @@ workflow, including branch naming, commits, validation commands, and PR creation
   into incremental PRs. When needed, make the dependency order between PRs
   explicit.
 
+## Editing
+
+- When moving blocks of code or documentation, consider using a small Python
+  script or another structured transformation instead of copying text manually.
+- Review the resulting diff to confirm that only the intended block moved and no
+  content was lost or duplicated.
+
 ## Providers
 
 - New providers must follow the existing patterns in
