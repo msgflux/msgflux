@@ -805,9 +805,19 @@ class TestToolLibrary:
 
         library = ToolLibrary(name="lib", tools=[remote_lookup])
 
-        result = library(
-            [("call_1", "tool_search", {"query": "remote lookup", "description": True})]
-        ).tool_calls[0].result
+        result = (
+            library(
+                [
+                    (
+                        "call_1",
+                        "tool_search",
+                        {"query": "remote lookup", "description": True},
+                    )
+                ]
+            )
+            .tool_calls[0]
+            .result
+        )
         schemas = library.get_tool_json_schemas()
         schema_names = [schema["function"]["name"] for schema in schemas]
 
@@ -827,9 +837,11 @@ class TestToolLibrary:
 
         library = ToolLibrary(name="lib", tools=[read_cloud_file])
 
-        result = library(
-            [("call_1", "tool_search", {"query": "select:read_cloud_file"})]
-        ).tool_calls[0].result
+        result = (
+            library([("call_1", "tool_search", {"query": "select:read_cloud_file"})])
+            .tool_calls[0]
+            .result
+        )
 
         assert result["matches"] == ["read_cloud_file"]
         assert result["loaded"] == ["read_cloud_file"]
@@ -867,7 +879,9 @@ class TestToolLibrary:
 
         library = ToolLibrary(name="lib", tools=[enable_remote_lookup])
 
-        add_result = library([("call_1", "enable_remote_lookup", {})]).tool_calls[0].result
+        add_result = (
+            library([("call_1", "enable_remote_lookup", {})]).tool_calls[0].result
+        )
         schema_names = [
             schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ]

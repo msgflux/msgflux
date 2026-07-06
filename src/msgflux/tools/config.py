@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from msgflux.core.dotdict import dotdict
 
 
-def tool_config(  # noqa: C901
+def tool_config(
     *,
     display_name: Optional[str] = None,
     usage_guidance: Optional[str] = None,

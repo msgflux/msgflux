@@ -75,4 +75,3 @@ def test_sqlite_task_store_serializes_concurrent_updates(tmp_path):
     assert task.status == "running"
     assert len([item for item in activity if item.kind == "progress"]) == 20
     store.close()
-

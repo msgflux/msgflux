@@ -184,10 +184,9 @@ class BackgroundTaskDispatcher:
                 else tool.get_module_name()
             )
 
-        checkpoint_store = (
-            get_execution_context().get("checkpoint_store")
-            or self.get_task_checkpoint_store(task.task_id)
-        )
+        checkpoint_store = get_execution_context().get(
+            "checkpoint_store"
+        ) or self.get_task_checkpoint_store(task.task_id)
         thread_id = task.metadata.get("checkpoint_thread_id")
         if not isinstance(thread_id, str) or not thread_id:
             thread_id = new_thread_id()
@@ -318,9 +317,7 @@ class BackgroundTaskDispatcher:
         parent_run_id = context.get("run_id")
         root_run_id = context.get("root_run_id")
         checkpoint_store = context.get("checkpoint_store")
-        root_agent_inbox = (
-            context.get("agent_inbox") or self.library_handle.agent_inbox
-        )
+        root_agent_inbox = context.get("agent_inbox") or self.library_handle.agent_inbox
         task_id = uuid4().hex[:8]
         task_inbox = None
         if is_agent_task:
@@ -338,9 +335,7 @@ class BackgroundTaskDispatcher:
             metadata={
                 "tool_call_id": tool_id,
                 "task_kind": "agent" if is_agent_task else task_kind,
-                "checkpoint_namespace": checkpoint_namespace
-                if is_agent_task
-                else None,
+                "checkpoint_namespace": checkpoint_namespace if is_agent_task else None,
                 "task_resume_params": task_resume_params,
                 "thread_id": thread_id,
                 "parent_run_id": parent_run_id,

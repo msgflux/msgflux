@@ -377,9 +377,8 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
             annotations.pop("messages", None)
         if tool_config.get("inject_vars", False):
             annotations.pop("vars", None)
-        if (
-            tool_config.get("allow_background", False)
-            and not tool_config.get("background", False)
+        if tool_config.get("allow_background", False) and not tool_config.get(
+            "background", False
         ):
             annotations[_RUNTIME_BACKGROUND_PARAM] = Optional[bool]
 
@@ -390,8 +389,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
     elif tool_config.get("allow_background", False):
         doc = (
             "This tool can run in the background when "
-            f"`{_RUNTIME_BACKGROUND_PARAM}=true`; otherwise it runs normally. \n"
-            + doc
+            f"`{_RUNTIME_BACKGROUND_PARAM}=true`; otherwise it runs normally. \n" + doc
         )
 
     return ToolMetadata(
@@ -452,15 +450,15 @@ def _split_hidden_annotations(
 
 def _is_tool_handle_type(type_hint: Any) -> bool:
     try:
-        return type_hint is ToolLibraryHandle or issubclass(type_hint, ToolLibraryHandle)
+        return type_hint is ToolLibraryHandle or issubclass(
+            type_hint, ToolLibraryHandle
+        )
     except TypeError:
         return False
 
 
 def _is_tool_handle_param(name: str, type_hint: Any) -> bool:
-    return _is_tool_handle_type(type_hint) or (
-        name == "handle" and type_hint is Any
-    )
+    return _is_tool_handle_type(type_hint) or (name == "handle" and type_hint is Any)
 
 
 def _validate_hidden_params(hidden_params: Mapping[str, Any]) -> None:
@@ -1196,14 +1194,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if prepared_calls:
             results = F.scatter_gather(prepared_calls)
             for meta, result in zip(call_metadata, results):
-                if (
-                    isinstance(result, TaskError)
-                    and isinstance(result.exception, TaskInterruptRequestedError)
+                if isinstance(result, TaskError) and isinstance(
+                    result.exception, TaskInterruptRequestedError
                 ):
                     raise result.exception
-                parameters = self.handle.build_call_parameters_for_response(
-                    meta.params
-                )
+                parameters = self.handle.build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,
@@ -1345,14 +1340,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if prepared_calls:
             results = await F.ascatter_gather(prepared_calls)
             for meta, result in zip(call_metadata, results):
-                if (
-                    isinstance(result, TaskError)
-                    and isinstance(result.exception, TaskInterruptRequestedError)
+                if isinstance(result, TaskError) and isinstance(
+                    result.exception, TaskInterruptRequestedError
                 ):
                     raise result.exception
-                parameters = self.handle.build_call_parameters_for_response(
-                    meta.params
-                )
+                parameters = self.handle.build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,

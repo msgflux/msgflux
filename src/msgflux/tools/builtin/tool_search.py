@@ -72,10 +72,7 @@ class ToolSearchTool(ToolLibraryOperator):
 
         descriptions = []
         if description:
-            descriptions = [
-                handle.describe_tool(tool_name)
-                for tool_name in matches
-            ]
+            descriptions = [handle.describe_tool(tool_name) for tool_name in matches]
 
         return self._result(
             query=query,
@@ -94,9 +91,7 @@ class ToolSearchTool(ToolLibraryOperator):
         descriptions: List[Dict[str, Any]],
         total: int,
     ) -> Dict[str, Any]:
-        already_loaded = [
-            tool_name for tool_name in matches if tool_name not in loaded
-        ]
+        already_loaded = [tool_name for tool_name in matches if tool_name not in loaded]
         return {
             "query": query,
             "matches": matches,

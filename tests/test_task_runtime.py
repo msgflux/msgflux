@@ -511,7 +511,9 @@ def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
 
     assert slow_tool_started.wait(timeout=1.0)
     interrupt_result = (
-        library([("call_2", "task_interrupt", {"task_id": task_id})]).tool_calls[0].result
+        library([("call_2", "task_interrupt", {"task_id": task_id})])
+        .tool_calls[0]
+        .result
     )
     assert interrupt_result["status"] == "interrupt_requested"
 
@@ -720,7 +722,9 @@ def test_agent_control_interrupts_before_model_call():
 
     inbox.interrupt(reason="operator requested interrupt")
 
-    with pytest.raises(TaskInterruptRequestedError, match="operator requested interrupt"):
+    with pytest.raises(
+        TaskInterruptRequestedError, match="operator requested interrupt"
+    ):
         agent("Continue.")
 
     assert not model.called
@@ -1188,9 +1192,10 @@ def test_task_message_resumes_completed_background_agent():
         resumed_run_id = task_state["metadata"]["checkpoint_run_id"]
         assert resumed_run_id != task_id
         assert store.load_state("worker", "user_42", task_id)["status"] == "completed"
-        assert store.load_state("worker", "user_42", resumed_run_id)[
-            "status"
-        ] == "completed"
+        assert (
+            store.load_state("worker", "user_42", resumed_run_id)["status"]
+            == "completed"
+        )
 
 
 def test_task_message_resume_clears_previous_interrupt_reason():

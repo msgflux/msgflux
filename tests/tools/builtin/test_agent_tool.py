@@ -94,9 +94,12 @@ def test_agent_tool_can_start_empty_and_capture_agents_from_library():
     reviewer.tool_config = {"usage_guidance": "Use for code review."}
     library = ToolLibrary(name="lib", tools=[AgentTool(), reviewer])
 
-    schema_names = [schema["function"]["name"] for schema in library.get_tool_json_schemas()]
+    schema_names = [
+        schema["function"]["name"] for schema in library.get_tool_json_schemas()
+    ]
     agent_schema = next(
-        schema for schema in library.get_tool_json_schemas()
+        schema
+        for schema in library.get_tool_json_schemas()
         if schema["function"]["name"] == "agent"
     )
 
@@ -114,7 +117,9 @@ def test_agent_tool_captures_existing_agents_when_bucket_is_added_later():
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
     library = ToolLibrary(name="lib", tools=[reviewer, AgentTool()])
 
-    schema_names = [schema["function"]["name"] for schema in library.get_tool_json_schemas()]
+    schema_names = [
+        schema["function"]["name"] for schema in library.get_tool_json_schemas()
+    ]
     response = library([("call_1", "agent", {"name": "reviewer", "message": "Go"})])
 
     assert schema_names == ["agent"]
@@ -272,15 +277,15 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
         schema["function"]["name"] for schema in library.get_tool_json_schemas()
     ]
 
-    search = library(
-        [("call_2", "tool_search", {"query": "select:reviewer"})]
-    ).tool_calls[0].result
+    search = (
+        library([("call_2", "tool_search", {"query": "select:reviewer"})])
+        .tool_calls[0]
+        .result
+    )
     schema_names_after = [
         schema["function"]["name"] for schema in library.get_tool_json_schemas()
     ]
-    response = library(
-        [("call_3", "agent", {"name": "reviewer", "message": "Go"})]
-    )
+    response = library([("call_3", "agent", {"name": "reviewer", "message": "Go"})])
 
     assert before_search.tool_calls[0].result is None
     assert "Agent `reviewer` not found" in before_search.tool_calls[0].error

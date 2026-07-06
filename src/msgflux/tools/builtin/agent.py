@@ -182,9 +182,8 @@ class AgentTool(ToolBucket):
                 agent_lines.append(f"- {agent_name}")
         if not agent_lines:
             agent_lines.append("- none")
-        return (
-            f"{self._base_description}\n\nAvailable agents:\n"
-            + "\n".join(agent_lines)
+        return f"{self._base_description}\n\nAvailable agents:\n" + "\n".join(
+            agent_lines
         )
 
     def _build_usage_guidance(self) -> str | None:

@@ -267,7 +267,9 @@ class TestToolLibraryMCPIntegration:
         mock_tools = [MCPTool(name="read_file", description="Read", inputSchema={})]
         mock_filter_tools.return_value = mock_tools
         mock_F.wait_for.side_effect = [None, mock_tools]
-        mock_F.scatter_gather.side_effect = lambda prepared: [call() for call in prepared]
+        mock_F.scatter_gather.side_effect = lambda prepared: [
+            call() for call in prepared
+        ]
         mock_convert_schema.return_value = {
             "type": "function",
             "function": {"name": "fs__read_file", "description": "Read"},
@@ -291,9 +293,11 @@ class TestToolLibraryMCPIntegration:
         ]
         assert initial_schema_names == ["tool_search"]
 
-        result = library(
-            [("call_1", "tool_search", {"query": "select:fs__read_file"})]
-        ).tool_calls[0].result
+        result = (
+            library([("call_1", "tool_search", {"query": "select:fs__read_file"})])
+            .tool_calls[0]
+            .result
+        )
 
         loaded_schema_names = [
             schema["function"]["name"] for schema in library.get_tool_json_schemas()

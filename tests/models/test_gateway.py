@@ -429,7 +429,7 @@ class TestModelExecution:
         ]
         gateway = ModelGateway(models=models)
 
-        with pytest.raises(ModelRouterError, match="All .* available models failed"):
+        with pytest.raises(ModelRouterError, match=r"All .* available models failed"):
             gateway()
 
     def test_execute_model_with_preference(self):
@@ -548,7 +548,7 @@ class TestModelExecution:
         ]
         gateway = ModelGateway(models=models)
 
-        with pytest.raises(ModelRouterError, match="All .* available models failed"):
+        with pytest.raises(ModelRouterError, match=r"All .* available models failed"):
             await gateway.acall()
 
 

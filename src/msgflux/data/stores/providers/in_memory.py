@@ -317,9 +317,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 ns_data = self._data.get(ns)
                 if ns_data is None:
                     continue
-                threads = (
-                    [thread_id] if thread_id is not None else list(ns_data.keys())
-                )
+                threads = [thread_id] if thread_id is not None else list(ns_data.keys())
                 for sid in threads:
                     thread = ns_data.get(sid)
                     if thread is None:

@@ -76,9 +76,7 @@ class AgentInbox:
             if not was_bound or previous_key[:2] == current_key[:2]:
                 self._move_notifications(previous_key, current_key)
             else:
-                previous_thread_key = self._scope_key_by_thread.get(
-                    self._thread_key()
-                )
+                previous_thread_key = self._scope_key_by_thread.get(self._thread_key())
                 if previous_thread_key is not None:
                     self._move_notifications(previous_thread_key, current_key)
             self._scope_key_by_thread[self._thread_key()] = current_key
@@ -280,9 +278,7 @@ class AgentInbox:
             rendered_messages.append(
                 {
                     "role": "system",
-                    "content": self._render_system_notifications(
-                        system_notifications
-                    ),
+                    "content": self._render_system_notifications(system_notifications),
                 }
             )
 
@@ -318,9 +314,7 @@ class AgentInbox:
         return "\n".join(lines)
 
     def _render_notification_body(self, notification: AgentNotification) -> List[str]:
-        body_lines: List[str] = [
-            f"source: {self._escape_text(notification.source)}"
-        ]
+        body_lines: List[str] = [f"source: {self._escape_text(notification.source)}"]
         if notification.ref:
             body_lines.append(f"ref: {self._escape_text(notification.ref)}")
         if notification.status:

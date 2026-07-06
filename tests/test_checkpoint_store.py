@@ -234,8 +234,7 @@ def test_sqlite_checkpoint_store_normalizes_messages(tmp_path):
 
     state = store.load_state("agent:test", "session_1", "run_1")
     row = store._conn.execute(
-        "SELECT state FROM checkpoints "
-        "WHERE namespace=? AND thread_id=? AND run_id=?",
+        "SELECT state FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?",
         ("agent:test", "session_1", "run_1"),
     ).fetchone()
     item_count = store._conn.execute(

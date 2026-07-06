@@ -191,9 +191,7 @@ class ToolLibraryHandle:
                 "display_name": getattr(tool, "display_name", None) or tool.name,
                 "description": tool.description,
                 "usage_guidance": getattr(tool, "usage_guidance", None),
-                "tool_kind": getattr(tool, "tool_config", {}).get(
-                    "tool_kind", "tool"
-                ),
+                "tool_kind": getattr(tool, "tool_config", {}).get("tool_kind", "tool"),
             }
         if metadata is None:
             raise ValueError(f"Tool `{tool_name}` not found.")
