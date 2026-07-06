@@ -266,14 +266,23 @@ events = checkpointer.load_events(namespace, thread_id, run_id)
 
 ## Agent Inbox
 
-`AgentInbox` creates an in-memory store by default:
+`Agent` creates a memory-backed inbox by default:
 
 ```python
-inbox = mf.AgentInbox()
+agent = nn.Agent(
+    name="support_agent",
+    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+)
+
+agent.agent_inbox.store
+# InMemoryAgentInboxStore(...)
 ```
 
-Use an explicit store when pending messages and control signals should survive
-process restarts or be shared by inbox handles created in different places:
+When you instantiate `AgentInbox` directly, pass a store. Direct inbox creation
+without a store raises an error, because the inbox needs a persistence boundary
+to queue and drain notifications. Use an explicit store when pending messages
+and control signals should survive process restarts or be shared by inbox
+handles created in different places:
 
 ```python
 inbox_store = mf.Store.agent_inbox(
@@ -294,6 +303,7 @@ the agent instance:
 
 ```python
 scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
+agent_inbox.bind_scope(scope, namespace="support_agent")
 
 with mf.execution_context(scope=scope, agent_inbox=agent_inbox):
     agent("Investigate this ticket.")
@@ -321,6 +331,8 @@ scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
 
 agent_inbox = mf.AgentInbox(store=inbox_store)
 agent_inbox.bind_scope(scope, namespace="support_agent")
+
+agent("Investigate this ticket.", scope=scope)
 ```
 
 Use `fork(...)` to create another handle over the same store with a different
@@ -384,6 +396,7 @@ the next provider call.
 inbox_store = mf.Store.agent_inbox("sqlite", path=".msgflux/inbox.sqlite3")
 agent_inbox = mf.AgentInbox(store=inbox_store)
 scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
+agent_inbox.bind_scope(scope, namespace="support_agent")
 
 agent = nn.Agent(
     name="support_agent",
@@ -411,12 +424,13 @@ same store and execution key:
 
 ```python
 store = mf.Store.agent_inbox("sqlite", path=".msgflux/inbox.sqlite3")
+scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
 
 external_inbox = mf.AgentInbox(
     store=store,
     namespace="support_agent",
-    thread_id="customer_42",
-    run_id="ticket_9001",
+    thread_id=scope.thread_id,
+    run_id=scope.run_id,
 )
 
 external_inbox.user_message("Ask for the latest invoice number before deciding.")

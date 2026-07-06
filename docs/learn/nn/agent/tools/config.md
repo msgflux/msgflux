@@ -234,6 +234,22 @@ This is useful for:
         tools = [Specialist]
     ```
 
+## Runtime Injection Options
+
+Tool config supports several `inject_*` flags. This page documents injections
+that apply to regular tool calls. Background task injections are documented with
+the background runtime because they depend on task dispatch and notification
+delivery.
+
+| Option | Injected argument | Documentation |
+|--------|-------------------|---------------|
+| `inject_vars=True` | `vars` | [inject_vars](#inject_vars) |
+| `inject_message=True` | `message` | [inject_message](#inject_message) |
+| `inject_messages=True` | `messages` | [inject_messages](#inject_messages) |
+| `inject_task=True` | `task` | [Background Tasks: Reporting Progress](background-tasks.md#reporting-progress) |
+| `inject_notification=True` | `notification` | [Background Tasks: Status Updates](background-tasks.md#status-updates-with-inject_notification) |
+| `inject_handle=True` | `handle` | [Background Tasks: Dynamic Tool Mutation](background-tasks.md#dynamic-tool-mutation-with-inject_handle) |
+
 ## inject_message
 
 With `inject_message=True`, the tool receives the original `message` passed to the

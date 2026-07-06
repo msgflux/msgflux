@@ -403,6 +403,7 @@ automatically in the same library.
 ## Related Pages
 
 - [Tools](index.md)
+- [Tool Config](config.md#runtime-injection-options)
 - [Task Runtime](../../../../anatomy/task-runtime.md)
 
 ## Example Scripts
