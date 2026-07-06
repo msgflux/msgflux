@@ -6,6 +6,10 @@ Guide for contributing to msgflux with automated CI/CD workflow.
 
 ### 1. Setup Local Environment
 
+This project uses [`uv`](https://docs.astral.sh/uv/) for dependency management
+and command execution. Prefer `uv sync` and `uv run ...` for all local
+development commands so contributors and CI use the same environment.
+
 ```bash
 # Clone repository
 git clone https://github.com/msgflux/msgflux.git
@@ -17,6 +21,11 @@ uv sync --group dev
 # Run tests to ensure everything works
 uv run pytest -v
 ```
+
+If dependencies change, update `pyproject.toml` and `uv.lock` through `uv`.
+Do not introduce a parallel package manager or environment workflow.
+If a one-off command needs a tool that is not installed, prefer
+`uv run --with <dependency> <command>` instead of installing it globally.
 
 ### 2. Create Feature Branch
 
@@ -61,9 +70,47 @@ uv run pytest -v
 uv run pytest tests/test_tracer.py::TestTracerManager::test_lazy_initialization -v
 ```
 
+#### Scope and impact
+
+Before implementing, inspect the code that calls, instantiates, inherits from,
+serializes, documents, or otherwise depends on the area being changed. Also
+check the code paths that will consume the new behavior.
+
+For complex changes, write a short plan before implementation. Include affected
+files, implementation order, risks, required tests, and documentation updates.
+If the change is too large for one focused review, split it into incremental PRs
+and make the dependency order explicit.
+
+#### Documentation requirements
+
+- Architectural changes may add internal design notes under `docs/anatomy/`.
+- Public API changes must update or add user-facing documentation under
+  `docs/learn/`.
+- `docs/learn/` pages should explain how the feature works, include code
+  examples, and describe what each example does.
+- Update `mkdocs.yml` navigation when adding new documentation pages that should
+  appear in the site.
+- For documentation validation, install the documentation dependencies with
+  `uv sync --group doc` and run `uv run mkdocs build` when applicable.
+
+#### Provider changes
+
+New model providers must follow the existing patterns in
+`src/msgflux/models/providers/`. Compare with similar providers before adding
+one, including exports in `__init__.py`, tests, examples, and related
+documentation. Document any intentional divergence in the PR description.
+
 ### 4. Commit Changes
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+Keep commits focused on one logical change. Split unrelated fixes, refactors,
+documentation updates, and feature work into separate commits or PRs.
+
+Stage files intentionally. Add only files that belong to the current change and
+avoid `git add -A`. Do not commit generated artifacts, caches, build outputs, or
+local files unless the project explicitly versions them or the PR explains why
+they are required.
 
 ```bash
 # Stage files individually (avoid git add -A)
@@ -100,6 +147,14 @@ git push origin feat/add-retry-logic
 ```
 
 ### 6. Open Pull Request
+
+PR descriptions should be precise and detailed. Include motivation, previous
+behavior, new behavior, relevant files, public API impact, tests executed, and
+documentation updated. Add code snippets when they make the change easier to
+review.
+
+If the work is split across dependent PRs, state the merge order and what each
+PR delivers.
 
 #### Via GitHub CLI (recommended):
 
