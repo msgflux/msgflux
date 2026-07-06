@@ -56,8 +56,7 @@ def main() -> None:
     history = mf.ChatMessages()
 
     dispatch_response = assistant(
-        "Start a background pipeline for ticket MSGFLUX-77. "
-        "Only dispatch it for now.",
+        "Start a background pipeline for ticket MSGFLUX-77. Only dispatch it for now.",
         messages=history,
     )
     time.sleep(0.2)
