@@ -11,6 +11,7 @@ from msgflux.runtime.agent_inbox.dataclasses import (
     AgentControlMessage,
     AgentNotification,
 )
+from msgflux.runtime.agent_inbox.providers.in_memory import InMemoryAgentInboxStore
 from msgflux.runtime.context import (
     DEFAULT_NAMESPACE,
     ExecutionScope,
@@ -35,17 +36,17 @@ class AgentInbox:
         run_id: str | None = None,
     ):
         self._lock = RLock()
-        self._notifications_by_scope: Dict[
-            Tuple[str, str, str],
-            List[AgentNotification],
-        ] = {}
         self._scope_bound = thread_id is not None or run_id is not None
         self.verbose = verbose
         self.owner = owner
-        self.store = store
+        self.store = store or InMemoryAgentInboxStore()
         self.namespace = namespace or owner or DEFAULT_NAMESPACE
         self.thread_id = thread_id or new_thread_id()
         self.run_id = run_id or new_run_id()
+        self._scope_key_by_thread: Dict[
+            Tuple[str, str],
+            Tuple[str, str, str],
+        ] = {self._thread_key(): self._scope_key()}
 
     # --- Scope Binding ---
 
@@ -69,6 +70,13 @@ class AgentInbox:
             current_key = self._scope_key()
             if not was_bound or previous_key[:2] == current_key[:2]:
                 self._move_notifications(previous_key, current_key)
+            else:
+                previous_thread_key = self._scope_key_by_thread.get(
+                    self._thread_key()
+                )
+                if previous_thread_key is not None:
+                    self._move_notifications(previous_thread_key, current_key)
+            self._scope_key_by_thread[self._thread_key()] = current_key
         return self
 
     def bind_scope(
@@ -362,8 +370,6 @@ class AgentInbox:
         )
 
     def _load_notifications_locked(self) -> List[AgentNotification]:
-        if self.store is None:
-            return deepcopy(self._notifications_by_scope.get(self._scope_key(), []))
         return [
             self._normalize(notification)
             for notification in self.store.load_notifications(
@@ -378,9 +384,7 @@ class AgentInbox:
         notifications: Iterable[AgentNotification],
     ) -> None:
         normalized = [self._normalize(notification) for notification in notifications]
-        if self.store is None:
-            self._notifications_by_scope[self._scope_key()] = deepcopy(normalized)
-            return
+        self._scope_key_by_thread[self._thread_key()] = self._scope_key()
         self.store.save_notifications(
             self.namespace,
             self.thread_id,
@@ -391,6 +395,9 @@ class AgentInbox:
     def _scope_key(self) -> Tuple[str, str, str]:
         return (self.namespace, self.thread_id, self.run_id)
 
+    def _thread_key(self) -> Tuple[str, str]:
+        return (self.namespace, self.thread_id)
+
     def _move_notifications(
         self,
         previous_key: Tuple[str, str, str],
@@ -398,29 +405,21 @@ class AgentInbox:
     ) -> None:
         if previous_key == current_key:
             return
-        if self.store is not None:
-            notifications = [
-                self._normalize(notification)
-                for notification in self.store.load_notifications(*previous_key)
-            ]
-            if not notifications:
-                return
-            current = [
-                self._normalize(notification)
-                for notification in self.store.load_notifications(*current_key)
-            ]
-            self.store.save_notifications(
-                *current_key,
-                [notification.to_dict() for notification in notifications + current],
-            )
-            self.store.clear(*previous_key)
-            return
-
-        notifications = self._notifications_by_scope.pop(previous_key, [])
+        notifications = [
+            self._normalize(notification)
+            for notification in self.store.load_notifications(*previous_key)
+        ]
         if not notifications:
             return
-        current = self._notifications_by_scope.setdefault(current_key, [])
-        self._notifications_by_scope[current_key] = notifications + current
+        current = [
+            self._normalize(notification)
+            for notification in self.store.load_notifications(*current_key)
+        ]
+        self.store.save_notifications(
+            *current_key,
+            [notification.to_dict() for notification in notifications + current],
+        )
+        self.store.clear(*previous_key)
 
     # --- Escaping Helpers ---
 

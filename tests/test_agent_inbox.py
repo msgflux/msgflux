@@ -72,6 +72,12 @@ def test_agent_inbox_accepts_control_messages():
     assert notification.hint == "operator request"
 
 
+def test_agent_inbox_creates_default_memory_store():
+    inbox = AgentInbox()
+
+    assert isinstance(inbox.store, InMemoryAgentInboxStore)
+
+
 def test_agent_inbox_renders_incoming_user_message():
     inbox = AgentInbox()
 
@@ -202,6 +208,25 @@ def test_agent_inbox_local_drain_is_scoped_by_thread_id():
 
     assert len(drained) == 1
     assert drained[0].hint == "Only user 1 should see this."
+
+
+def test_agent_inbox_default_store_keeps_multiple_thread_queues():
+    inbox = AgentInbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+
+    inbox.user_message("User 1 notification.")
+    inbox.bind(thread_id="user_2", run_id="run_2")
+    inbox.user_message("User 2 notification.")
+    inbox.bind(thread_id="user_1", run_id="run_3")
+    user_1_notifications = inbox.drain()
+    inbox.bind(thread_id="user_2", run_id="run_4")
+    user_2_notifications = inbox.drain()
+
+    assert [notification.hint for notification in user_1_notifications] == [
+        "User 1 notification."
+    ]
+    assert [notification.hint for notification in user_2_notifications] == [
+        "User 2 notification."
+    ]
 
 
 def test_agent_inbox_local_first_bind_keeps_prebound_notifications():

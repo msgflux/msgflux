@@ -266,14 +266,14 @@ events = checkpointer.load_events(namespace, thread_id, run_id)
 
 ## Agent Inbox
 
-`AgentInbox` is in-memory by default:
+`AgentInbox` creates an in-memory store by default:
 
 ```python
 inbox = mf.AgentInbox()
 ```
 
-Pass a store when pending messages and control signals should survive process
-restarts or be written by another runtime component:
+Use an explicit store when pending messages and control signals should survive
+process restarts or be shared by inbox handles created in different places:
 
 ```python
 inbox_store = mf.Store.agent_inbox(
@@ -298,6 +298,12 @@ scope = mf.ExecutionScope(thread_id="customer_42", run_id="ticket_9001")
 with mf.execution_context(scope=scope, agent_inbox=agent_inbox):
     agent("Investigate this ticket.")
 ```
+
+Use a stable `thread_id` for any workflow that expects inbox delivery across
+multiple turns, tools, or background tasks. If no scope is provided, msgFlux
+generates fallback `thread_id` and `run_id` values for local execution. Those
+generated identifiers are valid runtime keys, but another producer cannot
+reliably target the same inbox unless it uses the same scope.
 
 ??? tip "Available inbox stores"
 
@@ -337,7 +343,9 @@ child_inbox = agent_inbox.fork(
 pending = agent_inbox.peek()
 ```
 
-`drain()` reads and clears the pending notifications for the inbox key:
+`drain()` reads and clears the pending notifications for the current inbox key.
+The key includes the agent namespace and `thread_id`, so notifications for one
+conversation are not drained by another conversation:
 
 ```python
 notifications = agent_inbox.drain()

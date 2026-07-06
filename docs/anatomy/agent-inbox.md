@@ -287,11 +287,12 @@ Without requiring a more complex progress-specific protocol in the task API.
 
 ## Persistence
 
-The inbox should support durable storage, because notifications should be able
-to survive process restart and replay.
+The inbox should support pluggable storage, because notifications may need to
+survive process restart and replay.
 
-This means `AgentInbox` should be designed as a real store boundary, not just
-an in-memory queue.
+This means `AgentInbox` is designed as a real store boundary. It creates an
+in-memory store by default for local use, and callers can pass a durable store
+when notifications need to be shared across processes or restored later.
 
 ## Hooks
 
