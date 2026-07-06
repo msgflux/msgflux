@@ -1,18 +1,25 @@
-# Agent Tool
+# AgentTool
 
-Agents can be used as tools for other agents, enabling hierarchical task delegation, also known as **SubAgents**.
+`AgentTool` is a built-in tool for exposing a group of agents through one
+callable model tool:
 
-The Coordinator calls the Specialist as any other tool. The result returns to the Coordinator's model, which synthesizes it into the final response.
+```python
+agent(name: str, message: str) -> str
+```
 
-There are two common patterns:
+Use it when a coordinator should delegate to specialized agents, but the model
+should not see every specialist as a separate top-level tool. The coordinator
+calls `agent(...)`, `AgentTool` resolves the requested agent by `name`, and the
+selected agent processes the delegated `message`. The result then returns to the
+coordinator's model, which can synthesize the final response.
 
-- Register agents directly as tools, where each agent appears as its own tool.
-- Register one `AgentTool`, where the model calls a single `agent(name, message)`
-  tool and chooses the target agent by name.
+If you want to expose each agent as its own tool instead, see
+[Agents as Tools](index.md#agents-as-tools).
 
-## AgentTool
+## Basic Usage
 
-`AgentTool` exposes a group of agents through one tool named `agent`.
+Create an `AgentTool` with the agents that should be available behind the
+single `agent` tool, then add that `AgentTool` to the coordinator.
 
 ```python
 import msgflux as mf
@@ -37,12 +44,6 @@ coordinator = nn.Agent(
     instructions="Delegate specialized work to the agent tool when useful.",
     tools=[agent_tool],
 )
-```
-
-The model sees one callable shape:
-
-```python
-agent(name: str, message: str) -> str
 ```
 
 `AgentTool` also accepts runtime-injected `messages` and `vars`; those are
@@ -78,215 +79,165 @@ The bucket updates its own description and usage guidance when agents are
 captured, so the single `agent` tool still tells the model which agents are
 available and when each one should be used.
 
-This is useful with on-demand tools as well: an agent can be selected later,
-loaded into the library, and captured by the existing `AgentTool` bucket.
+[Tool Search](tool-search.md) is compatible with `ToolBucket` capture.
+On-demand agents can stay outside the active tool set until `tool_search`
+selects them. When the selected agent is promoted into the `ToolLibrary`, the
+existing `AgentTool` bucket captures it and makes it available as another
+`agent(name, message)` target.
 
-```
-              Input
-                │
-                ▼
-  ┌──────────────────────────────┐
-  │         Coordinator          │
-  │                              │
-  │   ┌──────────┐               │
-  │   │  Model   │──▶ "call      │
-  │   └──────────┘    Specialist │
-  └─────────────┬────────────────┘
-                │  call(task)
-                ▼
-  ┌──────────────────────────────┐
-  │         Specialist           │
-  │        (SubAgent)            │
-  │                              │
-  │  processes task independently│
-  │  may call its own tools      │
-  └─────────────┬────────────────┘
-                │  result
-                ▼
-  ┌──────────────────────────────┐
-  │         Coordinator          │
-  │                              │
-  │   ┌──────────┐               │
-  │   │  Model   │──▶ synthesized│
-  │   └──────────┘    response   │
-  └─────────────┬────────────────┘
-                │
-                ▼
-                Output
+`AgentTool` also works with [Background Tasks](background-tasks.md). When
+configured with background support, the selected subagent can run through the
+same task dispatch, status, wait, and task-message flow as other background
+tools.
+
+```text
+User input
+    |
+    v
++------------------------------+
+| Coordinator Agent            |
+|                              |
+| model sees one public tool:  |
+| agent(name, message)         |
++--------------+---------------+
+               |
+               | calls agent(
+               |   name="reviewer",
+               |   message="Check this answer"
+               | )
+               v
++------------------------------+
+| ToolLibrary                  |
+| exposes the AgentTool bucket |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| AgentTool                    |
+| - resolves name              |
+| - injects messages and vars  |
+| - dispatches to one agent    |
++--------------+---------------+
+               |
+               | selected agent: reviewer
+               v
++------------------------------+
+| reviewer subagent            |
+| processes delegated message  |
++--------------+---------------+
+               |
+               | result
+               v
++------------------------------+
+| Coordinator model            |
+| synthesizes final response   |
++--------------+---------------+
+               |
+               v
+Output
 ```
 
-???+ note "Agent-as-Tool Examples"
+## AgentTool Examples
+
+These examples use `AgentTool`, so the coordinator exposes one public
+`agent(name, message)` tool instead of exposing each specialist as a separate
+top-level tool.
+
+???+ example "AgentTool"
 
     === "Health Team"
 
-        A coordinator agent delegates to specialist agents:
+        A coordinator exposes one `agent` tool backed by multiple specialists:
 
         ```python
         # pip install msgflux[openai]
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.tools.builtin import AgentTool
 
         # mf.set_envs(OPENAI_API_KEY="...")
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-        class Nutritionist(nn.Agent):
-            """Specialist in nutrition, diet planning, and healthy eating habits.
-            Consult for meal plans, dietary recommendations, and nutritional advice."""
+        nutritionist = nn.Agent(
+            name="nutritionist",
+            model=model,
+            description="""Specialist in nutrition, diet planning, and healthy
+            eating habits. Use for meal plans, dietary recommendations, and
+            nutritional advice.""",
+            system_message="You are a certified nutritionist.",
+            instructions="""Create clear and practical meal plans tailored to
+            the user's goals. Be objective, technical, and structured.""",
+        )
 
-            model = model
-            system_message = "You are a certified nutritionist."
-            instructions = """Create clear and practical meal plans tailored to the user's goals.
-            Be objective, technical, and structured."""
+        fitness_trainer = nn.Agent(
+            name="fitness_trainer",
+            model=model,
+            description="""Specialist in fitness, exercise routines, and
+            physical training. Use for workout plans, training schedules, and
+            exercise guidance.""",
+            system_message="You are a certified personal trainer.",
+            instructions="""Design workout routines based on the user's fitness
+            level and goals. Focus on safety and sustainable progression.""",
+        )
 
-        class FitnessTrainer(nn.Agent):
-            """Specialist in fitness, exercise routines, and physical training.
-            Consult for workout plans, training schedules, and exercise guidance."""
+        agent_tool = AgentTool([nutritionist, fitness_trainer])
 
-            model = model
-            system_message = "You are a certified personal trainer."
-            instructions = """Design workout routines based on the user's fitness level and goals.
-            Focus on safety, progression, and sustainability."""
-
-        class HealthCoordinator(nn.Agent):
-            """Coordinates health specialists to provide comprehensive wellness advice."""
-
-            model = model
-            system_message = "You coordinate a team of health specialists."
-            instructions = "Delegate user requests to the appropriate specialist."
-            tools = [Nutritionist, FitnessTrainer]
-            config = {"verbose": True}
-
-        coordinator = HealthCoordinator()
+        coordinator = nn.Agent(
+            name="health_coordinator",
+            model=model,
+            system_message="You coordinate a team of health specialists.",
+            instructions="""Use the agent tool when a specialist should handle
+            the request. Choose `nutritionist` for diet questions and
+            `fitness_trainer` for workout questions.""",
+            tools=[agent_tool],
+        )
 
         response = coordinator("I want to lose 10kg and build muscle")
         ```
 
-    === "Research Team"
+        The model sees one tool named `agent`. To delegate, it calls that tool
+        with a target name such as `nutritionist` or `fitness_trainer` and a
+        message for the selected specialist.
 
-        Multiple research specialists with a coordinator:
+    === "Bucket Capture"
 
-        ```python
-        # pip install msgflux[openai]
-        import msgflux as mf
-        import msgflux.nn as nn
-
-        # mf.set_envs(OPENAI_API_KEY="...")
-
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-        class AcademicResearcher(nn.Agent):
-            """Expert in academic research with peer-reviewed sources.
-            Use for scholarly inquiries and scientific topics."""
-
-            model = model
-            system_message = "You are an academic researcher."
-            expected_output = "Provide academic-level analysis with citations."
-
-        class MarketResearcher(nn.Agent):
-            """Expert in market research and competitive analysis.
-            Use for business intelligence and market sizing."""
-
-            model = model
-            system_message = "You are a market research analyst."
-            expected_output = "Provide actionable business insights."
-
-        class TechnicalResearcher(nn.Agent):
-            """Expert in technical documentation and APIs.
-            Use for programming questions and library comparisons."""
-
-            model = model
-            system_message = "You are a technical researcher."
-            expected_output = "Provide technical details with code examples."
-
-        class ResearchCoordinator(nn.Agent):
-            model = model
-            system_message = "You coordinate research specialists."
-            instructions = "Delegate to the appropriate researcher based on the query type."
-            tools = [
-                AcademicResearcher,
-                MarketResearcher,
-                TechnicalResearcher
-            ]
-            config = {"verbose": True}
-
-        coordinator = ResearchCoordinator()
-
-        response = coordinator("Compare FastAPI vs Flask for building REST APIs")
-        ```
-
-    === "Agent Router"
-
-        Route requests directly to specialists using `return_direct`:
+        `AgentTool` can start empty and capture agent tools when they are added
+        to the same tool library:
 
         ```python
         # pip install msgflux[openai]
         import msgflux as mf
         import msgflux.nn as nn
+        from msgflux.tools.builtin import AgentTool
 
         # mf.set_envs(OPENAI_API_KEY="...")
 
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
-        @mf.tool_config(return_direct=True)
-        class PythonExpert(nn.Agent):
-            """Expert in Python performance optimization."""
-
-            model = model
-            system_message = "You specialize in Python performance."
-
-        @mf.tool_config(return_direct=True)
-        class JavaScriptExpert(nn.Agent):
-            """Expert in JavaScript and Node.js."""
-
-            model = model
-            system_message = "You specialize in JavaScript."
-
-        class Router(nn.Agent):
-            model = model
-            system_message = "Route programming questions to the right expert."
-            tools = [PythonExpert, JavaScriptExpert]
-            config = {"verbose": True}
-
-        router = Router()
-
-        # Response comes directly from the specialist
-        response = router("How do I optimize a Python loop?")
-        ```
-
-    === "Handoff Pattern"
-
-        Seamless conversation handoff between agents:
-
-        ```python
-        # pip install msgflux[openai]
-        import msgflux as mf
-        import msgflux.nn as nn
-
-        # mf.set_envs(OPENAI_API_KEY="...")
-
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-
-        # Enable handoff - transfers conversation history
-        @mf.tool_config(handoff=True)
-        class StartupSpecialist(nn.Agent):
-            """Specialist in scaling digital startups.
-            Use for growth strategies, metrics, and funding."""
-
-            model = model
-            system_message = "You are a startup scaling expert."
-
-        class BusinessConsultant(nn.Agent):
-            model = model
-            system_message = """You are a business consultant.
-            If the context is a startup, transfer to the specialist."""
-            tools = [StartupSpecialist]
-            config = {"verbose": True}
-
-        consultant = BusinessConsultant()
-
-        # Conversation is handed off to specialist
-        response = consultant(
-            "My SaaS has a CAC of $120 and LTV of $600. How do I scale?"
+        reviewer = nn.Agent(
+            name="reviewer",
+            model=model,
+            description="Review answers for correctness and missing details.",
+            instructions="Return a concise review with concrete corrections.",
         )
+
+        planner = nn.Agent(
+            name="planner",
+            model=model,
+            description="Break complex requests into ordered implementation steps.",
+            instructions="Return a practical plan with risks and validation steps.",
+        )
+
+        coordinator = nn.Agent(
+            name="coordinator",
+            model=model,
+            instructions="Delegate planning and review work through the agent tool.",
+            tools=[AgentTool(), reviewer, planner],
+        )
+
+        response = coordinator("Plan and review a migration to a new provider")
         ```
+
+        Because `AgentTool` is present, `reviewer` and `planner` are captured by
+        the bucket. The model still sees only the single public `agent` tool.
