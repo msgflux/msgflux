@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
-from msgflux.runtime.agent_inbox import AgentInbox
+from msgflux.runtime.agent_inbox import AgentInbox, InMemoryAgentInboxStore
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse
@@ -898,7 +898,7 @@ class TestAgentConfigOptions:
         """Verbose agents should enable verbose mode on inherited inboxes."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
-        inbox = AgentInbox()
+        inbox = AgentInbox(store=InMemoryAgentInboxStore())
 
         agent = Agent(
             name="agent",

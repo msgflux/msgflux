@@ -49,7 +49,11 @@ from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses
 from msgflux.nn.parameter import Parameter
-from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
+from msgflux.runtime.agent_inbox import (
+    AgentInbox,
+    AgentNotification,
+    InMemoryAgentInboxStore,
+)
 from msgflux.runtime.context import (
     ExecutionScope,
     execution_context,
@@ -368,6 +372,7 @@ class Agent(Module, metaclass=AutoParams):
             self.agent_inbox = AgentInbox(
                 verbose=config.get("verbose", False) if config else False,
                 owner=name,
+                store=InMemoryAgentInboxStore(),
             )
         else:
             self.agent_inbox = agent_inbox

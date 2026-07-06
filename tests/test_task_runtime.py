@@ -690,7 +690,7 @@ def test_inspect_model_execution_params_does_not_consume_notifications():
 
 
 def test_agent_control_interrupts_before_model_call():
-    inbox = mf.AgentInbox()
+    inbox = mf.AgentInbox(store=mf.InMemoryAgentInboxStore())
     model = _mock_model()
     agent = Agent(name="Assistant", model=model)
     agent.set_agent_inbox(inbox)
@@ -704,7 +704,7 @@ def test_agent_control_interrupts_before_model_call():
 
 
 def test_agent_control_pause_saves_checkpoint_before_model_call():
-    inbox = mf.AgentInbox()
+    inbox = mf.AgentInbox(store=mf.InMemoryAgentInboxStore())
     store = InMemoryCheckpointStore()
     model = _mock_model()
     agent = Agent(name="Assistant", model=model, checkpointer=store)
@@ -723,7 +723,7 @@ def test_agent_control_pause_saves_checkpoint_before_model_call():
 
 
 def test_agent_incoming_user_message_is_injected_before_model_call():
-    inbox = mf.AgentInbox()
+    inbox = mf.AgentInbox(store=mf.InMemoryAgentInboxStore())
     model = _mock_model()
     agent = Agent(name="Assistant", model=model)
     agent.set_agent_inbox(inbox)
@@ -926,7 +926,7 @@ def test_injected_notification_handle_publishes_task_status_updates():
 
 
 def test_nested_agent_uses_inherited_inbox_from_execution_context():
-    parent_inbox = mf.AgentInbox()
+    parent_inbox = mf.AgentInbox(store=mf.InMemoryAgentInboxStore())
     child = Agent(name="child", model=_mock_model())
 
     with execution_context(agent_inbox=parent_inbox):

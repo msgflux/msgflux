@@ -19,6 +19,7 @@ from msgflux.protocols.mcp import (
 )
 from msgflux.runtime.agent_inbox import (
     AgentInbox,
+    InMemoryAgentInboxStore,
 )
 from msgflux.runtime.background import BackgroundTaskDispatcher
 from msgflux.runtime.context import get_execution_context
@@ -498,7 +499,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
     @property
     def agent_inbox(self) -> AgentInbox:
         if self._agent_inbox is None:
-            self._agent_inbox = AgentInbox(owner=self.name)
+            self._agent_inbox = AgentInbox(
+                owner=self.name,
+                store=InMemoryAgentInboxStore(),
+            )
         return self._agent_inbox
 
     def add(self, tool: Callable) -> str:

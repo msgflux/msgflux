@@ -11,7 +11,6 @@ from msgflux.runtime.agent_inbox.dataclasses import (
     AgentControlMessage,
     AgentNotification,
 )
-from msgflux.runtime.agent_inbox.providers.in_memory import InMemoryAgentInboxStore
 from msgflux.runtime.context import (
     DEFAULT_NAMESPACE,
     ExecutionScope,
@@ -35,11 +34,17 @@ class AgentInbox:
         thread_id: str | None = None,
         run_id: str | None = None,
     ):
+        if store is None:
+            raise ValueError(
+                "`store` is required when creating AgentInbox directly. "
+                "Pass an AgentInboxStore with `store=...`, or let Agent create "
+                "its default memory-backed inbox."
+            )
         self._lock = RLock()
         self._scope_bound = thread_id is not None or run_id is not None
         self.verbose = verbose
         self.owner = owner
-        self.store = store or InMemoryAgentInboxStore()
+        self.store = store
         self.namespace = namespace or owner or DEFAULT_NAMESPACE
         self.thread_id = thread_id or new_thread_id()
         self.run_id = run_id or new_run_id()

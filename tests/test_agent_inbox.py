@@ -1,16 +1,25 @@
 """Tests for msgflux.runtime.agent_inbox."""
 
+from unittest.mock import Mock
+
+import pytest
+
+from msgflux.data.stores import Store
+from msgflux.nn import Agent
 from msgflux.runtime.agent_inbox import (
     AgentControlMessage,
     AgentInbox,
     InMemoryAgentInboxStore,
     SQLiteAgentInboxStore,
 )
-from msgflux.data.stores import Store
+
+
+def _memory_inbox(**kwargs):
+    return AgentInbox(store=InMemoryAgentInboxStore(), **kwargs)
 
 
 def test_agent_inbox_verbose_publish_and_drain_are_printed(capsys):
-    inbox = AgentInbox(verbose=True, owner="assistant")
+    inbox = _memory_inbox(verbose=True, owner="assistant")
 
     inbox.publish(
         {
@@ -36,7 +45,7 @@ def test_agent_inbox_verbose_publish_and_drain_are_printed(capsys):
 
 
 def test_agent_inbox_verbose_replace_is_printed(capsys):
-    inbox = AgentInbox(verbose=True, owner="assistant")
+    inbox = _memory_inbox(verbose=True, owner="assistant")
 
     inbox.publish(
         {
@@ -62,7 +71,7 @@ def test_agent_inbox_verbose_replace_is_printed(capsys):
 
 
 def test_agent_inbox_accepts_control_messages():
-    inbox = AgentInbox()
+    inbox = _memory_inbox()
 
     inbox.publish(AgentControlMessage(command="pause", reason="operator request"))
 
@@ -72,14 +81,22 @@ def test_agent_inbox_accepts_control_messages():
     assert notification.hint == "operator request"
 
 
-def test_agent_inbox_creates_default_memory_store():
-    inbox = AgentInbox()
+def test_agent_inbox_requires_store():
+    with pytest.raises(ValueError, match="`store` is required"):
+        AgentInbox()
 
-    assert isinstance(inbox.store, InMemoryAgentInboxStore)
+
+def test_agent_creates_default_memory_store_for_inbox():
+    model = Mock()
+    model.model_type = "chat_completion"
+
+    agent = Agent(name="assistant", model=model)
+
+    assert isinstance(agent.agent_inbox.store, InMemoryAgentInboxStore)
 
 
 def test_agent_inbox_renders_incoming_user_message():
-    inbox = AgentInbox()
+    inbox = _memory_inbox()
 
     inbox.user_message("Please adjust the answer.", metadata={"user_id": "u1"})
     rendered = inbox.render(inbox.drain())
@@ -95,7 +112,7 @@ def test_agent_inbox_renders_incoming_user_message():
 
 
 def test_agent_inbox_renders_runtime_notifications_as_system_messages():
-    inbox = AgentInbox()
+    inbox = _memory_inbox()
 
     inbox.publish(
         {
@@ -117,7 +134,7 @@ def test_agent_inbox_renders_runtime_notifications_as_system_messages():
 
 
 def test_agent_inbox_separates_incoming_user_message_from_system_notifications():
-    inbox = AgentInbox()
+    inbox = _memory_inbox()
 
     inbox.user_message("Please adjust the answer.")
     inbox.publish({"source": "task", "status": "completed"})
@@ -130,7 +147,7 @@ def test_agent_inbox_separates_incoming_user_message_from_system_notifications()
 
 
 def test_agent_inbox_clear_user_messages_preserves_system_notifications():
-    inbox = AgentInbox()
+    inbox = _memory_inbox()
 
     inbox.user_message("Please adjust the answer.")
     inbox.publish({"source": "task", "status": "completed"})
@@ -196,7 +213,7 @@ def test_agent_inbox_clear_user_messages_updates_store():
 
 
 def test_agent_inbox_local_drain_is_scoped_by_thread_id():
-    inbox = AgentInbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+    inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
 
     inbox.user_message("Only user 1 should see this.")
     inbox.bind(thread_id="user_2", run_id="run_2")
@@ -210,8 +227,8 @@ def test_agent_inbox_local_drain_is_scoped_by_thread_id():
     assert drained[0].hint == "Only user 1 should see this."
 
 
-def test_agent_inbox_default_store_keeps_multiple_thread_queues():
-    inbox = AgentInbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+def test_agent_inbox_memory_store_keeps_multiple_thread_queues():
+    inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
 
     inbox.user_message("User 1 notification.")
     inbox.bind(thread_id="user_2", run_id="run_2")
@@ -230,7 +247,7 @@ def test_agent_inbox_default_store_keeps_multiple_thread_queues():
 
 
 def test_agent_inbox_local_first_bind_keeps_prebound_notifications():
-    inbox = AgentInbox()
+    inbox = _memory_inbox()
 
     inbox.user_message("Deliver on first scope bind.")
     inbox.bind(namespace="assistant", thread_id="user_1", run_id="run_1")
@@ -242,7 +259,7 @@ def test_agent_inbox_local_first_bind_keeps_prebound_notifications():
 
 
 def test_agent_inbox_local_moves_pending_notifications_between_runs_same_thread():
-    inbox = AgentInbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+    inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
 
     inbox.user_message("Deliver on next turn.")
     inbox.bind(run_id="run_2")
