@@ -47,7 +47,9 @@ coordinator = nn.Agent(
 ```
 
 `AgentTool` also accepts runtime-injected `messages` and `vars`; those are
-provided by msgFlux and are not exposed as normal model parameters.
+provided by msgFlux and are not exposed as normal model parameters. Before
+dispatching, it only forwards those runtime values to the selected agent when
+that agent's own `tool_config` requests them.
 
 ## Tool Bucket Capture
 

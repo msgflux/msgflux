@@ -169,6 +169,7 @@ def test_agent_tool_dispatches_to_selected_agent():
 
 def test_agent_tool_injects_messages_and_vars_without_exposing_them():
     recorder = _RecordingAgent()
+    recorder.tool_config = {"inject_messages": True, "inject_vars": True}
     library = ToolLibrary(name="lib", tools=[AgentTool(), recorder])
     messages = [{"role": "user", "content": "history"}]
     vars = {"tenant": "acme"}
@@ -184,6 +185,66 @@ def test_agent_tool_injects_messages_and_vars_without_exposing_them():
     assert response.tool_calls[0].result == "recorded"
     assert recorder.calls[0]["messages"] == messages
     assert recorder.calls[0]["vars"] == vars
+
+
+def test_agent_tool_injects_runtime_kwargs_only_for_selected_agent_config():
+    contextual = _RecordingAgent("contextual")
+    contextual.tool_config = {"inject_messages": True, "inject_vars": True}
+    plain = _RecordingAgent("plain")
+    library = ToolLibrary(name="lib", tools=[AgentTool(), contextual, plain])
+    messages = [{"role": "user", "content": "history"}]
+    vars = {"tenant": "acme"}
+
+    plain_response = library(
+        [("call_1", "agent", {"name": "plain", "message": "Go"})],
+        messages=messages,
+        vars=vars,
+    )
+    contextual_response = library(
+        [("call_2", "agent", {"name": "contextual", "message": "Go"})],
+        messages=messages,
+        vars=vars,
+    )
+
+    assert plain_response.tool_calls[0].result == "recorded"
+    assert contextual_response.tool_calls[0].result == "recorded"
+    assert "messages" not in plain.calls[0]
+    assert "vars" not in plain.calls[0]
+    assert plain.calls[0]["scope"].namespace == "plain"
+    assert contextual.calls[0]["messages"] == messages
+    assert contextual.calls[0]["messages"] is not messages
+    assert contextual.calls[0]["vars"] == vars
+    assert contextual.calls[0]["scope"].namespace == "contextual"
+
+
+def test_agent_tool_filters_injected_vars_list_for_selected_agent():
+    recorder = _RecordingAgent()
+    recorder.tool_config = {"inject_vars": ["tenant"]}
+    library = ToolLibrary(name="lib", tools=[AgentTool(), recorder])
+
+    response = library(
+        [("call_1", "agent", {"name": "recorder", "message": "Go"})],
+        vars={"tenant": "acme", "secret": "hidden"},
+    )
+
+    assert response.tool_calls[0].result == "recorded"
+    assert recorder.calls[0]["vars"] == {"tenant": "acme"}
+
+
+def test_agent_tool_injected_vars_list_requires_selected_agent_vars():
+    recorder = _RecordingAgent()
+    recorder.tool_config = {"inject_vars": ["tenant"]}
+    library = ToolLibrary(name="lib", tools=[AgentTool(), recorder])
+
+    response = library(
+        [("call_1", "agent", {"name": "recorder", "message": "Go"})],
+        vars={},
+    )
+
+    assert response.tool_calls[0].result is None
+    assert "The agent `recorder` requires the injected parameter `tenant`" in (
+        response.tool_calls[0].error
+    )
 
 
 def test_agent_tool_rejects_unknown_agent_name():
