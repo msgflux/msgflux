@@ -34,6 +34,13 @@ class _GuardInterrupt(Exception):  # noqa: N818
         self.response = response
 
 
+class AbortRequestedError(Exception):
+    """Raised when a local runtime abort signal is observed."""
+
+    def __init__(self, message: Optional[str] = None):
+        super().__init__(message or "Execution abort requested.")
+
+
 class UnsafeUserInputError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe user input detected")
