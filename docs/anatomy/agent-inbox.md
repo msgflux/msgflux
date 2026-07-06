@@ -2,7 +2,7 @@
 
 This page records the notification primitive used by `Agent`.
 
-Implementation lives under `src/msgflux/runtime/agent_inbox.py` and
+Implementation lives under `src/msgflux/runtime/agent_inbox/` and
 `src/msgflux/runtime/context.py`.
 
 The goal is to make runtime notifications pluggable, durable, and
@@ -60,6 +60,7 @@ The current `AgentInbox` stays small:
 - `peek()`
 - `drain()`
 - `ack(notification_ids)`
+
 The inbox is a runtime primitive, not just a renderer.
 
 That means it is responsible for:
@@ -240,7 +241,7 @@ with execution_context(
 ## Producers
 
 Any runtime component should be able to publish directly to the inbox through
-the current execution context.
+the current execution context or through a hidden `ToolLibraryHandle`.
 
 Current and planned producers include:
 
@@ -248,7 +249,7 @@ Current and planned producers include:
 - task progress updates
 - checkpoint restore/replay signals
 - context budget warnings
-- tool registry changes made through hidden tool handles
+- tool registry changes made through hidden `ToolLibraryHandle` values
 
 The important rule is:
 

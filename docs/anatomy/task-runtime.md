@@ -10,8 +10,9 @@ tool-call result:
 - result delivery through either polling or passive notification
 
 This page describes the internal shape for `background task`, `progress`, and
-`notification` support. It does not cover checkpointing, agent resume, or a
-general event stream.
+`notification` support. Checkpointing and background agent resume are covered in
+[Checkpoints And Replay](checkpoints-and-replay.md). A general event stream is
+still outside this primitive.
 
 ## Mental Model
 
@@ -83,7 +84,7 @@ background tool.
 
 It exists so the tool can report progress without mutating the store directly.
 
-The first version only needs methods like:
+The core methods are:
 
 - `set_running(...)`
 - `update_progress(...)`
@@ -224,7 +225,7 @@ argument is `false` or `null`, the tool runs normally. Manual callers may also
 omit the argument, which is treated the same as `false`.
 
 The important detail is that `Hidden` only removes the parameter from the
-model-facing schema. `ToolLibrary` remains responsible for mounting the actual
+model-facing schema. `ToolLibrary` remains responsible for building the actual
 runtime kwargs.
 
 A hidden `ToolLibraryHandle` can add, remove, and list tools without exposing
@@ -285,16 +286,18 @@ src/msgflux/tasks/store.py
   -> TaskActivityRecorder
   -> TaskHandle
 
-src/msgflux/runtime/agent_inbox.py
+src/msgflux/runtime/agent_inbox/
   -> AgentNotification
   -> AgentInbox
   -> ToolNotificationHandle
 
+src/msgflux/tools/handles.py
+  -> ToolLibraryHandle
+
 src/msgflux/nn/modules/tool.py
   -> background dispatch integration
   -> task tools registration
-  -> TaskHandle injection
-  -> notification injection
+  -> Hidden runtime parameter resolution
 
 src/msgflux/nn/modules/agent.py
   -> notification delivery into model execution

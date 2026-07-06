@@ -1,6 +1,6 @@
 # Checkpoints And Replay
 
-This page records the intended checkpoint and replay contract for msgFlux.
+This page records the checkpoint and replay contract for msgFlux.
 
 It covers the durability model that should align:
 
@@ -9,9 +9,10 @@ It covers the durability model that should align:
 - `Inline`
 - parallel `Functional` helpers such as `bcast_gather`
 
-It is a design page, not an API tutorial. Some pieces described here already
-exist in experimental branches, while others are planned so the final
-implementation can stay coherent.
+It is a design page, not an API tutorial. The agent, task-runtime, and store
+pieces already use this identity model, while some integrations described here
+remain architectural direction so the durability surface stays coherent as it
+expands.
 
 ## Goal
 
