@@ -2014,3 +2014,17 @@ The pattern above keeps caching and retry behaviour identical to every other bui
 
 !!! note
     The response returned by `.chat.completions.create()` is consumed by `_process_model_output`. That method reads `model_output.choices[0].message` and `model_output.usage.to_dict()`. If your SDK returns a different structure, also override `_process_model_output` to adapt it.
+
+## 19. OpenAI SSL Verification
+
+OpenAI-compatible chat completion providers verify SSL certificates by default.
+Set `OPENAI_SSL_VERIFY=false` only when you intentionally need to disable
+certificate verification, such as when testing behind a local proxy or a
+controlled internal network with a custom certificate setup.
+
+```bash
+export OPENAI_SSL_VERIFY=false
+```
+
+The values `0`, `false`, and `no` disable SSL verification. When the variable
+is unset, or set to any other value, SSL verification remains enabled.
