@@ -4,86 +4,86 @@ import httpx
 import pytest
 
 import msgflux.tools.builtin.web_fetch as web_fetch_module
-from msgflux.tools.builtin.web_fetch import WebFetch
+from msgflux.tools.builtin.web_fetch import WebFetchTool
 from msgflux.nn.modules.tool import ToolLibrary
 
 
-class TestWebFetchInit:
-    """Tests for WebFetch.__init__ and class attributes."""
+class TestWebFetchToolInit:
+    """Tests for WebFetchTool.__init__ and class attributes."""
 
     def test_name_attribute(self):
-        assert WebFetch.name == "web_fetch"
-        assert WebFetch.display_name == "Web Fetch"
+        assert WebFetchTool.name == "web_fetch"
+        assert WebFetchTool.display_name == "Web Fetch"
 
     def test_defaults(self):
-        tool = WebFetch()
+        tool = WebFetchTool()
         assert tool.web_parser == "https://markdown.new/"
         assert tool.default_headers == {}
         assert tool.timeout == 1
 
     def test_custom_parser_url_adds_trailing_slash(self):
-        tool = WebFetch(web_parser="https://custom.parser")
+        tool = WebFetchTool(web_parser="https://custom.parser")
         assert tool.web_parser == "https://custom.parser/"
 
     def test_custom_parser_url_keeps_single_trailing_slash(self):
-        tool = WebFetch(web_parser="https://custom.parser/")
+        tool = WebFetchTool(web_parser="https://custom.parser/")
         assert tool.web_parser == "https://custom.parser/"
 
     def test_custom_headers(self):
         headers = {"Authorization": "Bearer token"}
-        tool = WebFetch(default_headers=headers)
+        tool = WebFetchTool(default_headers=headers)
         assert tool.default_headers == headers
 
     def test_none_headers_becomes_empty_dict(self):
-        tool = WebFetch(default_headers=None)
+        tool = WebFetchTool(default_headers=None)
         assert tool.default_headers == {}
 
     def test_custom_timeout(self):
-        tool = WebFetch(timeout=5)
+        tool = WebFetchTool(timeout=5)
         assert tool.timeout == 5
 
     def test_tool_library_uses_builtin_display_name(self):
-        library = ToolLibrary(name="web", tools=[WebFetch])
+        library = ToolLibrary(name="web", tools=[WebFetchTool])
 
         assert library.get_tool_display_names()["web_fetch"] == "Web Fetch"
 
 
 class TestBuildUrl:
-    """Tests for WebFetch._build_url."""
+    """Tests for WebFetchTool._build_url."""
 
     def test_url_with_https_scheme(self):
-        tool = WebFetch()
+        tool = WebFetchTool()
         assert (
             tool._build_url("https://example.com")
             == "https://markdown.new/https://example.com"
         )
 
     def test_url_with_http_scheme(self):
-        tool = WebFetch()
+        tool = WebFetchTool()
         assert (
             tool._build_url("http://example.com")
             == "https://markdown.new/http://example.com"
         )
 
     def test_url_without_scheme_adds_https(self):
-        tool = WebFetch()
+        tool = WebFetchTool()
         assert (
             tool._build_url("example.com") == "https://markdown.new/https://example.com"
         )
 
     def test_url_with_path(self):
-        tool = WebFetch()
+        tool = WebFetchTool()
         result = tool._build_url("https://example.com/some/path?q=1")
         assert result == "https://markdown.new/https://example.com/some/path?q=1"
 
     def test_custom_parser(self):
-        tool = WebFetch(web_parser="https://r.jina.ai/")
+        tool = WebFetchTool(web_parser="https://r.jina.ai/")
         result = tool._build_url("https://example.com")
         assert result == "https://r.jina.ai/https://example.com"
 
 
-class TestWebFetchCall:
-    """Tests for WebFetch.__call__ (sync)."""
+class TestWebFetchToolCall:
+    """Tests for WebFetchTool.__call__ (sync)."""
 
     def test_success_returns_text(self, mocker):
         mock_response = mocker.Mock()
@@ -93,7 +93,7 @@ class TestWebFetchCall:
             return_value=mock_response,
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         result = tool("https://example.com")
 
         assert result == "# Markdown content"
@@ -112,7 +112,7 @@ class TestWebFetchCall:
         )
 
         headers = {"X-Custom": "value"}
-        tool = WebFetch(default_headers=headers)
+        tool = WebFetchTool(default_headers=headers)
         tool("https://example.com")
 
         mock_get.assert_called_once_with(
@@ -129,7 +129,7 @@ class TestWebFetchCall:
             return_value=mock_response,
         )
 
-        tool = WebFetch(timeout=5)
+        tool = WebFetchTool(timeout=5)
         tool("https://example.com")
 
         _, kwargs = mock_get.call_args
@@ -143,7 +143,7 @@ class TestWebFetchCall:
             return_value=mock_response,
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         tool("example.com/page")
 
         args, _ = mock_get.call_args
@@ -155,7 +155,7 @@ class TestWebFetchCall:
             side_effect=httpx.HTTPError("connection refused"),
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(RuntimeError, match="Failed to fetch"):
             tool("https://example.com")
 
@@ -165,27 +165,27 @@ class TestWebFetchCall:
             side_effect=httpx.HTTPError("timeout"),
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(RuntimeError, match=r"https://example\.com"):
             tool("https://example.com")
 
     def test_raises_import_error_when_httpx_unavailable(self, mocker):
         mocker.patch.object(web_fetch_module, "httpx", None)
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(ImportError, match="httpx is required"):
             tool("https://example.com")
 
     def test_import_error_message_contains_install_hint(self, mocker):
         mocker.patch.object(web_fetch_module, "httpx", None)
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(ImportError, match="pip install msgflux"):
             tool("https://example.com")
 
 
-class TestWebFetchFallback:
-    """Tests for WebFetch fallback: parser fails → raw HTML + html_to_text."""
+class TestWebFetchToolFallback:
+    """Tests for WebFetchTool fallback: parser fails → raw HTML + html_to_text."""
 
     def test_fallback_called_on_parser_failure(self, mocker):
         raw_html = "<html><body><p>Hello</p></body></html>"
@@ -200,7 +200,7 @@ class TestWebFetchFallback:
             return_value="Hello",
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         result = tool("https://example.com")
 
         assert result == "Hello"
@@ -215,7 +215,7 @@ class TestWebFetchFallback:
         )
         mocker.patch("msgflux.tools.builtin.web_fetch.html_to_text", return_value="ok")
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         tool("https://example.com")
 
         first_url = mock_get.call_args_list[0][0][0]
@@ -232,7 +232,7 @@ class TestWebFetchFallback:
         )
         mocker.patch("msgflux.tools.builtin.web_fetch.html_to_text", return_value="ok")
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         tool("example.com")
 
         second_url = mock_get.call_args_list[1][0][0]
@@ -244,7 +244,7 @@ class TestWebFetchFallback:
             side_effect=httpx.HTTPError("all down"),
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(RuntimeError, match="Failed to fetch"):
             tool("https://example.com")
 
@@ -269,7 +269,7 @@ class TestWebFetchFallback:
             return_value="Hello",
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         result = await tool.acall("https://example.com")
 
         assert result == "Hello"
@@ -292,7 +292,7 @@ class TestWebFetchFallback:
         )
         mocker.patch("msgflux.tools.builtin.web_fetch.html_to_text", return_value="ok")
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         await tool.acall("https://example.com")
 
         first_url = mock_client.get.call_args_list[0][0][0]
@@ -311,13 +311,13 @@ class TestWebFetchFallback:
             return_value=mock_client,
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(RuntimeError, match="Failed to fetch"):
             await tool.acall("https://example.com")
 
 
-class TestWebFetchAcall:
-    """Tests for WebFetch.acall (async)."""
+class TestWebFetchToolAcall:
+    """Tests for WebFetchTool.acall (async)."""
 
     @pytest.mark.asyncio
     async def test_success_returns_text(self, mocker):
@@ -334,7 +334,7 @@ class TestWebFetchAcall:
             return_value=mock_client,
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         result = await tool.acall("https://example.com")
 
         assert result == "# Async Markdown"
@@ -359,7 +359,7 @@ class TestWebFetchAcall:
         )
 
         headers = {"X-Custom": "value"}
-        tool = WebFetch(default_headers=headers)
+        tool = WebFetchTool(default_headers=headers)
         await tool.acall("https://example.com")
 
         mock_client.get.assert_called_once_with(
@@ -382,7 +382,7 @@ class TestWebFetchAcall:
             return_value=mock_client,
         )
 
-        tool = WebFetch(timeout=3)
+        tool = WebFetchTool(timeout=3)
         await tool.acall("https://example.com")
 
         mock_async_client_cls.assert_called_once_with(timeout=3)
@@ -401,7 +401,7 @@ class TestWebFetchAcall:
             return_value=mock_client,
         )
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(RuntimeError, match="Failed to fetch"):
             await tool.acall("https://example.com")
 
@@ -409,6 +409,6 @@ class TestWebFetchAcall:
     async def test_raises_import_error_when_httpx_unavailable(self, mocker):
         mocker.patch.object(web_fetch_module, "httpx", None)
 
-        tool = WebFetch()
+        tool = WebFetchTool()
         with pytest.raises(ImportError, match="httpx is required"):
             await tool.acall("https://example.com")

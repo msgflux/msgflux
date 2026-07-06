@@ -1,6 +1,6 @@
 # System Prompt Components
 
-The system prompt is composed of 6 components:
+The system prompt is composed of 7 components:
 
 | Component | Description | Example |
 |-----------|-------------|---------|
@@ -10,6 +10,7 @@ The system prompt is composed of 6 components:
 | **examples** | Input/output examples | Examples of reasoning and outputs |
 | **system_extra_message** | Additional system context | Extra instructions or constraints |
 | **include_date** | Include current date | Adds "Weekday, Month DD, YYYY" |
+| **tool_usage_guidance** | Tool-specific usage instructions | Guidance from exposed tools, such as when to call each tool |
 
 All components are assembled using a **system prompt template**, that can be customized via `templates={"system": "..."}`. By default, the template concatenates all defined components in a structured format using XML tags.
 

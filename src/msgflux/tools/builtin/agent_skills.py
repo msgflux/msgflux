@@ -3,7 +3,7 @@ from typing import Optional
 from msgflux.runtime.skills import AgentSkillManager
 
 
-class ActivateSkill:
+class ActivateSkillTool:
     """Activate an Agent Skill and return its full instructions."""
 
     name = "activate_skill"
@@ -25,7 +25,7 @@ class ActivateSkill:
         return self(name)
 
 
-class SkillSearch:
+class SkillSearchTool:
     """Search Agent Skills that are not listed in the initial catalog."""
 
     name = "skill_search"

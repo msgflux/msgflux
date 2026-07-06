@@ -8,7 +8,7 @@ except ImportError:
     httpx = None
 
 
-class WebFetch:
+class WebFetchTool:
     """Fetches web pages as Markdown via a remote parser endpoint."""
 
     name = "web_fetch"
@@ -54,7 +54,7 @@ class WebFetch:
         """
         if httpx is None:
             raise ImportError(
-                "httpx is required for WebFetch."
+                "httpx is required for WebFetchTool."
                 " Install it with: pip install msgflux[httpx]"
             )
 
@@ -100,7 +100,7 @@ class WebFetch:
         """
         if httpx is None:
             raise ImportError(
-                "httpx is required for WebFetch."
+                "httpx is required for WebFetchTool."
                 " Install it with: pip install msgflux[httpx]"
             )
 

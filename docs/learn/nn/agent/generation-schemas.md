@@ -157,14 +157,14 @@ Each `Action` contains:
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.generation.reasoning import ReAct
-from msgflux.tools.builtin import WebFetch
+from msgflux.tools.builtin import WebFetchTool
 
 # mf.set_envs(OPENAI_API_KEY="...")
 
 class WebResearcher(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     generation_schema = ReAct
-    tools = [WebFetch]
+    tools = [WebFetchTool]
     config = {"verbose": True}
 
 agent = WebResearcher()

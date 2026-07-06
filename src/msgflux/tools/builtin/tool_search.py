@@ -14,6 +14,10 @@ class ToolSearchTool(ToolLibraryOperator):
         "Search registered on-demand tools by keyword. Use `select:tool_a,tool_b` "
         "to activate exact tools. Set `description=true` to include tool details."
     )
+    usage_guidance = (
+        "Use when the current tools may not cover the task. Search first, then "
+        "activate exact matches with `select:<tool_name>`."
+    )
     annotations = {
         "query": str,
         "description": bool,
