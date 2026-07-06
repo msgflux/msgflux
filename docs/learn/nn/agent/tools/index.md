@@ -20,15 +20,13 @@ Tools are interfaces that allow models to perform actions or query information.
 
 In msgFlux, a **Tool can be any callable** (function, class with `__call__`/`acall` e.g. nn.Agent).
 
-For background dispatch and task tools, see [Background Tasks](background-tasks.md).
-
 ### More Tool Topics
 
 - [Tool Config](config.md): per-tool behavior such as `return_direct`, runtime injection, retries, display names, and usage guidance.
 - [Builtin Tools](builtin.md): built-in web, weather, agent, skill, and runtime tools.
 - [Tool Search](tool-search.md): keep rarely used tools on demand and activate them with `tool_search`.
 - [Background Tasks](background-tasks.md): background dispatch, task tools, progress, notifications, and `task_message`.
-- [Agent Tool](agent-tool.md): using agents as tools, `AgentTool`, and tool buckets for agent routing.
+- [AgentTool](agent-tool.md): route many agents through one `agent(name, message)` tool and tool bucket.
 - [MCP](mcp.md): connecting external Model Context Protocol servers.
 
 
@@ -909,6 +907,101 @@ Tools can return any data type. Non-string returns are automatically serialized 
                 {"title": "Result 1", "url": "..."},
                 {"title": "Result 2", "url": "..."}
             ]
+        ```
+
+### Agents as Tools
+
+An `nn.Agent` can be registered directly as a tool. In this direct pattern,
+each agent appears to the model as its own callable tool, using the agent name,
+description, and task signature.
+
+Use this when the coordinator should choose between a small number of specialist
+agents directly. If you want the model to see only one public
+`agent(name, message)` tool that routes to many agents, use
+[AgentTool](agent-tool.md) instead.
+
+???+ example "Direct Agent Tools"
+
+    === "Health Team"
+
+        A coordinator agent delegates to specialist agents:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        class Nutritionist(nn.Agent):
+            """Specialist in nutrition, diet planning, and healthy eating habits.
+            Consult for meal plans, dietary recommendations, and nutritional advice."""
+
+            model = model
+            system_message = "You are a certified nutritionist."
+            instructions = """Create clear and practical meal plans tailored to the user's goals.
+            Be objective, technical, and structured."""
+
+        class FitnessTrainer(nn.Agent):
+            """Specialist in fitness, exercise routines, and physical training.
+            Consult for workout plans, training schedules, and exercise guidance."""
+
+            model = model
+            system_message = "You are a certified personal trainer."
+            instructions = """Design workout routines based on the user's fitness level and goals.
+            Focus on safety, progression, and sustainability."""
+
+        class HealthCoordinator(nn.Agent):
+            """Coordinates health specialists to provide comprehensive wellness advice."""
+
+            model = model
+            system_message = "You coordinate a team of health specialists."
+            instructions = "Delegate user requests to the appropriate specialist."
+            tools = [Nutritionist, FitnessTrainer]
+            config = {"verbose": True}
+
+        coordinator = HealthCoordinator()
+
+        response = coordinator("I want to lose 10kg and build muscle")
+        ```
+
+    === "Handoff Pattern"
+
+        Seamless conversation handoff between agents:
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+        # Enable handoff - transfers conversation history
+        @mf.tool_config(handoff=True)
+        class StartupSpecialist(nn.Agent):
+            """Specialist in scaling digital startups.
+            Use for growth strategies, metrics, and funding."""
+
+            model = model
+            system_message = "You are a startup scaling expert."
+
+        class BusinessConsultant(nn.Agent):
+            model = model
+            system_message = """You are a business consultant.
+            If the context is a startup, transfer to the specialist."""
+            tools = [StartupSpecialist]
+            config = {"verbose": True}
+
+        consultant = BusinessConsultant()
+
+        # Conversation is handed off to specialist
+        response = consultant(
+            "My SaaS has a CAC of $120 and LTV of $600. How do I scale?"
+        )
         ```
 
 ## Next Topics
