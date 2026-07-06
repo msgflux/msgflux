@@ -680,3 +680,107 @@ If either condition is missing, validation is silently skipped.
     - **Docstrings matter**: The class docstring becomes the model's instruction
     - **Trust the system**: Avoid over-engineering prompts in descriptions
     - **Enable validation in development**: Use `config={"validate_inputs": True}` to catch input errors early
+
+### Building Examples from ChatMessages
+
+`ChatMessages` can preserve turn metadata and convert completed turns into
+`mf.Example` objects. This is useful when you want to keep the original
+conversation shape while producing supervised examples for msgFlux examples or
+prompt optimizers such as DSPy.
+
+Each completed turn becomes one example:
+
+- `begin_turn(inputs=...)` records the signature inputs.
+- `add_user(...)`, `add_assistant_response(...)`, and related message helpers
+  preserve the chat history for future turns.
+- Tool traces can be replayed with `function_call` and `function_call_output`
+  items when you are building examples from a saved run.
+- `end_turn(assistant_output=...)` records the label for that turn.
+- `to_examples(...)` returns examples with the previous conversation in
+  `inputs[history_key]` and the target output in `labels[output_key]`.
+
+```python
+import msgflux as mf
+
+messages = mf.ChatMessages(
+    thread_id="support_42",
+    namespace="support_triage",
+)
+
+messages.begin_turn(
+    inputs={
+        "ticket": "Checkout fails when paying by card",
+        "customer_tier": "enterprise",
+    },
+    vars={"tone": "concise"},
+)
+messages.add_user("Ticket: Checkout fails when paying by card. Tier: enterprise.")
+messages.append(
+    {
+        "type": "function_call",
+        "call_id": "call_sla_1",
+        "name": "lookup_customer_sla",
+        "arguments": '{"customer_tier": "enterprise"}',
+    }
+)
+messages.append(
+    {
+        "type": "function_call_output",
+        "call_id": "call_sla_1",
+        "output": {
+            "sla": "1 hour",
+            "escalation": "payments-oncall",
+        },
+    }
+)
+messages.add_assistant_response(
+    "This is a high-priority payments issue.",
+    reasoning_content="Payment failures block revenue and affect an enterprise account.",
+)
+messages.end_turn(
+    assistant_output={
+        "category": "payments",
+        "priority": "high",
+        "reply": "I escalated this to payments support.",
+    },
+    response_type="signature",
+)
+
+messages.begin_turn(
+    inputs={
+        "ticket": "Can I export invoices as CSV?",
+        "customer_tier": "starter",
+    },
+)
+messages.add_user("Ticket: Can I export invoices as CSV? Tier: starter.")
+messages.add_assistant_response("This is a product how-to question.")
+messages.end_turn(
+    assistant_output={
+        "category": "product_help",
+        "priority": "normal",
+        "reply": "Use Billing > Invoices > Export CSV.",
+    },
+    response_type="signature",
+)
+
+examples = messages.to_examples(
+    history_key="conversation",
+    output_key="triage",
+)
+
+first = examples[0]
+print(first.inputs["ticket"])
+print(first.labels["triage"]["priority"])
+print(first.reasoning)
+
+second = examples[1]
+print(second.inputs["conversation"])
+print(second.labels["triage"]["reply"])
+```
+
+The first example has an empty `conversation` because no previous turn exists.
+The second example includes the first turn as ChatML history, including the
+simulated tool call and tool output, so optimizers can learn from both the
+current signature inputs and the conversation context that led to the expected
+output. Pass `include_history=False` when only the raw signature inputs should
+be exported.
