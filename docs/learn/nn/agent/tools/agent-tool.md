@@ -92,6 +92,73 @@ configured with background support, the selected subagent can run through the
 same task dispatch, status, wait, and task-message flow as other background
 tools.
 
+## Dynamic Agent Registration
+
+A tool can use a hidden runtime handle to register agents while the coordinator
+is running. The model writes the subagent specification through normal tool
+arguments, and the hidden `handle` gives the Python tool access to the current
+`ToolLibrary`.
+
+When the library already contains `AgentTool()`, `handle.add(agent)` follows the
+same `ToolLibrary.add(...)` path as static registration. Because `nn.Agent`
+uses `tool_kind="agent"`, the existing `AgentTool` bucket captures the new
+agent instead of exposing it as another top-level tool.
+
+```python
+# pip install msgflux[openai]
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools.builtin import AgentTool
+
+# mf.set_envs(OPENAI_API_KEY="...")
+
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+
+
+def create_specialist(
+    agent_name: str,
+    description: str,
+    instructions: str,
+    handle: mf.Hidden,
+) -> str:
+    """Create a specialist agent from a model-written specification."""
+    specialist = nn.Agent(
+        name=agent_name,
+        model=model,
+        description=description,
+        instructions=instructions,
+    )
+
+    registered_name = handle.add(specialist)
+    return (
+        f"Registered `{registered_name}`. Delegate with "
+        f"agent(name='{registered_name}', message='...')."
+    )
+
+
+coordinator = nn.Agent(
+    name="coordinator",
+    model=model,
+    instructions=(
+        "When a missing specialist would help, call create_specialist with a "
+        "clear name, description, and instructions. Then delegate through the "
+        "agent tool."
+    ),
+    tools=[
+        AgentTool(),
+        create_specialist,
+    ],
+)
+```
+
+The model-facing schema for `create_specialist` contains `agent_name`,
+`description`, and `instructions`. It does not contain `handle`; msgFlux injects
+that runtime value because the parameter is annotated with `mf.Hidden`.
+
+After `create_specialist` runs, the public tool list remains small:
+`create_specialist(...)` creates specialists, and `agent(name, message)`
+delegates to any captured specialist in the bucket.
+
 ```text
 User input
     |
