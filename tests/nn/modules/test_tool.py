@@ -866,14 +866,15 @@ class TestToolLibrary:
 
         assert "tool_search" not in library.get_tool_names()
 
-    def test_hidden_handle_can_add_on_demand_tool(self):
-        """Test that hidden handle can register on-demand tools."""
+    def test_injected_handle_can_add_on_demand_tool(self):
+        """Test that injected handle can register on-demand tools."""
 
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
             """Look up external information."""
             return query
 
+        @mf.tool_config(inject_handle=True)
         def enable_remote_lookup(
             handle: mf.Hidden,
         ) -> list[str]:
@@ -895,7 +896,7 @@ class TestToolLibrary:
         assert "tool_search" in schema_names
         assert "remote_lookup" not in schema_names
 
-    def test_hidden_handle_add_returns_normalized_tool_name(self):
+    def test_injected_handle_add_returns_normalized_tool_name(self):
         """Test that ToolLibraryHandle.add returns the registered tool name."""
 
         @mf.tool_config(name_override="remote_lookup")
@@ -903,6 +904,7 @@ class TestToolLibrary:
             """Look up external information."""
             return query
 
+        @mf.tool_config(inject_handle=True)
         def enable_lookup(handle: mf.Hidden) -> str:
             """Register a tool."""
             return handle.add(lookup)
@@ -1156,6 +1158,26 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
+    def test_tool_library_with_inject_handle(self):
+        """Test ToolLibrary with inject_handle config."""
+
+        @mf.tool_config(inject_handle=True)
+        def runtime_tool(handle: mf.Hidden) -> str:
+            """Tool that uses the runtime handle."""
+            return ",".join(handle.list_tools())
+
+        library = ToolLibrary(name="lib", tools=[runtime_tool])
+        schema = next(
+            item
+            for item in library.get_tool_json_schemas()
+            if item["function"]["name"] == "runtime_tool"
+        )
+
+        result = library([("call_1", "runtime_tool", {})])
+
+        assert "handle" not in schema["function"]["parameters"].get("properties", {})
+        assert "runtime_tool" in result.tool_calls[0].result
+
     def test_tool_library_tool_library_parameter_is_not_injected(self):
         """Test tool_library is a normal parameter, not a runtime alias."""
 
@@ -1395,6 +1417,22 @@ class TestToolLibrary:
         result = await library.aforward(tool_callings, message={"key": "state_value"})
 
         assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_inject_handle(self):
+        """Test async ToolLibrary inject_handle."""
+
+        async def async_tool(handle: mf.Hidden) -> str:
+            """Tool with runtime handle."""
+            return ",".join(handle.list_tools())
+
+        async_tool.tool_config = {"inject_handle": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        tool_callings = [("call_1", "async_tool", {})]
+        result = await library.aforward(tool_callings)
+
+        assert "async_tool" in result.tool_calls[0].result
 
     @pytest.mark.asyncio
     async def test_tool_library_aforward_disable_input_ignores_model_params(self):

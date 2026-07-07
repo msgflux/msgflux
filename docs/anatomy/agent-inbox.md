@@ -241,7 +241,8 @@ with execution_context(
 ## Producers
 
 Any runtime component should be able to publish directly to the inbox through
-the current execution context or through a hidden `ToolLibraryHandle`.
+the current execution context or through an explicitly injected
+`ToolLibraryHandle`.
 
 Current and planned producers include:
 
@@ -249,7 +250,7 @@ Current and planned producers include:
 - task progress updates
 - checkpoint restore/replay signals
 - context budget warnings
-- tool registry changes made through hidden `ToolLibraryHandle` values
+- tool registry changes made through injected `ToolLibraryHandle` values
 
 The important rule is:
 

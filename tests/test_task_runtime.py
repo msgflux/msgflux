@@ -230,8 +230,8 @@ def test_hidden_handle_schema_excludes_handle_for_inline_tool():
 
 def test_hidden_handle_response_parameters_exclude_handle():
     def register_tool(
-        handle: mf.Hidden,
         name: str,
+        handle: mf.Hidden = None,
     ) -> str:
         """Register a tool by name."""
         return name
@@ -242,13 +242,29 @@ def test_hidden_handle_response_parameters_exclude_handle():
     assert result.tool_calls[0].parameters == {"name": "lookup"}
 
 
-def test_hidden_unsupported_type_fails_tool_registration():
-    def unsupported(secret: mf.Hidden[str]) -> str:
-        """Use an unsupported hidden runtime argument."""
-        return secret
+def test_hidden_parameter_is_not_injected_without_tool_config():
+    def hidden_tool(name: str, handle: mf.Hidden = None) -> str:
+        """Hide a parameter without injecting it."""
+        return f"{name}:{handle is None}"
 
-    with pytest.raises(ValueError, match="unsupported type"):
-        ToolLibrary(name="lib", tools=[unsupported])
+    library = ToolLibrary(name="lib", tools=[hidden_tool])
+    result = library([("call_1", "hidden_tool", {"name": "lookup"})])
+
+    assert result.tool_calls[0].result == "lookup:True"
+
+
+def test_hidden_parameter_is_ignored_from_model_params():
+    def hidden_tool(name: str, secret: mf.Hidden[str] = "safe") -> str:
+        """Hide a parameter from schema and runtime model params."""
+        return f"{name}:{secret}"
+
+    library = ToolLibrary(name="lib", tools=[hidden_tool])
+    result = library(
+        [("call_1", "hidden_tool", {"name": "lookup", "secret": "model"})]
+    )
+
+    assert result.tool_calls[0].result == "lookup:safe"
+    assert result.tool_calls[0].parameters == {"name": "lookup"}
 
 
 def test_hidden_handle_schema_excludes_notification_handle():
@@ -271,16 +287,18 @@ def test_hidden_handle_schema_excludes_notification_handle():
     assert "handle" not in props
 
 
-def test_hidden_handle_can_add_and_remove_tools():
+def test_injected_handle_can_add_and_remove_tools():
     def multiply(x: int) -> int:
         """Multiply a number by two."""
         return x * 2
 
+    @mf.tool_config(inject_handle=True)
     def add_multiplier(handle: mf.Hidden) -> list[str]:
         """Register the multiply tool."""
         handle.add(multiply)
         return handle.list_tools()
 
+    @mf.tool_config(inject_handle=True)
     def remove_tool(
         handle: mf.Hidden,
         name: str,
@@ -302,8 +320,8 @@ def test_hidden_handle_can_add_and_remove_tools():
     assert "multiply" not in library.get_tool_names()
 
 
-def test_hidden_handle_can_add_background_tool_with_task_tools():
-    @mf.tool_config(background=True)
+def test_injected_handle_can_add_background_tool_with_task_tools():
+    @mf.tool_config(background=True, inject_handle=True)
     def background_multiplier(
         value: int,
         handle: mf.Hidden,
@@ -312,6 +330,7 @@ def test_hidden_handle_can_add_background_tool_with_task_tools():
         handle.update_progress(stage="work", message="Running", current=1, total=1)
         return value * 2
 
+    @mf.tool_config(inject_handle=True)
     def add_background_multiplier(
         handle: mf.Hidden,
     ) -> list[str]:
@@ -348,7 +367,7 @@ def test_background_task_reports_progress_and_output():
     started = threading.Event()
     release = threading.Event()
 
-    @mf.tool_config(background=True)
+    @mf.tool_config(background=True, inject_handle=True)
     def long_job(value: int, handle: mf.Hidden) -> int:
         """Run a long job in the background."""
         handle.set_running(stage="prepare", message="Preparing")
@@ -431,7 +450,7 @@ def test_task_wait_returns_final_output():
 def test_task_wait_returns_timeout_payload_with_progress():
     release = threading.Event()
 
-    @mf.tool_config(background=True)
+    @mf.tool_config(background=True, inject_handle=True)
     def long_job(value: int, handle: mf.Hidden) -> int:
         """Run a long job in the background."""
         handle.update_progress(stage="work", message="Halfway", current=1, total=2)
@@ -790,6 +809,7 @@ def test_agent_consumes_persisted_incoming_user_message_for_scope():
 
 
 def test_agent_drains_notifications_after_tool_call_before_next_model_call():
+    @mf.tool_config(inject_handle=True)
     def publish_status(handle: mf.Hidden) -> str:
         """Publish an in-loop status update."""
         handle.notification.update(status="progress", hint="Tool completed.")
@@ -820,7 +840,7 @@ def test_task_progress_notifications_are_persisted():
     started = threading.Event()
     release = threading.Event()
 
-    @mf.tool_config(background=True)
+    @mf.tool_config(background=True, inject_handle=True)
     def long_job(value: int, handle: mf.Hidden) -> int:
         """Emit progress updates while running in the background."""
         handle.notify(
@@ -882,13 +902,13 @@ def test_task_progress_notifications_are_persisted():
     )
 
 
-def test_hidden_handle_publishes_task_status_updates():
+def test_injected_handle_publishes_task_status_updates():
     started = threading.Event()
     release = threading.Event()
 
-    @mf.tool_config(background=True)
+    @mf.tool_config(background=True, inject_handle=True)
     def long_job(value: int, handle: mf.Hidden) -> int:
-        """Emit task status updates through the hidden tool handle."""
+        """Emit task status updates through the injected tool handle."""
         handle.notification.update(
             "prepare",
             hint="Background work has started.",
@@ -1018,10 +1038,11 @@ def test_background_agent_dispatch_mentions_task_message_and_activity():
     assert "task_interrupt" in library.get_tool_names()
 
 
-def test_hidden_handle_can_add_background_agent_with_agent_task_tools():
+def test_injected_handle_can_add_background_agent_with_agent_task_tools():
     worker = Agent(name="worker", model=_mock_model("done"))
     worker.tool_config = {"background": True}
 
+    @mf.tool_config(inject_handle=True)
     def add_worker(handle: mf.Hidden) -> list[str]:
         """Register a background agent."""
         handle.add(worker)

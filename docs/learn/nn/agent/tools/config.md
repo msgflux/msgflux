@@ -237,15 +237,39 @@ This is useful for:
 ## Runtime Injection Options
 
 Tool config supports several `inject_*` flags for common agent state. Use
-`mf.Hidden` for runtime handle access, including tool
-mutation, background task progress, and notifications.
+`inject_handle=True` for runtime handle access, including tool mutation,
+background task progress, and notifications. `mf.Hidden` only hides a parameter
+from the model-facing schema; it does not inject a value by itself.
 
 | API | Runtime argument | Documentation |
 |-----|------------------|---------------|
 | `inject_vars=True` | `vars` | [inject_vars](#inject_vars) |
 | `inject_message=True` | `message` | [inject_message](#inject_message) |
 | `inject_messages=True` | `messages` | [inject_messages](#inject_messages) |
-| `mf.Hidden` | `handle` | [Tools: Hidden Runtime Parameters](index.md#hidden-runtime-parameters) |
+| `inject_handle=True` | `handle` | [inject_handle](#inject_handle) |
+| `mf.Hidden` | Hidden schema parameter | [Tools: Hidden Tool Parameters](index.md#hidden-tool-parameters) |
+
+## inject_handle
+
+With `inject_handle=True`, the tool receives a `handle` argument at runtime. This
+argument is removed from the public tool schema. Use `mf.Hidden` on the
+parameter when you want the signature to make that schema boundary explicit.
+
+```python
+import msgflux as mf
+
+
+def lookup_customer(customer_id: str) -> str:
+    """Look up customer details."""
+    return customer_id
+
+
+@mf.tool_config(inject_handle=True)
+def enable_lookup(handle: mf.Hidden) -> list[str]:
+    """Register tools dynamically through the runtime handle."""
+    handle.add(lookup_customer)
+    return handle.list_tools()
+```
 
 ## inject_message
 

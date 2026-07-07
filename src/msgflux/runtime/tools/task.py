@@ -5,6 +5,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Dict, Optional
 
 from msgflux.core.registry import Registry
+from msgflux.tools.config import tool_config
 from msgflux.tools.types import Hidden
 from msgflux.utils.time import parse_utc_timestamp
 
@@ -13,6 +14,7 @@ AGENT_TASK_TOOLS = Registry()
 
 
 @BASE_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_status(task_id: str, handle: Hidden) -> Dict[str, Any]:
     """Get the current status of a background task by task_id."""
     task = handle.task_store.get(task_id)
@@ -27,6 +29,7 @@ def task_status(task_id: str, handle: Hidden) -> Dict[str, Any]:
 
 
 @BASE_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_list(
     status: Optional[str] = None,
     handle: Hidden = None,
@@ -46,6 +49,7 @@ def task_list(
 
 
 @BASE_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_output(task_id: str, handle: Hidden) -> Any:
     """Get the final output of a background task by task_id."""
     task = handle.task_store.get(task_id)
@@ -53,6 +57,7 @@ def task_output(task_id: str, handle: Hidden) -> Any:
 
 
 @BASE_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_wait(
     task_id: str,
     timeout: Optional[float] = None,
@@ -106,6 +111,7 @@ def task_wait(
 
 
 @BASE_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_interrupt(task_id: str, handle: Hidden) -> Dict[str, Any]:
     """Request a cooperative interrupt for a background task.
 
@@ -149,6 +155,7 @@ def task_interrupt(task_id: str, handle: Hidden) -> Dict[str, Any]:
 
 
 @AGENT_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_activity(
     task_id: str,
     limit: Optional[int] = 10,
@@ -177,6 +184,7 @@ def task_activity(
 
 
 @AGENT_TASK_TOOLS
+@tool_config(inject_handle=True)
 def task_message(task_id: str, message: str, handle: Hidden) -> Dict[str, Any]:
     """Send a message to a background agent task.
 

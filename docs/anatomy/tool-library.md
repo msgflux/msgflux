@@ -126,9 +126,9 @@ The contract is intentionally small:
 This is useful when a session can register a large number of tools but should
 keep the active tool context small.
 
-A hidden `ToolLibraryHandle` is the natural companion feature here: a tool can
-add a new on-demand tool at runtime, and `ToolLibrary` will expose `tool_search`
-automatically if needed.
+An explicitly injected `ToolLibraryHandle` is the natural companion feature
+here: a tool can add a new on-demand tool at runtime, and `ToolLibrary` will
+expose `tool_search` automatically if needed.
 
 `tool_search` itself is a builtin tool, not a method implemented inside
 `ToolLibrary`. Runtime-aware tools inherit `ToolLibraryOperator`, receive a
@@ -179,11 +179,11 @@ The model only sees `agent(...)`. The bucket description and usage guidance are
 refreshed on the wrapping `LocalTool`, so provider schemas and prompt guidance
 reflect the captured agents.
 
-`AgentTool` still receives runtime context as hidden runtime kwargs. The public
-agent parameters stay as `agent(name, message)`, while `ToolLibrary` passes the
-current `messages`, `vars`, and execution `scope` into the bucket. The bucket
-then forwards those runtime values only when the selected subagent's own
-`tool_config` requests them.
+`AgentTool` still receives runtime context as explicitly injected kwargs. The
+public agent parameters stay as `agent(name, message)`, while `ToolLibrary`
+passes the current `messages`, `vars`, and execution `scope` into the bucket.
+The bucket then forwards those runtime values only when the selected subagent's
+own `tool_config` requests them.
 
 On-demand tools use the same path. An on-demand agent first lives in
 `on_demand_tools`; when `tool_search` receives `select:agent_name`,

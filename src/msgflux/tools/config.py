@@ -18,6 +18,7 @@ def tool_config(
     on_demand: Optional[bool] = False,
     inject_message: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
+    inject_handle: Optional[bool] = False,
     inject_vars: Optional[Union[bool, List[str]]] = False,
     handoff: Optional[bool] = False,
     name_override: Optional[str] = None,
@@ -75,6 +76,10 @@ def tool_config(
         inject_messages:
             If True, the tool receives the current conversation history as
             `messages` at runtime. This injected parameter does not become part of
+            the tool schema exposed to the model.
+        inject_handle:
+            If True, the tool receives the current `ToolLibraryHandle` as
+            `handle` at runtime. This injected parameter does not become part of
             the tool schema exposed to the model.
         inject_vars:
             Indicates if the tool should receive vars. If True, the tool receives all
@@ -186,6 +191,7 @@ def tool_config(
                     "on_demand": on_demand,
                     "inject_message": _inject_message,
                     "inject_messages": _inject_messages,
+                    "inject_handle": inject_handle,
                     "inject_vars": inject_vars,
                     "return_direct": _return_direct,
                     "name_overridden": name_override,

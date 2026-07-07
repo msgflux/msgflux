@@ -212,7 +212,8 @@ Recommended public configuration:
 
 - `background=True`
 - `allow_background=True`
-- `mf.Hidden` for runtime-only handle parameters
+- `inject_handle=True` for runtime-only handle parameters
+- `mf.Hidden` when a parameter should be excluded from the model-facing schema
 
 `background=True` means the developer has chosen background execution for every
 call. The model never receives a choice parameter for that tool.
@@ -228,7 +229,7 @@ The important detail is that `Hidden` only removes the parameter from the
 model-facing schema. `ToolLibrary` remains responsible for building the actual
 runtime kwargs.
 
-A hidden `ToolLibraryHandle` can add, remove, and list tools without exposing
+An injected `ToolLibraryHandle` can add, remove, and list tools without exposing
 the whole `ToolLibrary` object.
 
 For background tools, the same handle exposes task helpers such as

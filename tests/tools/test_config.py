@@ -68,6 +68,7 @@ class TestToolConfig:
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
+        assert config.inject_handle is False
         assert config.display_name is None
         assert config.usage_guidance is None
 
@@ -305,6 +306,15 @@ class TestToolConfigCombinations:
 
         assert sample.tool_config.inject_message is True
 
+    def test_inject_handle_true(self):
+        """Test inject_handle=True configuration."""
+
+        @tool_config(inject_handle=True)
+        def sample():
+            pass
+
+        assert sample.tool_config.inject_handle is True
+
     def test_disable_input_true(self):
         """Test disable_input=True configuration."""
 
@@ -322,6 +332,7 @@ class TestToolConfigCombinations:
             disable_input=True,
             inject_vars=["var1", "var2"],
             inject_messages=True,
+            inject_handle=True,
         )
         def sample():
             pass
@@ -331,6 +342,7 @@ class TestToolConfigCombinations:
         assert config.disable_input is True
         assert config.inject_vars == ["var1", "var2"]
         assert config.inject_messages is True
+        assert config.inject_handle is True
 
     def test_all_false_parameters(self):
         """Test all parameters set to False."""
@@ -345,6 +357,7 @@ class TestToolConfigCombinations:
             inject_vars=False,
             inject_message=False,
             inject_messages=False,
+            inject_handle=False,
         )
         def sample():
             pass
@@ -359,6 +372,7 @@ class TestToolConfigCombinations:
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
+        assert config.inject_handle is False
 
 
 class TestToolConfigEdgeCases:

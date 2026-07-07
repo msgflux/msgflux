@@ -365,7 +365,6 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
 
     annotations, hidden_params = _split_hidden_annotations(annotations)
     if hidden_params:
-        _validate_hidden_params(hidden_params)
         tool_config["_hidden_params"] = hidden_params
 
     if tool_config.get("handoff", False) or tool_config.get("disable_input", False):
@@ -375,6 +374,8 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
             annotations.pop("message", None)
         if tool_config.get("inject_messages", False):
             annotations.pop("messages", None)
+        if tool_config.get("inject_handle", False):
+            annotations.pop("handle", None)
         if tool_config.get("inject_vars", False):
             annotations.pop("vars", None)
         if tool_config.get("allow_background", False) and not tool_config.get(
@@ -446,30 +447,6 @@ def _split_hidden_annotations(
             continue
         public_annotations[name] = annotation
     return public_annotations, hidden_params
-
-
-def _is_tool_handle_type(type_hint: Any) -> bool:
-    try:
-        return type_hint is ToolLibraryHandle or issubclass(
-            type_hint, ToolLibraryHandle
-        )
-    except TypeError:
-        return False
-
-
-def _is_tool_handle_param(name: str, type_hint: Any) -> bool:
-    return _is_tool_handle_type(type_hint) or (name == "handle" and type_hint is Any)
-
-
-def _validate_hidden_params(hidden_params: Mapping[str, Any]) -> None:
-    for name, type_hint in hidden_params.items():
-        if _is_tool_handle_param(name, type_hint):
-            continue
-        raise ValueError(
-            f"Hidden tool parameter `{name}` uses unsupported type "
-            f"`{type_hint}`. Use `handle: Hidden` or "
-            "`Hidden[ToolLibraryHandle]`."
-        )
 
 
 def _convert_module_to_nn_tool(impl: Callable) -> Tool:
@@ -1007,6 +984,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
         else:
             call_params = self._coerce_tool_params(tool_name, tool_params)
 
+        for param_name in config.get("_hidden_params") or {}:
+            call_params.pop(param_name, None)
+
         inject_vars = config.get("inject_vars", False)
         if inject_vars:
             if isinstance(inject_vars, list):
@@ -1029,14 +1009,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("inject_message", False):
             call_params["message"] = message
 
-        for param_name, hidden_type in (config.get("_hidden_params") or {}).items():
-            if _is_tool_handle_param(param_name, hidden_type):
-                call_params[param_name] = self.handle.for_tool(tool_name=tool_name)
-                continue
-            raise ValueError(
-                f"Hidden tool parameter `{param_name}` uses unsupported type "
-                f"`{hidden_type}`."
-            )
+        if config.get("inject_handle", False):
+            call_params["handle"] = self.handle.for_tool(tool_name=tool_name)
 
         return call_params
 

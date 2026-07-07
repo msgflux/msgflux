@@ -14,7 +14,7 @@ mf.load_dotenv()
 def build_agent(model_name: str) -> nn.Agent:
     model = mf.Model.chat_completion(model_name)
 
-    @mf.tool_config(background=True)
+    @mf.tool_config(background=True, inject_handle=True)
     def slow_pipeline(ticket_id: str, handle: mf.Hidden) -> str:
         """Run a synthetic pipeline and publish status updates."""
         handle.notify(

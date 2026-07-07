@@ -550,17 +550,19 @@ Control how the model selects tools.
     - If `tool_filter` removes a specific tool configured in `tool_choice`, the Agent falls back to `"auto"` for that request
     - If `tool_filter` removes all tools, tool usage is disabled for that request
 
-### Hidden Runtime Parameters
+### Hidden Tool Parameters
 
 Use `mf.Hidden` when a Python tool parameter should not be included in the
 model-facing schema. This is useful with `@mf.tool_config(...)` when a tool
-needs implementation-only runtime values.
+needs implementation-only values. `Hidden` only hides the parameter; use an
+explicit injection flag such as `inject_handle=True` when the runtime should
+provide the value.
 
 ```python
 import msgflux as mf
 
 
-@mf.tool_config(background=True)
+@mf.tool_config(background=True, inject_handle=True)
 def rebuild_index(index_name: str, handle: mf.Hidden) -> str:
     """Rebuild a search index in the background."""
     handle.notify(status="started", hint=f"Rebuilding {index_name}.")
