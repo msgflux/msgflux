@@ -82,10 +82,6 @@ class ToolLibraryHandle:
     def task_store(self) -> Any:
         return self._library.task_store
 
-    @property
-    def task_runtime_tools(self) -> Any:
-        return self._library.task_runtime_tools
-
     def list_tools(self) -> List[str]:
         return self._library.get_tool_names()
 

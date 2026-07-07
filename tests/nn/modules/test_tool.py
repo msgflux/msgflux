@@ -511,7 +511,9 @@ class TestToolLibrary:
 
         assert library._handle is None
         assert library._background_dispatcher is None
-        assert library._task_runtime_tools is None
+        assert library._task_runtime_enabled is False
+        assert library._agent_task_runtime_enabled is False
+        assert library._runtime_tool_names == set()
         assert library._task_store is None
         assert library._agent_inbox is None
 
@@ -519,7 +521,9 @@ class TestToolLibrary:
 
         assert library._handle is None
         assert library._background_dispatcher is None
-        assert library._task_runtime_tools is None
+        assert library._task_runtime_enabled is False
+        assert library._agent_task_runtime_enabled is False
+        assert library._runtime_tool_names == set()
 
     def test_tool_library_add_tool(self):
         """Test adding a tool to library."""

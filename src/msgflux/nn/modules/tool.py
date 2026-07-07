@@ -33,7 +33,7 @@ from msgflux.runtime.agent_inbox import (
 )
 from msgflux.runtime.background import BackgroundTaskDispatcher
 from msgflux.runtime.context import get_execution_context
-from msgflux.runtime.task_tools import TaskRuntimeTools
+from msgflux.runtime.tools.task import AGENT_TASK_TOOLS, BASE_TASK_TOOLS
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.telemetry.span import (
     aset_tool_attributes,
@@ -529,7 +529,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self._agent_task_runtime_enabled = False
         self._handle: Optional[ToolLibraryHandle] = None
         self._background_dispatcher: Optional[BackgroundTaskDispatcher] = None
-        self._task_runtime_tools: Optional[TaskRuntimeTools] = None
         self._tool_search_enabled = False
         for tool in tools:
             self.add(tool)
@@ -547,14 +546,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if self._background_dispatcher is None:
             self._background_dispatcher = BackgroundTaskDispatcher(self.handle)
         return self._background_dispatcher
-
-    @property
-    def task_runtime_tools(self) -> TaskRuntimeTools:
-        if self._task_runtime_tools is None:
-            self._task_runtime_tools = TaskRuntimeTools(
-                self.handle,
-            )
-        return self._task_runtime_tools
 
     @property
     def task_store(self) -> Any:
@@ -637,8 +628,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self._runtime_tool_names.clear()
         if self._background_dispatcher is not None:
             self._background_dispatcher.clear()
-        if self._task_runtime_tools is not None:
-            self._task_runtime_tools.reset()
         self._tool_search_enabled = False
 
     def _register_tool_metadata(self, metadata: ToolMetadata) -> Tool:
@@ -932,7 +921,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         )
         if can_run_background:
             # Background-capable tools need the shared task control surface.
-            self.task_runtime_tools.ensure_base_tools()
+            self._ensure_task_control_tools()
             self._task_runtime_enabled = True
         tool = self.library.get(tool_name)
         impl = getattr(tool, "impl", None) if tool is not None else None
@@ -941,7 +930,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             config.get("tool_kind") == "agent" or supports_task_message
         ):
             # Background agents also expose activity and message-resume controls.
-            self.task_runtime_tools.ensure_agent_tools()
+            self._ensure_agent_task_control_tools()
             self._agent_task_runtime_enabled = True
 
     def _is_tool_exposed(self, tool_name: str) -> bool:
@@ -963,13 +952,22 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
     # --- Task Runtime Registration ---
 
-    def _ensure_task_runtime_tools(self) -> None:
-        self.task_runtime_tools.ensure_base_tools()
+    def _ensure_task_control_tools(self) -> None:
+        if self._task_runtime_enabled:
+            return
         self._task_runtime_enabled = True
+        for tool in BASE_TASK_TOOLS:
+            self._add_runtime_tool(tool)
 
-    def _ensure_agent_task_runtime_tools(self) -> None:
-        self.task_runtime_tools.ensure_agent_tools()
+    def _ensure_agent_task_control_tools(self) -> None:
+        if self._agent_task_runtime_enabled:
+            return
         self._agent_task_runtime_enabled = True
+        for tool in AGENT_TASK_TOOLS:
+            self._add_runtime_tool(tool)
+
+    def _add_runtime_tool(self, tool: Callable) -> None:
+        self.handle.add_runtime_tool(_inspect_tool_metadata(tool))
 
     def _ensure_on_demand_runtime_tools(self) -> None:
         if self._tool_search_enabled:

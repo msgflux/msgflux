@@ -410,8 +410,8 @@ def disable_tool(
     return handle.list_tools()
 ```
 
-If a hidden-handle tool adds a new background tool, the task tools are registered
-automatically in the same library.
+If a hidden-handle tool adds a new background tool, the task control functions
+are registered automatically in the same library.
 
 ## Related Pages
 

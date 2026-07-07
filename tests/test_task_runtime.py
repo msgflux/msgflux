@@ -549,7 +549,7 @@ def test_cancelled_background_future_is_not_logged_as_error():
 def test_task_wait_falls_back_to_task_store_polling_without_future():
     @mf.tool_config(background=True)
     def placeholder() -> None:
-        """Enable task runtime tools for the library."""
+        """Enable task control functions for the library."""
         return None
 
     library = ToolLibrary(name="lib", tools=[placeholder])

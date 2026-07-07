@@ -296,7 +296,7 @@ src/msgflux/tools/handles.py
 
 src/msgflux/nn/modules/tool.py
   -> background dispatch integration
-  -> task tools registration
+  -> hidden-handle task tool registration
   -> Hidden runtime parameter resolution
 
 src/msgflux/nn/modules/agent.py

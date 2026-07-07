@@ -17,6 +17,10 @@ from msgflux.runtime.context import (
     new_run_id,
     new_thread_id,
 )
+from msgflux.runtime.tools.task import (
+    build_background_dispatch_result,
+    truncate_activity_text,
+)
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
 from msgflux.tools.responses import ToolCall
 
@@ -222,7 +226,7 @@ class BackgroundTaskDispatcher:
             kind="message",
             summary=(
                 "Root message: "
-                f"{self.library_handle.task_runtime_tools.truncate_activity_text(message)}"
+                f"{truncate_activity_text(message)}"
             ),
             metadata={
                 "direction": "root_to_task",
@@ -415,7 +419,7 @@ class BackgroundTaskDispatcher:
             parameters=self.library_handle.build_call_parameters_for_response(
                 call_params
             ),
-            result=self.library_handle.task_runtime_tools.build_background_dispatch_result(
+            result=build_background_dispatch_result(
                 task_id=task.task_id,
                 tool_name=tool_name,
                 task_kind=task_kind,
