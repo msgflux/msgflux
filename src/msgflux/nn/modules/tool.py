@@ -33,22 +33,40 @@ from msgflux.runtime.agent_inbox import (
 )
 from msgflux.runtime.background import BackgroundTaskDispatcher
 from msgflux.runtime.context import get_execution_context
-from msgflux.runtime.tools.task import AGENT_TASK_TOOLS, BASE_TASK_TOOLS
+from msgflux.runtime.tools.task import (
+    AGENT_TASK_TOOLS,
+    BASE_TASK_TOOLS,
+)
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.telemetry.span import (
     aset_tool_attributes,
     set_tool_attributes,
 )
 from msgflux.tools.builtin.tool_search import ToolSearchTool
+from msgflux.tools.dataclasses import InternalToolState
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.helpers import (
+    BACKGROUND_TASK_TOOL_KIND,
+    RUNTIME_TOOL_KIND,
+)
+from msgflux.tools.helpers import (
+    RESERVED_TOOL_KINDS as _RESERVED_TOOL_KINDS,
+)
+from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM as _RUNTIME_BACKGROUND_PARAM,
+)
+from msgflux.tools.helpers import (
+    is_background_capable as _is_background_capable,
+)
+from msgflux.tools.helpers import (
+    is_reserved_tool_kind as _is_reserved_tool_kind,
 )
 from msgflux.tools.helpers import (
     should_copy_injected_messages as _should_copy_injected_messages,
 )
 from msgflux.tools.responses import ToolCall, ToolResponses
 from msgflux.tools.types import (
+    ToolBucket,
     ToolMetadata,
     unwrap_hidden_annotation,
 )
@@ -500,38 +518,31 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.register_buffer("mcp_clients", {})
         self._task_store = task_store
         self._agent_inbox: Optional[AgentInbox] = None
-        self._runtime_tool_names: set[str] = set()
         self._bucket_tool_names_by_capture_kind: Dict[str, str] = {}
-        self._task_runtime_enabled = False
-        self._agent_task_runtime_enabled = False
+        self._internal_tool_state = InternalToolState()
         self._handle: Optional[ToolLibraryHandle] = None
         self._background_dispatcher: Optional[BackgroundTaskDispatcher] = None
-        self._tool_search_enabled = False
         for tool in tools:
             self.add(tool)
         if mcp_servers:
             self._initialize_mcp_clients(mcp_servers)
 
-    @property
-    def handle(self) -> ToolLibraryHandle:
+    def get_handle(self) -> ToolLibraryHandle:
         if self._handle is None:
             self._handle = ToolLibraryHandle(self)
         return self._handle
 
-    @property
-    def background_dispatcher(self) -> BackgroundTaskDispatcher:
+    def get_background_dispatcher(self) -> BackgroundTaskDispatcher:
         if self._background_dispatcher is None:
-            self._background_dispatcher = BackgroundTaskDispatcher(self.handle)
+            self._background_dispatcher = BackgroundTaskDispatcher(self.get_handle())
         return self._background_dispatcher
 
-    @property
-    def task_store(self) -> Any:
+    def _get_default_task_store(self) -> Any:
         if self._task_store is None:
             self._task_store = InMemoryTaskStore()
         return self._task_store
 
-    @property
-    def agent_inbox(self) -> AgentInbox:
+    def get_agent_inbox(self) -> AgentInbox:
         if self._agent_inbox is None:
             self._agent_inbox = AgentInbox(
                 owner=self.name,
@@ -566,9 +577,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
             return metadata.name
 
         # Buckets expose one public tool while absorbing tools of a matching kind.
-        bucket_name = self._find_bucket_for_metadata(metadata)
+        bucket_name = ToolBucket.find_bucket_for_metadata(
+            metadata,
+            self._bucket_tool_names_by_capture_kind,
+            reserved_tool_kinds=_RESERVED_TOOL_KINDS,
+        )
         if bucket_name is not None:
-            self._add_tool_to_bucket(bucket_name, metadata)
+            ToolBucket.add_to_bucket(self.library[bucket_name], bucket_name, metadata)
             return metadata.name
 
         # Normal tools become directly callable and visible according to their config.
@@ -577,13 +592,32 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
     def remove(self, tool_name: str):
         if tool_name in self.library.keys():
-            self.library.pop(tool_name)
-            self.tool_configs.pop(tool_name, None)
-            for capture_kind, bucket_name in list(
-                self._bucket_tool_names_by_capture_kind.items()
-            ):
-                if bucket_name == tool_name:
-                    self._bucket_tool_names_by_capture_kind.pop(capture_kind, None)
+            config = self.tool_configs.get(tool_name, {})
+            is_task_tool = self._is_installed_background_task_tool(tool_name)
+            is_tool_search = self._is_installed_tool_search(tool_name)
+            was_background = _is_background_capable(config)
+            was_background_agent = self._is_background_agent_tool(tool_name, config)
+
+            self._remove_registered_tool(tool_name)
+
+            if is_tool_search:
+                self._internal_tool_state.tool_search_disabled = True
+                return
+
+            if is_task_tool:
+                self._internal_tool_state.disabled_background_task_tool_names.add(
+                    tool_name
+                )
+                self._internal_tool_state.background_task_tool_names.discard(tool_name)
+                self._internal_tool_state.agent_task_tool_names.discard(tool_name)
+                return
+
+            if was_background:
+                self._internal_tool_state.background_tool_names.discard(tool_name)
+            if was_background_agent:
+                self._internal_tool_state.background_agent_tool_names.discard(tool_name)
+            if was_background or was_background_agent:
+                self._sync_background_task_tools()
             self._sync_on_demand_runtime_tools()
         elif tool_name in self.on_demand_tools:
             self.on_demand_tools.pop(tool_name, None)
@@ -591,6 +625,16 @@ class ToolLibrary(Module, metaclass=AutoParams):
             self._sync_on_demand_runtime_tools()
         else:
             raise ValueError(f"The tool name `{tool_name}` is not in tool library")
+
+    def _remove_registered_tool(self, tool_name: str) -> None:
+        if tool_name in self.library:
+            self.library.pop(tool_name)
+        self.tool_configs.pop(tool_name, None)
+        for capture_kind, bucket_name in list(
+            self._bucket_tool_names_by_capture_kind.items()
+        ):
+            if bucket_name == tool_name:
+                self._bucket_tool_names_by_capture_kind.pop(capture_kind, None)
 
     def clear(self):
         self.library.clear()
@@ -600,27 +644,24 @@ class ToolLibrary(Module, metaclass=AutoParams):
         for mcp_data in self.mcp_clients.values():
             F.wait_for(mcp_data["client"].disconnect)
         self.mcp_clients.clear()
-        self._task_runtime_enabled = False
-        self._agent_task_runtime_enabled = False
-        self._runtime_tool_names.clear()
+        self._internal_tool_state.clear()
         if self._background_dispatcher is not None:
             self._background_dispatcher.clear()
-        self._tool_search_enabled = False
 
     def _register_tool_metadata(self, metadata: ToolMetadata) -> Tool:
-        if metadata.tool_config.get("tool_kind") == "bucket":
-            capture_kind = getattr(metadata.impl, "capture_kind", None)
-            if not isinstance(capture_kind, str) or not capture_kind:
-                raise ValueError(
-                    f"The bucket tool `{metadata.name}` must define capture_kind."
-                )
-            existing = self._bucket_tool_names_by_capture_kind.get(capture_kind)
-            if existing is not None and existing != metadata.name:
-                raise ValueError(
-                    f"The bucket capture kind `{capture_kind}` is already handled by "
-                    f"`{existing}`."
-                )
-            self._validate_existing_tools_for_bucket(metadata.name, capture_kind)
+        capture_kind = ToolBucket.validate_registration(
+            metadata,
+            self._bucket_tool_names_by_capture_kind,
+        )
+        if capture_kind is not None:
+            ToolBucket.validate_existing_captures(
+                bucket_name=metadata.name,
+                capture_kind=capture_kind,
+                tools=self.library,
+                tool_configs=self.tool_configs,
+                metadata_factory=_metadata_from_tool,
+                is_reserved_tool_kind=_is_reserved_tool_kind,
+            )
 
         tool = (
             metadata.source_tool
@@ -629,6 +670,15 @@ class ToolLibrary(Module, metaclass=AutoParams):
         )
         self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
         self.library.update({tool.name: tool})
+        if self.tool_configs[tool.name].get("tool_kind") == BACKGROUND_TASK_TOOL_KIND:
+            self._internal_tool_state.disabled_background_task_tool_names.discard(
+                tool.name
+            )
+        if (
+            tool.name == ToolSearchTool.name
+            and self.tool_configs[tool.name].get("tool_kind") == RUNTIME_TOOL_KIND
+        ):
+            self._internal_tool_state.tool_search_disabled = False
         self._apply_tool_registration_effects(tool.name)
         self._register_bucket_if_needed(tool.name, tool)
         return tool
@@ -638,79 +688,21 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("tool_kind") != "bucket":
             return
         impl = getattr(tool, "impl", None)
-        capture_kind = getattr(impl, "capture_kind", None)
-        if not isinstance(capture_kind, str) or not capture_kind:
-            raise ValueError(f"The bucket tool `{tool_name}` must define capture_kind.")
+        capture_kind = ToolBucket.require_capture_kind(tool_name, impl)
         self._bucket_tool_names_by_capture_kind[capture_kind] = tool_name
-        self._capture_existing_tools_for_bucket(tool_name, capture_kind)
-
-    def _find_bucket_for_metadata(self, metadata: ToolMetadata) -> Optional[str]:
-        tool_kind = metadata.tool_config.get("tool_kind", "tool")
-        if tool_kind == "bucket":
-            return None
-        return self._bucket_tool_names_by_capture_kind.get(tool_kind)
-
-    def _add_tool_to_bucket(self, bucket_name: str, metadata: ToolMetadata) -> None:
-        self._validate_bucket_capture(bucket_name, metadata)
-        bucket_tool = self.library[bucket_name]
-        bucket_impl = getattr(bucket_tool, "impl", None)
-        if bucket_impl is None or not hasattr(bucket_impl, "add"):
-            raise ValueError(f"The bucket tool `{bucket_name}` cannot capture tools.")
-        bucket_impl.add(metadata)
-        self._refresh_bucket_tool(bucket_name)
-
-    @staticmethod
-    def _validate_bucket_capture(bucket_name: str, metadata: ToolMetadata) -> None:
-        if metadata.tool_config.get("background", False) or metadata.tool_config.get(
-            "allow_background", False
+        for metadata in ToolBucket.pop_existing_captures(
+            bucket_name=tool_name,
+            capture_kind=capture_kind,
+            tools=self.library,
+            tool_configs=self.tool_configs,
+            metadata_factory=_metadata_from_tool,
+            is_reserved_tool_kind=_is_reserved_tool_kind,
         ):
-            raise ValueError(
-                "Bucket-captured tools cannot use `background=True` or "
-                f"`allow_background=True`. Tool `{metadata.name}` would be captured "
-                f"by bucket `{bucket_name}`."
+            ToolBucket.add_to_bucket(
+                self.library[tool_name],
+                tool_name,
+                metadata,
             )
-
-    def _refresh_bucket_tool(self, bucket_name: str) -> None:
-        bucket_tool = self.library[bucket_name]
-        bucket_impl = getattr(bucket_tool, "impl", None)
-        if bucket_impl is None:
-            return
-        description = getattr(bucket_impl, "description", None)
-        if isinstance(description, str):
-            bucket_tool.set_description(description)
-        bucket_tool.register_buffer(
-            "usage_guidance",
-            getattr(bucket_impl, "usage_guidance", None),
-        )
-
-    def _capture_existing_tools_for_bucket(
-        self,
-        bucket_name: str,
-        capture_kind: str,
-    ) -> None:
-        for tool_name, tool in list(self.library.items()):
-            if tool_name == bucket_name or tool_name in self._runtime_tool_names:
-                continue
-            config = self.tool_configs.get(tool_name, {})
-            if config.get("tool_kind") != capture_kind:
-                continue
-            metadata = _metadata_from_tool(tool)
-            self.library.pop(tool_name)
-            self.tool_configs.pop(tool_name, None)
-            self._add_tool_to_bucket(bucket_name, metadata)
-
-    def _validate_existing_tools_for_bucket(
-        self,
-        bucket_name: str,
-        capture_kind: str,
-    ) -> None:
-        for tool_name, tool in self.library.items():
-            if tool_name == bucket_name or tool_name in self._runtime_tool_names:
-                continue
-            config = self.tool_configs.get(tool_name, {})
-            if config.get("tool_kind") != capture_kind:
-                continue
-            self._validate_bucket_capture(bucket_name, _metadata_from_tool(tool))
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
@@ -882,89 +874,136 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if task_store is not None:
             self._task_store = task_store
 
-    def _sync_task_store_from_context(self) -> None:
-        task_store = get_execution_context().get("task_store")
+    def get_task_store(self, task_store: Any = None) -> Any:
         if task_store is not None:
-            self.set_task_store(task_store)
-        elif self._task_store is None and self._task_runtime_enabled:
-            self._task_store = InMemoryTaskStore()
+            return task_store
+        context_task_store = get_execution_context().get("task_store")
+        if context_task_store is not None:
+            return context_task_store
+        return self._get_default_task_store()
 
     # --- Tool Visibility Helpers ---
 
     def _apply_tool_registration_effects(self, tool_name: str) -> None:
         config = self.tool_configs.get(tool_name, {})
-        can_run_background = config.get("background", False) or config.get(
-            "allow_background", False
-        )
-        if can_run_background:
-            # Background-capable tools need the shared task control surface.
-            self._ensure_task_control_tools()
-            self._task_runtime_enabled = True
-        tool = self.library.get(tool_name)
-        impl = getattr(tool, "impl", None) if tool is not None else None
-        supports_task_message = bool(getattr(impl, "supports_task_message", False))
-        if can_run_background and (
-            config.get("tool_kind") == "agent" or supports_task_message
-        ):
-            # Background agents also expose activity and message-resume controls.
-            self._ensure_agent_task_control_tools()
-            self._agent_task_runtime_enabled = True
+        if _is_reserved_tool_kind(config):
+            return
+        if _is_background_capable(config):
+            self._internal_tool_state.background_tool_names.add(tool_name)
+            if self._is_background_agent_tool(tool_name, config):
+                self._internal_tool_state.background_agent_tool_names.add(tool_name)
+            self._sync_background_task_tools()
 
     def _is_tool_exposed(self, tool_name: str) -> bool:
-        if tool_name in self._runtime_tool_names:
-            return True
         return tool_name not in self.on_demand_tools
 
     def _sync_on_demand_runtime_tools(self) -> None:
         if self.on_demand_tools:
             self._ensure_on_demand_runtime_tools()
             return
-        if not self._tool_search_enabled:
+        self._internal_tool_state.tool_search_disabled = False
+        if not self._is_installed_tool_search(ToolSearchTool.name):
             return
-        self._tool_search_enabled = False
-        self.handle.runtime_tool_names.discard(ToolSearchTool.name)
-        if ToolSearchTool.name in self.library:
-            self.library.pop(ToolSearchTool.name)
-        self.tool_configs.pop(ToolSearchTool.name, None)
+        self._remove_registered_tool(ToolSearchTool.name)
 
     # --- Task Runtime Registration ---
 
-    def _ensure_task_control_tools(self) -> None:
-        if self._task_runtime_enabled:
+    def _is_installed_tool_search(self, tool_name: str) -> bool:
+        return (
+            tool_name == ToolSearchTool.name
+            and tool_name in self.library
+            and self.tool_configs.get(tool_name, {}).get("tool_kind")
+            == RUNTIME_TOOL_KIND
+        )
+
+    def _is_background_agent_tool(
+        self,
+        tool_name: str,
+        config: Mapping[str, Any],
+    ) -> bool:
+        tool = self.library.get(tool_name)
+        impl = getattr(tool, "impl", None) if tool is not None else None
+        return config.get("tool_kind") == "agent" or bool(
+            getattr(impl, "supports_task_message", False)
+        )
+
+    def _is_installed_background_task_tool(self, tool_name: str) -> bool:
+        return (
+            tool_name in self._internal_tool_state.background_task_tool_names
+            or tool_name in self._internal_tool_state.agent_task_tool_names
+        )
+
+    def _sync_background_task_tools(self) -> None:
+        if self._internal_tool_state.background_tool_names:
+            self._ensure_task_control_tools()
+        else:
+            self._remove_background_task_tools(
+                self._internal_tool_state.background_task_tool_names
+            )
+            self._remove_background_task_tools(
+                self._internal_tool_state.agent_task_tool_names
+            )
+            self._internal_tool_state.disabled_background_task_tool_names.clear()
             return
-        self._task_runtime_enabled = True
-        for tool in BASE_TASK_TOOLS:
-            self._add_runtime_tool(tool)
+
+        if self._internal_tool_state.background_agent_tool_names:
+            self._ensure_agent_task_control_tools()
+        else:
+            self._remove_background_task_tools(
+                self._internal_tool_state.agent_task_tool_names
+            )
+
+    def _ensure_task_control_tools(self) -> None:
+        self._ensure_background_task_tools(
+            tools=BASE_TASK_TOOLS,
+            installed_names=self._internal_tool_state.background_task_tool_names,
+        )
 
     def _ensure_agent_task_control_tools(self) -> None:
-        if self._agent_task_runtime_enabled:
-            return
-        self._agent_task_runtime_enabled = True
-        for tool in AGENT_TASK_TOOLS:
-            self._add_runtime_tool(tool)
+        self._ensure_background_task_tools(
+            tools=AGENT_TASK_TOOLS,
+            installed_names=self._internal_tool_state.agent_task_tool_names,
+        )
 
-    def _add_runtime_tool(self, tool: Callable) -> None:
-        self.handle.add_runtime_tool(_inspect_tool_metadata(tool))
+    def _ensure_background_task_tools(
+        self,
+        *,
+        tools: Iterator[Callable],
+        installed_names: set[str],
+    ) -> None:
+        for tool in tools:
+            metadata = _inspect_tool_metadata(tool)
+            tool_name = metadata.name
+            if (
+                tool_name
+                in self._internal_tool_state.disabled_background_task_tool_names
+            ):
+                continue
+            if tool_name in self.library:
+                existing_config = self.tool_configs.get(tool_name, {})
+                if existing_config.get("tool_kind") != BACKGROUND_TASK_TOOL_KIND:
+                    raise ValueError(
+                        f"The background task tool `{tool_name}` conflicts with "
+                        "an existing tool."
+                    )
+                installed_names.add(tool_name)
+                continue
+            self.add(metadata)
+            installed_names.add(tool_name)
+
+    def _remove_background_task_tools(self, installed_names: set[str]) -> None:
+        for tool_name in list(installed_names):
+            if tool_name in self.library:
+                self._remove_registered_tool(tool_name)
+            installed_names.discard(tool_name)
 
     def _ensure_on_demand_runtime_tools(self) -> None:
-        if self._tool_search_enabled:
-            return
-        self._tool_search_enabled = True
-        self.handle.runtime_tool_names.add(ToolSearchTool.name)
-        tool = _convert_module_to_nn_tool(ToolSearchTool())
-        if tool.name in self.library and self.tool_configs.get(tool.name):
-            raise ValueError(
-                f"The runtime tool `{tool.name}` conflicts with an existing tool."
-            )
         if (
-            tool.name in self.library
-            and tool.name not in self.handle.runtime_tool_names
+            self._is_installed_tool_search(ToolSearchTool.name)
+            or self._internal_tool_state.tool_search_disabled
         ):
-            raise ValueError(
-                f"The runtime tool `{tool.name}` conflicts with an existing tool."
-            )
-        self.library.update({tool.name: tool})
-        self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
+            return
+        self.add(ToolSearchTool())
 
     # --- Tool Call Preparation ---
 
@@ -1010,7 +1049,12 @@ class ToolLibrary(Module, metaclass=AutoParams):
             call_params["message"] = message
 
         if config.get("inject_handle", False):
-            call_params["handle"] = self.handle.for_tool(tool_name=tool_name)
+            context = get_execution_context()
+            call_params["handle"] = self.get_handle().for_tool(
+                tool_name=tool_name,
+                agent_inbox=context.get("agent_inbox"),
+                task_store=context.get("task_store"),
+            )
 
         return call_params
 
@@ -1037,6 +1081,71 @@ class ToolLibrary(Module, metaclass=AutoParams):
             f"Tool `{tool_name}` parameters must be a mapping or None, "
             f"given `{type(tool_params)}`."
         )
+
+    @staticmethod
+    def build_call_parameters_for_response(
+        params: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if params is None:
+            return None
+        if hasattr(params, "to_dict"):
+            parameters = params.to_dict()
+        else:
+            parameters = dict(params)
+        for key in (
+            "vars",
+            "messages",
+            "message",
+            "task",
+            "notification",
+            "scope",
+            "handle",
+            "tool_call_id",
+            _RUNTIME_BACKGROUND_PARAM,
+        ):
+            parameters.pop(key, None)
+        return parameters
+
+    def _record_tool_activity(
+        self,
+        *,
+        activity_recorder: Any,
+        tool_name: str,
+        parameters: Mapping[str, Any] | None,
+    ) -> None:
+        config = self.tool_configs.get(tool_name, {})
+        if activity_recorder is None or _is_reserved_tool_kind(config):
+            return
+        activity_recorder.tool_call(tool_name, parameters)
+
+    def _prepare_tool_kwargs(
+        self,
+        *,
+        tool: Tool,
+        tool_name: str,
+        tool_params: Any,
+        config: Mapping[str, Any],
+        message: Optional[Any],
+        messages: List[Dict[str, Any]],
+        vars: Mapping[str, Any],
+        activity_recorder: Any,
+    ) -> tuple[Dict[str, Any], dict[str, Any] | None]:
+        call_params = self._build_call_params(
+            tool=tool,
+            tool_name=tool_name,
+            tool_params=tool_params,
+            config=config,
+            message=message,
+            messages=messages,
+            vars=vars,
+        )
+        response_params = self.build_call_parameters_for_response(call_params)
+        self._record_tool_activity(
+            activity_recorder=activity_recorder,
+            tool_name=tool_name,
+            parameters=response_params,
+        )
+        return call_params, response_params
 
     def forward(  # noqa: C901
         self,
@@ -1070,7 +1179,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if vars is None:
             vars = {}
 
-        self._sync_task_store_from_context()
         activity_recorder = get_execution_context().get("task_activity_recorder")
         prepared_calls = []
         call_metadata = []
@@ -1093,12 +1201,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
-            if (
-                activity_recorder is not None
-                and tool_name not in self._runtime_tool_names
-            ):
-                activity_recorder.tool_call(tool_name, tool_params)
-            call_params = self._build_call_params(
+            call_params, response_params = self._prepare_tool_kwargs(
                 tool=tool,
                 tool_name=tool_name,
                 tool_params=tool_params,
@@ -1106,6 +1209,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 message=message,
                 messages=messages,
                 vars=vars,
+                activity_recorder=activity_recorder,
             )
 
             if config.get("spawn", False):
@@ -1115,7 +1219,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     ToolCall(
                         id=tool_id,
                         name=tool_name,
-                        parameters=tool_params,
+                        parameters=response_params,
                         result=f"The `{tool_name}` tool was dispatched. "
                         "This tool will not generate a return.",
                     )
@@ -1128,7 +1232,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             ):
                 return_directly = False
                 tool_calls.append(
-                    self.background_dispatcher.dispatch(
+                    self.get_background_dispatcher().dispatch(
                         tool=tool,
                         tool_id=tool_id,
                         tool_name=tool_name,
@@ -1142,7 +1246,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 "call_as_response", False
             ):  # return function call as response
                 tool_calls.append(
-                    ToolCall(id=tool_id, name=tool_name, parameters=tool_params)
+                    ToolCall(id=tool_id, name=tool_name, parameters=response_params)
                 )
                 return_directly = True
                 continue
@@ -1170,7 +1274,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     result.exception, TaskInterruptRequestedError
                 ):
                     raise result.exception
-                parameters = self.handle.build_call_parameters_for_response(meta.params)
+                parameters = self.build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,
@@ -1216,7 +1320,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if vars is None:
             vars = {}
 
-        self._sync_task_store_from_context()
         activity_recorder = get_execution_context().get("task_activity_recorder")
         prepared_calls = []
         call_metadata = []
@@ -1239,12 +1342,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             # Get tool
             tool = self.library[tool_name]
             config = self.tool_configs.get(tool_name, {})
-            if (
-                activity_recorder is not None
-                and tool_name not in self._runtime_tool_names
-            ):
-                activity_recorder.tool_call(tool_name, tool_params)
-            call_params = self._build_call_params(
+            call_params, response_params = self._prepare_tool_kwargs(
                 tool=tool,
                 tool_name=tool_name,
                 tool_params=tool_params,
@@ -1252,6 +1350,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 message=message,
                 messages=messages,
                 vars=vars,
+                activity_recorder=activity_recorder,
             )
 
             if config.get("spawn", False):
@@ -1261,7 +1360,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     ToolCall(
                         id=tool_id,
                         name=tool_name,
-                        parameters=tool_params,
+                        parameters=response_params,
                         result=f"The `{tool_name}` tool was dispatched. "
                         "This tool will not generate a return.",
                     )
@@ -1274,7 +1373,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             ):
                 return_directly = False
                 tool_calls.append(
-                    self.background_dispatcher.dispatch(
+                    self.get_background_dispatcher().dispatch(
                         tool=tool,
                         tool_id=tool_id,
                         tool_name=tool_name,
@@ -1288,7 +1387,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 "call_as_response", False
             ):  # return function call as response
                 tool_calls.append(
-                    ToolCall(id=tool_id, name=tool_name, parameters=tool_params)
+                    ToolCall(id=tool_id, name=tool_name, parameters=response_params)
                 )
                 return_directly = True
                 continue
@@ -1316,7 +1415,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     result.exception, TaskInterruptRequestedError
                 ):
                     raise result.exception
-                parameters = self.handle.build_call_parameters_for_response(meta.params)
+                parameters = self.build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,

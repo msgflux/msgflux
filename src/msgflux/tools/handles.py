@@ -3,13 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping
 
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
-from msgflux.runtime.context import get_execution_context
-from msgflux.tools.helpers import RUNTIME_BACKGROUND_PARAM as _RUNTIME_BACKGROUND_PARAM
+from msgflux.runtime.context import execution_context, get_execution_context
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolLibrary
     from msgflux.runtime.agent_inbox import AgentInbox
-    from msgflux.tools.types import ToolMetadata
 
 
 class ToolLibraryHandle:
@@ -21,66 +19,41 @@ class ToolLibraryHandle:
         *,
         tool_name: str | None = None,
         agent_inbox: AgentInbox | None = None,
+        task_store: Any = None,
     ):
         self._library = library
         self._tool_name = tool_name
         self._agent_inbox = agent_inbox
+        self._task_store = task_store
 
     def for_tool(
         self,
         *,
         tool_name: str,
         agent_inbox: AgentInbox | None = None,
+        task_store: Any = None,
     ) -> ToolLibraryHandle:
         return ToolLibraryHandle(
             self._library,
             tool_name=tool_name,
-            agent_inbox=agent_inbox or self._agent_inbox,
+            agent_inbox=agent_inbox if agent_inbox is not None else self._agent_inbox,
+            task_store=task_store if task_store is not None else self._task_store,
         )
 
     def add(self, tool: Callable) -> str:
         return self._library.add(tool)
 
-    def add_runtime_tool(self, metadata: ToolMetadata) -> None:
-        from msgflux.nn.modules.tool import LocalTool  # noqa: PLC0415
-
-        name = metadata.name
-        if name in self._library.library and name not in self.runtime_tool_names:
-            raise ValueError(
-                f"The runtime tool `{name}` conflicts with an existing tool."
-            )
-        self.runtime_tool_names.add(name)
-        tool = LocalTool(
-            name=name,
-            description=metadata.description,
-            annotations=metadata.annotations,
-            tool_config=metadata.tool_config,
-            impl=metadata.impl,
-        )
-        if name in self._library.library and self._library.tool_configs.get(name):
-            raise ValueError(
-                f"The runtime tool `{name}` conflicts with an existing tool."
-            )
-        self._library.library.update({name: tool})
-        self._library.tool_configs[name] = metadata.tool_config
-
     def remove(self, tool_name: str) -> str:
-        if tool_name in self.runtime_tool_names:
-            raise ValueError(f"The runtime tool `{tool_name}` cannot be removed.")
         self._library.remove(tool_name)
         return tool_name
 
-    @property
-    def runtime_tool_names(self) -> set[str]:
-        return self._library._runtime_tool_names
+    def get_agent_inbox(self) -> AgentInbox:
+        if self._agent_inbox is not None:
+            return self._agent_inbox
+        return self._library.get_agent_inbox()
 
-    @property
-    def agent_inbox(self) -> AgentInbox:
-        return self._agent_inbox or self._library.agent_inbox
-
-    @property
-    def task_store(self) -> Any:
-        return self._library.task_store
+    def get_task_store(self) -> Any:
+        return self._library.get_task_store(self._task_store)
 
     def list_tools(self) -> List[str]:
         return self._library.get_tool_names()
@@ -91,34 +64,33 @@ class ToolLibraryHandle:
         return self._library.library[tool_name]
 
     def get_task_future(self, task_id: str) -> Any | None:
-        return self._library.background_dispatcher.get_task_future(task_id)
+        return self._library.get_background_dispatcher().get_task_future(task_id)
 
     def get_task_inbox(self, task_id: str) -> AgentInbox | None:
-        return self._library.background_dispatcher.get_task_inbox(task_id)
+        return self._library.get_background_dispatcher().get_task_inbox(task_id)
 
-    @property
-    def task(self) -> Any:
+    def get_task(self) -> Any:
         task_handle = get_execution_context().get("task_handle")
         if task_handle is None:
-            raise RuntimeError("`handle.task` is only available in background tools.")
+            raise RuntimeError(
+                "`handle.get_task()` is only available in background tools."
+            )
         return task_handle
 
-    @property
-    def task_id(self) -> str:
-        return self.task.task_id
+    def get_task_id(self) -> str:
+        return self.get_task().task_id
 
-    @property
-    def notification(self) -> ToolNotificationHandle:
+    def get_notification(self) -> ToolNotificationHandle:
         if self._tool_name is None:
             raise RuntimeError(
-                "`handle.notification` is only available on a tool-scoped handle."
+                "`handle.get_notification()` is only available on a tool-scoped handle."
             )
         task_handle = get_execution_context().get("task_handle")
         ref = getattr(task_handle, "task_id", None)
         return self.build_notification_handle(
             tool_name=self._tool_name,
             ref=ref,
-            agent_inbox=self.agent_inbox,
+            agent_inbox=self.get_agent_inbox(),
         )
 
     def set_running(
@@ -127,7 +99,7 @@ class ToolLibraryHandle:
         stage: str | None = None,
         message: str | None = None,
     ) -> Any:
-        return self.task.set_running(stage=stage, message=message)
+        return self.get_task().set_running(stage=stage, message=message)
 
     def update_progress(
         self,
@@ -138,7 +110,7 @@ class ToolLibraryHandle:
         total: int | None = None,
         percent: float | None = None,
     ) -> Any:
-        return self.task.update_progress(
+        return self.get_task().update_progress(
             stage=stage,
             message=message,
             current=current,
@@ -155,7 +127,7 @@ class ToolLibraryHandle:
         dedupe_key: str | None = None,
         source: str | None = None,
     ) -> Any:
-        return self.notification.update(
+        return self.get_notification().update(
             status,
             hint=hint,
             metadata=metadata,
@@ -164,16 +136,17 @@ class ToolLibraryHandle:
         )
 
     def raise_if_interrupted(self) -> None:
-        self.task.raise_if_interrupted()
+        self.get_task().raise_if_interrupted()
 
     def raise_if_paused(self) -> None:
-        self.task.raise_if_paused()
+        self.get_task().raise_if_paused()
 
     def resume_background_agent_task(self, *, task: Any, message: str) -> str:
-        return self._library.background_dispatcher.resume_agent_task(
-            task=task,
-            message=message,
-        )
+        with execution_context(task_store=self.get_task_store()):
+            return self._library.get_background_dispatcher().resume_agent_task(
+                task=task,
+                message=message,
+            )
 
     def list_on_demand_tools(self) -> List[str]:
         return list(self._library.on_demand_tools.keys())
@@ -258,25 +231,7 @@ class ToolLibraryHandle:
         self,
         params: Mapping[str, Any] | None,
     ) -> dict[str, Any] | None:
-        if params is None:
-            return None
-        if hasattr(params, "to_dict"):
-            parameters = params.to_dict()
-        else:
-            parameters = dict(params)
-        for key in (
-            "vars",
-            "messages",
-            "message",
-            "task",
-            "notification",
-            "scope",
-            "handle",
-            "tool_call_id",
-            _RUNTIME_BACKGROUND_PARAM,
-        ):
-            parameters.pop(key, None)
-        return parameters
+        return self._library.build_call_parameters_for_response(params)
 
     def build_notification_handle(
         self,
@@ -286,7 +241,11 @@ class ToolLibraryHandle:
         agent_inbox: AgentInbox | None = None,
     ) -> ToolNotificationHandle:
         execution_context = get_execution_context()
-        inbox = agent_inbox or execution_context.get("agent_inbox") or self.agent_inbox
+        inbox = agent_inbox
+        if inbox is None:
+            inbox = execution_context.get("agent_inbox")
+        if inbox is None:
+            inbox = self.get_agent_inbox()
         return ToolNotificationHandle(
             inbox,
             ref=ref,

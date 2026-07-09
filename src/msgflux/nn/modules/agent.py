@@ -530,8 +530,6 @@ class Agent(Module, metaclass=AutoParams):
         effective_checkpointer = self._get_effective_checkpointer()
         effective_task_store = self._get_effective_task_store()
         effective_inbox = self._get_effective_agent_inbox()
-        if effective_task_store is not None:
-            self.tool_library.set_task_store(effective_task_store)
         if effective_inbox is not None:
             effective_inbox.bind_scope(
                 inputs.get("scope"),
@@ -590,8 +588,6 @@ class Agent(Module, metaclass=AutoParams):
         effective_checkpointer = self._get_effective_checkpointer()
         effective_task_store = self._get_effective_task_store()
         effective_inbox = self._get_effective_agent_inbox()
-        if effective_task_store is not None:
-            self.tool_library.set_task_store(effective_task_store)
         if effective_inbox is not None:
             effective_inbox.bind_scope(
                 inputs.get("scope"),

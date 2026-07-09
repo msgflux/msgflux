@@ -61,6 +61,12 @@ When the tool library runs inside this context, it reads the active
 interrupt requests. If no task store is provided, msgFlux creates an in-memory
 store when background tools are used.
 
+Task control tools are installed automatically while the library contains
+background-capable tools. Removing the last `background=True` or
+`allow_background=True` tool removes those task tools as well. You can still
+remove an individual task tool manually; msgFlux will not reinstall that tool
+while the current background tool set remains active.
+
 ## Basic Background Tool
 
 ```python
@@ -319,7 +325,7 @@ def process_items(
             source="task_progress",
             status="update",
             metadata={"item": item, "current": index, "total": total},
-            dedupe_key=f"task_progress:{handle.task_id}",
+            dedupe_key=f"task_progress:{handle.get_task_id()}",
         )
     return total
 ```
@@ -346,7 +352,7 @@ but has a checkpoint, msgFlux resumes it with the same `task_id`.
 
 ## Status Updates With The Handle
 
-Use `handle.notification` when the tool should publish lightweight status
+Use `handle.get_notification()` when the tool should publish lightweight status
 updates.
 
 ```python
@@ -356,14 +362,14 @@ def process_items(
     handle: mf.Hidden,
 ) -> int:
     """Process items and publish task-scoped status updates."""
-    handle.notification.update(
+    handle.get_notification().update(
         "prepare",
         hint="Background work has started.",
         metadata={"total": len(items)},
         dedupe_key="process-items-status",
     )
     for index, item in enumerate(items, 1):
-        handle.notification.update(
+        handle.get_notification().update(
             "process",
             metadata={"item": item, "current": index, "total": len(items)},
             dedupe_key="process-items-status",
@@ -371,7 +377,7 @@ def process_items(
     return len(items)
 ```
 
-For background tools, `handle.notification` is automatically bound to the
+For background tools, `handle.get_notification()` is automatically bound to the
 current `task_id`, so the agent sees a normal notification block with
 `ref: <task_id>`.
 

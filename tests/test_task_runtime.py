@@ -16,6 +16,7 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.tasks import InMemoryTaskStore
 
 
 def _wait_until(predicate, timeout: float = 2.0, interval: float = 0.02) -> None:
@@ -208,6 +209,112 @@ def test_allow_background_dispatches_when_model_requests_background():
     assert output.tool_calls[0].result == "background:a"
 
 
+def test_tool_library_uses_context_task_store_without_replacing_default():
+    @mf.tool_config(background=True)
+    def slow_pipeline(value: int) -> int:
+        """Run a simple background tool."""
+        return value * 2
+
+    library = ToolLibrary(name="lib", tools=[slow_pipeline])
+    default_store = library.get_task_store()
+    context_store = InMemoryTaskStore()
+
+    with execution_context(task_store=context_store):
+        dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+
+    _wait_until(
+        lambda: (
+            context_store.get(task_id) is not None
+            and context_store.get(task_id).status == "completed"
+        )
+    )
+
+    assert default_store.get(task_id) is None
+    assert context_store.get(task_id).result == 8
+
+    outside_status = (
+        library([("call_2", "task_status", {"task_id": task_id})]).tool_calls[0].result
+    )
+
+    assert outside_status == {"task_id": task_id, "status": "not_found"}
+    with execution_context(task_store=context_store):
+        with_context_status = (
+            library([("call_3", "task_status", {"task_id": task_id})])
+            .tool_calls[0]
+            .result
+        )
+    assert with_context_status["status"] == "completed"
+
+
+def test_background_task_tools_follow_background_tool_lifecycle():
+    @mf.tool_config(background=True)
+    def first_job(value: int) -> int:
+        """Run the first background job."""
+        return value
+
+    @mf.tool_config(background=True)
+    def second_job(value: int) -> int:
+        """Run the second background job."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[first_job, second_job])
+
+    assert "task_status" in library.get_tool_names()
+    assert "task_wait" in library.get_tool_names()
+
+    library.remove("first_job")
+    assert "task_status" in library.get_tool_names()
+
+    library.remove("second_job")
+    assert "task_status" not in library.get_tool_names()
+    assert "task_wait" not in library.get_tool_names()
+
+
+def test_removed_background_task_tool_is_not_reinstalled_while_background_active():
+    @mf.tool_config(background=True)
+    def first_job(value: int) -> int:
+        """Run the first background job."""
+        return value
+
+    @mf.tool_config(background=True)
+    def second_job(value: int) -> int:
+        """Run the second background job."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[first_job])
+    library.remove("task_status")
+
+    assert "task_status" not in library.get_tool_names()
+
+    library.add(second_job)
+
+    assert "task_status" not in library.get_tool_names()
+    assert "task_wait" in library.get_tool_names()
+
+
+def test_agent_task_tools_follow_background_agent_lifecycle():
+    @mf.tool_config(background=True)
+    def slow_pipeline(value: int) -> int:
+        """Run a simple background tool."""
+        return value * 2
+
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[slow_pipeline, worker])
+
+    assert "task_status" in library.get_tool_names()
+    assert "task_activity" in library.get_tool_names()
+    assert "task_message" in library.get_tool_names()
+
+    library.remove("worker")
+
+    assert "task_status" in library.get_tool_names()
+    assert "task_activity" not in library.get_tool_names()
+    assert "task_message" not in library.get_tool_names()
+
+
 def test_hidden_handle_schema_excludes_handle_for_inline_tool():
     def register_tool(
         handle: mf.Hidden,
@@ -259,9 +366,7 @@ def test_hidden_parameter_is_ignored_from_model_params():
         return f"{name}:{secret}"
 
     library = ToolLibrary(name="lib", tools=[hidden_tool])
-    result = library(
-        [("call_1", "hidden_tool", {"name": "lookup", "secret": "model"})]
-    )
+    result = library([("call_1", "hidden_tool", {"name": "lookup", "secret": "model"})])
 
     assert result.tool_calls[0].result == "lookup:safe"
     assert result.tool_calls[0].parameters == {"name": "lookup"}
@@ -560,7 +665,7 @@ def test_cancelled_background_future_is_not_logged_as_error():
     future.result.side_effect = FutureCancelledError()
 
     with patch("msgflux.runtime.background.logger.error") as mock_error:
-        library.background_dispatcher.log_task_failure(future)
+        library.get_background_dispatcher().log_task_failure(future)
 
     mock_error.assert_not_called()
 
@@ -572,11 +677,11 @@ def test_task_wait_falls_back_to_task_store_polling_without_future():
         return None
 
     library = ToolLibrary(name="lib", tools=[placeholder])
-    task = library.task_store.create(tool_name="external_job")
+    task = library.get_task_store().create(tool_name="external_job")
 
     def complete_task():
         time.sleep(0.1)
-        library.task_store.complete(task.task_id, 99)
+        library.get_task_store().complete(task.task_id, 99)
 
     timer = threading.Thread(target=complete_task)
     timer.start()
@@ -812,7 +917,7 @@ def test_agent_drains_notifications_after_tool_call_before_next_model_call():
     @mf.tool_config(inject_handle=True)
     def publish_status(handle: mf.Hidden) -> str:
         """Publish an in-loop status update."""
-        handle.notification.update(status="progress", hint="Tool completed.")
+        handle.get_notification().update(status="progress", hint="Tool completed.")
         return "ok"
 
     model = _ScriptedModel(
@@ -848,7 +953,7 @@ def test_task_progress_notifications_are_persisted():
             status="update",
             hint="Wait for the final completion notification before consuming output.",
             metadata={"tool_stage": "prepare"},
-            dedupe_key=f"progress:{handle.task_id}",
+            dedupe_key=f"progress:{handle.get_task_id()}",
         )
         started.set()
         release.wait(timeout=2.0)
@@ -909,7 +1014,7 @@ def test_injected_handle_publishes_task_status_updates():
     @mf.tool_config(background=True, inject_handle=True)
     def long_job(value: int, handle: mf.Hidden) -> int:
         """Emit task status updates through the injected tool handle."""
-        handle.notification.update(
+        handle.get_notification().update(
             "prepare",
             hint="Background work has started.",
             metadata={"step": 1},
@@ -917,7 +1022,7 @@ def test_injected_handle_publishes_task_status_updates():
         )
         started.set()
         release.wait(timeout=2.0)
-        handle.notification.update(
+        handle.get_notification().update(
             "process",
             metadata={"step": 2},
             dedupe_key="job-status",
@@ -1146,6 +1251,7 @@ def test_task_activity_tracks_compact_subagent_tool_calls():
 
 def test_task_message_resumes_completed_background_agent():
     store = InMemoryCheckpointStore()
+    task_store = InMemoryTaskStore()
     worker_model = _ScriptedModel(
         [
             _text_response("first pass"),
@@ -1156,12 +1262,14 @@ def test_task_message_resumes_completed_background_agent():
     worker.tool_config = {"background": True}
 
     library = ToolLibrary(name="lib", tools=[worker])
+    default_task_store = library.get_task_store()
     with execution_context(
         thread_id="user_42",
         namespace="root_agent",
         run_id="run_root",
         root_run_id="run_root",
         checkpoint_store=store,
+        task_store=task_store,
     ):
         dispatch = library([("call_1", "worker", {"task": "Start worker."})])
         task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
@@ -1217,6 +1325,8 @@ def test_task_message_resumes_completed_background_agent():
             store.load_state("worker", "user_42", resumed_run_id)["status"]
             == "completed"
         )
+    assert default_task_store.get(task_id) is None
+    assert task_store.get(task_id).status == "completed"
 
 
 def test_task_message_resume_clears_previous_interrupt_reason():

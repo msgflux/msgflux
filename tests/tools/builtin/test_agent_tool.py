@@ -326,6 +326,8 @@ def test_agent_tool_background_run_uses_task_id_as_child_run_id():
     task_id = _extract_task_id(dispatch.tool_calls[0].result)
     wait = library([("call_2", "task_wait", {"task_id": task_id, "timeout": 1.0})])
 
+    assert "`task_activity`" in dispatch.tool_calls[0].result
+    assert "`task_message`" in dispatch.tool_calls[0].result
     assert wait.tool_calls[0].result == "reviewed"
     assert store.load_state("reviewer", "user_42", task_id)["status"] == "completed"
 

@@ -17,6 +17,12 @@ from msgflux.nn.modules.tool import (
     _convert_module_to_nn_tool,
     _should_copy_injected_messages,
 )
+from msgflux.runtime.context import execution_context
+from msgflux.tasks import InMemoryTaskStore, TaskActivityRecorder
+
+
+def _activity_summaries(store: InMemoryTaskStore, task_id: str) -> list[str]:
+    return [activity.summary for activity in store.list_activity(task_id)]
 
 
 class TestToolCall:
@@ -511,9 +517,10 @@ class TestToolLibrary:
 
         assert library._handle is None
         assert library._background_dispatcher is None
-        assert library._task_runtime_enabled is False
-        assert library._agent_task_runtime_enabled is False
-        assert library._runtime_tool_names == set()
+        assert library._internal_tool_state.background_tool_names == set()
+        assert library._internal_tool_state.background_agent_tool_names == set()
+        assert library._internal_tool_state.background_task_tool_names == set()
+        assert library._internal_tool_state.agent_task_tool_names == set()
         assert library._task_store is None
         assert library._agent_inbox is None
 
@@ -521,9 +528,10 @@ class TestToolLibrary:
 
         assert library._handle is None
         assert library._background_dispatcher is None
-        assert library._task_runtime_enabled is False
-        assert library._agent_task_runtime_enabled is False
-        assert library._runtime_tool_names == set()
+        assert library._internal_tool_state.background_tool_names == set()
+        assert library._internal_tool_state.background_agent_tool_names == set()
+        assert library._internal_tool_state.background_task_tool_names == set()
+        assert library._internal_tool_state.agent_task_tool_names == set()
 
     def test_tool_library_add_tool(self):
         """Test adding a tool to library."""
@@ -549,8 +557,8 @@ class TestToolLibrary:
         with pytest.raises(ValueError, match="already in tool library"):
             library.add(my_tool)
 
-    def test_runtime_tool_conflict_raises_error(self):
-        """Test that runtime tools cannot overwrite user tools."""
+    def test_background_task_tool_conflict_raises_error(self):
+        """Test that background task tools cannot overwrite user tools."""
 
         def task_status(task_id: str) -> str:
             """User-defined task status."""
@@ -561,7 +569,10 @@ class TestToolLibrary:
             """Run in the background."""
             return "ok"
 
-        with pytest.raises(ValueError, match="runtime tool `task_status` conflicts"):
+        with pytest.raises(
+            ValueError,
+            match="background task tool `task_status` conflicts",
+        ):
             ToolLibrary(name="lib", tools=[task_status, background_tool])
 
     def test_tool_library_add_already_tool_instance(self):
@@ -983,6 +994,44 @@ class TestToolLibrary:
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0].result == 30
 
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_activity_recorder_uses_response_parameters(
+        self,
+    ):
+        """Test async activity recording excludes hidden parameters."""
+        task_store = InMemoryTaskStore()
+        task = task_store.create(
+            "worker",
+            task_id="task_async_activity_sanitized",
+            metadata={"task_kind": "agent"},
+        )
+
+        async def hidden_tool(name: str, secret: mf.Hidden[str] = "safe") -> str:
+            """Hide a parameter from model-facing responses."""
+            return f"{name}:{secret}"
+
+        library = ToolLibrary(name="lib", tools=[hidden_tool])
+
+        with execution_context(
+            task_activity_recorder=TaskActivityRecorder(task.task_id, task_store)
+        ):
+            result = await library.aforward(
+                [
+                    (
+                        "call_1",
+                        "hidden_tool",
+                        {"name": "lookup", "secret": "model"},
+                    )
+                ]
+            )
+
+        assert result.tool_calls[0].result == "lookup:safe"
+        assert result.tool_calls[0].parameters == {"name": "lookup"}
+        assert _activity_summaries(task_store, task.task_id) == [
+            "Task queued.",
+            "hidden_tool({'name': 'lookup'})",
+        ]
+
     def test_tool_library_with_inject_vars_list(self):
         """Test ToolLibrary with inject_vars as list."""
 
@@ -1031,6 +1080,70 @@ class TestToolLibrary:
 
         with pytest.raises(ValueError, match="requires the injected parameter"):
             library(tool_callings, vars={})
+
+    def test_tool_library_activity_recorder_uses_response_parameters(self):
+        """Test activity recording excludes hidden and runtime parameters."""
+        task_store = InMemoryTaskStore()
+        task = task_store.create(
+            "worker",
+            task_id="task_activity_sanitized",
+            metadata={"task_kind": "agent"},
+        )
+
+        @mf.tool_config(allow_background=True)
+        def hidden_tool(name: str, secret: mf.Hidden[str] = "safe") -> str:
+            """Hide a parameter from model-facing responses."""
+            return f"{name}:{secret}"
+
+        library = ToolLibrary(name="lib", tools=[hidden_tool])
+
+        with execution_context(
+            task_activity_recorder=TaskActivityRecorder(task.task_id, task_store)
+        ):
+            result = library(
+                [
+                    (
+                        "call_1",
+                        "hidden_tool",
+                        {
+                            "name": "lookup",
+                            "secret": "model",
+                            "run_in_background": False,
+                        },
+                    )
+                ]
+            )
+
+        assert result.tool_calls[0].result == "lookup:safe"
+        assert result.tool_calls[0].parameters == {"name": "lookup"}
+        assert _activity_summaries(task_store, task.task_id) == [
+            "Task queued.",
+            "hidden_tool({'name': 'lookup'})",
+        ]
+
+    def test_tool_library_activity_recorder_waits_for_prepared_params(self):
+        """Test invalid prepared parameters do not create a tool-call activity."""
+        task_store = InMemoryTaskStore()
+        task = task_store.create(
+            "worker",
+            task_id="task_activity_validation_error",
+            metadata={"task_kind": "agent"},
+        )
+
+        @mf.tool_config(inject_vars=["required"])
+        def tool_needs_var(a: int, required: str) -> str:
+            """Tool needs var."""
+            return f"{a}-{required}"
+
+        library = ToolLibrary(name="lib", tools=[tool_needs_var])
+
+        with pytest.raises(ValueError, match="requires the injected parameter"):
+            with execution_context(
+                task_activity_recorder=TaskActivityRecorder(task.task_id, task_store)
+            ):
+                library([("call_1", "tool_needs_var", {"a": 5})], vars={})
+
+        assert _activity_summaries(task_store, task.task_id) == ["Task queued."]
 
     def test_tool_library_with_return_direct(self):
         """Test ToolLibrary with return_direct config."""

@@ -1,7 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Generic, TypeVar, get_args, get_origin
+from typing import (
+    Any,
+    Callable,
+    Container,
+    Dict,
+    Generic,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    TypeVar,
+    get_args,
+    get_origin,
+)
+
+from msgflux.tools.helpers import is_background_capable
 
 T = TypeVar("T")
 
@@ -47,6 +61,147 @@ class ToolBucket:
 
     def add(self, tool: ToolMetadata) -> None:
         raise NotImplementedError
+
+    @classmethod
+    def find_bucket_for_metadata(
+        cls,
+        metadata: ToolMetadata,
+        bucket_names_by_capture_kind: Mapping[str, str],
+        *,
+        reserved_tool_kinds: Container[str],
+    ) -> str | None:
+        tool_kind = metadata.tool_config.get("tool_kind", "tool")
+        if tool_kind == cls.tool_kind or tool_kind in reserved_tool_kinds:
+            return None
+        return bucket_names_by_capture_kind.get(tool_kind)
+
+    @classmethod
+    def validate_registration(
+        cls,
+        metadata: ToolMetadata,
+        bucket_names_by_capture_kind: Mapping[str, str],
+    ) -> str | None:
+        if metadata.tool_config.get("tool_kind") != cls.tool_kind:
+            return None
+        capture_kind = cls.require_capture_kind(metadata.name, metadata.impl)
+        existing = bucket_names_by_capture_kind.get(capture_kind)
+        if existing is not None and existing != metadata.name:
+            raise ValueError(
+                f"The bucket capture kind `{capture_kind}` is already handled by "
+                f"`{existing}`."
+            )
+        return capture_kind
+
+    @staticmethod
+    def require_capture_kind(bucket_name: str, bucket_impl: Any) -> str:
+        capture_kind = getattr(bucket_impl, "capture_kind", None)
+        if not isinstance(capture_kind, str) or not capture_kind:
+            raise ValueError(
+                f"The bucket tool `{bucket_name}` must define capture_kind."
+            )
+        return capture_kind
+
+    @staticmethod
+    def validate_capture(bucket_name: str, metadata: ToolMetadata) -> None:
+        if is_background_capable(metadata.tool_config):
+            raise ValueError(
+                "Bucket-captured tools cannot use `background=True` or "
+                f"`allow_background=True`. Tool `{metadata.name}` would be captured "
+                f"by bucket `{bucket_name}`."
+            )
+
+    @classmethod
+    def add_to_bucket(
+        cls,
+        bucket_tool: Any,
+        bucket_name: str,
+        metadata: ToolMetadata,
+    ) -> None:
+        cls.validate_capture(bucket_name, metadata)
+        bucket_impl = getattr(bucket_tool, "impl", None)
+        if bucket_impl is None or not hasattr(bucket_impl, "add"):
+            raise ValueError(f"The bucket tool `{bucket_name}` cannot capture tools.")
+        bucket_impl.add(metadata)
+        cls.refresh_tool(bucket_tool)
+
+    @staticmethod
+    def refresh_tool(bucket_tool: Any) -> None:
+        bucket_impl = getattr(bucket_tool, "impl", None)
+        if bucket_impl is None:
+            return
+        description = getattr(bucket_impl, "description", None)
+        if isinstance(description, str):
+            bucket_tool.set_description(description)
+        bucket_tool.register_buffer(
+            "usage_guidance",
+            getattr(bucket_impl, "usage_guidance", None),
+        )
+
+    @classmethod
+    def iter_capture_candidates(
+        cls,
+        *,
+        bucket_name: str,
+        capture_kind: str,
+        tools: Mapping[str, Any],
+        tool_configs: Mapping[str, Mapping[str, Any]],
+        is_reserved_tool_kind: Callable[[Mapping[str, Any]], bool],
+    ) -> Iterator[tuple[str, Any]]:
+        for tool_name, tool in tools.items():
+            config = tool_configs.get(tool_name, {})
+            if tool_name == bucket_name or is_reserved_tool_kind(config):
+                continue
+            if config.get("tool_kind") != capture_kind:
+                continue
+            yield tool_name, tool
+
+    @classmethod
+    def validate_existing_captures(
+        cls,
+        *,
+        bucket_name: str,
+        capture_kind: str,
+        tools: Mapping[str, Any],
+        tool_configs: Mapping[str, Mapping[str, Any]],
+        metadata_factory: Callable[[Any], ToolMetadata],
+        is_reserved_tool_kind: Callable[[Mapping[str, Any]], bool],
+    ) -> None:
+        for _, tool in cls.iter_capture_candidates(
+            bucket_name=bucket_name,
+            capture_kind=capture_kind,
+            tools=tools,
+            tool_configs=tool_configs,
+            is_reserved_tool_kind=is_reserved_tool_kind,
+        ):
+            cls.validate_capture(bucket_name, metadata_factory(tool))
+
+    @classmethod
+    def pop_existing_captures(
+        cls,
+        *,
+        bucket_name: str,
+        capture_kind: str,
+        tools: MutableMapping[str, Any],
+        tool_configs: MutableMapping[str, Any],
+        metadata_factory: Callable[[Any], ToolMetadata],
+        is_reserved_tool_kind: Callable[[Mapping[str, Any]], bool],
+    ) -> list[ToolMetadata]:
+        captured = []
+        candidates = list(
+            cls.iter_capture_candidates(
+                bucket_name=bucket_name,
+                capture_kind=capture_kind,
+                tools=tools,
+                tool_configs=tool_configs,
+                is_reserved_tool_kind=is_reserved_tool_kind,
+            )
+        )
+        for tool_name, tool in candidates:
+            metadata = metadata_factory(tool)
+            tools.pop(tool_name)
+            tool_configs.pop(tool_name, None)
+            captured.append(metadata)
+        return captured
 
 
 class ToolLibraryOperator:

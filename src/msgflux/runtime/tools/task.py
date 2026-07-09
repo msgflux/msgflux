@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from msgflux.core.registry import Registry
 from msgflux.tools.config import tool_config
+from msgflux.tools.helpers import BACKGROUND_TASK_TOOL_KIND
 from msgflux.tools.types import Hidden
 from msgflux.utils.time import parse_utc_timestamp
 
@@ -13,56 +14,65 @@ BASE_TASK_TOOLS = Registry()
 AGENT_TASK_TOOLS = Registry()
 
 
+def background_task_tool(tool):
+    tool.tool_kind = BACKGROUND_TASK_TOOL_KIND
+    return tool
+
+
 @BASE_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
 def task_status(task_id: str, handle: Hidden) -> Dict[str, Any]:
     """Get the current status of a background task by task_id."""
-    task = handle.task_store.get(task_id)
+    task_store = handle.get_task_store()
+    task = task_store.get(task_id)
     if task is None:
         return {"task_id": task_id, "status": "not_found"}
     payload = task.to_dict()
     payload.update(build_task_timing_fields(task))
-    last_activity = handle.task_store.get_last_activity(task_id)
+    last_activity = task_store.get_last_activity(task_id)
     if last_activity is not None:
         payload["last_activity_summary"] = format_task_activity_entry(last_activity)
     return payload
 
 
 @BASE_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
 def task_list(
-    status: Optional[str] = None,
+    status: Optional[str] = None,  # noqa: UP045
     handle: Hidden = None,
 ) -> list[Dict[str, Any]]:
     """List background tasks registered in the current tool library."""
+    task_store = handle.get_task_store()
     tasks = []
-    for task in handle.task_store.list(status=status):
+    for task in task_store.list(status=status):
         payload = task.to_dict()
         payload.update(build_task_timing_fields(task))
-        last_activity = handle.task_store.get_last_activity(task.task_id)
+        last_activity = task_store.get_last_activity(task.task_id)
         if last_activity is not None:
-            payload["last_activity_summary"] = format_task_activity_entry(
-                last_activity
-            )
+            payload["last_activity_summary"] = format_task_activity_entry(last_activity)
         tasks.append(payload)
     return tasks
 
 
 @BASE_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
 def task_output(task_id: str, handle: Hidden) -> Any:
     """Get the final output of a background task by task_id."""
-    task = handle.task_store.get(task_id)
+    task = handle.get_task_store().get(task_id)
     return build_task_result(task_id=task_id, task=task)
 
 
 @BASE_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
-def task_wait(
+def task_wait(  # noqa: C901
     task_id: str,
-    timeout: Optional[float] = None,
+    timeout: Optional[float] = None,  # noqa: UP045
     handle: Hidden = None,
-) -> Any:  # noqa: C901
+) -> Any:
     """Wait for a background task to finish.
 
     Returns the final output, failed payload, or a timeout status.
@@ -75,7 +85,8 @@ def task_wait(
         if timeout < 0:
             raise ValueError("`timeout` must be greater than or equal to 0.")
 
-    task = handle.task_store.get(task_id)
+    task_store = handle.get_task_store()
+    task = task_store.get(task_id)
     if task is None:
         return {"task_id": task_id, "status": "not_found"}
     if task.status in {"completed", "failed", "interrupted"}:
@@ -86,20 +97,20 @@ def task_wait(
         try:
             future.result(timeout=timeout)
         except FutureTimeoutError:
-            task = handle.task_store.get(task_id)
+            task = task_store.get(task_id)
             return build_task_timeout_result(
                 task_id=task_id,
                 task=task,
             )
         except Exception:
-            task = handle.task_store.get(task_id)
+            task = task_store.get(task_id)
             return build_task_result(task_id=task_id, task=task)
-        task = handle.task_store.get(task_id)
+        task = task_store.get(task_id)
         return build_task_result(task_id=task_id, task=task)
 
     deadline = None if timeout is None else time.monotonic() + float(timeout)
     while True:
-        task = handle.task_store.get(task_id)
+        task = task_store.get(task_id)
         if task is None or task.status in {"completed", "failed", "interrupted"}:
             return build_task_result(task_id=task_id, task=task)
         if deadline is not None and time.monotonic() >= deadline:
@@ -111,13 +122,15 @@ def task_wait(
 
 
 @BASE_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
 def task_interrupt(task_id: str, handle: Hidden) -> Dict[str, Any]:
     """Request a cooperative interrupt for a background task.
 
     Interrupts immediately only if the task has not started yet.
     """
-    task = handle.task_store.get(task_id)
+    task_store = handle.get_task_store()
+    task = task_store.get(task_id)
     if task is None:
         return {"task_id": task_id, "status": "not_found"}
 
@@ -128,10 +141,10 @@ def task_interrupt(task_id: str, handle: Hidden) -> Dict[str, Any]:
             "message": "Task already reached a terminal state.",
         }
 
-    handle.task_store.request_interrupt(task_id)
+    task_store.request_interrupt(task_id)
     future = handle.get_task_future(task_id)
     if future is not None and future.cancel():
-        interrupted = handle.task_store.interrupt(
+        interrupted = task_store.interrupt(
             task_id,
             reason="Task was cancelled before it started running.",
         )
@@ -155,10 +168,11 @@ def task_interrupt(task_id: str, handle: Hidden) -> Dict[str, Any]:
 
 
 @AGENT_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
 def task_activity(
     task_id: str,
-    limit: Optional[int] = 10,
+    limit: Optional[int] = 10,  # noqa: UP045
     handle: Hidden = None,
 ) -> Any:
     """List compact activity entries for a background agent task."""
@@ -167,7 +181,8 @@ def task_activity(
             raise TypeError(f"`limit` must be int or None, given `{type(limit)}`")
         if limit <= 0:
             raise ValueError("`limit` must be greater than 0.")
-    task = handle.task_store.get(task_id)
+    task_store = handle.get_task_store()
+    task = task_store.get(task_id)
     if task is None:
         return {"task_id": task_id, "status": "not_found"}
     if task.metadata.get("task_kind") != "agent":
@@ -176,7 +191,7 @@ def task_activity(
             "status": "unsupported",
             "error": "task_activity is only available for background agent tasks.",
         }
-    activity = handle.task_store.list_activity(
+    activity = task_store.list_activity(
         task_id,
         limit=limit,
     )
@@ -184,6 +199,7 @@ def task_activity(
 
 
 @AGENT_TASK_TOOLS
+@background_task_tool
 @tool_config(inject_handle=True)
 def task_message(task_id: str, message: str, handle: Hidden) -> Dict[str, Any]:
     """Send a message to a background agent task.
@@ -191,7 +207,8 @@ def task_message(task_id: str, message: str, handle: Hidden) -> Dict[str, Any]:
     If it is still running, deliver the message to its inbox. If it already
     interrupted, resume the task from its checkpoint.
     """
-    task = handle.task_store.get(task_id)
+    task_store = handle.get_task_store()
+    task = task_store.get(task_id)
     if task is None:
         return {"task_id": task_id, "status": "not_found"}
     if task.metadata.get("task_kind") != "agent":
@@ -214,7 +231,7 @@ def task_message(task_id: str, message: str, handle: Hidden) -> Dict[str, Any]:
                 "metadata": {"direction": "root_to_task"},
             }
         )
-        handle.task_store.add_activity(
+        task_store.add_activity(
             task_id,
             kind="message",
             summary=f"Root message: {truncate_activity_text(message)}",

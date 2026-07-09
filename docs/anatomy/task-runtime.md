@@ -79,8 +79,8 @@ percent
 
 ### `TaskHandle`
 
-`TaskHandle` is the controlled object exposed through `handle.task` inside a
-background tool.
+`TaskHandle` is the controlled object exposed through `handle.get_task()` inside
+a background tool.
 
 It exists so the tool can report progress without mutating the store directly.
 

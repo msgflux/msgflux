@@ -1,7 +1,20 @@
 from importlib import import_module
 from typing import Any, Callable, Mapping
 
+BACKGROUND_TASK_TOOL_KIND = "background"
 RUNTIME_BACKGROUND_PARAM = "run_in_background"
+RUNTIME_TOOL_KIND = "runtime"
+RESERVED_TOOL_KINDS = {BACKGROUND_TASK_TOOL_KIND, RUNTIME_TOOL_KIND}
+
+
+def is_reserved_tool_kind(config: Mapping[str, Any]) -> bool:
+    return config.get("tool_kind") in RESERVED_TOOL_KINDS
+
+
+def is_background_capable(config: Mapping[str, Any]) -> bool:
+    return bool(
+        config.get("background", False) or config.get("allow_background", False)
+    )
 
 
 def should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> bool:
