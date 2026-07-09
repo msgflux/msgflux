@@ -1,6 +1,7 @@
 from unittest.mock import Mock
 
 import msgflux as mf
+import pytest
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
@@ -113,9 +114,26 @@ def test_agent_tool_can_start_empty_and_capture_agents_from_library():
     assert response.tool_calls[0].result == "reviewed"
 
 
-def test_agent_tool_captures_existing_agents_when_bucket_is_added_later():
+def test_agent_tool_rejects_background_agent_on_initialization():
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
-    library = ToolLibrary(name="lib", tools=[reviewer, AgentTool()])
+    reviewer.tool_config = {"background": True}
+
+    with pytest.raises(ValueError, match="Bucket-captured tools cannot use"):
+        AgentTool([reviewer])
+
+
+def test_agent_tool_rejects_on_demand_agent_on_initialization():
+    reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
+    reviewer.tool_config = {"on_demand": True}
+
+    with pytest.raises(ValueError, match="On-demand tools must be registered"):
+        AgentTool([reviewer])
+
+
+def test_agent_tool_captures_registered_agents_when_added_later():
+    reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
+    library = ToolLibrary(name="lib", tools=[reviewer])
+    library.add(AgentTool())
 
     schema_names = [
         schema["function"]["name"] for schema in library.get_tool_json_schemas()
@@ -130,19 +148,20 @@ def test_agent_tool_captures_existing_agents_when_bucket_is_added_later():
 def test_agent_tool_rejects_background_agent_capture():
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
     reviewer.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[AgentTool()])
 
     try:
-        ToolLibrary(name="lib", tools=[AgentTool(), reviewer])
+        library.add(reviewer)
     except ValueError as exc:
         error = str(exc)
     else:
         raise AssertionError("AgentTool should reject background captured agents.")
 
     assert "Bucket-captured tools cannot use `background=True`" in error
-    assert "reviewer" in error
+    assert "reviewer" not in library.library
 
 
-def test_agent_tool_rejects_existing_allow_background_agent_capture_without_removal():
+def test_agent_tool_rejects_existing_allow_background_agent_capture():
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
     reviewer.tool_config = {"allow_background": True}
     library = ToolLibrary(name="lib", tools=[reviewer])
@@ -157,7 +176,6 @@ def test_agent_tool_rejects_existing_allow_background_agent_capture_without_remo
     assert "Bucket-captured tools cannot use `background=True`" in error
     assert "reviewer" in library.library
     assert "agent" not in library.library
-    assert "agent" not in library._bucket_tool_names_by_capture_kind.values()
 
 
 def test_agent_tool_dispatches_to_selected_agent():

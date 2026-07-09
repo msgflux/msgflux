@@ -58,12 +58,14 @@ tools of a specific kind and exposes them through one public tool. `AgentTool`
 uses:
 
 ```python
-tool_kind = "bucket"
-capture_kind = "agent"
+class AgentTool(ToolBucket):
+    capture_kind = "agent"
 ```
 
-Agents are registered with `tool_kind="agent"`. When a `ToolLibrary` contains
-an `AgentTool`, adding an agent tool causes the library to route that agent into
+`ToolBucket` supplies `tool_kind="bucket"`; the library stores that value in
+the bucket's `tool_config`. Agents are registered with
+`tool_config["tool_kind"]="agent"`. When a `ToolLibrary` contains an
+`AgentTool`, adding an agent tool causes the library to route that agent into
 the bucket instead of exposing it as a separate top-level tool:
 
 ```python
@@ -80,6 +82,11 @@ print(library.get_tool_names())
 The bucket updates its own description and usage guidance when agents are
 captured, so the single `agent` tool still tells the model which agents are
 available and when each one should be used.
+
+`capture_kind` can also group multiple kinds with `|`, for example
+`capture_kind = "research|review"`. Each bucket owns its declared kinds, and
+the base `add()` method rejects duplicate captured names and calls the bucket's
+`refresh()` hook so `AgentTool` can update its description and usage guidance.
 
 [Tool Search](tool-search.md) is compatible with `ToolBucket` capture.
 On-demand agents can stay outside the active tool set until `tool_search`

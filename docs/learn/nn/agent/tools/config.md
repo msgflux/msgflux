@@ -610,6 +610,46 @@ def github_repository_search_v2_extended(query: str) -> str:
 # Tool is exposed as "search_repos" instead of the long function name
 ```
 
+## tool_kind
+
+Use `tool_kind` to label a tool for `ToolBucket` routing. The label is stored
+in the tool configuration and does not change the function name or its
+model-facing schema.
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools import ToolBucket
+
+@mf.tool_config(tool_kind="catalog")
+def find_product(query: str) -> str:
+    """Find a product by name."""
+    return query
+
+class CommerceTool(ToolBucket):
+    """Group commerce operations."""
+
+    name = "commerce"
+    capture_kind = "catalog|orders"
+    annotations = {"return": str}
+
+    def __call__(self) -> str:
+        return "ready"
+
+library = nn.ToolLibrary(
+    name="store",
+    tools=[find_product, CommerceTool()],
+)
+
+print(library.get_tool_names())
+# ["commerce"]
+```
+
+`CommerceTool` captures the `catalog` tool regardless of their order during
+library initialization. `capture_kind` accepts one kind or several kinds
+separated by `|`; a kind can belong to only one bucket. Configure
+`background` or `allow_background` on the bucket, not on a tool it captures.
+
 ## display_name
 
 Assign a human-readable name for UI surfaces and events while keeping the tool's

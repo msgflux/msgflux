@@ -21,6 +21,7 @@ def tool_config(
     inject_handle: Optional[bool] = False,
     inject_vars: Optional[Union[bool, List[str]]] = False,
     handoff: Optional[bool] = False,
+    tool_kind: Optional[str] = None,
     name_override: Optional[str] = None,
     retry: Optional[Any] = None,
 ) -> Callable:
@@ -88,6 +89,8 @@ def tool_config(
         handoff:
             If True, indicates that this function will receive the `messages`
             from the Agent.
+        tool_kind:
+            Optional kind used by `ToolBucket` to group related tools.
         name_override:
             A custom name to override the default tool name derived from the function
             or class. If not provided, the original name is used.
@@ -194,6 +197,7 @@ def tool_config(
                     "inject_handle": inject_handle,
                     "inject_vars": inject_vars,
                     "return_direct": _return_direct,
+                    "tool_kind": tool_kind,
                     "name_overridden": name_override,
                     "retry": retry,
                 }

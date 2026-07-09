@@ -43,11 +43,8 @@ from msgflux.telemetry.span import (
     set_tool_attributes,
 )
 from msgflux.tools.builtin.tool_search import ToolSearchTool
-from msgflux.tools.dataclasses import InternalToolState
+from msgflux.tools.dataclasses import InternalToolState, ToolMetadata
 from msgflux.tools.handles import ToolLibraryHandle
-from msgflux.tools.helpers import (
-    RESERVED_TOOL_KINDS as _RESERVED_TOOL_KINDS,
-)
 from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM as _RUNTIME_BACKGROUND_PARAM,
 )
@@ -65,7 +62,6 @@ from msgflux.tools.types import (
     ToolBackground,
     ToolBucket,
     ToolLibraryOperator,
-    ToolMetadata,
     unwrap_hidden_annotation,
 )
 from msgflux.utils.chat import generate_tool_json_schema
@@ -377,7 +373,14 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
     if tool_config.get("handoff", False):
         name = "transfer_to_" + name
 
-    tool_config["tool_kind"] = getattr(impl, "tool_kind", None) or "tool"
+    if isinstance(impl, ToolBucket):
+        tool_kind = ToolBucket.tool_kind
+    else:
+        tool_kind = tool_config.get("tool_kind") or getattr(impl, "tool_kind", None)
+        tool_kind = tool_kind or "tool"
+    if not isinstance(tool_kind, str) or not tool_kind.strip():
+        raise ValueError(f"The tool `{name}` must define a non-empty tool_kind.")
+    tool_config["tool_kind"] = tool_kind
 
     annotations, hidden_params = _split_hidden_annotations(annotations)
     if hidden_params:
@@ -516,7 +519,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.register_buffer("mcp_clients", {})
         self._task_store = task_store
         self._agent_inbox: Optional[AgentInbox] = None
-        self._bucket_tool_names_by_capture_kind: Dict[str, str] = {}
         self._internal_tool_state = InternalToolState()
         self._handle: Optional[ToolLibraryHandle] = None
         self._background_dispatcher: Optional[BackgroundTaskDispatcher] = None
@@ -574,20 +576,20 @@ class ToolLibrary(Module, metaclass=AutoParams):
             self._sync_on_demand_runtime_tools()
             return metadata.name
 
-        # Buckets expose one public tool while absorbing tools of a matching kind.
+        # A matching registered bucket owns the tool instead of direct registration.
         bucket_name = None
         if not ToolLibraryOperator.is_runtime_metadata(metadata):
-            bucket_name = ToolBucket.find_bucket_for_metadata(
+            bucket_name = ToolBucket.find_bucket(
                 metadata,
-                self._bucket_tool_names_by_capture_kind,
-                reserved_tool_kinds=_RESERVED_TOOL_KINDS,
+                self.library,
+                self.tool_configs,
             )
         if bucket_name is not None:
-            ToolBucket.add_to_bucket(self.library[bucket_name], bucket_name, metadata)
+            self._add_to_bucket(bucket_name, metadata)
             return metadata.name
 
         # Normal tools become directly callable and visible according to their config.
-        self._register_tool_metadata(metadata)
+        self._register_tool(metadata)
         return metadata.name
 
     def remove(self, tool_name: str):
@@ -642,17 +644,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if tool_name in self.library:
             self.library.pop(tool_name)
         self.tool_configs.pop(tool_name, None)
-        for capture_kind, bucket_name in list(
-            self._bucket_tool_names_by_capture_kind.items()
-        ):
-            if bucket_name == tool_name:
-                self._bucket_tool_names_by_capture_kind.pop(capture_kind, None)
 
     def clear(self):
         self.library.clear()
         self.tool_configs.clear()
         self.on_demand_tools.clear()
-        self._bucket_tool_names_by_capture_kind.clear()
         for mcp_data in self.mcp_clients.values():
             F.wait_for(mcp_data["client"].disconnect)
         self.mcp_clients.clear()
@@ -660,70 +656,75 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if self._background_dispatcher is not None:
             self._background_dispatcher.clear()
 
-    def _register_tool_metadata(self, metadata: ToolMetadata) -> Tool:
-        capture_kind = ToolBucket.validate_registration(
-            metadata,
-            self._bucket_tool_names_by_capture_kind,
-        )
-        if capture_kind is not None:
-            ToolBucket.validate_existing_captures(
-                bucket_name=metadata.name,
-                capture_kind=capture_kind,
-                tools=self.library,
-                tool_configs=self.tool_configs,
-                metadata_factory=_metadata_from_tool,
-                is_reserved_tool=self._is_reserved_or_runtime_tool,
+    def _register_tool(self, metadata: ToolMetadata) -> Tool:
+        # A bucket must be valid before it becomes visible in the library.
+        captures = []
+        if metadata.tool_config.get("tool_kind") == ToolBucket.tool_kind:
+            ToolBucket.validate_registration(
+                metadata,
+                self.library,
+                self.tool_configs,
+            )
+            captures = ToolBucket.find_capture_candidates(
+                metadata.impl,
+                self.library,
+                self.tool_configs,
             )
 
+            # Check every pending capture before changing the current library state.
+            for _, captured_tool in captures:
+                ToolBucket.validate_capture(_metadata_from_tool(captured_tool))
+
+        # Convert callable metadata to the local executable representation when needed.
         tool = (
             metadata.source_tool
             if isinstance(metadata.source_tool, Tool)
             else _convert_metadata_to_local_tool(metadata)
         )
+
+        # Register the public tool and its normalized configuration together.
         self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
         self.library.update({tool.name: tool})
+
+        # Keep the existing background task runtime bookkeeping synchronized.
         ToolBackground.record_registered_tool(
             tool.name,
             self.tool_configs[tool.name],
             self._internal_tool_state,
         )
+
+        # Re-enable Tool Search when its runtime tool is registered again.
         if tool.name == ToolSearchTool.name and ToolLibraryOperator.is_runtime_tool(
             tool
         ):
             self._internal_tool_state.tool_search_disabled = False
+
+        # Apply the registered tool's visibility and background execution effects.
         self._apply_tool_registration_effects(tool.name)
-        self._register_bucket_if_needed(tool.name, tool)
+
+        # Move matching local tools into a newly registered bucket.
+        for captured_name, captured_tool in captures:
+            captured_metadata = _metadata_from_tool(captured_tool)
+            self.remove(captured_name)
+            self._add_to_bucket(tool.name, captured_metadata)
         return tool
 
-    def _register_bucket_if_needed(self, tool_name: str, tool: Tool) -> None:
-        config = self.tool_configs.get(tool_name, {})
-        if config.get("tool_kind") != "bucket":
-            return
-        impl = getattr(tool, "impl", None)
-        capture_kind = ToolBucket.require_capture_kind(tool_name, impl)
-        self._bucket_tool_names_by_capture_kind[capture_kind] = tool_name
-        for metadata in ToolBucket.pop_existing_captures(
-            bucket_name=tool_name,
-            capture_kind=capture_kind,
-            tools=self.library,
-            tool_configs=self.tool_configs,
-            metadata_factory=_metadata_from_tool,
-            is_reserved_tool=self._is_reserved_or_runtime_tool,
-        ):
-            ToolBucket.add_to_bucket(
-                self.library[tool_name],
-                tool_name,
-                metadata,
-            )
+    def _add_to_bucket(self, bucket_name: str, metadata: ToolMetadata) -> None:
+        # Resolve the bucket implementation before changing its captured tools.
+        bucket_tool = self.library[bucket_name]
+        bucket = getattr(bucket_tool, "impl", None)
+        if not isinstance(bucket, ToolBucket):
+            raise ValueError(f"The bucket tool `{bucket_name}` cannot capture tools.")
 
-    @staticmethod
-    def _is_reserved_or_runtime_tool(
-        _tool_name: str,
-        tool: Tool,
-        config: Mapping[str, Any],
-    ) -> bool:
-        return _is_reserved_tool_kind(config) or ToolLibraryOperator.is_runtime_tool(
-            tool
+        # Let the bucket validate, retain, and refresh its captured state.
+        bucket.add(metadata)
+
+        # Reflect the bucket's current presentation metadata on its public tool.
+        if isinstance(getattr(bucket, "description", None), str):
+            bucket_tool.set_description(bucket.description)
+        bucket_tool.register_buffer(
+            "usage_guidance",
+            getattr(bucket, "usage_guidance", None),
         )
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):

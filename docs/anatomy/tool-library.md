@@ -159,7 +159,21 @@ class ToolBucket:
 
     def add(self, tool: ToolMetadata) -> None:
         ...
+
+    def refresh(self) -> None:
+        ...
 ```
+
+`capture_kind` matches `tool_config["tool_kind"]`. It can name one kind, such
+as `"agent"`, or several kinds separated by `|`, such as
+`"catalog|orders"`. A bucket owns each declared kind, so two buckets cannot
+capture the same kind. A captured tool cannot configure `background` or
+`allow_background`; configure those flags on the bucket itself instead.
+
+`ToolLibrary` routes matching tools to `ToolBucket.add(...)`. The base method
+keeps metadata in `bucket.tools`, rejects duplicate names, and calls
+`bucket.refresh()`. The base refresh hook does nothing; a subclass can rebuild
+derived presentation data such as its description and usage guidance.
 
 The registration rule is:
 
@@ -167,10 +181,14 @@ The registration rule is:
 - otherwise, if a bucket exists for its `tool_kind`, the bucket captures it
 - otherwise, the tool is registered normally
 
-For agents, `nn.Agent` exposes `tool_kind="agent"`. `AgentTool` is a bucket
-with `capture_kind="agent"`, so adding an agent to a library that already has
-`AgentTool` updates the single public `agent(name, message)` tool instead of
-exposing the agent as a separate tool.
+When a bucket is registered, it also captures matching tools that are already
+registered. Therefore, the order of `tools` in `ToolLibrary(...)` does not
+change capture behavior.
+
+For agents, `nn.Agent` is normalized to `tool_config["tool_kind"]="agent"`.
+`AgentTool` is a bucket with `capture_kind="agent"`, so adding an agent to a
+library that already has `AgentTool` updates the single public
+`agent(name, message)` tool instead of exposing the agent as a separate tool.
 
 ```python
 library = ToolLibrary(

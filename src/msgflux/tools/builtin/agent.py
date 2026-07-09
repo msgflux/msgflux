@@ -8,7 +8,8 @@ from msgflux.runtime.context import (
     get_execution_context,
     new_thread_id,
 )
-from msgflux.tools.types import ToolBucket, ToolMetadata
+from msgflux.tools.dataclasses import ToolMetadata
+from msgflux.tools.types import ToolBucket
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.agent import Agent
@@ -19,7 +20,6 @@ class AgentTool(ToolBucket):
 
     is_agent_tool = True
     capture_kind = "agent"
-    supports_task_message = True
     task_resume_params = ("name",)
     task_checkpoint_namespace_param = "name"
     name = "agent"
@@ -36,8 +36,6 @@ class AgentTool(ToolBucket):
 
     def __init__(self, agents: Sequence[Agent] = ()):
         self._base_description = type(self).description
-        self.agents: Dict[str, Agent] = {}
-        self.agent_metadata: Dict[str, ToolMetadata] = {}
         for agent in agents:
             agent_name = self._get_agent_name(agent)
             self.add(
@@ -55,18 +53,9 @@ class AgentTool(ToolBucket):
                 )
             )
 
-        self.description = self._build_description()
-        self.usage_guidance = self._build_usage_guidance()
+        self.refresh()
 
-    def add(self, tool: ToolMetadata) -> None:
-        if tool.name in self.agents:
-            raise ValueError(f"Duplicate agent name `{tool.name}`.")
-        if tool.tool_config.get("on_demand", False):
-            raise ValueError(
-                "On-demand agents must be registered through `ToolLibrary.add(...)`."
-            )
-        self.agents[tool.name] = tool.impl
-        self.agent_metadata[tool.name] = tool
+    def refresh(self) -> None:
         self.description = self._build_description()
         self.usage_guidance = self._build_usage_guidance()
 
@@ -113,9 +102,10 @@ class AgentTool(ToolBucket):
         )
 
     def resolve_agent(self, name: str) -> Agent:
-        if name in self.agents:
-            return self.agents[name]
-        available = ", ".join(sorted(self.agents))
+        metadata = self.tools.get(name)
+        if metadata is not None:
+            return metadata.impl
+        available = ", ".join(sorted(self.tools))
         raise ValueError(f"Agent `{name}` not found. Available agents: {available}.")
 
     def _build_agent_kwargs(
@@ -127,7 +117,7 @@ class AgentTool(ToolBucket):
         runtime_vars: Mapping[str, Any] | None,
         scope: ExecutionScope | None,
     ) -> Dict[str, Any]:
-        metadata = self.agent_metadata.get(agent_name)
+        metadata = self.tools.get(agent_name)
         config = metadata.tool_config if metadata is not None else {}
         kwargs: Dict[str, Any] = {"scope": scope or self._build_scope(agent)}
 
@@ -174,7 +164,7 @@ class AgentTool(ToolBucket):
 
     def _build_description(self) -> str:
         agent_lines: List[str] = []
-        for agent_name, metadata in sorted(self.agent_metadata.items()):
+        for agent_name, metadata in sorted(self.tools.items()):
             description = metadata.description
             if description:
                 agent_lines.append(f"- {agent_name}: {description}")
@@ -188,7 +178,7 @@ class AgentTool(ToolBucket):
 
     def _build_usage_guidance(self) -> str | None:
         guidance_lines: List[str] = []
-        for agent_name, metadata in sorted(self.agent_metadata.items()):
+        for agent_name, metadata in sorted(self.tools.items()):
             guidance = metadata.usage_guidance
             if isinstance(guidance, str) and guidance.strip():
                 guidance_lines.append(f"- {agent_name}: {' '.join(guidance.split())}")

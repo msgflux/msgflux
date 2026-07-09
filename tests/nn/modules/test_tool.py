@@ -804,12 +804,6 @@ class TestToolLibrary:
             description = "Capture search tools."
             annotations = {"query": str, "return": str}
 
-            def __init__(self):
-                self.captured = []
-
-            def add(self, tool):
-                self.captured.append(tool.name)
-
             def __call__(self, query: str) -> str:
                 return query
 
@@ -817,7 +811,112 @@ class TestToolLibrary:
         library.add(SearchBucket())
 
         assert "tool_search" in library.library
-        assert library.library["search_bucket"].impl.captured == []
+        assert library.library["search_bucket"].impl.tools == {}
+
+    def test_tool_bucket_captures_multiple_tool_kinds(self):
+        @mf.tool_config(tool_kind="catalog")
+        def find_product(query: str) -> str:
+            """Find a product."""
+            return query
+
+        @mf.tool_config(tool_kind="catalog")
+        def list_products() -> str:
+            """List products."""
+            return "products"
+
+        @mf.tool_config(tool_kind="orders")
+        def get_order(order_id: str) -> str:
+            """Get an order."""
+            return order_id
+
+        class CommerceBucket(ToolBucket):
+            """Group commerce tools."""
+
+            name = "commerce"
+            capture_kind = "catalog|orders"
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "commerce"
+
+        bucket = CommerceBucket()
+        library = ToolLibrary(
+            name="lib",
+            tools=[find_product, list_products, get_order, bucket],
+        )
+
+        assert list(library.library) == ["commerce"]
+        assert set(bucket.tools) == {"find_product", "list_products", "get_order"}
+        assert library.tool_configs["commerce"]["tool_kind"] == "bucket"
+        assert bucket.tools["find_product"].tool_config["tool_kind"] == "catalog"
+
+        with pytest.raises(ValueError, match="Duplicate tool name `find_product`"):
+            library.add(find_product)
+
+    def test_tool_bucket_captures_background_tool_kinds(self):
+        @mf.tool_config(tool_kind="background")
+        def background_job() -> str:
+            """Run a background job."""
+            return "background"
+
+        @mf.tool_config(tool_kind="allow_background")
+        def optional_background_job() -> str:
+            """Run an optional background job."""
+            return "optional"
+
+        class BackgroundBucket(ToolBucket):
+            """Group background-capable tools."""
+
+            name = "background_jobs"
+            capture_kind = "background|allow_background"
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "background"
+
+        bucket = BackgroundBucket()
+        library = ToolLibrary(
+            name="lib",
+            tools=[background_job, optional_background_job, bucket],
+        )
+
+        assert list(library.library) == ["background_jobs"]
+        assert set(bucket.tools) == {"background_job", "optional_background_job"}
+
+    def test_tool_bucket_rejects_overlapping_capture_kinds(self):
+        class FirstBucket(ToolBucket):
+            """Capture catalog tools."""
+
+            name = "first"
+            capture_kind = "catalog|orders"
+
+            def __call__(self) -> str:
+                return "first"
+
+        class SecondBucket(ToolBucket):
+            """Capture order tools."""
+
+            name = "second"
+            capture_kind = "orders|billing"
+
+            def __call__(self) -> str:
+                return "second"
+
+        with pytest.raises(ValueError, match="capture kind `orders`"):
+            ToolLibrary(name="lib", tools=[FirstBucket(), SecondBucket()])
+
+    def test_tool_bucket_rejects_empty_capture_kind_segment(self):
+        class InvalidBucket(ToolBucket):
+            """Invalid bucket."""
+
+            name = "invalid"
+            capture_kind = "catalog||orders"
+
+            def __call__(self) -> str:
+                return "invalid"
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            ToolLibrary(name="lib", tools=[InvalidBucket()])
 
     def test_tool_library_operator_injects_handle_by_default(self):
         """Test runtime-aware operator tools inherit handle injection."""

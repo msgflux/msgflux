@@ -23,6 +23,7 @@ from msgflux.runtime.tools.task import (
 )
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
 from msgflux.tools.responses import ToolCall
+from msgflux.tools.types import ToolBucket
 
 
 class BackgroundTaskDispatcher:
@@ -306,10 +307,7 @@ class BackgroundTaskDispatcher:
             tool=tool,
             call_params=call_params,
         )
-        impl = getattr(tool, "impl", None)
-        is_agent_task = task_kind == "agent" or bool(
-            getattr(impl, "supports_task_message", False)
-        )
+        is_agent_task = ToolBucket.has_kind(tool, config, "agent")
         checkpoint_namespace = self._get_checkpoint_namespace(
             tool_name=tool_name,
             tool=tool,
@@ -355,7 +353,7 @@ class BackgroundTaskDispatcher:
             },
         )
         runner_params = dict(call_params)
-        if task_kind == "agent":
+        if is_agent_task:
             runner_params["scope"] = ExecutionScope(
                 thread_id=thread_id,
                 namespace=checkpoint_namespace,

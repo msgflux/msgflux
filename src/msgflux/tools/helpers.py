@@ -2,6 +2,7 @@ from importlib import import_module
 from typing import Any, Callable, Mapping
 
 BACKGROUND_TASK_TOOL_KIND = "background"
+TOOL_BUCKET_KIND = "bucket"
 RUNTIME_BACKGROUND_PARAM = "run_in_background"
 RESERVED_TOOL_KINDS = {BACKGROUND_TASK_TOOL_KIND}
 

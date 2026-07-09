@@ -121,6 +121,7 @@ def test_tool_config_values_are_correct():
         inject_handle=False,
         inject_vars=["var1", "var2"],
         handoff=False,
+        tool_kind="specialist",
         name_override="CustomName",
     )
     class TestAgent(Agent):
@@ -140,6 +141,7 @@ def test_tool_config_values_are_correct():
     assert config.inject_handle is False
     assert config.inject_vars == ["var1", "var2"]
     assert config.handoff is False
+    assert config.tool_kind == "specialist"
     assert config.name_overridden == "CustomName"
 
     print("✓ Test 4 passed: All tool_config values set correctly")
