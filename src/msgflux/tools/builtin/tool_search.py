@@ -9,12 +9,12 @@ class ToolSearchTool(ToolLibraryOperator):
     """Search and activate registered on-demand tools."""
 
     name = "tool_search"
+    tool_kind = "search"
     display_name = "Tool Search"
     description = (
         "Search registered on-demand tools by keyword. Use `select:tool_a,tool_b` "
         "to activate exact tools. Set `description=true` to include tool details."
     )
-    tool_config = {"inject_handle": True}
     usage_guidance = (
         "Use when the current tools may not cover the task. Search first, then "
         "activate exact matches with `select:<tool_name>`."

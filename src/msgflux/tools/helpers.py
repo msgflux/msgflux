@@ -3,8 +3,7 @@ from typing import Any, Callable, Mapping
 
 BACKGROUND_TASK_TOOL_KIND = "background"
 RUNTIME_BACKGROUND_PARAM = "run_in_background"
-RUNTIME_TOOL_KIND = "runtime"
-RESERVED_TOOL_KINDS = {BACKGROUND_TASK_TOOL_KIND, RUNTIME_TOOL_KIND}
+RESERVED_TOOL_KINDS = {BACKGROUND_TASK_TOOL_KIND}
 
 
 def is_reserved_tool_kind(config: Mapping[str, Any]) -> bool:

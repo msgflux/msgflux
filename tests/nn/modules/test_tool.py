@@ -19,6 +19,7 @@ from msgflux.nn.modules.tool import (
 )
 from msgflux.runtime.context import execution_context
 from msgflux.tasks import InMemoryTaskStore, TaskActivityRecorder
+from msgflux.tools import ToolBucket, ToolLibraryOperator
 
 
 def _activity_summaries(store: InMemoryTaskStore, task_id: str) -> list[str]:
@@ -785,6 +786,63 @@ class TestToolLibrary:
         assert "remote_lookup" in names
         assert "tool_search" in names
         assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
+        assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
+        assert library.library["tool_search"].tool_config["inject_handle"] is True
+        assert library.library["tool_search"].tool_config["tool_kind"] == "search"
+
+    def test_tool_search_is_not_captured_by_search_bucket(self):
+        """Test tool_search stays registered even if a search bucket is added."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        class SearchBucket(ToolBucket):
+            name = "search_bucket"
+            capture_kind = "search"
+            description = "Capture search tools."
+            annotations = {"query": str, "return": str}
+
+            def __init__(self):
+                self.captured = []
+
+            def add(self, tool):
+                self.captured.append(tool.name)
+
+            def __call__(self, query: str) -> str:
+                return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+        library.add(SearchBucket())
+
+        assert "tool_search" in library.library
+        assert library.library["search_bucket"].impl.captured == []
+
+    def test_tool_library_operator_injects_handle_by_default(self):
+        """Test runtime-aware operator tools inherit handle injection."""
+
+        class RuntimeEchoTool(ToolLibraryOperator):
+            name = "runtime_echo"
+            tool_kind = "diagnostic"
+            description = "List the current tool names."
+            annotations = {"handle": mf.Hidden, "return": str}
+
+            def __call__(self, handle):
+                return ",".join(handle.list_tools())
+
+        library = ToolLibrary(name="lib", tools=[RuntimeEchoTool()])
+        schema = next(
+            item
+            for item in library.get_tool_json_schemas()
+            if item["function"]["name"] == "runtime_echo"
+        )
+        result = library([("call_1", "runtime_echo", {})])
+
+        assert "handle" not in schema["function"]["parameters"].get("properties", {})
+        assert result.tool_calls[0].result == "runtime_echo"
+        assert library.library["runtime_echo"].tool_config["inject_handle"] is True
+        assert library.library["runtime_echo"].tool_config["tool_kind"] == "diagnostic"
 
     def test_tool_search_has_default_usage_guidance(self):
         """Test tool_search exposes default guidance when on-demand tools exist."""

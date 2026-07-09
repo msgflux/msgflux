@@ -16,7 +16,9 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.runtime.tools import TaskStatusTool, task_status
 from msgflux.tasks import InMemoryTaskStore
+from msgflux.tools import ToolBackground, ToolLibraryOperator
 
 
 def _wait_until(predicate, timeout: float = 2.0, interval: float = 0.02) -> None:
@@ -269,6 +271,25 @@ def test_background_task_tools_follow_background_tool_lifecycle():
     library.remove("second_job")
     assert "task_status" not in library.get_tool_names()
     assert "task_wait" not in library.get_tool_names()
+
+
+def test_background_task_tools_are_tool_background_instances():
+    @mf.tool_config(background=True)
+    def slow_pipeline(value: int) -> int:
+        """Run a simple background tool."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[slow_pipeline])
+    installed = library.library["task_status"]
+
+    assert isinstance(task_status, TaskStatusTool)
+    assert isinstance(task_status, ToolLibraryOperator)
+    assert isinstance(task_status, ToolBackground)
+    assert isinstance(installed.impl, TaskStatusTool)
+    assert isinstance(installed.impl, ToolLibraryOperator)
+    assert isinstance(installed.impl, ToolBackground)
+    assert installed.tool_config["inject_handle"] is True
+    assert installed.tool_config["tool_kind"] == "background"
 
 
 def test_removed_background_task_tool_is_not_reinstalled_while_background_active():

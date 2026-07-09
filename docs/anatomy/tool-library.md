@@ -132,10 +132,18 @@ expose `tool_search` automatically if needed.
 
 `tool_search` itself is a builtin tool, not a method implemented inside
 `ToolLibrary`. Runtime-aware tools inherit `ToolLibraryOperator`, receive a
-`ToolLibraryHandle`, and use that handle to search, describe, select, or add
-tools. This keeps `ToolLibrary` focused on registration, removal, schema
-exposure, and execution, while operational behavior lives in builtin/runtime
-components.
+`ToolLibraryHandle` by default, and use that handle to search, describe, select,
+or add tools. Each operator subclass declares its own `tool_kind`; the base
+class is only the marker and handle-injection contract. This keeps `ToolLibrary`
+focused on registration, removal, schema exposure, and execution, while
+operational behavior lives in builtin/runtime components.
+
+Background task control tools follow the same pattern through `ToolBackground`.
+The `task_status`, `task_wait`, `task_output`, `task_interrupt`,
+`task_activity`, and `task_message` tools are callable objects with
+`tool_kind="background"`. `ToolLibrary` tracks whether background-capable tools
+exist, while `ToolBackground` owns the install/remove rules for the task control
+surface.
 
 ## Tool Buckets
 
