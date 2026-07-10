@@ -2,8 +2,8 @@
 
 Background tasks let tools start work immediately while the agent continues with a
 `task_id` handle. The result can be checked later through task tools, delivered
-back through notifications, or continued through `task_message` when the task is
-a background subagent.
+back through notifications, or continued through `task_message` when the task
+declares the corresponding capability.
 
 Use background tasks when a tool may be slow, long-running, interruptible, or
 useful to monitor separately from the current model turn.
@@ -14,10 +14,11 @@ The main pieces are:
 |-------|---------|
 | `background=True` | Always dispatch this tool in the background. |
 | `allow_background=True` | Let the model choose background execution with `run_in_background`. |
+| `background_capabilities` | Optional task controls supported by this background tool. |
 | `TaskStore` | Stores task state, progress, output, activity, and routing metadata. |
 | Task tools | `task_status`, `task_wait`, `task_output`, `task_list`, and `task_interrupt`. |
 | Notifications | Completed, failed, and progress updates can be delivered back to the agent inbox. |
-| Subagent messaging | `task_activity` and `task_message` appear when a background subagent is available. |
+| Optional controls | `task_activity` and `task_message` appear only when a registered tool supports them. |
 
 ## Mental Model
 
@@ -66,6 +67,32 @@ background-capable tools. Removing the last `background=True` or
 `allow_background=True` tool removes those task tools as well. You can still
 remove an individual task tool manually; msgFlux will not reinstall that tool
 while the current background tool set remains active.
+
+## Background Capabilities
+
+All background-capable tools install the common task controls. Optional controls
+are installed from `background_capabilities`:
+
+| Capability | Control | Meaning |
+|------------|---------|---------|
+| `activity` | `task_activity` | Read compact task activity. |
+| `message` | `task_message` | Deliver a message or continue an agent task. |
+
+`activity` is available to any background source. `message` is currently
+reserved for agent sources because it requires an inbox and can continue an
+agent through its checkpoint. For example, a future shell tool can expose
+activity without accepting agent messages:
+
+```python
+@mf.tool_config(background=True, background_capabilities=["activity"])
+def monitored_job(command: str) -> str:
+    """Run a monitored job."""
+    return command
+```
+
+`Agent` and `AgentTool` receive `activity` and `message` by default when they
+run in the background. Another source kind can add message only together with
+an equivalent runtime implementation.
 
 ## Basic Background Tool
 
@@ -157,17 +184,17 @@ If the task has not started yet, msgFlux may interrupt it immediately. If it is
 already running, the interrupt is observed at the next cooperative checkpoint. For
 background subagents, that means before the next provider call.
 
-## Reading Subagent Activity
+## Reading Task Activity
 
-`task_activity(task_id)` returns a compact list of activity entries, but only
-for background subagent tasks.
+`task_activity(task_id)` returns a compact list of activity entries for tasks
+that declare the `activity` capability.
 
 ```python
 activity = agent.tool_library([("call_6", "task_activity", {"task_id": task_id})])
 print(activity.tool_calls[0].result)
 ```
 
-For background subagents it can include compact tool call entries such as:
+For background agents it can include compact tool call entries such as:
 
 ```python
 [
@@ -180,9 +207,9 @@ For background subagents it can include compact tool call entries such as:
 ## Task Messaging And Subagent Continuation
 
 For normal background tools, the task id is an operational handle. Background
-subagents can also receive follow-up messages after dispatch. The built-in
-`AgentTool` supports this with `task_message`, which lets the root model send
-another message to the same running or resumable subagent task:
+agents declare the `message` capability by default. The built-in `AgentTool`
+uses `task_message` to let the root model send another message to the same
+running subagent or continue it from its checkpoint:
 
 ```python
 task_message(

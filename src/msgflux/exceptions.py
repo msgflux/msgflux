@@ -58,6 +58,14 @@ class TaskPauseRequestedError(Exception):
         super().__init__(message or f"Task {label} pause requested.")
 
 
+class TaskIdCollisionError(Exception):
+    """Raised when a task store receives an id already assigned to another task."""
+
+    def __init__(self, task_id: str):
+        super().__init__(f"Task id `{task_id}` already exists.")
+        self.task_id = task_id
+
+
 class UnsafeUserInputError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe user input detected")

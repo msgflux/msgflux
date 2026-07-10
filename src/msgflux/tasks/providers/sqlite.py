@@ -7,6 +7,7 @@ from threading import RLock
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
+from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import SQLiteTaskStoreType
@@ -115,6 +116,28 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    def _insert_task(self, task: TaskRecord) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO tasks
+                (task_id, tool_name, status, created_at, updated_at,
+                 completed_at, result, error, progress, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task.task_id,
+                task.tool_name,
+                task.status,
+                task.created_at,
+                task.updated_at,
+                task.completed_at,
+                self._serialize(task.result),
+                task.error,
+                self._serialize(task.progress.to_dict()),
+                self._serialize(task.metadata),
+            ),
+        )
+
     def _append_activity(
         self,
         task_id: str,
@@ -163,7 +186,11 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 updated_at=now,
                 metadata=dict(metadata or {}),
             )
-            self._save_task(task)
+            try:
+                self._insert_task(task)
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                raise TaskIdCollisionError(task.task_id) from exc
             self._append_activity(
                 task.task_id,
                 kind="status",

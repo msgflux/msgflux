@@ -5,6 +5,7 @@ from threading import RLock
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
+from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskRecord
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import InMemoryTaskStoreType
@@ -41,6 +42,8 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             metadata=deepcopy(metadata or {}),
         )
         with self._lock:
+            if task.task_id in self._tasks:
+                raise TaskIdCollisionError(task.task_id)
             self._tasks[task.task_id] = task
             self._activities[task.task_id] = []
             self._activities[task.task_id].append(

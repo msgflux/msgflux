@@ -15,11 +15,14 @@ from msgflux.nn.modules.tool import (
     MCPTool,
     ToolLibrary,
     _convert_module_to_nn_tool,
-    _should_copy_injected_messages,
 )
 from msgflux.runtime.context import execution_context
 from msgflux.tasks import InMemoryTaskStore, TaskActivityRecorder
-from msgflux.tools import ToolBucket, ToolLibraryOperator, ToolMetadata
+from msgflux.tools import ToolBackground, ToolBucket, ToolLibraryOperator, ToolMetadata
+from msgflux.tools.helpers import (
+    build_call_parameters_for_response,
+    should_copy_injected_messages,
+)
 
 
 def _activity_summaries(store: InMemoryTaskStore, task_id: str) -> list[str]:
@@ -518,10 +521,6 @@ class TestToolLibrary:
 
         assert library._handle is None
         assert library._background_dispatcher is None
-        assert library._internal_tool_state.background_tool_names == set()
-        assert library._internal_tool_state.background_agent_tool_names == set()
-        assert library._internal_tool_state.background_task_tool_names == set()
-        assert library._internal_tool_state.agent_task_tool_names == set()
         assert library._task_store is None
         assert library._agent_inbox is None
 
@@ -529,10 +528,6 @@ class TestToolLibrary:
 
         assert library._handle is None
         assert library._background_dispatcher is None
-        assert library._internal_tool_state.background_tool_names == set()
-        assert library._internal_tool_state.background_agent_tool_names == set()
-        assert library._internal_tool_state.background_task_tool_names == set()
-        assert library._internal_tool_state.agent_task_tool_names == set()
 
     def test_tool_library_add_tool(self):
         """Test adding a tool to library."""
@@ -545,6 +540,41 @@ class TestToolLibrary:
         library.add(new_tool)
 
         assert "new_tool" in library.library
+
+    def test_build_call_parameters_for_response_omits_runtime_values(self):
+        parameters = build_call_parameters_for_response(
+            {
+                "query": "hello",
+                "vars": {"tenant": "acme"},
+                "messages": [{"role": "user", "content": "hello"}],
+                "handle": object(),
+                "tool_call_id": "call_1",
+                "run_in_background": True,
+            }
+        )
+
+        assert parameters == {"query": "hello"}
+        assert build_call_parameters_for_response(None) is None
+
+    def test_tool_library_skips_background_validation_for_regular_metadata(self):
+        def regular_tool() -> str:
+            return "ok"
+
+        metadata = ToolMetadata(
+            name="regular_tool",
+            description="A regular tool.",
+            annotations={"return": str},
+            tool_config={"tool_kind": "tool"},
+            impl=regular_tool,
+        )
+
+        with patch.object(
+            ToolBackground, "validate_background_capabilities"
+        ) as validate:
+            library = ToolLibrary(name="test_library", tools=[metadata])
+
+        assert "regular_tool" in library.library
+        validate.assert_not_called()
 
     def test_tool_library_add_duplicate_raises_error(self):
         """Test that adding duplicate tool raises error."""
@@ -1457,7 +1487,7 @@ class TestToolLibrary:
         tool_callings = [("call_1", "stateful_tool", {})]
 
         with patch(
-            "msgflux.nn.modules.tool._should_copy_injected_messages",
+            "msgflux.nn.modules.tool.should_copy_injected_messages",
             return_value=True,
         ):
             result = library(tool_callings, messages=original_messages)
@@ -1475,9 +1505,7 @@ class TestToolLibrary:
 
         local_tool = _convert_module_to_nn_tool(agent)
 
-        assert (
-            _should_copy_injected_messages(local_tool, local_tool.tool_config) is True
-        )
+        assert should_copy_injected_messages(local_tool, local_tool.tool_config) is True
 
     def test_tool_library_with_inject_message(self):
         """Test ToolLibrary with inject_message config."""
@@ -1732,7 +1760,7 @@ class TestToolLibrary:
         tool_callings = [("call_1", "async_tool", {})]
 
         with patch(
-            "msgflux.nn.modules.tool._should_copy_injected_messages",
+            "msgflux.nn.modules.tool.should_copy_injected_messages",
             return_value=True,
         ):
             result = await library.aforward(tool_callings, messages=original_messages)

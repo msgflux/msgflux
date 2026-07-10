@@ -5,6 +5,7 @@ from typing import (
     Callable,
     Dict,
     Generic,
+    Iterable,
     Iterator,
     Mapping,
     TypeVar,
@@ -15,8 +16,11 @@ from typing import (
 from msgflux.tools.dataclasses import ToolMetadata
 from msgflux.tools.helpers import (
     BACKGROUND_TASK_TOOL_KIND,
+    DEFAULT_AGENT_BACKGROUND_CAPABILITIES,
     TOOL_BUCKET_KIND,
     is_background_capable,
+    is_reserved_tool_kind,
+    normalize_background_capabilities,
 )
 
 T = TypeVar("T")
@@ -221,100 +225,215 @@ class ToolBackground(ToolLibraryOperator):
     tool_kind = BACKGROUND_TASK_TOOL_KIND
 
     @classmethod
-    def record_registered_tool(
+    def is_active_task_tool(
         cls,
+        *,
+        library: Any,
         tool_name: str,
         config: Mapping[str, Any],
-        state: Any,
-    ) -> None:
-        if config.get("tool_kind") == cls.tool_kind:
-            state.disabled_background_task_tool_names.discard(tool_name)
+        base_tools: Iterable[Callable],
+        capability_tools: Mapping[str, Iterable[Callable]],
+        metadata_factory: Callable[[Callable], ToolMetadata],
+    ) -> bool:
+        if not is_reserved_tool_kind(config):
+            return False
+        background_tools = list(cls._iter_background_tools(library))
+        if not background_tools:
+            return False
+
+        capabilities = {
+            capability
+            for tool, source_config in background_tools
+            for capability in cls.get_background_capabilities(tool, source_config)
+        }
+        task_tools = cls._task_tools_for_capabilities(
+            base_tools=base_tools,
+            capability_tools=capability_tools,
+            capabilities=capabilities,
+            metadata_factory=metadata_factory,
+        )
+        return tool_name in {
+            metadata_factory(task_tool).name for task_tool in task_tools
+        }
 
     @staticmethod
-    def is_agent_capable(tool: Any | None, config: Mapping[str, Any]) -> bool:
+    def is_agent_source(tool: Any | None, config: Mapping[str, Any]) -> bool:
         return ToolBucket.has_kind(tool, config, "agent")
 
-    @staticmethod
-    def is_installed_tool(tool_name: str, state: Any) -> bool:
-        return (
-            tool_name in state.background_task_tool_names
-            or tool_name in state.agent_task_tool_names
-        )
+    @classmethod
+    def get_background_capabilities(
+        cls,
+        tool: Any | None,
+        config: Mapping[str, Any],
+    ) -> tuple[str, ...]:
+        declared_capabilities = config.get("background_capabilities")
+        if declared_capabilities is not None and not is_background_capable(config):
+            raise ValueError(
+                "`background_capabilities` requires `background=True` or "
+                "`allow_background=True`."
+            )
+        if not is_background_capable(config):
+            return ()
+        if declared_capabilities is None:
+            if cls.is_agent_source(tool, config):
+                return DEFAULT_AGENT_BACKGROUND_CAPABILITIES
+            return ()
+        capabilities = normalize_background_capabilities(declared_capabilities)
+        agent_capabilities = {"message"}
+        if agent_capabilities.intersection(capabilities) and not cls.is_agent_source(
+            tool, config
+        ):
+            raise ValueError(
+                "`message` background capability is currently only supported by "
+                "agent sources."
+            )
+        return capabilities
+
+    @classmethod
+    def validate_background_capabilities(
+        cls,
+        tool: Any | None,
+        config: Mapping[str, Any],
+    ) -> None:
+        cls.get_background_capabilities(tool, config)
 
     @classmethod
     def sync_task_tools(
         cls,
         *,
         library: Any,
-        state: Any,
-        base_tools: Iterator[Callable],
-        agent_tools: Iterator[Callable],
+        disabled_tool_names: set[str],
+        base_tools: Iterable[Callable],
+        capability_tools: Mapping[str, Iterable[Callable]],
         metadata_factory: Callable[[Callable], ToolMetadata],
     ) -> None:
-        if state.background_tool_names:
-            cls._ensure_task_tools(
-                library=library,
-                state=state,
-                tools=base_tools,
-                installed_names=state.background_task_tool_names,
+        background_tools = list(cls._iter_background_tools(library))
+        all_task_tools = cls._all_task_tools(
+            base_tools=base_tools,
+            capability_tools=capability_tools,
+            metadata_factory=metadata_factory,
+        )
+        if background_tools:
+            capabilities = {
+                capability
+                for tool, config in background_tools
+                for capability in cls.get_background_capabilities(tool, config)
+            }
+            required_task_tools = cls._task_tools_for_capabilities(
+                base_tools=base_tools,
+                capability_tools=capability_tools,
+                capabilities=capabilities,
                 metadata_factory=metadata_factory,
             )
-        else:
+            cls._ensure_task_tools(
+                library=library,
+                disabled_tool_names=disabled_tool_names,
+                tools=required_task_tools,
+                metadata_factory=metadata_factory,
+            )
+            required_names = {
+                metadata_factory(task_tool).name for task_tool in required_task_tools
+            }
             cls._remove_task_tools(
                 library=library,
-                installed_names=state.background_task_tool_names,
+                tools=(
+                    task_tool
+                    for task_tool in all_task_tools
+                    if metadata_factory(task_tool).name not in required_names
+                ),
+                metadata_factory=metadata_factory,
             )
-            cls._remove_task_tools(
-                library=library,
-                installed_names=state.agent_task_tool_names,
-            )
-            state.disabled_background_task_tool_names.clear()
             return
 
-        if state.background_agent_tool_names:
-            cls._ensure_task_tools(
-                library=library,
-                state=state,
-                tools=agent_tools,
-                installed_names=state.agent_task_tool_names,
-                metadata_factory=metadata_factory,
-            )
-        else:
-            cls._remove_task_tools(
-                library=library,
-                installed_names=state.agent_task_tool_names,
-            )
+        cls._remove_task_tools(
+            library=library,
+            tools=all_task_tools,
+            metadata_factory=metadata_factory,
+        )
+        disabled_tool_names.clear()
+
+    @classmethod
+    def _iter_background_tools(
+        cls,
+        library: Any,
+    ) -> Iterator[tuple[Any, Mapping[str, Any]]]:
+        for tool_name, tool in library.library.items():
+            config = library.tool_configs.get(tool_name, {})
+            if is_reserved_tool_kind(config):
+                continue
+            if is_background_capable(config):
+                yield tool, config
+
+    @classmethod
+    def _all_task_tools(
+        cls,
+        *,
+        base_tools: Iterable[Callable],
+        capability_tools: Mapping[str, Iterable[Callable]],
+        metadata_factory: Callable[[Callable], ToolMetadata],
+    ) -> tuple[Callable, ...]:
+        return cls._task_tools_for_capabilities(
+            base_tools=base_tools,
+            capability_tools=capability_tools,
+            capabilities=capability_tools.keys(),
+            metadata_factory=metadata_factory,
+        )
+
+    @classmethod
+    def _task_tools_for_capabilities(
+        cls,
+        *,
+        base_tools: Iterable[Callable],
+        capability_tools: Mapping[str, Iterable[Callable]],
+        capabilities: Iterable[str],
+        metadata_factory: Callable[[Callable], ToolMetadata],
+    ) -> tuple[Callable, ...]:
+        selected_tools = list(base_tools)
+        capability_names = set(capabilities)
+        for capability, tools in capability_tools.items():
+            if capability in capability_names:
+                selected_tools.extend(tools)
+
+        unique_tools: Dict[str, Callable] = {}
+        for task_tool in selected_tools:
+            metadata = metadata_factory(task_tool)
+            unique_tools.setdefault(metadata.name, task_tool)
+        return tuple(unique_tools.values())
 
     @classmethod
     def _ensure_task_tools(
         cls,
         *,
         library: Any,
-        state: Any,
-        tools: Iterator[Callable],
-        installed_names: set[str],
+        disabled_tool_names: set[str],
+        tools: Iterable[Callable],
         metadata_factory: Callable[[Callable], ToolMetadata],
     ) -> None:
         for tool in tools:
             metadata = metadata_factory(tool)
             tool_name = metadata.name
-            if tool_name in state.disabled_background_task_tool_names:
+            if tool_name in disabled_tool_names:
                 continue
             if tool_name in library.library:
                 existing_config = library.tool_configs.get(tool_name, {})
-                if existing_config.get("tool_kind") != cls.tool_kind:
+                if not is_reserved_tool_kind(existing_config):
                     raise ValueError(
                         f"The background task tool `{tool_name}` conflicts with "
                         "an existing tool."
                     )
-                installed_names.add(tool_name)
                 continue
             library.add(metadata)
-            installed_names.add(tool_name)
 
-    @staticmethod
-    def _remove_task_tools(*, library: Any, installed_names: set[str]) -> None:
-        for tool_name in list(installed_names):
-            if tool_name in library.library:
+    @classmethod
+    def _remove_task_tools(
+        cls,
+        *,
+        library: Any,
+        tools: Iterable[Callable],
+        metadata_factory: Callable[[Callable], ToolMetadata],
+    ) -> None:
+        for tool in tools:
+            tool_name = metadata_factory(tool).name
+            config = library.tool_configs.get(tool_name, {})
+            if tool_name in library.library and is_reserved_tool_kind(config):
                 library._remove_registered_tool(tool_name)
-            installed_names.discard(tool_name)

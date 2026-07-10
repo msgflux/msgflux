@@ -2,16 +2,24 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any, Dict, Optional
+from typing import Any, Collection, Dict, Optional
 
 from msgflux.core.registry import Registry
+from msgflux.tools.helpers import (
+    BACKGROUND_ACTIVITY_TOOL_KIND,
+    BACKGROUND_MESSAGE_TOOL_KIND,
+    DEFAULT_AGENT_BACKGROUND_CAPABILITIES,
+    normalize_background_capabilities,
+)
 from msgflux.tools.types import Hidden, ToolBackground
 from msgflux.utils.time import parse_utc_timestamp
 
-BASE_TASK_TOOLS = Registry()
-AGENT_TASK_TOOLS = Registry()
+_base_task_tools = Registry()
+_background_activity_tools = Registry()
+_background_message_tools = Registry()
 
 
+@_base_task_tools
 class TaskStatusTool(ToolBackground):
     name = "task_status"
     description = "Get the current status of a background task by task_id."
@@ -30,6 +38,7 @@ class TaskStatusTool(ToolBackground):
         return payload
 
 
+@_base_task_tools
 class TaskListTool(ToolBackground):
     name = "task_list"
     description = "List background tasks registered in the current tool library."
@@ -58,6 +67,7 @@ class TaskListTool(ToolBackground):
         return tasks
 
 
+@_base_task_tools
 class TaskOutputTool(ToolBackground):
     name = "task_output"
     description = "Get the final output of a background task by task_id."
@@ -68,6 +78,7 @@ class TaskOutputTool(ToolBackground):
         return build_task_result(task_id=task_id, task=task)
 
 
+@_base_task_tools
 class TaskWaitTool(ToolBackground):
     name = "task_wait"
     description = (
@@ -131,6 +142,7 @@ class TaskWaitTool(ToolBackground):
             time.sleep(0.05)
 
 
+@_base_task_tools
 class TaskInterruptTool(ToolBackground):
     name = "task_interrupt"
     description = (
@@ -178,9 +190,11 @@ class TaskInterruptTool(ToolBackground):
         }
 
 
+@_background_activity_tools
 class TaskActivityTool(ToolBackground):
     name = "task_activity"
-    description = "List compact activity entries for a background agent task."
+    tool_kind = BACKGROUND_ACTIVITY_TOOL_KIND
+    description = "List compact activity entries for a background task."
     annotations = {
         "task_id": str,
         "limit": Optional[int],
@@ -203,11 +217,11 @@ class TaskActivityTool(ToolBackground):
         task = task_store.get(task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
-        if task.metadata.get("task_kind") != "agent":
+        if "activity" not in get_task_background_capabilities(task):
             return {
                 "task_id": task_id,
                 "status": "unsupported",
-                "error": "task_activity is only available for background agent tasks.",
+                "error": "task_activity requires the task activity capability.",
             }
         activity = task_store.list_activity(
             task_id,
@@ -216,12 +230,13 @@ class TaskActivityTool(ToolBackground):
         return [format_task_activity_entry(item) for item in activity]
 
 
+@_background_message_tools
 class TaskMessageTool(ToolBackground):
     name = "task_message"
+    tool_kind = BACKGROUND_MESSAGE_TOOL_KIND
     description = (
-        "Send a message to a background agent task. If it is still running, "
-        "deliver the message to its inbox. If it already interrupted, resume "
-        "the task from its checkpoint."
+        "Send a message to a capable background task. Agent tasks can also "
+        "resume from their checkpoint."
     )
     annotations = {
         "task_id": str,
@@ -240,17 +255,25 @@ class TaskMessageTool(ToolBackground):
         task = task_store.get(task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
-        if task.metadata.get("task_kind") != "agent":
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "task_message is only available for background agent tasks.",
-            }
         if not isinstance(message, str) or not message.strip():
             raise ValueError("`message` must be a non-empty string.")
 
+        capabilities = get_task_background_capabilities(task)
+        if "message" not in capabilities:
+            return {
+                "task_id": task_id,
+                "status": "unsupported",
+                "error": "task_message requires the task message capability.",
+            }
+
         task_inbox = handle.get_task_inbox(task_id)
-        if task.status == "running" and task_inbox is not None:
+        if task.status == "running":
+            if task_inbox is None:
+                return {
+                    "task_id": task_id,
+                    "status": "unsupported",
+                    "error": "The running task does not expose a message inbox.",
+                }
             task_inbox.publish(
                 {
                     "source": "task_message",
@@ -272,6 +295,12 @@ class TaskMessageTool(ToolBackground):
                 "message": "Message delivered to the running background agent.",
             }
 
+        if task.metadata.get("task_kind") != "agent":
+            return {
+                "task_id": task_id,
+                "status": "unsupported",
+                "error": "Task continuation is not implemented for this task kind.",
+            }
         resumed = handle.resume_background_agent_task(
             task=task,
             message=message.strip(),
@@ -283,21 +312,22 @@ class TaskMessageTool(ToolBackground):
         }
 
 
-task_status = TaskStatusTool()
-task_list = TaskListTool()
-task_output = TaskOutputTool()
-task_wait = TaskWaitTool()
-task_interrupt = TaskInterruptTool()
-task_activity = TaskActivityTool()
-task_message = TaskMessageTool()
+BASE_TASK_TOOLS = _base_task_tools.to_list()
+BACKGROUND_ACTIVITY_TOOLS = _background_activity_tools.to_list()
+BACKGROUND_MESSAGE_TOOLS = _background_message_tools.to_list()
+BACKGROUND_CAPABILITY_TOOLS = {
+    "activity": BACKGROUND_ACTIVITY_TOOLS,
+    "message": BACKGROUND_MESSAGE_TOOLS,
+}
 
-BASE_TASK_TOOLS(task_status)
-BASE_TASK_TOOLS(task_list)
-BASE_TASK_TOOLS(task_output)
-BASE_TASK_TOOLS(task_wait)
-BASE_TASK_TOOLS(task_interrupt)
-AGENT_TASK_TOOLS(task_activity)
-AGENT_TASK_TOOLS(task_message)
+
+def get_task_background_capabilities(task: Any) -> tuple[str, ...]:
+    capabilities = task.metadata.get("background_capabilities")
+    if capabilities is None:
+        if task.metadata.get("task_kind") == "agent":
+            return DEFAULT_AGENT_BACKGROUND_CAPABILITIES
+        return ()
+    return normalize_background_capabilities(capabilities)
 
 
 def build_task_result(*, task_id: str, task: Any | None) -> Any:
@@ -373,12 +403,14 @@ def build_background_dispatch_result(
     *,
     task_id: str,
     tool_name: str,
-    task_kind: str,
+    task_capabilities: Collection[str],
 ) -> str:
-    actions = ["`task_status`", "`task_interrupt`", "`task_wait`", "`task_output`"]
-    if task_kind == "agent":
-        actions.insert(1, "`task_activity`")
-        actions.insert(2, "`task_message`")
+    actions = ["`task_status`"]
+    if "activity" in task_capabilities:
+        actions.append("`task_activity`")
+    if "message" in task_capabilities:
+        actions.append("`task_message`")
+    actions.extend(["`task_interrupt`", "`task_wait`", "`task_output`"])
     return (
         f"The `{tool_name}` tool is running in the background with "
         f"task_id='{task_id}'. Use that task_id with "

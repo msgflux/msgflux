@@ -33,33 +33,27 @@ from msgflux.runtime.agent_inbox import (
 )
 from msgflux.runtime.background import BackgroundTaskDispatcher
 from msgflux.runtime.context import get_execution_context
-from msgflux.runtime.tools.task import (
-    AGENT_TASK_TOOLS,
-    BASE_TASK_TOOLS,
-)
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.telemetry.span import (
     aset_tool_attributes,
     set_tool_attributes,
 )
+from msgflux.tools.builtin.task import (
+    BACKGROUND_CAPABILITY_TOOLS,
+    BASE_TASK_TOOLS,
+)
 from msgflux.tools.builtin.tool_search import ToolSearchTool
-from msgflux.tools.dataclasses import InternalToolState, ToolMetadata
+from msgflux.tools.dataclasses import ToolMetadata
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.helpers import (
-    RUNTIME_BACKGROUND_PARAM as _RUNTIME_BACKGROUND_PARAM,
-)
-from msgflux.tools.helpers import coerce_tool_params as _coerce_tool_params
-from msgflux.tools.helpers import (
-    is_background_capable as _is_background_capable,
-)
-from msgflux.tools.helpers import (
-    is_reserved_tool_kind as _is_reserved_tool_kind,
-)
-from msgflux.tools.helpers import (
-    should_copy_injected_messages as _should_copy_injected_messages,
-)
-from msgflux.tools.helpers import (
-    should_dispatch_background as _should_dispatch_background,
+    RUNTIME_BACKGROUND_PARAM,
+    build_call_parameters_for_response,
+    coerce_tool_params,
+    is_background_capable,
+    is_reserved_tool_kind,
+    normalize_background_capabilities,
+    should_copy_injected_messages,
+    should_dispatch_background,
 )
 from msgflux.tools.responses import ToolCall, ToolResponses
 from msgflux.tools.types import (
@@ -252,18 +246,20 @@ class LocalTool(Tool):
             if not (key in self._param_defaults and value is None)
         }
 
+    def _prepare_call_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        kwargs = self._restore_transport_params(kwargs)
+        return self._strip_none_default_kwargs(kwargs)
+
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
-        kwargs = self._restore_transport_params(kwargs)
-        kwargs = self._strip_none_default_kwargs(kwargs)
+        kwargs = self._prepare_call_kwargs(kwargs)
         if inspect.iscoroutinefunction(self.impl):
             return F.wait_for(self.impl, **kwargs)
         return self.impl(**kwargs)
 
     @aset_tool_attributes(execution_type="local")
     async def aforward(self, *args, **kwargs):
-        kwargs = self._restore_transport_params(kwargs)
-        kwargs = self._strip_none_default_kwargs(kwargs)
+        kwargs = self._prepare_call_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
         elif inspect.iscoroutinefunction(self.impl):
@@ -386,6 +382,17 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
         raise ValueError(f"The tool `{name}` must define a non-empty tool_kind.")
     tool_config["tool_kind"] = tool_kind
 
+    declared_capabilities = tool_config.get("background_capabilities")
+    if declared_capabilities is not None:
+        if not is_background_capable(tool_config):
+            raise ValueError(
+                "`background_capabilities` requires `background=True` or "
+                "`allow_background=True`."
+            )
+        tool_config["background_capabilities"] = normalize_background_capabilities(
+            declared_capabilities
+        )
+
     annotations, hidden_params = _split_hidden_annotations(annotations)
     if hidden_params:
         tool_config["_hidden_params"] = hidden_params
@@ -404,7 +411,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
         if tool_config.get("allow_background", False) and not tool_config.get(
             "background", False
         ):
-            annotations[_RUNTIME_BACKGROUND_PARAM] = Optional[bool]
+            annotations[RUNTIME_BACKGROUND_PARAM] = Optional[bool]
 
     if tool_config.get("spawn"):
         doc = "This tool will not generate a return. \n" + doc
@@ -413,7 +420,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
     elif tool_config.get("allow_background", False):
         doc = (
             "This tool can run in the background when "
-            f"`{_RUNTIME_BACKGROUND_PARAM}=true`; otherwise it runs normally. \n" + doc
+            f"`{RUNTIME_BACKGROUND_PARAM}=true`; otherwise it runs normally. \n" + doc
         )
 
     return ToolMetadata(
@@ -523,7 +530,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.register_buffer("mcp_clients", {})
         self._task_store = task_store
         self._agent_inbox: Optional[AgentInbox] = None
-        self._internal_tool_state = InternalToolState()
+        self._disabled_background_task_tool_names: set[str] = set()
         self._handle: Optional[ToolLibraryHandle] = None
         self._background_dispatcher: Optional[BackgroundTaskDispatcher] = None
         for tool in tools:
@@ -572,6 +579,12 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 f"The tool name `{metadata.name}` is already in on-demand tools"
             )
 
+        if is_background_capable(metadata.tool_config):
+            ToolBackground.validate_background_capabilities(
+                metadata.impl,
+                metadata.tool_config,
+            )
+
         # On-demand tools are searchable but not callable until tool_search promotes
         # them back through this same registration path.
         if metadata.tool_config.get("on_demand", False):
@@ -599,38 +612,26 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def remove(self, tool_name: str):
         if tool_name in self.library.keys():
             config = self.tool_configs.get(tool_name, {})
-            is_task_tool = ToolBackground.is_installed_tool(
-                tool_name,
-                self._internal_tool_state,
+            is_task_tool = ToolBackground.is_active_task_tool(
+                library=self,
+                tool_name=tool_name,
+                config=config,
+                base_tools=BASE_TASK_TOOLS,
+                capability_tools=BACKGROUND_CAPABILITY_TOOLS,
+                metadata_factory=_inspect_tool_metadata,
             )
-            was_background = _is_background_capable(config)
-            was_background_agent = ToolBackground.is_agent_capable(
-                self.library.get(tool_name),
-                config,
-            )
+            was_background = not is_reserved_tool_kind(
+                config
+            ) and is_background_capable(config)
 
             self._remove_registered_tool(tool_name)
 
             if is_task_tool:
-                self._internal_tool_state.disabled_background_task_tool_names.add(
-                    tool_name
-                )
-                self._internal_tool_state.background_task_tool_names.discard(tool_name)
-                self._internal_tool_state.agent_task_tool_names.discard(tool_name)
+                self._disabled_background_task_tool_names.add(tool_name)
                 return
 
             if was_background:
-                self._internal_tool_state.background_tool_names.discard(tool_name)
-            if was_background_agent:
-                self._internal_tool_state.background_agent_tool_names.discard(tool_name)
-            if was_background or was_background_agent:
-                ToolBackground.sync_task_tools(
-                    library=self,
-                    state=self._internal_tool_state,
-                    base_tools=BASE_TASK_TOOLS,
-                    agent_tools=AGENT_TASK_TOOLS,
-                    metadata_factory=_inspect_tool_metadata,
-                )
+                self._sync_background_task_tools()
             self._sync_on_demand_operator_tools()
         elif tool_name in self.on_demand_tools:
             self.on_demand_tools.pop(tool_name, None)
@@ -651,7 +652,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         for mcp_data in self.mcp_clients.values():
             F.wait_for(mcp_data["client"].disconnect)
         self.mcp_clients.clear()
-        self._internal_tool_state.clear()
+        self._disabled_background_task_tool_names.clear()
         if self._background_dispatcher is not None:
             self._background_dispatcher.clear()
 
@@ -685,15 +686,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
         self.library.update({tool.name: tool})
 
-        # Keep the existing background task runtime bookkeeping synchronized.
-        ToolBackground.record_registered_tool(
-            tool.name,
-            self.tool_configs[tool.name],
-            self._internal_tool_state,
-        )
+        # An explicit re-add re-enables a builtin task control tool.
+        config = self.tool_configs[tool.name]
+        if is_reserved_tool_kind(config):
+            self._disabled_background_task_tool_names.discard(tool.name)
 
-        # Apply the registered tool's visibility and background execution effects.
-        self._apply_tool_registration_effects(tool.name)
+        # Background-capable sources determine the shared task control surface.
+        self._sync_background_task_tools_for_source(config)
 
         # Move matching local tools into a newly registered bucket.
         for captured_name, captured_tool in captures:
@@ -793,7 +792,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
                         # Add to library (will have name like "namespace__tool_name")
                         self.library.update({mcp_tool.name: mcp_tool})
                         self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
-                        self._apply_tool_registration_effects(mcp_tool.name)
+                        config = self.tool_configs[mcp_tool.name]
+                        self._sync_background_task_tools_for_source(config)
 
                 self.mcp_clients[namespace] = {
                     "client": client,
@@ -902,21 +902,22 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
     # --- Tool Visibility Helpers ---
 
-    def _apply_tool_registration_effects(self, tool_name: str) -> None:
-        config = self.tool_configs.get(tool_name, {})
-        if _is_reserved_tool_kind(config):
+    def _sync_background_task_tools_for_source(
+        self,
+        config: Mapping[str, Any],
+    ) -> None:
+        if is_reserved_tool_kind(config) or not is_background_capable(config):
             return
-        if _is_background_capable(config):
-            self._internal_tool_state.background_tool_names.add(tool_name)
-            if ToolBackground.is_agent_capable(self.library.get(tool_name), config):
-                self._internal_tool_state.background_agent_tool_names.add(tool_name)
-            ToolBackground.sync_task_tools(
-                library=self,
-                state=self._internal_tool_state,
-                base_tools=BASE_TASK_TOOLS,
-                agent_tools=AGENT_TASK_TOOLS,
-                metadata_factory=_inspect_tool_metadata,
-            )
+        self._sync_background_task_tools()
+
+    def _sync_background_task_tools(self) -> None:
+        ToolBackground.sync_task_tools(
+            library=self,
+            disabled_tool_names=self._disabled_background_task_tool_names,
+            base_tools=BASE_TASK_TOOLS,
+            capability_tools=BACKGROUND_CAPABILITY_TOOLS,
+            metadata_factory=_inspect_tool_metadata,
+        )
 
     def _is_tool_schema_exposed(self, tool_name: str) -> bool:
         return tool_name not in self.on_demand_tools
@@ -946,7 +947,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("handoff", False) or config.get("disable_input", False):
             call_params: Dict[str, Any] = {}
         else:
-            call_params = _coerce_tool_params(tool_name, tool_params)
+            call_params = coerce_tool_params(tool_name, tool_params)
 
         for param_name in config.get("_hidden_params") or {}:
             call_params.pop(param_name, None)
@@ -965,7 +966,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 call_params["vars"] = vars
 
         if config.get("inject_messages", False):
-            if _should_copy_injected_messages(tool, config):
+            if should_copy_injected_messages(tool, config):
                 call_params["messages"] = deepcopy(messages)
             else:
                 call_params["messages"] = messages
@@ -983,30 +984,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
         return call_params
 
-    @staticmethod
-    def build_call_parameters_for_response(
-        params: Mapping[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        if params is None:
-            return None
-        if hasattr(params, "to_dict"):
-            parameters = params.to_dict()
-        else:
-            parameters = dict(params)
-        for key in (
-            "vars",
-            "messages",
-            "message",
-            "task",
-            "notification",
-            "scope",
-            "handle",
-            "tool_call_id",
-            _RUNTIME_BACKGROUND_PARAM,
-        ):
-            parameters.pop(key, None)
-        return parameters
-
     def _record_tool_activity(
         self,
         *,
@@ -1017,7 +994,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         config = self.tool_configs.get(tool_name, {})
         if (
             activity_recorder is None
-            or _is_reserved_tool_kind(config)
+            or is_reserved_tool_kind(config)
             or ToolLibraryOperator.is_operator_tool(self.library.get(tool_name))
         ):
             return
@@ -1044,7 +1021,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             messages=messages,
             vars=vars,
         )
-        response_params = self.build_call_parameters_for_response(call_params)
+        response_params = build_call_parameters_for_response(call_params)
         self._record_tool_activity(
             activity_recorder=activity_recorder,
             tool_name=tool_name,
@@ -1131,7 +1108,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 continue
 
-            if _should_dispatch_background(
+            if should_dispatch_background(
                 config=config,
                 call_params=call_params,
             ):
@@ -1179,7 +1156,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     result.exception, TaskInterruptRequestedError
                 ):
                     raise result.exception
-                parameters = self.build_call_parameters_for_response(meta.params)
+                parameters = build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,
@@ -1272,7 +1249,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 continue
 
-            if _should_dispatch_background(
+            if should_dispatch_background(
                 config=config,
                 call_params=call_params,
             ):
@@ -1320,7 +1297,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     result.exception, TaskInterruptRequestedError
                 ):
                     raise result.exception
-                parameters = self.build_call_parameters_for_response(meta.params)
+                parameters = build_call_parameters_for_response(meta.params)
                 tool_calls.append(
                     ToolCall(
                         id=meta.id,

@@ -1,6 +1,38 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from msgflux.tasks import SQLiteTaskStore, TaskStore
+import pytest
+
+from msgflux.tasks import (
+    InMemoryTaskStore,
+    SQLiteTaskStore,
+    TaskIdCollisionError,
+    TaskStore,
+)
+
+
+def test_in_memory_task_store_rejects_duplicate_task_id():
+    store = InMemoryTaskStore()
+    store.create("worker", task_id="task_1")
+
+    with pytest.raises(TaskIdCollisionError, match="task_1"):
+        store.create("other_worker", task_id="task_1")
+
+    task = store.get("task_1")
+    assert task is not None
+    assert task.tool_name == "worker"
+
+
+def test_sqlite_task_store_rejects_duplicate_task_id(tmp_path):
+    store = SQLiteTaskStore(path=str(tmp_path / "tasks.sqlite3"))
+    store.create("worker", task_id="task_1")
+
+    with pytest.raises(TaskIdCollisionError, match="task_1"):
+        store.create("other_worker", task_id="task_1")
+
+    task = store.get("task_1")
+    assert task is not None
+    assert task.tool_name == "worker"
+    store.close()
 
 
 def test_sqlite_task_store_roundtrip_and_reopen(tmp_path):

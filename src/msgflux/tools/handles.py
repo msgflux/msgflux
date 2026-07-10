@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
 from msgflux.runtime.context import execution_context, get_execution_context
@@ -291,12 +291,6 @@ class ToolLibraryHandle:
             "descriptions": descriptions,
             "total_on_demand_tools": total,
         }
-
-    def build_call_parameters_for_response(
-        self,
-        params: Mapping[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        return self._library.build_call_parameters_for_response(params)
 
     def build_notification_handle(
         self,

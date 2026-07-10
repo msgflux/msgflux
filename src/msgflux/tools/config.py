@@ -1,8 +1,25 @@
 from functools import wraps
 from types import FunctionType, MethodType
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Collection, Dict, List, Optional, Union
 
 from msgflux.core.dotdict import dotdict
+from msgflux.tools.helpers import normalize_background_capabilities
+
+
+def _normalize_configured_background_capabilities(
+    *,
+    background: Optional[bool],
+    allow_background: Optional[bool],
+    capabilities: Optional[Collection[str]],
+) -> tuple[str, ...] | None:
+    if capabilities is None:
+        return None
+    if not (background or allow_background):
+        raise ValueError(
+            "`background_capabilities` requires `background=True` or "
+            "`allow_background=True`."
+        )
+    return normalize_background_capabilities(capabilities)
 
 
 def tool_config(
@@ -14,6 +31,7 @@ def tool_config(
     spawn: Optional[bool] = False,
     background: Optional[bool] = False,
     allow_background: Optional[bool] = False,
+    background_capabilities: Optional[Collection[str]] = None,
     disable_input: Optional[bool] = False,
     on_demand: Optional[bool] = False,
     inject_message: Optional[bool] = False,
@@ -62,6 +80,10 @@ def tool_config(
             background by setting the reserved `run_in_background` tool
             argument. When false or null, the tool runs normally. Manual
             callers may omit the argument, which is treated as false.
+        background_capabilities:
+            Optional task controls supported by this background tool. Valid
+            values are `activity` and `message`. Agents receive their defaults
+            when this option is omitted.
         disable_input:
             If True, removes public input parameters from the tool schema. The model
             will call the tool with no explicit arguments, and any arguments supplied
@@ -175,6 +197,14 @@ def tool_config(
                 "and `handoff=True`."
             )
 
+        normalized_background_capabilities = (
+            _normalize_configured_background_capabilities(
+                background=background,
+                allow_background=allow_background,
+                capabilities=background_capabilities,
+            )
+        )
+
         if inject_vars is not False and call_as_response is True:
             raise ValueError(
                 "`inject_vars` is not compatible with `call_as_response=True`"
@@ -186,6 +216,7 @@ def tool_config(
                     "spawn": spawn,
                     "background": background,
                     "allow_background": allow_background,
+                    "background_capabilities": normalized_background_capabilities,
                     "display_name": display_name,
                     "usage_guidance": usage_guidance,
                     "call_as_response": call_as_response,

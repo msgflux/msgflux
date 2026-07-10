@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict
 
 
@@ -14,19 +14,3 @@ class ToolMetadata:
     display_name: str | None = None
     usage_guidance: str | None = None
     source_tool: Any | None = None
-
-
-@dataclass
-class InternalToolState:
-    background_tool_names: set[str] = field(default_factory=set)
-    background_agent_tool_names: set[str] = field(default_factory=set)
-    background_task_tool_names: set[str] = field(default_factory=set)
-    agent_task_tool_names: set[str] = field(default_factory=set)
-    disabled_background_task_tool_names: set[str] = field(default_factory=set)
-
-    def clear(self) -> None:
-        self.background_tool_names.clear()
-        self.background_agent_tool_names.clear()
-        self.background_task_tool_names.clear()
-        self.agent_task_tool_names.clear()
-        self.disabled_background_task_tool_names.clear()

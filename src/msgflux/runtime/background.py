@@ -7,7 +7,11 @@ from typing import Any, Dict, Mapping
 from uuid import uuid4
 
 from msgflux._private.executor import Executor
-from msgflux.exceptions import TaskInterruptRequestedError, TaskPauseRequestedError
+from msgflux.exceptions import (
+    TaskIdCollisionError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.logger import logger
 from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
 from msgflux.runtime.context import (
@@ -17,13 +21,14 @@ from msgflux.runtime.context import (
     new_run_id,
     new_thread_id,
 )
-from msgflux.runtime.tools.task import (
+from msgflux.tasks import TaskActivityRecorder, TaskHandle
+from msgflux.tools.builtin.task import (
     build_background_dispatch_result,
     truncate_activity_text,
 )
-from msgflux.tasks import TaskActivityRecorder, TaskHandle
+from msgflux.tools.helpers import build_call_parameters_for_response
 from msgflux.tools.responses import ToolCall
-from msgflux.tools.types import ToolBucket
+from msgflux.tools.types import ToolBackground
 
 
 class BackgroundTaskDispatcher:
@@ -302,12 +307,13 @@ class BackgroundTaskDispatcher:
         config: Mapping[str, Any],
     ) -> Any:
         task_kind = config.get("tool_kind", "tool")
+        task_capabilities = ToolBackground.get_background_capabilities(tool, config)
         task_store = self.library_handle.get_task_store()
         task_resume_params = self._get_task_resume_params(
             tool=tool,
             call_params=call_params,
         )
-        is_agent_task = ToolBucket.has_kind(tool, config, "agent")
+        is_agent_task = ToolBackground.is_agent_source(tool, config)
         checkpoint_namespace = self._get_checkpoint_namespace(
             tool_name=tool_name,
             tool=tool,
@@ -323,35 +329,43 @@ class BackgroundTaskDispatcher:
         root_agent_inbox = context.get("agent_inbox")
         if root_agent_inbox is None:
             root_agent_inbox = self.library_handle.get_agent_inbox()
-        task_id = uuid4().hex[:8]
+        task_metadata = {
+            "tool_call_id": tool_id,
+            "task_kind": "agent" if is_agent_task else task_kind,
+            "checkpoint_namespace": checkpoint_namespace if is_agent_task else None,
+            "task_resume_params": task_resume_params,
+            "thread_id": thread_id,
+            "parent_run_id": parent_run_id,
+            "root_run_id": root_run_id,
+            "checkpoint_thread_id": thread_id,
+            "background_capabilities": list(task_capabilities),
+            "interrupt_requested": False,
+        }
+        while True:
+            task_id = uuid4().hex[:8]
+            try:
+                task = task_store.create(
+                    task_id=task_id,
+                    tool_name=tool_name,
+                    metadata={
+                        **task_metadata,
+                        "checkpoint_run_id": task_id if is_agent_task else None,
+                    },
+                )
+            except TaskIdCollisionError:
+                continue
+            break
+
         task_inbox = None
         if is_agent_task:
             task_inbox = root_agent_inbox.fork(
-                owner=f"{checkpoint_namespace}:{task_id}",
+                owner=f"{checkpoint_namespace}:{task.task_id}",
                 namespace=checkpoint_namespace,
                 thread_id=thread_id if isinstance(thread_id, str) else None,
-                run_id=task_id,
+                run_id=task.task_id,
             )
-            self.register_task_inbox(task_id, task_inbox)
-            self.register_task_checkpoint_store(task_id, checkpoint_store)
-        task = task_store.create(
-            task_id=task_id,
-            tool_name=tool_name,
-            metadata={
-                "tool_call_id": tool_id,
-                "task_kind": "agent" if is_agent_task else task_kind,
-                "checkpoint_namespace": checkpoint_namespace if is_agent_task else None,
-                "task_resume_params": task_resume_params,
-                "thread_id": thread_id,
-                "parent_run_id": parent_run_id,
-                "root_run_id": root_run_id,
-                "checkpoint_thread_id": thread_id,
-                "checkpoint_run_id": task_id if is_agent_task else None,
-                "supports_activity": is_agent_task,
-                "supports_message": is_agent_task,
-                "interrupt_requested": False,
-            },
-        )
+            self.register_task_inbox(task.task_id, task_inbox)
+            self.register_task_checkpoint_store(task.task_id, checkpoint_store)
         runner_params = dict(call_params)
         if is_agent_task:
             runner_params["scope"] = ExecutionScope(
@@ -415,13 +429,11 @@ class BackgroundTaskDispatcher:
         return ToolCall(
             id=tool_id,
             name=tool_name,
-            parameters=self.library_handle.build_call_parameters_for_response(
-                call_params
-            ),
+            parameters=build_call_parameters_for_response(call_params),
             result=build_background_dispatch_result(
                 task_id=task.task_id,
                 tool_name=tool_name,
-                task_kind="agent" if is_agent_task else task_kind,
+                task_capabilities=task_capabilities,
             ),
         )
 

@@ -141,9 +141,12 @@ operational behavior lives in builtin/runtime components.
 Background task control tools follow the same pattern through `ToolBackground`.
 The `task_status`, `task_wait`, `task_output`, `task_interrupt`,
 `task_activity`, and `task_message` tools are callable objects with
-`tool_kind="background"`. `ToolLibrary` tracks whether background-capable tools
-exist, while `ToolBackground` owns the install/remove rules for the task control
-surface.
+reserved background tool kinds: the common controls use `"background"`,
+activity uses `"background_activity"`, and messaging uses
+`"background_message"`. `ToolLibrary` asks `ToolBackground` to reconcile the
+surface from currently registered tools. `ToolBackground` derives the common
+controls from background execution and the optional controls from the union of
+declared `background_capabilities`.
 
 ## Tool Buckets
 

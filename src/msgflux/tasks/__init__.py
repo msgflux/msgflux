@@ -1,3 +1,4 @@
+from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.activity import TaskActivityRecorder
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
 from msgflux.tasks.handle import TaskHandle
@@ -20,6 +21,7 @@ __all__ = [
     "TaskActivity",
     "TaskActivityRecorder",
     "TaskHandle",
+    "TaskIdCollisionError",
     "TaskProgress",
     "TaskRecord",
     "TaskStore",

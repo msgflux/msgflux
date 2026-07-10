@@ -222,6 +222,22 @@ class TestToolAnnotations:
 
 
 class TestForwardRestores:
+    def test_prepare_call_kwargs_restores_values_and_applies_defaults(self):
+        def fn(mapping: dict[str, str], limit: int = 5) -> str:
+            """fn"""
+            return ""
+
+        local = _convert_module_to_nn_tool(fn)
+
+        kwargs = local._prepare_call_kwargs(
+            {
+                "mapping": {"entries": [{"key": "city", "value": "Austin"}]},
+                "limit": None,
+            }
+        )
+
+        assert kwargs == {"mapping": {"city": "Austin"}}
+
     def test_forward_passes_restored_dict_to_impl(self):
         received = {}
 

@@ -4,6 +4,7 @@ library-aware tools."""
 from concurrent.futures import CancelledError as FutureCancelledError
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import msgflux as mf
@@ -16,7 +17,12 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
-from msgflux.runtime.tools import TaskStatusTool, task_status
+from msgflux.tools.builtin import TaskActivityTool, TaskStatusTool
+from msgflux.tools.builtin.task import (
+    BACKGROUND_ACTIVITY_TOOLS,
+    BACKGROUND_MESSAGE_TOOLS,
+    BASE_TASK_TOOLS,
+)
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.tools import ToolBackground, ToolLibraryOperator
 
@@ -273,7 +279,42 @@ def test_background_task_tools_follow_background_tool_lifecycle():
     assert "task_wait" not in library.get_tool_names()
 
 
-def test_background_task_tools_are_tool_background_instances():
+def test_background_dispatch_retries_task_id_collision():
+    release = threading.Event()
+
+    @mf.tool_config(background=True)
+    def slow_job() -> str:
+        """Wait until the test releases the task."""
+        release.wait(timeout=2.0)
+        return "done"
+
+    task_store = InMemoryTaskStore()
+    task_store.create("existing", task_id="deadbeef")
+    library = ToolLibrary(name="lib", tools=[slow_job])
+
+    with execution_context(task_store=task_store):
+        with patch(
+            "msgflux.runtime.background.uuid4",
+            side_effect=[
+                SimpleNamespace(hex="deadbeef00000000"),
+                SimpleNamespace(hex="cafebabe00000000"),
+            ],
+        ):
+            dispatch = library([("call_1", "slow_job", {})])
+
+    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    assert task_id == "cafebabe"
+
+    release.set()
+    _wait_until(
+        lambda: (
+            task_store.get(task_id) is not None
+            and task_store.get(task_id).status == "completed"
+        )
+    )
+
+
+def test_background_task_tools_are_registered_as_classes():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
         """Run a simple background tool."""
@@ -282,9 +323,10 @@ def test_background_task_tools_are_tool_background_instances():
     library = ToolLibrary(name="lib", tools=[slow_pipeline])
     installed = library.library["task_status"]
 
-    assert isinstance(task_status, TaskStatusTool)
-    assert isinstance(task_status, ToolLibraryOperator)
-    assert isinstance(task_status, ToolBackground)
+    assert TaskStatusTool in BASE_TASK_TOOLS
+    assert TaskActivityTool in BACKGROUND_ACTIVITY_TOOLS
+    assert BACKGROUND_MESSAGE_TOOLS[0].name == "task_message"
+    assert all(isinstance(task_class, type) for task_class in BASE_TASK_TOOLS)
     assert isinstance(installed.impl, TaskStatusTool)
     assert isinstance(installed.impl, ToolLibraryOperator)
     assert isinstance(installed.impl, ToolBackground)
@@ -314,6 +356,36 @@ def test_removed_background_task_tool_is_not_reinstalled_while_background_active
     assert "task_wait" in library.get_tool_names()
 
 
+def test_readded_background_task_tool_returns_to_the_background_lifecycle():
+    @mf.tool_config(background=True)
+    def job(value: int) -> int:
+        """Run in the background."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[job])
+    library.remove("task_status")
+    library.add(TaskStatusTool)
+
+    assert "task_status" in library.get_tool_names()
+
+    library.remove("job")
+
+    assert "task_status" not in library.get_tool_names()
+
+
+def test_removing_task_tool_without_background_source_does_not_disable_it():
+    @mf.tool_config(background=True)
+    def job(value: int) -> int:
+        """Run in the background."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[TaskStatusTool])
+    library.remove("task_status")
+    library.add(job)
+
+    assert "task_status" in library.get_tool_names()
+
+
 def test_agent_task_tools_follow_background_agent_lifecycle():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
@@ -334,6 +406,71 @@ def test_agent_task_tools_follow_background_agent_lifecycle():
     assert "task_status" in library.get_tool_names()
     assert "task_activity" not in library.get_tool_names()
     assert "task_message" not in library.get_tool_names()
+
+
+def test_background_capabilities_control_task_tool_lifecycle():
+    @mf.tool_config(background=True)
+    def plain_job(value: int) -> int:
+        """Run without additional task controls."""
+        return value
+
+    @mf.tool_config(background=True, background_capabilities=["activity"])
+    def monitored_job(value: int) -> int:
+        """Run with observable task activity."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[plain_job, monitored_job])
+
+    assert "task_status" in library.get_tool_names()
+    assert "task_activity" in library.get_tool_names()
+    assert "task_message" not in library.get_tool_names()
+    assert library.library["task_activity"].tool_config["tool_kind"] == (
+        "background_activity"
+    )
+
+    library.remove("monitored_job")
+
+    assert "task_status" in library.get_tool_names()
+    assert "task_activity" not in library.get_tool_names()
+
+
+def test_removing_inactive_optional_task_tool_does_not_disable_it():
+    @mf.tool_config(background=True)
+    def plain_job(value: int) -> int:
+        """Run without additional task controls."""
+        return value
+
+    @mf.tool_config(background=True, background_capabilities=["activity"])
+    def monitored_job(value: int) -> int:
+        """Run with observable task activity."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[plain_job, TaskActivityTool])
+    library.remove("task_activity")
+    library.add(monitored_job)
+
+    assert "task_activity" in library.get_tool_names()
+
+
+def test_background_capabilities_validate_declaration():
+    with pytest.raises(ValueError, match="requires `background=True`"):
+
+        @mf.tool_config(background_capabilities=["activity"])
+        def invalid_job() -> None:
+            """Declare an invalid background capability."""
+
+    with pytest.raises(ValueError, match="Unsupported background capabilities"):
+
+        @mf.tool_config(background=True, background_capabilities=["resume"])
+        def resume_capability_job() -> None:
+            """Declare a removed background capability."""
+
+    @mf.tool_config(background=True, background_capabilities=["message"])
+    def generic_message_job() -> None:
+        """Declare an unsupported generic messaging capability."""
+
+    with pytest.raises(ValueError, match="only supported by agent sources"):
+        ToolLibrary(name="lib", tools=[generic_message_job])
 
 
 def test_hidden_handle_schema_excludes_handle_for_inline_tool():
@@ -521,7 +658,7 @@ def test_background_task_reports_progress_and_output():
     assert task_state["status"] == "running"
     assert "started_at" in task_state
     assert isinstance(task_state["running_for_seconds"], float)
-    assert task_state["metadata"]["supports_activity"] is False
+    assert task_state["metadata"]["background_capabilities"] == []
     assert task_state["progress"]["stage"] == "work"
     assert task_state["progress"]["percent"] == 50.0
 
@@ -676,7 +813,10 @@ def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
         library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
     assert status["status"] == "interrupted"
-    assert status["metadata"]["supports_activity"] is True
+    assert status["metadata"]["background_capabilities"] == [
+        "activity",
+        "message",
+    ]
     assert status["last_activity_summary"] == "Status: Task interrupted."
 
 
@@ -1207,7 +1347,37 @@ def test_background_tool_dispatch_does_not_mention_task_activity():
     assert "task_activity" not in library.get_tool_names()
 
 
-def test_task_activity_is_unsupported_for_non_agent_task():
+def test_background_activity_capability_is_available_for_non_agent_task():
+    @mf.tool_config(background=True, background_capabilities=["activity"])
+    def monitored_pipeline(value: int) -> int:
+        """Run a monitored background pipeline."""
+        return value * 2
+
+    library = ToolLibrary(name="lib", tools=[monitored_pipeline])
+
+    dispatch = library([("call_1", "monitored_pipeline", {"value": 4})])
+    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+
+    assert "`task_activity`" in dispatch.tool_calls[0].result
+    assert "`task_message`" not in dispatch.tool_calls[0].result
+    assert "task_activity" in library.get_tool_names()
+    assert "task_message" not in library.get_tool_names()
+
+    task = (
+        library([("call_2", "task_status", {"task_id": task_id})]).tool_calls[0].result
+    )
+    activity = (
+        library([("call_3", "task_activity", {"task_id": task_id})])
+        .tool_calls[0]
+        .result
+    )
+
+    assert task["metadata"]["task_kind"] == "tool"
+    assert task["metadata"]["background_capabilities"] == ["activity"]
+    assert isinstance(activity, list)
+
+
+def test_task_activity_is_unsupported_without_activity_capability():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
         """Run a simple background tool."""
@@ -1228,7 +1398,7 @@ def test_task_activity_is_unsupported_for_non_agent_task():
     )
 
     assert activity["status"] == "unsupported"
-    assert "background agent tasks" in activity["error"]
+    assert "activity capability" in activity["error"]
 
 
 def test_task_activity_tracks_compact_subagent_tool_calls():

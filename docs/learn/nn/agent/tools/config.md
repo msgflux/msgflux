@@ -610,6 +610,25 @@ def github_repository_search_v2_extended(query: str) -> str:
 # Tool is exposed as "search_repos" instead of the long function name
 ```
 
+## background_capabilities
+
+Use `background_capabilities` to declare the optional task controls a
+background-capable tool implements. Valid values are `activity` and `message`.
+This option requires `background=True` or `allow_background=True`.
+
+```python
+@mf.tool_config(background=True, background_capabilities=["activity"])
+def index_documents(path: str) -> str:
+    """Index a document tree in the background."""
+    return path
+```
+
+The declaration installs `task_activity` while the tool is registered. `message`
+installs `task_message`; it is currently implemented by background agents
+through their inbox and checkpoint runtime, so it is rejected for other source
+kinds. `Agent` and `AgentTool` use both capabilities by default when this
+option is omitted.
+
 ## tool_kind
 
 Use `tool_kind` to label a tool for `ToolBucket` routing. The label is stored
