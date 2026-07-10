@@ -4,6 +4,8 @@ import inspect
 import pytest
 from unittest.mock import Mock, MagicMock, patch
 
+from msgflux.core.dotdict import dotdict
+from msgflux.core.message import Message
 from msgflux.nn.modules.module import (
     Module,
     _IncompatibleKeys,
@@ -1218,3 +1220,111 @@ class TestModuleMisc:
         desc = module.get_module_description()
         # Should be docstring or empty
         assert isinstance(desc, str)
+
+
+class TestResponseMode:
+    """Tests for _set_response_mode and _define_response_mode."""
+
+    def _make_module(self, response_mode=None):
+        """Create a SimpleModule with response_mode configured."""
+        m = SimpleModule()
+        m._set_response_mode(response_mode)
+        return m
+
+    # --- _set_response_mode validation ---
+
+    def test_set_response_mode_none(self):
+        m = self._make_module(None)
+        assert m.response_mode is None
+
+    def test_set_response_mode_plain_string(self):
+        m = self._make_module("outputs.result")
+        assert m.response_mode == "outputs.result"
+
+    def test_set_response_mode_dotdict_format(self):
+        m = self._make_module("outputs.result:")
+        assert m.response_mode == "outputs.result:"
+
+    def test_set_response_mode_simple_dotdict(self):
+        m = self._make_module("result:")
+        assert m.response_mode == "result:"
+
+    def test_set_response_mode_empty_string_raises(self):
+        with pytest.raises(ValueError):
+            self._make_module("")
+
+    def test_set_response_mode_bare_colon_raises(self):
+        """':' alone has no path, must be rejected."""
+        with pytest.raises(ValueError):
+            self._make_module(":")
+
+    def test_set_response_mode_wrong_type_raises(self):
+        with pytest.raises(TypeError):
+            self._make_module(123)  # type: ignore[arg-type]
+
+    # --- _define_response_mode: None mode ---
+
+    def test_define_response_mode_none_returns_response(self):
+        m = self._make_module(None)
+        result = m._define_response_mode("hello", None)
+        assert result == "hello"
+
+    # --- _define_response_mode: dotdict mode (ends with ':') ---
+
+    def test_define_response_mode_dotdict_simple_key(self):
+        """'result:' returns dotdict({'result': response})."""
+        m = self._make_module("result:")
+        result = m._define_response_mode("hello", None)
+        assert isinstance(result, dotdict)
+        assert result.get("result") == "hello"
+
+    def test_define_response_mode_dotdict_nested_path(self):
+        """'outputs.text:' returns a nested dotdict."""
+        m = self._make_module("outputs.text:")
+        result = m._define_response_mode("world", None)
+        assert isinstance(result, dotdict)
+        assert result.get("outputs.text") == "world"
+
+    def test_define_response_mode_dotdict_deep_path(self):
+        """'a.b.c:' returns a deeply nested dotdict."""
+        m = self._make_module("a.b.c:")
+        result = m._define_response_mode(42, None)
+        assert isinstance(result, dotdict)
+        assert result.get("a.b.c") == 42
+
+    def test_define_response_mode_dotdict_ignores_message(self):
+        """Dotdict mode must not require nor modify Message."""
+        m = self._make_module("result:")
+        msg = Message(content="original")
+        result = m._define_response_mode("value", msg)
+        assert isinstance(result, dotdict)
+        assert result.get("result") == "value"
+        # Message must remain untouched
+        assert msg.content == "original"
+
+    def test_define_response_mode_dotdict_works_without_message(self):
+        """Dotdict mode works when message is None."""
+        m = self._make_module("result:")
+        result = m._define_response_mode("value", None)
+        assert isinstance(result, dotdict)
+
+    def test_define_response_mode_dotdict_any_response_type(self):
+        """Dotdict mode wraps any response type (dict, list, object)."""
+        m = self._make_module("data:")
+        payload = {"key": [1, 2, 3]}
+        result = m._define_response_mode(payload, None)
+        assert result.get("data") == payload
+
+    # --- _define_response_mode: message mode (no colon) ---
+
+    def test_define_response_mode_message_writes_field_and_returns_none(self):
+        m = self._make_module("outputs.result")
+        msg = Message(content="input")
+        result = m._define_response_mode("answer", msg)
+        assert result is None
+        assert msg.get("outputs.result") == "answer"
+
+    def test_define_response_mode_message_without_message_raises(self):
+        m = self._make_module("outputs.result")
+        with pytest.raises(ValueError):
+            m._define_response_mode("answer", None)

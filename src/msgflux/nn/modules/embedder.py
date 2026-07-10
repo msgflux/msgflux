@@ -59,6 +59,8 @@ class Embedder(Module, metaclass=AutoParams):
             * ``None`` (default): Returns the embeddings directly.
             * ``"<path>"``: Writes to ``obj.<path>`` and returns ``None``
               (``dotdict`` or ``Message`` is mutated in place).
+            * ``"<path>:"``: Returns a new ``dotdict`` with the response stored
+              under ``<path>`` (no ``Message`` required).
         config:
             Dictionary with configuration options. Accepts any keys without validation.
             Additional parameters will be passed directly to model execution.
