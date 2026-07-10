@@ -311,7 +311,127 @@ Returns a JSON-encoded `bytes` object, powered by `msgspec`:
 
 ---
 
-## 8. **Immutability**
+## 8. **Persistent Store**
+
+Pass `store=` to hydrate a `dotdict` from an external key-value store and persist top-level writes back to that store. A common store is `diskcache.Cache`:
+
+Install `diskcache` before using these examples:
+
+```bash
+pip install diskcache
+# or
+uv add diskcache
+```
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from diskcache import Cache
+
+    cache = Cache("./state")
+    d = mf.dotdict(store=cache)
+
+    d.status = "running"
+    d["score"] = 0.98
+
+    print(cache["status"])  # "running"
+    print(cache["score"])   # 0.98
+    ```
+
+Existing store keys are loaded first. Values passed through `initial_data` or keyword arguments override store values and are written back:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from diskcache import Cache
+
+    cache = Cache("./state")
+    cache["status"] = "stale"
+    cache["attempts"] = 1
+
+    d = mf.dotdict({"status": "ready"}, store=cache)
+
+    print(d.status)         # "ready"
+    print(d.attempts)       # 1
+    print(cache["status"])  # "ready"
+    ```
+
+Use `store_prefix` to namespace keys when several `dotdict` instances share the same store:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from diskcache import Cache
+
+    cache = Cache("./state")
+
+    run_1 = mf.dotdict(store=cache, store_prefix="run_1")
+    run_2 = mf.dotdict(store=cache, store_prefix="run_2")
+
+    run_1.score = 10
+    run_2.score = 20
+
+    print(cache["run_1.score"])  # 10
+    print(cache["run_2.score"])  # 20
+    ```
+
+`set()` and dotted-key `update()` persist the final top-level value:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from diskcache import Cache
+
+    cache = Cache("./state")
+    d = mf.dotdict(store=cache)
+
+    d.set("user.name", "Maria")
+    d.update({"metrics.latency_ms": 42})
+
+    print(cache["user"])     # {"name": "Maria"}
+    print(cache["metrics"])  # {"latency_ms": 42}
+    ```
+
+Mutating a nested child object directly does **not** persist by itself. Use `set()`, dotted-key `update()`, or reassign the top-level key:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from diskcache import Cache
+
+    cache = Cache("./state")
+    cache["user"] = {"name": "Maria"}
+    d = mf.dotdict(store=cache)
+
+    d.user.name = "Ana"  # in-memory only
+    d.user = {**d.user, "name": "Ana"}  # persisted
+    ```
+
+Deleting a top-level key removes it from the store:
+
+???+ example
+
+    ```python
+    import msgflux as mf
+    from diskcache import Cache
+
+    cache = Cache("./state")
+    cache["status"] = "done"
+    d = mf.dotdict(store=cache)
+
+    del d.status
+
+    print("status" in cache)  # False
+    ```
+
+---
+
+## 9. **Immutability**
 
 Pass `frozen=True` to create a read-only `dotdict`. Any attempt to write raises `AttributeError`:
 
@@ -342,7 +462,7 @@ Nested dicts inherit the `frozen` flag automatically:
 
 ---
 
-## 9. **Hidden Keys**
+## 10. **Hidden Keys**
 
 `hidden_keys` marks keys as invisible to enumeration and discovery. They won't appear in iteration, serialization, or string representations — but can always be accessed directly if you know they exist.
 
@@ -376,7 +496,7 @@ Nested dicts inherit the `frozen` flag automatically:
 
 ---
 
-## 10. **Extending dotdict**
+## 11. **Extending dotdict**
 
 `dotdict` is designed to be subclassed. You can add default fields, metadata, or custom behavior by overriding `__init__`:
 

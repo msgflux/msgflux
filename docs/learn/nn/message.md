@@ -4,7 +4,11 @@
 
 `Message` is a structured container for **data flow between modules**. It extends [`dotdict`](../dotdict.md) with default fields tailored for AI workflows.
 
-For general `dotdict` features — dot access, nested paths, `get()`/`set()`, serialization, immutability, and hidden keys — see the [`dotdict` docs](../dotdict.md).
+For general `dotdict` features — dot access, nested paths, `get()`/`set()`, serialization, immutability, hidden keys, and persistent stores — see the [`dotdict` docs](../dotdict.md).
+
+`Message` also accepts `hidden_keys=` directly, so default fields like `extra`,
+`context`, or `outputs` can be hidden from enumeration and serialization while
+remaining available through direct access.
 
 ## 1. **Quick Start**
 
@@ -40,7 +44,40 @@ print(msg.context.data)  # {"key": "value"}
 
 ---
 
-## 3. **With nn.Agent**
+## 3. **Persistent Store**
+
+`Message` accepts the same `store` and `store_prefix` arguments as `dotdict`. This lets you persist message fields and restore them later:
+
+```python
+from diskcache import Cache
+from msgflux import Message
+
+cache = Cache("./state")
+
+msg = Message(
+    content="Analyze this text",
+    store=cache,
+    store_prefix="chat_1",
+)
+msg.set("outputs.answer", "done")
+
+restored = Message(store=cache, store_prefix="chat_1")
+
+print(restored.content)         # "Analyze this text"
+print(restored.outputs.answer)  # "done"
+```
+
+Install `diskcache` before using this example:
+
+```bash
+pip install diskcache
+# or
+uv add diskcache
+```
+
+---
+
+## 4. **With nn.Agent**
 
 ### message_fields
 
@@ -93,7 +130,7 @@ print(msg.outputs.result)
 
 ---
 
-## 4. **Inline**
+## 5. **Inline**
 
 ```python
 import msgflux.nn.functional as F
@@ -117,7 +154,7 @@ print(msg.outputs.analysis)  # "Analyzed: HELLO WORLD"
 
 ---
 
-## 5. **Multimodal Data**
+## 6. **Multimodal Data**
 
 Store multimodal inputs directly on the message:
 
