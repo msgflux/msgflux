@@ -80,6 +80,7 @@ hide:
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
+| Kokoro      | `msgflux[openai]` |                    |
 | OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
 | Together    | `msgflux[openai]` | `TOGETHER_API_KEY` |
 

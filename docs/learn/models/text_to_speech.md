@@ -54,6 +54,23 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
         )
         ```
 
+    === "Kokoro"
+
+        ```python
+        # pip install msgflux[openai]
+        import msgflux as mf
+
+        # First run an OpenAI-compatible Kokoro server, such as Kokoro-FastAPI.
+        # No API key is required for the default localhost setup.
+
+        model = mf.Model.text_to_speech(
+            "kokoro/kokoro",
+            voice="af_heart",
+            response_format="pcm",
+            stream_chunk_size=512,
+        )
+        ```
+
 ## 2. **Quick Start**
 
 ???+ example
@@ -133,6 +150,48 @@ Control voice characteristics with prompts:
     ```
 
 Note: `gpt-4o-mini-tts` has native steerability — you can instruct not just *what* to say but *how* to say it.
+
+### 4.1 **Local Kokoro Servers**
+
+The `kokoro` provider targets OpenAI-compatible Kokoro TTS servers, including Kokoro-FastAPI. By default it points to `http://localhost:8880/v1`, uses `model="kokoro"`, and does not require you to configure an API key for localhost.
+
+Start Kokoro-FastAPI with Docker:
+
+```bash
+# CPU
+docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest
+
+# NVIDIA GPU
+docker run --gpus all -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-gpu:latest
+```
+
+Or run it from source:
+
+```bash
+git clone https://github.com/remsky/Kokoro-FastAPI.git
+cd Kokoro-FastAPI
+./start-cpu.sh
+```
+
+Then use the local server from msgFlux:
+
+```python
+import msgflux as mf
+
+model = mf.Model.text_to_speech(
+    "kokoro/kokoro",
+    voice="af_heart",
+    stream_chunk_size=512,
+)
+```
+
+Use `KOKORO_BASE_URL` only when the server is not running at the default localhost URL:
+
+```python
+mf.set_envs(KOKORO_BASE_URL="http://192.168.1.50:8880/v1")
+```
+
+If your server is exposed beyond localhost, configure authentication at the server/proxy layer. `KOKORO_API_KEY` is optional and only needs to be set when that layer expects a bearer token.
 
 ## 5. **Streaming Audio**
 
