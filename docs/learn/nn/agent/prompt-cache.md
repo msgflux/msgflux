@@ -156,4 +156,3 @@ msgflux currently implements this warmup path for chat completions.
 - Do not expect warmup to persist conversation state.
 - Use foreground warmup during tests so failures are visible.
 - Use background warmup during app startup when failures should not block serving.
-

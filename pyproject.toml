@@ -86,6 +86,9 @@ openai = [
 httpx = [
     "httpx>=0.28.1",
 ]
+hf_hub = [
+    "huggingface-hub>=0.36.0",
+]
 plot = [
     "code2mermaid>=0.3.0",
     "mermaid-py>=0.8.0",

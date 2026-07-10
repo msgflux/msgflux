@@ -1905,7 +1905,12 @@ class Module:
         return handle
 
     def _load_from_state_dict(  # noqa: C901
-        self, state_dict: Dict[str, Any], prefix: Optional[str] = ""
+        self,
+        state_dict: Dict[str, Any],
+        prefix: Optional[str] = "",
+        *,
+        replacements: Optional[Dict[str, Any]] = None,
+        ignore_keys: Optional[Set[str]] = None,
     ) -> None:
         """Loads the module state from a state dict.
 
@@ -1917,16 +1922,29 @@ class Module:
         for name, param in self._parameters.items():
             if param is not None:
                 key = prefix + name
+                if ignore_keys and key in ignore_keys:
+                    continue
                 if key in state_dict:
-                    self._parameters[name].copy_to_data(state_dict[key])
+                    value = (
+                        replacements[key]
+                        if replacements is not None and key in replacements
+                        else state_dict[key]
+                    )
+                    self._parameters[name].copy_to_data(value)
 
         # Load buffers
         for name, _ in self._buffers.items():
             key = prefix + name
+            if ignore_keys and key in ignore_keys:
+                continue
+            if replacements is not None and key in replacements:
+                self._buffers[name] = replacements[key]
+                continue
             if key in state_dict:
                 data = state_dict[key]
                 # Check if it is a msgflux serializable class
                 if isinstance(data, dict) and "msgflux_type" in data:
+                    data = dict(data)
                     msgflux_type = data.pop("msgflux_type")
                     if msgflux_type in MSGFLUX_DESERIALIZABLE_CLS:
                         # TODO not recreate if same type
@@ -1949,21 +1967,51 @@ class Module:
                     for k, v in state_dict.items()
                     if k.startswith(module_prefix)
                 }
+                module_replacements = None
+                if replacements:
+                    module_replacements = {
+                        k.removeprefix(module_prefix): v
+                        for k, v in replacements.items()
+                        if k.startswith(module_prefix)
+                    }
+                module_ignore_keys = None
+                if ignore_keys:
+                    module_ignore_keys = {
+                        k.removeprefix(module_prefix)
+                        for k in ignore_keys
+                        if k.startswith(module_prefix)
+                    }
                 if module_dict:
-                    module._load_from_state_dict(module_dict)
+                    module._load_from_state_dict(
+                        module_dict,
+                        replacements=module_replacements,
+                        ignore_keys=module_ignore_keys,
+                    )
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(
+        self,
+        state_dict: Dict[str, Any],
+        *,
+        replacements: Optional[Dict[str, Any]] = None,
+        ignore_keys: Optional[Set[str]] = None,
+    ) -> None:
         """Loads the state of the module and its submodules.
 
         Args:
             state_dict: Dictionary containing the complete state
+            replacements: Exact state keys to replace before deserialization.
+            ignore_keys: Exact state keys to skip while loading.
         """
         if not isinstance(state_dict, dict):
             raise TypeError(
                 f"`state_dict` to be dict, given {type(state_dict).__name__}"
             )
 
-        self._load_from_state_dict(state_dict)
+        self._load_from_state_dict(
+            state_dict,
+            replacements=replacements,
+            ignore_keys=ignore_keys,
+        )
 
     def _named_members(  # ok?
         self,
@@ -2100,6 +2148,25 @@ class Module:
             remove_duplicate=remove_duplicate,
         )
         yield from gen
+
+    def named_models(
+        self,
+        prefix: Optional[str] = "",
+        *,
+        recurse: Optional[bool] = True,
+    ) -> Iterator[Tuple[str, Any]]:
+        """Return model buffers by state-dict path.
+
+        Duplicate model instances are intentionally not removed because each
+        usage site is a distinct replacement slot for AutoModule exports.
+        """
+        for name, buffer in self.named_buffers(
+            prefix=prefix,
+            recurse=recurse,
+            remove_duplicate=False,
+        ):
+            if getattr(buffer, "msgflux_type", None) == "model":
+                yield name, buffer
 
     def children(self) -> Iterator["Module"]:
         """Return an iterator over immediate children modules.

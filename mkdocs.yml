@@ -155,6 +155,7 @@ nav:
         - learn/nn/module/module-list.md
         - learn/nn/module/sequential.md
         - learn/nn/module/visualization.md
+      - AutoModule: learn/nn/auto-module.md
       - Message: learn/nn/message.md
       - Agent:
         - learn/nn/agent/index.md
