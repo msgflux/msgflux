@@ -246,8 +246,9 @@ class TestToolLibraryMCPIntegration:
         schemas = library.get_tool_json_schemas()
 
         # Should include MCP tool schema
-        assert len(schemas) >= 1
-        mock_convert_schema.assert_called()
+        assert len(schemas) == 1
+        assert schemas[0]["function"]["name"] == "fs__read_file"
+        mock_convert_schema.assert_called_once()
 
     def test_mcp_servers_none(self):
         """Test ToolLibrary with no MCP servers."""
@@ -283,3 +284,66 @@ class TestToolLibraryMCPIntegration:
 
         with pytest.raises(ValueError, match="Unknown transport type"):
             ToolLibrary(name="test", tools=[], mcp_servers=mcp_servers)
+
+    @patch("msgflux.nn.modules.tool.MCPClient")
+    @patch("msgflux.nn.modules.tool.F")
+    def test_required_mcp_server_init_failure_raises(self, mock_F, mock_mcp_client):
+        """Required MCP server failures should fail library construction."""
+        from msgflux.nn.modules.tool import ToolLibrary
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.connect = AsyncMock()
+        mock_client_instance.list_tools = AsyncMock()
+        mock_client_instance.disconnect = AsyncMock()
+        mock_mcp_client.from_stdio.return_value = mock_client_instance
+        mock_F.wait_for.side_effect = [None, RuntimeError("tools/list failed"), None]
+
+        mcp_servers = [
+            {
+                "name": "fs",
+                "transport": "stdio",
+                "command": "mcp-server",
+                "required": True,
+            }
+        ]
+
+        with pytest.raises(RuntimeError, match="required MCP server 'fs'"):
+            ToolLibrary(name="test", tools=[], mcp_servers=mcp_servers)
+
+        assert (
+            mock_F.wait_for.call_args_list[-1].args[0]
+            is mock_client_instance.disconnect
+        )
+
+    @patch("msgflux.nn.modules.tool.MCPClient")
+    @patch("msgflux.nn.modules.tool.F")
+    def test_optional_mcp_server_init_failure_is_recorded(
+        self, mock_F, mock_mcp_client
+    ):
+        """Optional MCP server failures should be inspectable without raising."""
+        from msgflux.nn.modules.tool import ToolLibrary
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.connect = AsyncMock()
+        mock_client_instance.list_tools = AsyncMock()
+        mock_client_instance.disconnect = AsyncMock()
+        mock_mcp_client.from_stdio.return_value = mock_client_instance
+        mock_F.wait_for.side_effect = [None, RuntimeError("tools/list failed"), None]
+
+        mcp_servers = [
+            {
+                "name": "fs",
+                "transport": "stdio",
+                "command": "mcp-server",
+                "required": False,
+            }
+        ]
+
+        library = ToolLibrary(name="test", tools=[], mcp_servers=mcp_servers)
+
+        assert library.mcp_clients == {}
+        assert library.mcp_errors["fs"] == "tools/list failed"
+        assert (
+            mock_F.wait_for.call_args_list[-1].args[0]
+            is mock_client_instance.disconnect
+        )

@@ -285,6 +285,7 @@ class StdioTransport(BaseTransport):
         self._process: Optional[asyncio.subprocess.Process] = None
         self._pending_requests: Dict[str, asyncio.Future] = {}
         self._read_task: Optional[asyncio.Task] = None
+        self._stderr_task: Optional[asyncio.Task] = None
         super().__init__()
 
     async def connect(self):
@@ -306,19 +307,15 @@ class StdioTransport(BaseTransport):
 
             # Start background task to read responses
             self._read_task = asyncio.create_task(self._read_responses())
+            self._stderr_task = asyncio.create_task(self._drain_stderr())
 
         except Exception as e:
             raise MCPConnectionError(f"Failed to start MCP server: {e}") from e
 
     async def disconnect(self):
         """Terminate subprocess and cleanup."""
-        if self._read_task:
-            self._read_task.cancel()
-            try:
-                await self._read_task
-            except asyncio.CancelledError:
-                pass
-            self._read_task = None
+        await self._cancel_background_task("_read_task")
+        await self._cancel_background_task("_stderr_task")
 
         if self._process:
             try:
@@ -335,6 +332,16 @@ class StdioTransport(BaseTransport):
             if not future.done():
                 future.cancel()
         self._pending_requests.clear()
+
+    async def _cancel_background_task(self, task_attr: str) -> None:
+        task = getattr(self, task_attr)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            setattr(self, task_attr, None)
 
     async def _read_responses(self):
         """Background task to read JSON-RPC responses from stdout."""
@@ -368,6 +375,22 @@ class StdioTransport(BaseTransport):
                     logger.debug(f"Error processing response: {e}")
                     continue
 
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: S110
+            pass
+
+    async def _drain_stderr(self):
+        """Drain subprocess stderr so verbose servers cannot block on a full pipe."""
+        if not self._process or not self._process.stderr:
+            return
+
+        try:
+            while True:
+                line = await self._process.stderr.readline()
+                if not line:
+                    break
+                logger.debug(line.decode("utf-8", errors="replace").rstrip())
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: S110
