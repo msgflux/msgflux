@@ -68,16 +68,24 @@ print(result["descriptions"])
 
 ## Select Tools
 
-Use `select:name` to activate exact on-demand tools:
+Use `select` to activate exact on-demand tools:
 
 ```python
 result = agent.tool_library(
-    [("call_3", "tool_search", {"query": "select:query_finance_report"})]
+    [
+        (
+            "call_3",
+            "tool_search",
+            {"select": ["query_finance_report"]},
+        )
+    ]
 ).tool_calls[0].result
 
 print(result["loaded"])
 # ["query_finance_report"]
 ```
+
+`query="select:query_finance_report"` remains supported for compatibility.
 
 After selection, the tool is promoted into the normal library:
 
@@ -98,4 +106,3 @@ tools remain, msgFlux removes `tool_search` from the exposed runtime tools.
 On-demand agents work with [Agent Tool](agent-tool.md) as well. When an
 on-demand agent is selected, `ToolLibrary.add(...)` promotes it and the existing
 `AgentTool` bucket captures it as an available `agent(name, message)` target.
-

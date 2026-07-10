@@ -12,92 +12,72 @@ class ToolSearchTool(ToolLibraryOperator):
     tool_kind = "search"
     display_name = "Tool Search"
     description = (
-        "Search registered on-demand tools by keyword. Use `select:tool_a,tool_b` "
-        "to activate exact tools. Set `description=true` to include tool details."
+        "Search registered on-demand tools by keyword. Use `select` to activate "
+        "exact tools. Set `description=true` to include tool details."
     )
     usage_guidance = (
         "Use when the current tools may not cover the task. Search first, then "
-        "activate exact matches with `select:<tool_name>`."
+        "activate exact matches with `select=[<tool_name>]`."
     )
     annotations = {
-        "query": str,
+        "query": Optional[str],
+        "select": Optional[List[str]],
         "description": bool,
-        "max_results": Optional[int],
+        "max_results": int,
         "handle": Hidden,
         "return": dict,
     }
 
     def __call__(
         self,
-        query: str,
+        query: str | None = None,
         *,
+        select: List[str] | None = None,
         description: bool = False,
-        max_results: int | None = 5,
+        max_results: int = 5,
         handle,
     ) -> Dict[str, Any]:
-        if not isinstance(query, str) or not query.strip():
-            raise ValueError("`query` must be a non-empty string.")
-        if max_results is not None:
-            if isinstance(max_results, bool) or not isinstance(max_results, int):
-                raise TypeError(
-                    f"`max_results` must be int or None, given `{type(max_results)}`"
-                )
-            if max_results <= 0:
-                raise ValueError("`max_results` must be greater than 0.")
+        query, select = self._normalize_selection(query, select)
+        if isinstance(max_results, bool) or not isinstance(max_results, int):
+            raise TypeError(f"`max_results` must be int, given `{type(max_results)}")
+        if max_results <= 0:
+            raise ValueError("`max_results` must be greater than 0.")
 
-        on_demand_tool_names = handle.list_on_demand_tools()
-        total = len(on_demand_tool_names)
-        if total == 0:
-            return self._result(
-                query=query,
-                matches=[],
-                loaded=[],
-                descriptions=[],
-                total=0,
-            )
+        return handle.search_tools(
+            query=query,
+            select=select,
+            include_descriptions=description,
+            max_results=max_results,
+        )
 
-        if query.lower().startswith("select:"):
-            requested = [
+    @staticmethod
+    def _normalize_selection(
+        query: str | None,
+        select: List[str] | None,
+    ) -> tuple[str | None, List[str] | None]:
+        if query is not None and not isinstance(query, str):
+            raise TypeError(f"`query` must be str or None, given `{type(query)}`")
+        query = query.strip() if query is not None else None
+        if select is not None:
+            if not isinstance(select, list) or not all(
+                isinstance(tool_name, str) for tool_name in select
+            ):
+                raise TypeError("`select` must be a list of strings or None.")
+            if query:
+                raise ValueError("`query` and `select` cannot be used together.")
+            select = [tool_name.strip() for tool_name in select if tool_name.strip()]
+            if not select:
+                raise ValueError("`select` must include at least one tool name.")
+        elif query and query.lower().startswith("select:"):
+            select = [
                 item.strip()
                 for item in query.split(":", 1)[1].split(",")
                 if item.strip()
             ]
-            matches = handle.select_on_demand_tools(requested)
-            loaded = handle.activate_on_demand_tools(matches)
-        else:
-            matches = handle.search_on_demand_tools(
-                query=query,
-                max_results=max_results or 5,
+            if not select:
+                raise ValueError("`select` must include at least one tool name.")
+        elif not query:
+            raise ValueError(
+                "`query` must be a non-empty string when `select` is absent."
             )
-            loaded = []
-
-        descriptions = []
-        if description:
-            descriptions = [handle.describe_tool(tool_name) for tool_name in matches]
-
-        return self._result(
-            query=query,
-            matches=matches,
-            loaded=loaded,
-            descriptions=descriptions,
-            total=total,
-        )
-
-    @staticmethod
-    def _result(
-        *,
-        query: str,
-        matches: List[str],
-        loaded: List[str],
-        descriptions: List[Dict[str, Any]],
-        total: int,
-    ) -> Dict[str, Any]:
-        already_loaded = [tool_name for tool_name in matches if tool_name not in loaded]
-        return {
-            "query": query,
-            "matches": matches,
-            "loaded": loaded,
-            "already_loaded": already_loaded,
-            "descriptions": descriptions,
-            "total_on_demand_tools": total,
-        }
+        return query, select

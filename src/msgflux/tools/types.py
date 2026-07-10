@@ -57,7 +57,11 @@ class ToolBucket:
         if tool.name in self.tools:
             raise ValueError(f"Duplicate tool name `{tool.name}` in bucket.")
         self.tools[tool.name] = tool
-        self.refresh()
+        try:
+            self.refresh()
+        except Exception:
+            self.tools.pop(tool.name, None)
+            raise
 
     @property
     def tools(self) -> Dict[str, ToolMetadata]:
@@ -132,6 +136,26 @@ class ToolBucket:
         return None
 
     @classmethod
+    def find_captured_metadata(
+        cls,
+        tool_name: str,
+        tools: Mapping[str, Any],
+        tool_configs: Mapping[str, Mapping[str, Any]],
+    ) -> ToolMetadata | None:
+        """Find metadata that is owned by a registered bucket."""
+        for bucket_name, tool in tools.items():
+            config = tool_configs.get(bucket_name, {})
+            if config.get("tool_kind") != cls.tool_kind:
+                continue
+            bucket = getattr(tool, "impl", tool)
+            if not isinstance(bucket, cls):
+                continue
+            metadata = bucket.tools.get(tool_name)
+            if metadata is not None:
+                return metadata
+        return None
+
+    @classmethod
     def find_capture_candidates(
         cls,
         bucket: ToolBucket,
@@ -143,7 +167,7 @@ class ToolBucket:
             config = tool_configs.get(tool_name, {})
             if config.get(
                 "tool_kind"
-            ) == cls.tool_kind or ToolLibraryOperator.is_runtime_tool(tool):
+            ) == cls.tool_kind or ToolLibraryOperator.is_operator_tool(tool):
                 continue
             if config.get("tool_kind", "tool") in bucket.capture_kinds:
                 candidates.append((tool_name, tool))
@@ -175,19 +199,19 @@ class ToolBucket:
 
 
 class ToolLibraryOperator:
-    """Base class for runtime tools that operate through ToolLibraryHandle."""
+    """Base class for tools that operate through ToolLibraryHandle."""
 
     tool_config = {"inject_handle": True}
 
     @classmethod
-    def is_runtime_tool(cls, tool: Any | None) -> bool:
+    def is_operator_tool(cls, tool: Any | None) -> bool:
         if tool is None:
             return False
         impl = getattr(tool, "impl", tool)
         return isinstance(impl, cls)
 
     @classmethod
-    def is_runtime_metadata(cls, metadata: ToolMetadata) -> bool:
+    def is_operator_metadata(cls, metadata: ToolMetadata) -> bool:
         return isinstance(metadata.impl, cls)
 
 

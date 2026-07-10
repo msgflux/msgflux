@@ -19,7 +19,7 @@ from msgflux.nn.modules.tool import (
 )
 from msgflux.runtime.context import execution_context
 from msgflux.tasks import InMemoryTaskStore, TaskActivityRecorder
-from msgflux.tools import ToolBucket, ToolLibraryOperator
+from msgflux.tools import ToolBucket, ToolLibraryOperator, ToolMetadata
 
 
 def _activity_summaries(store: InMemoryTaskStore, task_id: str) -> list[str]:
@@ -919,7 +919,7 @@ class TestToolLibrary:
             ToolLibrary(name="lib", tools=[InvalidBucket()])
 
     def test_tool_library_operator_injects_handle_by_default(self):
-        """Test runtime-aware operator tools inherit handle injection."""
+        """Test operator tools inherit handle injection."""
 
         class RuntimeEchoTool(ToolLibraryOperator):
             name = "runtime_echo"
@@ -962,7 +962,7 @@ class TestToolLibrary:
                 "guidance": (
                     "Use when the current tools may not cover the task. "
                     "Search first, then activate exact matches with "
-                    "`select:<tool_name>`."
+                    "`select=[<tool_name>]`."
                 ),
             }
         ]
@@ -999,24 +999,78 @@ class TestToolLibrary:
         assert "tool_search" in schema_names
         assert "remote_lookup" not in schema_names
 
-    def test_tool_search_select_supports_exact_names(self):
-        """Test that tool_search supports select:name syntax."""
+    def test_tool_search_select_supports_explicit_and_legacy_names(self):
+        """Test that tool_search supports explicit selection and legacy syntax."""
 
         @mf.tool_config(on_demand=True)
         def read_cloud_file(path: str) -> str:
             """Read a cloud file."""
             return path
 
-        library = ToolLibrary(name="lib", tools=[read_cloud_file])
+        @mf.tool_config(on_demand=True)
+        def read_legacy_file(path: str) -> str:
+            """Read a legacy file."""
+            return path
 
-        result = (
-            library([("call_1", "tool_search", {"query": "select:read_cloud_file"})])
+        library = ToolLibrary(
+            name="lib",
+            tools=[read_cloud_file, read_legacy_file],
+        )
+
+        explicit_result = (
+            library([("call_1", "tool_search", {"select": ["read_cloud_file"]})])
+            .tool_calls[0]
+            .result
+        )
+        legacy_result = (
+            library([("call_2", "tool_search", {"query": "select:read_legacy_file"})])
             .tool_calls[0]
             .result
         )
 
-        assert result["matches"] == ["read_cloud_file"]
-        assert result["loaded"] == ["read_cloud_file"]
+        assert explicit_result["matches"] == ["read_cloud_file"]
+        assert explicit_result["loaded"] == ["read_cloud_file"]
+        assert legacy_result["matches"] == ["read_legacy_file"]
+        assert legacy_result["loaded"] == ["read_legacy_file"]
+
+    def test_tool_search_restores_tool_when_activation_fails(self):
+        """Test failed promotion does not discard an on-demand tool."""
+
+        class CatalogBucket(ToolBucket):
+            name = "catalog"
+            capture_kind = "catalog"
+            description = "Catalog operations."
+            annotations = {"query": str, "return": str}
+
+            def __call__(self, query: str) -> str:
+                return query
+
+        bucket = CatalogBucket()
+        bucket.add(
+            ToolMetadata(
+                name="lookup",
+                description="Existing lookup.",
+                annotations={},
+                tool_config={"tool_kind": "catalog"},
+                impl=lambda query: query,
+            )
+        )
+
+        @mf.tool_config(
+            on_demand=True,
+            tool_kind="catalog",
+            name_override="lookup",
+        )
+        def delayed_lookup(query: str) -> str:
+            """Look up a catalog item later."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[bucket, delayed_lookup])
+        response = library([("call_1", "tool_search", {"select": ["lookup"]})])
+
+        assert "Duplicate tool name `lookup` in bucket." in response.tool_calls[0].error
+        assert "lookup" in library.on_demand_tools
+        assert library.on_demand_tools["lookup"].tool_config["on_demand"] is True
 
     def test_tool_search_is_removed_when_last_on_demand_tool_is_removed(self):
         """Test runtime tool cleanup when on-demand tools disappear."""
@@ -1033,6 +1087,20 @@ class TestToolLibrary:
         library.remove("remote_lookup")
 
         assert "tool_search" not in library.get_tool_names()
+
+    def test_tool_search_is_reinstalled_while_on_demand_tools_remain(self):
+        """Test Tool Search remains derived from the on-demand registry."""
+
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        library.remove("tool_search")
+
+        assert "tool_search" in library.library
 
     def test_injected_handle_can_add_on_demand_tool(self):
         """Test that injected handle can register on-demand tools."""

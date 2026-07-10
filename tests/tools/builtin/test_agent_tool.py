@@ -296,7 +296,15 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
     ]
 
     search = (
-        library([("call_2", "tool_search", {"query": "select:reviewer"})])
+        library(
+            [
+                (
+                    "call_2",
+                    "tool_search",
+                    {"select": ["reviewer"], "description": True},
+                )
+            ]
+        )
         .tool_calls[0]
         .result
     )
@@ -309,6 +317,7 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
     assert "Agent `reviewer` not found" in before_search.tool_calls[0].error
     assert schema_names_before == ["agent", "tool_search"]
     assert search["loaded"] == ["reviewer"]
+    assert search["descriptions"][0]["name"] == "reviewer"
     assert schema_names_after == ["agent"]
     assert response.tool_calls[0].result == "reviewed"
     assert "reviewer: Use for code review." in library.library["agent"].usage_guidance

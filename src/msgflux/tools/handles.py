@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping
 
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
 from msgflux.runtime.context import execution_context, get_execution_context
+from msgflux.tools.types import ToolBucket
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolLibrary
@@ -163,7 +165,17 @@ class ToolLibraryHandle:
                 "tool_kind": getattr(tool, "tool_config", {}).get("tool_kind", "tool"),
             }
         if metadata is None:
+            metadata = ToolBucket.find_captured_metadata(
+                tool_name,
+                self._library.library,
+                self._library.tool_configs,
+            )
+        if metadata is None:
             raise ValueError(f"Tool `{tool_name}` not found.")
+        return self._describe_metadata(metadata)
+
+    @staticmethod
+    def _describe_metadata(metadata: Any) -> dict[str, Any]:
         return {
             "name": metadata.name,
             "display_name": metadata.display_name or metadata.name,
@@ -217,15 +229,68 @@ class ToolLibraryHandle:
     def activate_on_demand_tools(self, tool_names: List[str]) -> List[str]:
         activated = []
         for tool_name in tool_names:
-            metadata = self._library.on_demand_tools.pop(tool_name, None)
+            metadata = self._library.on_demand_tools.get(tool_name)
             if metadata is None:
                 continue
-            metadata.tool_config["on_demand"] = False
-            self._library.tool_configs.pop(tool_name, None)
-            self._library.add(metadata)
+            self._activate_on_demand_tool(metadata)
             activated.append(tool_name)
-        self._library._sync_on_demand_runtime_tools()
+        self._library._sync_on_demand_operator_tools()
         return activated
+
+    def _activate_on_demand_tool(self, metadata: Any) -> None:
+        """Promote one on-demand tool while restoring it if registration fails."""
+        tool_name = metadata.name
+        original_config = self._library.tool_configs.get(tool_name)
+        promoted = replace(
+            metadata,
+            tool_config={**metadata.tool_config, "on_demand": False},
+        )
+
+        # `ToolLibrary.add` rejects names still present in the on-demand registry.
+        self._library.on_demand_tools.pop(tool_name)
+        self._library.tool_configs.pop(tool_name, None)
+        try:
+            self._library.add(promoted)
+        except Exception:
+            self._library.on_demand_tools[tool_name] = metadata
+            if original_config is not None:
+                self._library.tool_configs[tool_name] = original_config
+            raise
+
+    def search_tools(
+        self,
+        *,
+        query: str | None,
+        select: List[str] | None,
+        include_descriptions: bool,
+        max_results: int,
+    ) -> dict[str, Any]:
+        """Search or promote on-demand tools through one stateful operation."""
+        total = len(self._library.on_demand_tools)
+        if select is not None:
+            matches = self.select_on_demand_tools(select)
+            loaded = self.activate_on_demand_tools(matches)
+        else:
+            matches = self.search_on_demand_tools(
+                query=query or "",
+                max_results=max_results,
+            )
+            loaded = []
+
+        descriptions = []
+        if include_descriptions:
+            descriptions = [self.describe_tool(tool_name) for tool_name in matches]
+
+        return {
+            "query": query,
+            "matches": matches,
+            "loaded": loaded,
+            "already_loaded": [
+                tool_name for tool_name in matches if tool_name not in loaded
+            ],
+            "descriptions": descriptions,
+            "total_on_demand_tools": total,
+        }
 
     def build_call_parameters_for_response(
         self,

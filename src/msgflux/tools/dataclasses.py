@@ -23,7 +23,6 @@ class InternalToolState:
     background_task_tool_names: set[str] = field(default_factory=set)
     agent_task_tool_names: set[str] = field(default_factory=set)
     disabled_background_task_tool_names: set[str] = field(default_factory=set)
-    tool_search_disabled: bool = False
 
     def clear(self) -> None:
         self.background_tool_names.clear()
@@ -31,4 +30,3 @@ class InternalToolState:
         self.background_task_tool_names.clear()
         self.agent_task_tool_names.clear()
         self.disabled_background_task_tool_names.clear()
-        self.tool_search_disabled = False

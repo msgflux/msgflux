@@ -573,12 +573,12 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if metadata.tool_config.get("on_demand", False):
             self.on_demand_tools[metadata.name] = metadata
             self.tool_configs[metadata.name] = metadata.tool_config
-            self._sync_on_demand_runtime_tools()
+            self._sync_on_demand_operator_tools()
             return metadata.name
 
         # A matching registered bucket owns the tool instead of direct registration.
         bucket_name = None
-        if not ToolLibraryOperator.is_runtime_metadata(metadata):
+        if not ToolLibraryOperator.is_operator_metadata(metadata):
             bucket_name = ToolBucket.find_bucket(
                 metadata,
                 self.library,
@@ -599,7 +599,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 tool_name,
                 self._internal_tool_state,
             )
-            is_tool_search = self._is_installed_tool_search(tool_name)
             was_background = _is_background_capable(config)
             was_background_agent = ToolBackground.is_agent_capable(
                 self.library.get(tool_name),
@@ -607,10 +606,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
             )
 
             self._remove_registered_tool(tool_name)
-
-            if is_tool_search:
-                self._internal_tool_state.tool_search_disabled = True
-                return
 
             if is_task_tool:
                 self._internal_tool_state.disabled_background_task_tool_names.add(
@@ -632,11 +627,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     agent_tools=AGENT_TASK_TOOLS,
                     metadata_factory=_inspect_tool_metadata,
                 )
-            self._sync_on_demand_runtime_tools()
+            self._sync_on_demand_operator_tools()
         elif tool_name in self.on_demand_tools:
             self.on_demand_tools.pop(tool_name, None)
             self.tool_configs.pop(tool_name, None)
-            self._sync_on_demand_runtime_tools()
+            self._sync_on_demand_operator_tools()
         else:
             raise ValueError(f"The tool name `{tool_name}` is not in tool library")
 
@@ -692,12 +687,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
             self.tool_configs[tool.name],
             self._internal_tool_state,
         )
-
-        # Re-enable Tool Search when its runtime tool is registered again.
-        if tool.name == ToolSearchTool.name and ToolLibraryOperator.is_runtime_tool(
-            tool
-        ):
-            self._internal_tool_state.tool_search_disabled = False
 
         # Apply the registered tool's visibility and background execution effects.
         self._apply_tool_registration_effects(tool.name)
@@ -796,7 +785,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
                         metadata = _metadata_from_tool(mcp_tool)
                         self.on_demand_tools[mcp_tool.name] = metadata
                         self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
-                        self._sync_on_demand_runtime_tools()
                     else:
                         # Add to library (will have name like "namespace__tool_name")
                         self.library.update({mcp_tool.name: mcp_tool})
@@ -819,6 +807,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     exc_info=True,
                 )
                 # Continue with other servers instead of failing completely
+
+        # Install Tool Search once after all MCP on-demand tools are registered.
+        self._sync_on_demand_operator_tools()
 
     def get_tools(self) -> Iterator[Dict[str, Tool]]:
         return self.library.items()
@@ -926,31 +917,14 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def _is_tool_exposed(self, tool_name: str) -> bool:
         return tool_name not in self.on_demand_tools
 
-    def _sync_on_demand_runtime_tools(self) -> None:
+    def _sync_on_demand_operator_tools(self) -> None:
+        # Tool Search exists exactly while on-demand tools are registered.
         if self.on_demand_tools:
-            self._ensure_on_demand_runtime_tools()
+            if ToolSearchTool.name not in self.library:
+                self.add(ToolSearchTool())
             return
-        self._internal_tool_state.tool_search_disabled = False
-        if not self._is_installed_tool_search(ToolSearchTool.name):
-            return
-        self._remove_registered_tool(ToolSearchTool.name)
-
-    # --- Task Runtime Registration ---
-
-    def _is_installed_tool_search(self, tool_name: str) -> bool:
-        return (
-            tool_name == ToolSearchTool.name
-            and tool_name in self.library
-            and ToolLibraryOperator.is_runtime_tool(self.library.get(tool_name))
-        )
-
-    def _ensure_on_demand_runtime_tools(self) -> None:
-        if (
-            self._is_installed_tool_search(ToolSearchTool.name)
-            or self._internal_tool_state.tool_search_disabled
-        ):
-            return
-        self.add(ToolSearchTool())
+        if ToolSearchTool.name in self.library:
+            self._remove_registered_tool(ToolSearchTool.name)
 
     # --- Tool Call Preparation ---
 
@@ -1064,7 +1038,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if (
             activity_recorder is None
             or _is_reserved_tool_kind(config)
-            or ToolLibraryOperator.is_runtime_tool(self.library.get(tool_name))
+            or ToolLibraryOperator.is_operator_tool(self.library.get(tool_name))
         ):
             return
         activity_recorder.tool_call(tool_name, parameters)

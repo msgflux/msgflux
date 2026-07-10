@@ -120,7 +120,7 @@ The contract is intentionally small:
 - `tool_search` can search both local and MCP-backed on-demand tools
 - keyword searches return matching tool names, and `description=True` includes
   tool metadata
-- `select:tool_name` promotes matching tools by calling `ToolLibrary.add(...)`
+- `select=["tool_name"]` promotes matching tools by calling `ToolLibrary.add(...)`
   again without the `on_demand` flag
 
 This is useful when a session can register a large number of tools but should
@@ -212,7 +212,7 @@ The bucket then forwards those runtime values only when the selected subagent's
 own `tool_config` requests them.
 
 On-demand tools use the same path. An on-demand agent first lives in
-`on_demand_tools`; when `tool_search` receives `select:agent_name`,
+`on_demand_tools`; when `tool_search` receives `select=["agent_name"]`,
 `ToolLibrary.add(...)` runs again and the agent is captured by `AgentTool`.
 
 ## Typed Restoration
