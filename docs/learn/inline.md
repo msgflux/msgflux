@@ -709,7 +709,48 @@ always refer to values stored in the message passed to the pipeline.
 
 ---
 
-## 12. **DSL Grammar**
+## 12. **Visualization**
+
+`Inline` can generate a [Mermaid](https://mermaid.js.org/) flowchart from its
+parsed pipeline. This is useful for documentation, debugging, and sharing
+workflow diagrams with your team.
+
+### `to_mermaid()`
+
+```python
+flux.to_mermaid(title="")  # returns a Mermaid string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `title` | `str` | Optional title displayed above the flowchart. |
+
+The generated diagram uses the following shapes:
+
+| Shape | Meaning |
+|-------|---------|
+| Rectangle `[module]` | Module execution |
+| Diamond `{Decision}` | Conditional branch point |
+| Hexagon `{{if cond}}` | Condition clause (if / elif / else) |
+| Circle `((condition))` | While loop |
+| Dashed arrow `-.->` | Loop back-edge |
+
+???+ example
+
+    ```python
+    import msgflux as mf
+
+    flux = mf.Inline(
+        "load -> process -> save",
+        {"load": lambda m: None, "process": lambda m: None, "save": lambda m: None},
+    )
+
+    print(flux.to_mermaid())
+    ```
+
+---
+
+## 13. **DSL Grammar**
 
 ```
 pipeline     ::= step ("->" step)*
