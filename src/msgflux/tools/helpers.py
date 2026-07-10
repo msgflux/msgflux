@@ -17,6 +17,29 @@ def is_background_capable(config: Mapping[str, Any]) -> bool:
     )
 
 
+def should_dispatch_background(
+    config: Mapping[str, Any],
+    call_params: dict[str, Any],
+) -> bool:
+    if config.get("background", False):
+        call_params.pop(RUNTIME_BACKGROUND_PARAM, None)
+        return True
+    if not config.get("allow_background", False):
+        return False
+    return call_params.pop(RUNTIME_BACKGROUND_PARAM, False) is True
+
+
+def coerce_tool_params(tool_name: str, tool_params: Any) -> dict[str, Any]:
+    if tool_params is None:
+        return {}
+    if isinstance(tool_params, Mapping):
+        return dict(tool_params)
+    raise TypeError(
+        f"Tool `{tool_name}` parameters must be a mapping or None, "
+        f"given `{type(tool_params)}`."
+    )
+
+
 def should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> bool:
     if not config.get("inject_messages", False):
         return False

@@ -48,6 +48,7 @@ from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM as _RUNTIME_BACKGROUND_PARAM,
 )
+from msgflux.tools.helpers import coerce_tool_params as _coerce_tool_params
 from msgflux.tools.helpers import (
     is_background_capable as _is_background_capable,
 )
@@ -56,6 +57,9 @@ from msgflux.tools.helpers import (
 )
 from msgflux.tools.helpers import (
     should_copy_injected_messages as _should_copy_injected_messages,
+)
+from msgflux.tools.helpers import (
+    should_dispatch_background as _should_dispatch_background,
 )
 from msgflux.tools.responses import ToolCall, ToolResponses
 from msgflux.tools.types import (
@@ -862,7 +866,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         """Returns a list of JSON schemas from local and MCP tools."""
         schemas = []
         for tool_name in self.library:
-            if not self._is_tool_exposed(tool_name):
+            if not self._is_tool_schema_exposed(tool_name):
                 continue
             schemas.append(self.library[tool_name].get_json_schema())
 
@@ -872,7 +876,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         """Return local tool annotations keyed by tool name."""
         annotations = {}
         for tool_name, tool in self.library.items():
-            if not self._is_tool_exposed(tool_name):
+            if not self._is_tool_schema_exposed(tool_name):
                 continue
             annotations[tool_name] = {
                 name: hint
@@ -914,7 +918,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 metadata_factory=_inspect_tool_metadata,
             )
 
-    def _is_tool_exposed(self, tool_name: str) -> bool:
+    def _is_tool_schema_exposed(self, tool_name: str) -> bool:
         return tool_name not in self.on_demand_tools
 
     def _sync_on_demand_operator_tools(self) -> None:
@@ -942,7 +946,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("handoff", False) or config.get("disable_input", False):
             call_params: Dict[str, Any] = {}
         else:
-            call_params = self._coerce_tool_params(tool_name, tool_params)
+            call_params = _coerce_tool_params(tool_name, tool_params)
 
         for param_name in config.get("_hidden_params") or {}:
             call_params.pop(param_name, None)
@@ -978,30 +982,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
             )
 
         return call_params
-
-    def _should_dispatch_background(
-        self,
-        *,
-        config: Mapping[str, Any],
-        call_params: Dict[str, Any],
-    ) -> bool:
-        if config.get("background", False):
-            call_params.pop(_RUNTIME_BACKGROUND_PARAM, None)
-            return True
-        if not config.get("allow_background", False):
-            return False
-        return call_params.pop(_RUNTIME_BACKGROUND_PARAM, False) is True
-
-    @staticmethod
-    def _coerce_tool_params(tool_name: str, tool_params: Any) -> Dict[str, Any]:
-        if tool_params is None:
-            return {}
-        if isinstance(tool_params, Mapping):
-            return dict(tool_params)
-        raise TypeError(
-            f"Tool `{tool_name}` parameters must be a mapping or None, "
-            f"given `{type(tool_params)}`."
-        )
 
     @staticmethod
     def build_call_parameters_for_response(
@@ -1151,7 +1131,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 continue
 
-            if self._should_dispatch_background(
+            if _should_dispatch_background(
                 config=config,
                 call_params=call_params,
             ):
@@ -1292,7 +1272,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 continue
 
-            if self._should_dispatch_background(
+            if _should_dispatch_background(
                 config=config,
                 call_params=call_params,
             ):
