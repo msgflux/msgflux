@@ -18,6 +18,7 @@ from msgflux.tools.helpers import (
     BACKGROUND_TASK_TOOL_KIND,
     DEFAULT_AGENT_BACKGROUND_CAPABILITIES,
     TOOL_BUCKET_KIND,
+    is_agent_tool_impl,
     is_background_capable,
     is_reserved_tool_kind,
     normalize_background_capabilities,
@@ -257,8 +258,8 @@ class ToolBackground(ToolLibraryOperator):
         }
 
     @staticmethod
-    def is_agent_source(tool: Any | None, config: Mapping[str, Any]) -> bool:
-        return ToolBucket.has_kind(tool, config, "agent")
+    def is_agent_source(tool: Any | None) -> bool:
+        return is_agent_tool_impl(getattr(tool, "impl", tool))
 
     @classmethod
     def get_background_capabilities(
@@ -275,13 +276,13 @@ class ToolBackground(ToolLibraryOperator):
         if not is_background_capable(config):
             return ()
         if declared_capabilities is None:
-            if cls.is_agent_source(tool, config):
+            if cls.is_agent_source(tool):
                 return DEFAULT_AGENT_BACKGROUND_CAPABILITIES
             return ()
         capabilities = normalize_background_capabilities(declared_capabilities)
         agent_capabilities = {"message"}
         if agent_capabilities.intersection(capabilities) and not cls.is_agent_source(
-            tool, config
+            tool
         ):
             raise ValueError(
                 "`message` background capability is currently only supported by "

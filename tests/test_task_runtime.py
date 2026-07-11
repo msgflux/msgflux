@@ -17,7 +17,7 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
-from msgflux.tools.builtin import TaskActivityTool, TaskStatusTool
+from msgflux.tools.builtin import AgentTool, TaskActivityTool, TaskStatusTool
 from msgflux.tools.builtin.task import (
     BACKGROUND_ACTIVITY_TOOLS,
     BACKGROUND_MESSAGE_TOOLS,
@@ -471,6 +471,17 @@ def test_background_capabilities_validate_declaration():
 
     with pytest.raises(ValueError, match="only supported by agent sources"):
         ToolLibrary(name="lib", tools=[generic_message_job])
+
+
+def test_background_agent_source_detection_uses_implementation_type():
+    worker = Agent(name="worker", model=_mock_model("done"))
+
+    class AgentKindOnly:
+        tool_kind = "agent"
+
+    assert ToolBackground.is_agent_source(worker)
+    assert ToolBackground.is_agent_source(AgentTool())
+    assert not ToolBackground.is_agent_source(AgentKindOnly())
 
 
 def test_hidden_handle_schema_excludes_handle_for_inline_tool():

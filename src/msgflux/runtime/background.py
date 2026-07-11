@@ -313,7 +313,7 @@ class BackgroundTaskDispatcher:
             tool=tool,
             call_params=call_params,
         )
-        is_agent_task = ToolBackground.is_agent_source(tool, config)
+        is_agent_task = ToolBackground.is_agent_source(tool)
         checkpoint_namespace = self._get_checkpoint_namespace(
             tool_name=tool_name,
             tool=tool,

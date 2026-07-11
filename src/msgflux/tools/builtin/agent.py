@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 class AgentTool(ToolBucket):
     """Dispatch a message to one of the configured agents."""
 
-    is_agent_tool = True
     capture_kind = "agent"
     task_resume_params = ("name",)
     task_checkpoint_namespace_param = "name"
