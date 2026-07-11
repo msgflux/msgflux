@@ -816,11 +816,23 @@ class TestToolLibrary:
         assert "remote_lookup" in names
         assert "tool_search" in names
         assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
+        parameters = schemas[0]["function"]["parameters"]
+        properties = parameters["properties"]
+        assert properties["query"]["description"] == "Keywords used to find tools."
+        assert properties["select"]["description"] == "Exact tool names to activate."
+        assert parameters["required"] == [
+            "query",
+            "select",
+            "description",
+            "max_results",
+        ]
+        assert {"type": "null"} in properties["query"]["anyOf"]
+        assert {"type": "null"} in properties["max_results"]["anyOf"]
         assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
         assert library.library["tool_search"].tool_config["inject_handle"] is True
-        assert library.library["tool_search"].tool_config["tool_kind"] == "search"
+        assert library.library["tool_search"].tool_config["tool_kind"] == "tool_search"
 
-    def test_tool_search_is_not_captured_by_search_bucket(self):
+    def test_tool_search_is_not_captured_by_tool_search_bucket(self):
         """Test tool_search stays registered even if a search bucket is added."""
 
         @mf.tool_config(on_demand=True)
@@ -830,7 +842,7 @@ class TestToolLibrary:
 
         class SearchBucket(ToolBucket):
             name = "search_bucket"
-            capture_kind = "search"
+            capture_kind = "tool_search"
             description = "Capture search tools."
             annotations = {"query": str, "return": str}
 
@@ -990,9 +1002,8 @@ class TestToolLibrary:
                 "name": "tool_search",
                 "display_name": "Tool Search",
                 "guidance": (
-                    "Use when the current tools may not cover the task. "
-                    "Search first, then activate exact matches with "
-                    "`select=[<tool_name>]`."
+                    "Search first; activate an exact match with `select` before "
+                    "calling it."
                 ),
             }
         ]
@@ -1026,6 +1037,7 @@ class TestToolLibrary:
         assert result["matches"] == ["remote_lookup"]
         assert result["loaded"] == []
         assert result["descriptions"][0]["name"] == "remote_lookup"
+        assert "already_loaded" not in result
         assert "tool_search" in schema_names
         assert "remote_lookup" not in schema_names
 

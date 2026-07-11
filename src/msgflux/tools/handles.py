@@ -285,9 +285,6 @@ class ToolLibraryHandle:
             "query": query,
             "matches": matches,
             "loaded": loaded,
-            "already_loaded": [
-                tool_name for tool_name in matches if tool_name not in loaded
-            ],
             "descriptions": descriptions,
             "total_on_demand_tools": total,
         }

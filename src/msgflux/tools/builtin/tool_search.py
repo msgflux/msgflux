@@ -9,15 +9,16 @@ class ToolSearchTool(ToolLibraryOperator):
     """Search and activate registered on-demand tools."""
 
     name = "tool_search"
-    tool_kind = "search"
+    tool_kind = "tool_search"
     display_name = "Tool Search"
-    description = (
-        "Search registered on-demand tools by keyword. Use `select` to activate "
-        "exact tools. Set `description=true` to include tool details."
-    )
+    description = """Find on-demand tools. `query` lists; `select` activates.
+
+    Args:
+        query: Keywords used to find tools.
+        select: Exact tool names to activate.
+    """
     usage_guidance = (
-        "Use when the current tools may not cover the task. Search first, then "
-        "activate exact matches with `select=[<tool_name>]`."
+        "Search first; activate an exact match with `select` before calling it."
     )
     annotations = {
         "query": Optional[str],
