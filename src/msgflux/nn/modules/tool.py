@@ -38,7 +38,7 @@ from msgflux.telemetry.span import (
     aset_tool_attributes,
     set_tool_attributes,
 )
-from msgflux.tools.builtin.task import (
+from msgflux.tools.builtin.task_tool import (
     BACKGROUND_CAPABILITY_TOOLS,
     BASE_TASK_TOOLS,
 )

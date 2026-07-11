@@ -105,5 +105,5 @@ def should_copy_injected_messages(tool: Callable, config: Mapping[str, Any]) -> 
 
 def is_agent_tool_impl(impl: Any) -> bool:
     agent_type = import_module("msgflux.nn.modules.agent").Agent
-    agent_tool_type = import_module("msgflux.tools.builtin.agent").AgentTool
+    agent_tool_type = import_module("msgflux.tools.builtin.agent_tool").AgentTool
     return isinstance(impl, (agent_type, agent_tool_type))

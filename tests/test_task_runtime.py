@@ -18,7 +18,7 @@ from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.tools.builtin import AgentTool, TaskActivityTool, TaskStatusTool
-from msgflux.tools.builtin.task import (
+from msgflux.tools.builtin.task_tool import (
     BACKGROUND_ACTIVITY_TOOLS,
     BACKGROUND_MESSAGE_TOOLS,
     BASE_TASK_TOOLS,

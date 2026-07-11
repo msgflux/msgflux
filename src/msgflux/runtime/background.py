@@ -22,7 +22,7 @@ from msgflux.runtime.context import (
     new_thread_id,
 )
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
-from msgflux.tools.builtin.task import (
+from msgflux.tools.builtin.task_tool import (
     build_background_dispatch_result,
     truncate_activity_text,
 )

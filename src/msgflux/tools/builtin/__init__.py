@@ -1,11 +1,11 @@
 """Built-in agent tools ready for use out of the box."""
 
-from msgflux.tools.builtin.agent import AgentTool
 from msgflux.tools.builtin.agent_skills import (
     ActivateSkillTool,
     SkillSearchTool,
 )
-from msgflux.tools.builtin.task import (
+from msgflux.tools.builtin.agent_tool import AgentTool
+from msgflux.tools.builtin.task_tool import (
     BACKGROUND_CAPABILITY_TOOLS,
     BASE_TASK_TOOLS,
     TaskActivityTool,
