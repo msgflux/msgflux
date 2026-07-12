@@ -16,7 +16,7 @@ meet here.
 `ToolLibrary` owns five responsibilities:
 
 - registering local and remote tools
-- routing tools into buckets when a bucket captures their kind
+- routing tools into buckets when a bucket capture matches their configuration
 - exposing tool schemas to other modules
 - executing prepared tool calls
 - collecting results into a uniform `ToolResponses` object
@@ -114,9 +114,8 @@ The contract is intentionally small:
 
 - `@tool_config(on_demand=True)` keeps the tool out of
   `get_tool_json_schemas()` and `get_tool_annotations()`
-- the tool is stored in `ToolLibrary.on_demand_tools` and can still be found by
-  `tool_search`
-- if at least one on-demand tool exists, `ToolLibrary` injects `tool_search`
+- on-demand tools are captured by the builtin `tool_search` bucket
+- if at least one on-demand tool exists, `ToolLibrary` registers `tool_search`
 - `tool_search` can search both local and MCP-backed on-demand tools
 - keyword searches return matching tool names, and `description=True` includes
   tool metadata
@@ -130,13 +129,11 @@ An explicitly injected `ToolLibraryHandle` is the natural companion feature
 here: a tool can add a new on-demand tool at runtime, and `ToolLibrary` will
 expose `tool_search` automatically if needed.
 
-`tool_search` itself is a builtin tool, not a method implemented inside
-`ToolLibrary`. Runtime-aware tools inherit `ToolLibraryOperator`, receive a
-`ToolLibraryHandle` by default, and use that handle to search, describe, select,
-or add tools. Each operator subclass declares its own `tool_kind`; the base
-class is only the marker and handle-injection contract. This keeps `ToolLibrary`
-focused on registration, removal, schema exposure, and execution, while
-operational behavior lives in builtin/runtime components.
+`tool_search` is both a builtin operator and a `ToolBucket` with
+`capture={"on_demand": True}`. It owns the searchable metadata and promotes a
+selected tool through `ToolLibrary.add(...)` with `on_demand=False`. The library
+only performs normal registration and bucket routing; search behavior remains in
+the builtin tool.
 
 Background task control tools follow the same pattern through `ToolBackground`.
 The `task_status`, `task_wait`, `task_output`, `task_interrupt`,
@@ -158,7 +155,7 @@ members of another tool.
 ```python
 class ToolBucket:
     tool_kind = "bucket"
-    capture_kind: str
+    capture: Mapping[str, Any]
 
     def add(self, tool: ToolMetadata) -> None:
         ...
@@ -167,10 +164,16 @@ class ToolBucket:
         ...
 ```
 
-`capture_kind` matches `tool_config["tool_kind"]`. It can name one kind, such
-as `"agent"`, or several kinds separated by `|`, such as
-`"catalog|orders"`. A bucket owns each declared kind, so two buckets cannot
-capture the same kind. A captured tool cannot configure `background` or
+`capture` matches entries in `tool_config`. For example,
+`{"tool_kind": "agent", "on_demand": False}` captures regular agents, while
+`{"on_demand": True}` captures every on-demand tool. Every entry must match.
+`capture["tool_kind"]` can name one kind or several kinds separated by `|`,
+such as `"catalog|orders"`.
+
+Two bucket captures cannot overlap. This makes routing deterministic without a
+priority system. A kind bucket that coexists with on-demand tools should include
+`"on_demand": False`, leaving `{"on_demand": True}` to `tool_search`. The
+base bucket rejects captured tools that configure `background` or
 `allow_background`; configure those flags on the bucket itself instead.
 
 `ToolLibrary` routes matching tools to `ToolBucket.add(...)`. The base method
@@ -180,8 +183,7 @@ derived presentation data such as its description and usage guidance.
 
 The registration rule is:
 
-- if a tool has `on_demand=True`, it goes to `on_demand_tools`
-- otherwise, if a bucket exists for its `tool_kind`, the bucket captures it
+- if a registered bucket matches the tool configuration, the bucket captures it
 - otherwise, the tool is registered normally
 
 When a bucket is registered, it also captures matching tools that are already
@@ -189,8 +191,9 @@ registered. Therefore, the order of `tools` in `ToolLibrary(...)` does not
 change capture behavior.
 
 For agents, `nn.Agent` is normalized to `tool_config["tool_kind"]="agent"`.
-`AgentTool` is a bucket with `capture_kind="agent"`, so adding an agent to a
-library that already has `AgentTool` updates the single public
+`AgentTool` is a bucket with
+`capture={"tool_kind": "agent", "on_demand": False}`, so adding an agent to
+a library that already has `AgentTool` updates the single public
 `agent(name, message)` tool instead of exposing the agent as a separate tool.
 
 ```python
@@ -214,9 +217,9 @@ passes the current `messages`, `vars`, and execution `scope` into the bucket.
 The bucket then forwards those runtime values only when the selected subagent's
 own `tool_config` requests them.
 
-On-demand tools use the same path. An on-demand agent first lives in
-`on_demand_tools`; when `tool_search` receives `select=["agent_name"]`,
-`ToolLibrary.add(...)` runs again and the agent is captured by `AgentTool`.
+On-demand tools use the same path. An on-demand agent is first captured by
+`tool_search`; when it receives `select=["agent_name"]`, `ToolLibrary.add(...)`
+runs again with `on_demand=False`, and `AgentTool` captures it.
 
 ## Typed Restoration
 

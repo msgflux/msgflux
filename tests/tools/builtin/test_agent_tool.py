@@ -126,7 +126,7 @@ def test_agent_tool_rejects_on_demand_agent_on_initialization():
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
     reviewer.tool_config = {"on_demand": True}
 
-    with pytest.raises(ValueError, match="On-demand tools must be registered"):
+    with pytest.raises(ValueError, match="does not match this bucket's capture rule"):
         AgentTool([reviewer])
 
 

@@ -59,7 +59,7 @@ uses:
 
 ```python
 class AgentTool(ToolBucket):
-    capture_kind = "agent"
+    capture = {"tool_kind": "agent", "on_demand": False}
 ```
 
 `ToolBucket` supplies `tool_kind="bucket"`; the library stores that value in
@@ -83,10 +83,12 @@ The bucket updates its own description and usage guidance when agents are
 captured, so the single `agent` tool still tells the model which agents are
 available and when each one should be used.
 
-`capture_kind` can also group multiple kinds with `|`, for example
-`capture_kind = "research|review"`. Each bucket owns its declared kinds, and
-the base `add()` method rejects duplicate captured names and calls the bucket's
-`refresh()` hook so `AgentTool` can update its description and usage guidance.
+`capture` can match any tool configuration field. `capture["tool_kind"]` can
+also group multiple kinds with `|`, for example
+`capture = {"tool_kind": "research|review", "on_demand": False}`. Overlapping
+captures are rejected, and the base `add()` method rejects duplicate captured
+names and calls the bucket's `refresh()` hook so `AgentTool` can update its
+description and usage guidance.
 
 [Tool Search](tool-search.md) is compatible with `ToolBucket` capture.
 On-demand agents can stay outside the active tool set until `tool_search`

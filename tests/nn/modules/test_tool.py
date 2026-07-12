@@ -829,8 +829,9 @@ class TestToolLibrary:
         assert {"type": "null"} in properties["query"]["anyOf"]
         assert {"type": "null"} in properties["max_results"]["anyOf"]
         assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
+        assert isinstance(library.library["tool_search"].impl, ToolBucket)
         assert library.library["tool_search"].tool_config["inject_handle"] is True
-        assert library.library["tool_search"].tool_config["tool_kind"] == "tool_search"
+        assert library.library["tool_search"].tool_config["tool_kind"] == "bucket"
 
     def test_tool_search_is_not_captured_by_tool_search_bucket(self):
         """Test tool_search stays registered even if a search bucket is added."""
@@ -842,7 +843,7 @@ class TestToolLibrary:
 
         class SearchBucket(ToolBucket):
             name = "search_bucket"
-            capture_kind = "tool_search"
+            capture = {"tool_kind": "bucket", "on_demand": False}
             description = "Capture search tools."
             annotations = {"query": str, "return": str}
 
@@ -875,7 +876,7 @@ class TestToolLibrary:
             """Group commerce tools."""
 
             name = "commerce"
-            capture_kind = "catalog|orders"
+            capture = {"tool_kind": "catalog|orders", "on_demand": False}
             annotations = {"return": str}
 
             def __call__(self) -> str:
@@ -910,7 +911,10 @@ class TestToolLibrary:
             """Group background-capable tools."""
 
             name = "background_jobs"
-            capture_kind = "background|allow_background"
+            capture = {
+                "tool_kind": "background|allow_background",
+                "on_demand": False,
+            }
             annotations = {"return": str}
 
             def __call__(self) -> str:
@@ -925,12 +929,12 @@ class TestToolLibrary:
         assert list(library.library) == ["background_jobs"]
         assert set(bucket.tools) == {"background_job", "optional_background_job"}
 
-    def test_tool_bucket_rejects_overlapping_capture_kinds(self):
+    def test_tool_bucket_rejects_overlapping_capture_rules(self):
         class FirstBucket(ToolBucket):
             """Capture catalog tools."""
 
             name = "first"
-            capture_kind = "catalog|orders"
+            capture = {"tool_kind": "catalog|orders", "on_demand": False}
 
             def __call__(self) -> str:
                 return "first"
@@ -939,26 +943,54 @@ class TestToolLibrary:
             """Capture order tools."""
 
             name = "second"
-            capture_kind = "orders|billing"
+            capture = {"tool_kind": "orders|billing", "on_demand": False}
 
             def __call__(self) -> str:
                 return "second"
 
-        with pytest.raises(ValueError, match="capture kind `orders`"):
+        with pytest.raises(ValueError, match=r"capture.*overlaps"):
             ToolLibrary(name="lib", tools=[FirstBucket(), SecondBucket()])
 
-    def test_tool_bucket_rejects_empty_capture_kind_segment(self):
+    def test_tool_bucket_rejects_empty_capture_tool_kind_segment(self):
         class InvalidBucket(ToolBucket):
             """Invalid bucket."""
 
             name = "invalid"
-            capture_kind = "catalog||orders"
+            capture = {"tool_kind": "catalog||orders"}
 
             def __call__(self) -> str:
                 return "invalid"
 
         with pytest.raises(ValueError, match="cannot be empty"):
             ToolLibrary(name="lib", tools=[InvalidBucket()])
+
+    def test_tool_bucket_captures_generic_configuration(self):
+        class PreviewBucket(ToolBucket):
+            """Group preview tools."""
+
+            name = "preview"
+            capture = {"preview": True}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "preview"
+
+        def render_preview() -> str:
+            """Render a preview."""
+            return "preview"
+
+        metadata = ToolMetadata(
+            name="render_preview",
+            description="Render a preview.",
+            annotations={"return": str},
+            tool_config={"tool_kind": "tool", "preview": True},
+            impl=render_preview,
+        )
+        bucket = PreviewBucket()
+        library = ToolLibrary(name="lib", tools=[metadata, bucket])
+
+        assert list(library.library) == ["preview"]
+        assert set(bucket.tools) == {"render_preview"}
 
     def test_tool_library_operator_injects_handle_by_default(self):
         """Test operator tools inherit handle injection."""
@@ -984,6 +1016,29 @@ class TestToolLibrary:
         assert result.tool_calls[0].result == "runtime_echo"
         assert library.library["runtime_echo"].tool_config["inject_handle"] is True
         assert library.library["runtime_echo"].tool_config["tool_kind"] == "diagnostic"
+
+    def test_tool_search_captures_on_demand_operator_tools(self):
+        """Test on-demand operators use the same ToolSearch bucket."""
+
+        class DeferredOperator(ToolLibraryOperator):
+            name = "deferred_operator"
+            description = "List the currently registered tools."
+            annotations = {"handle": mf.Hidden, "return": list[str]}
+            tool_config = {"inject_handle": True, "on_demand": True}
+
+            def __call__(self, handle) -> list[str]:
+                return handle.list_tools()
+
+        library = ToolLibrary(name="lib", tools=[DeferredOperator()])
+
+        assert [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ] == ["tool_search"]
+
+        library([("call_1", "tool_search", {"select": ["deferred_operator"]})])
+        response = library([("call_2", "deferred_operator", {})])
+
+        assert "deferred_operator" in response.tool_calls[0].result
 
     def test_tool_search_has_default_usage_guidance(self):
         """Test tool_search exposes default guidance when on-demand tools exist."""
@@ -1080,7 +1135,7 @@ class TestToolLibrary:
 
         class CatalogBucket(ToolBucket):
             name = "catalog"
-            capture_kind = "catalog"
+            capture = {"tool_kind": "catalog", "on_demand": False}
             description = "Catalog operations."
             annotations = {"query": str, "return": str}
 
@@ -1093,7 +1148,7 @@ class TestToolLibrary:
                 name="lookup",
                 description="Existing lookup.",
                 annotations={},
-                tool_config={"tool_kind": "catalog"},
+                tool_config={"tool_kind": "catalog", "on_demand": False},
                 impl=lambda query: query,
             )
         )
@@ -1111,8 +1166,9 @@ class TestToolLibrary:
         response = library([("call_1", "tool_search", {"select": ["lookup"]})])
 
         assert "Duplicate tool name `lookup` in bucket." in response.tool_calls[0].error
-        assert "lookup" in library.on_demand_tools
-        assert library.on_demand_tools["lookup"].tool_config["on_demand"] is True
+        search = library.library["tool_search"].impl
+        assert "lookup" in search.tools
+        assert search.tools["lookup"].tool_config["on_demand"] is True
 
     def test_tool_search_is_removed_when_last_on_demand_tool_is_removed(self):
         """Test runtime tool cleanup when on-demand tools disappear."""
@@ -1130,8 +1186,8 @@ class TestToolLibrary:
 
         assert "tool_search" not in library.get_tool_names()
 
-    def test_tool_search_is_reinstalled_while_on_demand_tools_remain(self):
-        """Test Tool Search remains derived from the on-demand registry."""
+    def test_tool_search_cannot_be_removed_while_on_demand_tools_remain(self):
+        """Test Tool Search retains its captured on-demand tools."""
 
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
@@ -1140,7 +1196,8 @@ class TestToolLibrary:
 
         library = ToolLibrary(name="lib", tools=[remote_lookup])
 
-        library.remove("tool_search")
+        with pytest.raises(ValueError, match="still captures tools"):
+            library.remove("tool_search")
 
         assert "tool_search" in library.library
 

@@ -131,7 +131,8 @@ class MCPTool(Tool):
             self.set_description(mcp_tool_info.description)
 
         # Store config
-        tc = config or {}
+        tc = {**(config or {})}
+        tc.setdefault("tool_kind", "tool")
         self.register_buffer("tool_config", tc)
 
         # Apply retry
@@ -272,6 +273,7 @@ class LocalTool(Tool):
 def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
     """Extract normalized metadata from a callable tool."""
     tool_config = dotdict(deepcopy(getattr(impl, "tool_config", dotdict())))
+    tool_config.setdefault("on_demand", False)
 
     name_overridden = tool_config.pop("name_overridden", None)
     configured_display_name = tool_config.get("display_name")
@@ -526,7 +528,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.set_name(f"{name}_tool_library")
         self.library = ModuleDict()
         self.register_buffer("tool_configs", {})
-        self.register_buffer("on_demand_tools", {})
         self.register_buffer("mcp_clients", {})
         self._task_store = task_store
         self._agent_inbox: Optional[AgentInbox] = None
@@ -570,40 +571,45 @@ class ToolLibrary(Module, metaclass=AutoParams):
         else:
             metadata = _inspect_tool_metadata(tool)
 
+        metadata.tool_config = dotdict(metadata.tool_config)
+        metadata.tool_config.setdefault("on_demand", False)
+
         if metadata.name in self.library.keys():
             raise ValueError(
                 f"The tool name `{metadata.name}` is already in tool library"
             )
-        if metadata.name in self.on_demand_tools:
-            raise ValueError(
-                f"The tool name `{metadata.name}` is already in on-demand tools"
-            )
-
         if is_background_capable(metadata.tool_config):
             ToolBackground.validate_background_capabilities(
                 metadata.impl,
                 metadata.tool_config,
             )
 
-        # On-demand tools are searchable but not callable until tool_search promotes
-        # them back through this same registration path.
-        if metadata.tool_config.get("on_demand", False):
-            self.on_demand_tools[metadata.name] = metadata
-            self.tool_configs[metadata.name] = metadata.tool_config
-            self._sync_on_demand_operator_tools()
-            return metadata.name
+        # On-demand tools are held by the search bucket until explicit activation.
+        if (
+            metadata.tool_config.get("on_demand", False)
+            and ToolSearchTool.name not in self.library
+        ):
+            self.add(ToolSearchTool())
 
         # A matching registered bucket owns the tool instead of direct registration.
-        bucket_name = None
-        if not ToolLibraryOperator.is_operator_metadata(metadata):
-            bucket_name = ToolBucket.find_bucket(
-                metadata,
-                self.library,
-                self.tool_configs,
-            )
+        bucket_name = ToolBucket.find_bucket(
+            metadata,
+            self.library,
+            self.tool_configs,
+        )
         if bucket_name is not None:
             self._add_to_bucket(bucket_name, metadata)
             return metadata.name
+
+        capturing_bucket = ToolBucket.find_capturing_bucket(
+            metadata.name,
+            self.library,
+            self.tool_configs,
+        )
+        if capturing_bucket is not None:
+            raise ValueError(
+                f"The tool name `{metadata.name}` is already in tool library"
+            )
 
         # Normal tools become directly callable and visible according to their config.
         self._register_tool(metadata)
@@ -611,6 +617,12 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
     def remove(self, tool_name: str):
         if tool_name in self.library.keys():
+            bucket = getattr(self.library[tool_name], "impl", None)
+            if isinstance(bucket, ToolBucket) and bucket.tools:
+                raise ValueError(
+                    f"The bucket tool `{tool_name}` still captures tools and cannot "
+                    "be removed."
+                )
             config = self.tool_configs.get(tool_name, {})
             is_task_tool = ToolBackground.is_active_task_tool(
                 library=self,
@@ -632,13 +644,16 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
             if was_background:
                 self._sync_background_task_tools()
-            self._sync_on_demand_operator_tools()
-        elif tool_name in self.on_demand_tools:
-            self.on_demand_tools.pop(tool_name, None)
-            self.tool_configs.pop(tool_name, None)
-            self._sync_on_demand_operator_tools()
-        else:
+            return
+
+        bucket_name = ToolBucket.find_capturing_bucket(
+            tool_name,
+            self.library,
+            self.tool_configs,
+        )
+        if bucket_name is None:
             raise ValueError(f"The tool name `{tool_name}` is not in tool library")
+        self._remove_from_bucket(bucket_name, tool_name)
 
     def _remove_registered_tool(self, tool_name: str) -> None:
         if tool_name in self.library:
@@ -648,7 +663,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def clear(self):
         self.library.clear()
         self.tool_configs.clear()
-        self.on_demand_tools.clear()
         for mcp_data in self.mcp_clients.values():
             F.wait_for(mcp_data["client"].disconnect)
         self.mcp_clients.clear()
@@ -673,7 +687,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
             # Check every pending capture before changing the current library state.
             for _, captured_tool in captures:
-                ToolBucket.validate_capture(_metadata_from_tool(captured_tool))
+                metadata.impl.validate_capture(_metadata_from_tool(captured_tool))
 
         # Convert callable metadata to the local executable representation when needed.
         tool = (
@@ -683,11 +697,14 @@ class ToolLibrary(Module, metaclass=AutoParams):
         )
 
         # Register the public tool and its normalized configuration together.
-        self.tool_configs[tool.name] = getattr(tool, "tool_config", {})
+        tool_config = dotdict(metadata.tool_config)
+        if isinstance(metadata.source_tool, Tool):
+            tool.register_buffer("tool_config", tool_config)
+        self.tool_configs[tool.name] = tool_config
         self.library.update({tool.name: tool})
 
         # An explicit re-add re-enables a builtin task control tool.
-        config = self.tool_configs[tool.name]
+        config = tool_config
         if is_reserved_tool_kind(config):
             self._disabled_background_task_tool_names.discard(tool.name)
 
@@ -710,8 +727,22 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
         # Let the bucket validate, retain, and refresh its captured state.
         bucket.add(metadata)
+        self._sync_bucket_presentation(bucket_name, bucket)
 
-        # Reflect the bucket's current presentation metadata on its public tool.
+    def _remove_from_bucket(self, bucket_name: str, tool_name: str) -> ToolMetadata:
+        bucket_tool = self.library[bucket_name]
+        bucket = getattr(bucket_tool, "impl", None)
+        if not isinstance(bucket, ToolBucket):
+            raise ValueError(f"The bucket tool `{bucket_name}` cannot release tools.")
+        metadata = bucket.remove(tool_name)
+        if bucket.expose_captured_names and not bucket.tools:
+            self._remove_registered_tool(bucket_name)
+        else:
+            self._sync_bucket_presentation(bucket_name, bucket)
+        return metadata
+
+    def _sync_bucket_presentation(self, bucket_name: str, bucket: ToolBucket) -> None:
+        bucket_tool = self.library[bucket_name]
         if isinstance(getattr(bucket, "description", None), str):
             bucket_tool.set_description(bucket.description)
         bucket_tool.register_buffer(
@@ -784,16 +815,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                         config=tool_config,
                     )
 
-                    if mcp_tool.tool_config.get("on_demand", False):
-                        metadata = _metadata_from_tool(mcp_tool)
-                        self.on_demand_tools[mcp_tool.name] = metadata
-                        self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
-                    else:
-                        # Add to library (will have name like "namespace__tool_name")
-                        self.library.update({mcp_tool.name: mcp_tool})
-                        self.tool_configs[mcp_tool.name] = mcp_tool.tool_config
-                        config = self.tool_configs[mcp_tool.name]
-                        self._sync_background_task_tools_for_source(config)
+                    self.add(mcp_tool)
 
                 self.mcp_clients[namespace] = {
                     "client": client,
@@ -812,17 +834,17 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
                 # Continue with other servers instead of failing completely
 
-        # Install Tool Search once after all MCP on-demand tools are registered.
-        self._sync_on_demand_operator_tools()
-
     def get_tools(self) -> Iterator[Dict[str, Tool]]:
         return self.library.items()
 
     def get_tool_names(self) -> List[str]:
         """Get names of all tools."""
-        return list(self.library.keys()) + [
-            name for name in self.on_demand_tools if name not in self.library
-        ]
+        names = list(self.library.keys())
+        for tool in self.library.values():
+            bucket = getattr(tool, "impl", None)
+            if isinstance(bucket, ToolBucket) and bucket.expose_captured_names:
+                names.extend(name for name in bucket.tools if name not in names)
+        return names
 
     def get_tool_display_names(self) -> Dict[str, str]:
         """Return human-readable display names keyed by registered tool name."""
@@ -864,20 +886,12 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
     def get_tool_json_schemas(self) -> List[Dict[str, Any]]:
         """Returns a list of JSON schemas from local and MCP tools."""
-        schemas = []
-        for tool_name in self.library:
-            if not self._is_tool_schema_exposed(tool_name):
-                continue
-            schemas.append(self.library[tool_name].get_json_schema())
-
-        return schemas
+        return [tool.get_json_schema() for tool in self.library.values()]
 
     def get_tool_annotations(self) -> Dict[str, Dict[str, Any]]:
         """Return local tool annotations keyed by tool name."""
         annotations = {}
         for tool_name, tool in self.library.items():
-            if not self._is_tool_schema_exposed(tool_name):
-                continue
             annotations[tool_name] = {
                 name: hint
                 for name, hint in tool.get_module_annotations().items()
@@ -900,8 +914,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
             return context_task_store
         return self._get_default_task_store()
 
-    # --- Tool Visibility Helpers ---
-
     def _sync_background_task_tools_for_source(
         self,
         config: Mapping[str, Any],
@@ -918,18 +930,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
             capability_tools=BACKGROUND_CAPABILITY_TOOLS,
             metadata_factory=_inspect_tool_metadata,
         )
-
-    def _is_tool_schema_exposed(self, tool_name: str) -> bool:
-        return tool_name not in self.on_demand_tools
-
-    def _sync_on_demand_operator_tools(self) -> None:
-        # Tool Search exists exactly while on-demand tools are registered.
-        if self.on_demand_tools:
-            if ToolSearchTool.name not in self.library:
-                self.add(ToolSearchTool())
-            return
-        if ToolSearchTool.name in self.library:
-            self._remove_registered_tool(ToolSearchTool.name)
 
     # --- Tool Call Preparation ---
 

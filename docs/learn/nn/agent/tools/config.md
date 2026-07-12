@@ -649,7 +649,7 @@ class CommerceTool(ToolBucket):
     """Group commerce operations."""
 
     name = "commerce"
-    capture_kind = "catalog|orders"
+    capture = {"tool_kind": "catalog|orders", "on_demand": False}
     annotations = {"return": str}
 
     def __call__(self) -> str:
@@ -665,9 +665,11 @@ print(library.get_tool_names())
 ```
 
 `CommerceTool` captures the `catalog` tool regardless of their order during
-library initialization. `capture_kind` accepts one kind or several kinds
-separated by `|`; a kind can belong to only one bucket. Configure
-`background` or `allow_background` on the bucket, not on a tool it captures.
+library initialization. `capture` matches `tool_config` entries, and
+`capture["tool_kind"]` accepts one kind or several kinds separated by `|`.
+Overlapping captures are rejected. Configure `background` or
+`allow_background` on the bucket, not on a tool it captures with the base
+`ToolBucket` validation.
 
 ## display_name
 

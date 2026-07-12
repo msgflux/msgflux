@@ -47,17 +47,14 @@ def unwrap_hidden_annotation(annotation: Any) -> Any | None:
 
 
 class ToolBucket:
-    """Base class for tools that absorb other tools by kind."""
+    """Base class for tools that capture tools matching a configuration."""
 
     tool_kind = TOOL_BUCKET_KIND
-    capture_kind: str
+    capture: Mapping[str, Any] | None = None
+    expose_captured_names = False
 
     def add(self, tool: ToolMetadata) -> None:
         """Store a captured tool and refresh metadata derived from its contents."""
-        if tool.tool_config.get("on_demand", False):
-            raise ValueError(
-                "On-demand tools must be registered through `ToolLibrary.add(...)`."
-            )
         self.validate_capture(tool)
         if tool.name in self.tools:
             raise ValueError(f"Duplicate tool name `{tool.name}` in bucket.")
@@ -67,6 +64,21 @@ class ToolBucket:
         except Exception:
             self.tools.pop(tool.name, None)
             raise
+
+    def remove(self, tool_name: str) -> ToolMetadata:
+        """Release a captured tool and refresh metadata derived from its contents."""
+        try:
+            tool = self.tools.pop(tool_name)
+        except KeyError as exc:
+            raise ValueError(
+                f"Tool `{tool_name}` is not captured by this bucket."
+            ) from exc
+        try:
+            self.refresh()
+        except Exception:
+            self.tools[tool_name] = tool
+            raise
+        return tool
 
     @property
     def tools(self) -> Dict[str, ToolMetadata]:
@@ -78,40 +90,52 @@ class ToolBucket:
         """Refresh presentation metadata after the library captures a tool."""
 
     @property
-    def capture_kinds(self) -> tuple[str, ...]:
-        capture_kind = getattr(self, "capture_kind", None)
-        if not isinstance(capture_kind, str) or not capture_kind.strip():
-            raise ValueError("A bucket tool must define a non-empty capture_kind.")
-
-        kinds = tuple(kind.strip() for kind in capture_kind.split("|"))
-        if not all(kinds):
-            raise ValueError("Bucket capture_kind values cannot be empty.")
-        if len(set(kinds)) != len(kinds):
-            raise ValueError("Bucket capture_kind values must be unique.")
-        return kinds
+    def capture_rules(self) -> Mapping[str, Any]:
+        """Return the validated configuration predicates for this bucket."""
+        capture = getattr(self, "capture", None)
+        if not isinstance(capture, Mapping) or not capture:
+            raise ValueError("A bucket tool must define a non-empty `capture` mapping.")
+        if not all(isinstance(key, str) and key for key in capture):
+            raise ValueError("Bucket capture keys must be non-empty strings.")
+        for key, value in capture.items():
+            self._capture_values(key, value)
+        return capture
 
     @staticmethod
-    def validate_capture(metadata: ToolMetadata) -> None:
+    def _capture_values(key: str, value: Any) -> tuple[Any, ...]:
+        """Normalize a capture value for matching and overlap validation."""
+        if key != "tool_kind":
+            return (value,)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                "Bucket `capture['tool_kind']` must be a non-empty string."
+            )
+        values = tuple(part.strip() for part in value.split("|"))
+        if not all(values):
+            raise ValueError("Bucket `capture['tool_kind']` values cannot be empty.")
+        if len(set(values)) != len(values):
+            raise ValueError("Bucket `capture['tool_kind']` values must be unique.")
+        return values
+
+    def captures_config(self, tool_config: Mapping[str, Any]) -> bool:
+        return all(
+            tool_config.get(key) in self._capture_values(key, value)
+            for key, value in self.capture_rules.items()
+        )
+
+    def captures(self, metadata: ToolMetadata) -> bool:
+        return self.captures_config(metadata.tool_config)
+
+    def validate_capture(self, metadata: ToolMetadata) -> None:
         if is_background_capable(metadata.tool_config):
             raise ValueError(
                 "Bucket-captured tools cannot use `background=True` or "
                 f"`allow_background=True`. Tool `{metadata.name}` cannot be captured."
             )
-
-    @classmethod
-    def has_kind(
-        cls,
-        tool: Any | None,
-        config: Mapping[str, Any],
-        kind: str,
-    ) -> bool:
-        tool_kind = config.get("tool_kind", "tool")
-        if tool_kind == kind:
-            return True
-        if tool_kind != cls.tool_kind or tool is None:
-            return False
-        bucket = getattr(tool, "impl", tool)
-        return isinstance(bucket, cls) and kind in bucket.capture_kinds
+        if not self.captures(metadata):
+            raise ValueError(
+                f"Tool `{metadata.name}` does not match this bucket's capture rule."
+            )
 
     @classmethod
     def find_bucket(
@@ -120,15 +144,21 @@ class ToolBucket:
         tools: Mapping[str, Any],
         tool_configs: Mapping[str, Mapping[str, Any]],
     ) -> str | None:
-        tool_kind = metadata.tool_config.get("tool_kind", "tool")
-        if tool_kind == cls.tool_kind:
+        if metadata.tool_config.get("tool_kind") == cls.tool_kind:
             return None
-        return cls.find_bucket_for_kind(tool_kind, tools, tool_configs)
+        for bucket_name, tool in tools.items():
+            config = tool_configs.get(bucket_name, {})
+            if config.get("tool_kind") != cls.tool_kind:
+                continue
+            bucket = getattr(tool, "impl", tool)
+            if isinstance(bucket, cls) and bucket.captures(metadata):
+                return bucket_name
+        return None
 
     @classmethod
-    def find_bucket_for_kind(
+    def find_capturing_bucket(
         cls,
-        tool_kind: str,
+        tool_name: str,
         tools: Mapping[str, Any],
         tool_configs: Mapping[str, Mapping[str, Any]],
     ) -> str | None:
@@ -136,28 +166,9 @@ class ToolBucket:
             config = tool_configs.get(bucket_name, {})
             if config.get("tool_kind") != cls.tool_kind:
                 continue
-            if cls.has_kind(tool, config, tool_kind):
-                return bucket_name
-        return None
-
-    @classmethod
-    def find_captured_metadata(
-        cls,
-        tool_name: str,
-        tools: Mapping[str, Any],
-        tool_configs: Mapping[str, Mapping[str, Any]],
-    ) -> ToolMetadata | None:
-        """Find metadata that is owned by a registered bucket."""
-        for bucket_name, tool in tools.items():
-            config = tool_configs.get(bucket_name, {})
-            if config.get("tool_kind") != cls.tool_kind:
-                continue
             bucket = getattr(tool, "impl", tool)
-            if not isinstance(bucket, cls):
-                continue
-            metadata = bucket.tools.get(tool_name)
-            if metadata is not None:
-                return metadata
+            if isinstance(bucket, cls) and tool_name in bucket.tools:
+                return bucket_name
         return None
 
     @classmethod
@@ -170,11 +181,9 @@ class ToolBucket:
         candidates = []
         for tool_name, tool in tools.items():
             config = tool_configs.get(tool_name, {})
-            if config.get(
-                "tool_kind"
-            ) == cls.tool_kind or ToolLibraryOperator.is_operator_tool(tool):
+            if config.get("tool_kind") == cls.tool_kind:
                 continue
-            if config.get("tool_kind", "tool") in bucket.capture_kinds:
+            if bucket.captures_config(config):
                 candidates.append((tool_name, tool))
         return candidates
 
@@ -190,17 +199,37 @@ class ToolBucket:
             raise ValueError(
                 f"The bucket tool `{metadata.name}` must inherit ToolBucket."
             )
-        for capture_kind in bucket.capture_kinds:
-            existing_bucket = cls.find_bucket_for_kind(
-                capture_kind,
-                tools,
-                tool_configs,
-            )
-            if existing_bucket is not None:
+        capture = bucket.capture_rules
+        for bucket_name, tool in tools.items():
+            config = tool_configs.get(bucket_name, {})
+            if config.get("tool_kind") != cls.tool_kind:
+                continue
+            registered_bucket = getattr(tool, "impl", tool)
+            if not isinstance(registered_bucket, cls):
+                continue
+            if cls._captures_overlap(capture, registered_bucket.capture_rules):
                 raise ValueError(
-                    f"The bucket capture kind `{capture_kind}` is already handled by "
-                    f"`{existing_bucket}`."
+                    f"The bucket capture for `{metadata.name}` overlaps with "
+                    f"`{bucket_name}`."
                 )
+
+    @classmethod
+    def _captures_overlap(
+        cls,
+        first: Mapping[str, Any],
+        second: Mapping[str, Any],
+    ) -> bool:
+        """Return whether two capture rules can match the same configuration."""
+        for key in first.keys() & second.keys():
+            first_values = cls._capture_values(key, first[key])
+            second_values = cls._capture_values(key, second[key])
+            if not any(
+                first_value == second_value
+                for first_value in first_values
+                for second_value in second_values
+            ):
+                return False
+        return True
 
 
 class ToolLibraryOperator:
@@ -214,10 +243,6 @@ class ToolLibraryOperator:
             return False
         impl = getattr(tool, "impl", tool)
         return isinstance(impl, cls)
-
-    @classmethod
-    def is_operator_metadata(cls, metadata: ToolMetadata) -> bool:
-        return isinstance(metadata.impl, cls)
 
 
 class ToolBackground(ToolLibraryOperator):

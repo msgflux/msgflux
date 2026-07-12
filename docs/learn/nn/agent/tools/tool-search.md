@@ -25,6 +25,11 @@ When at least one on-demand tool exists, msgFlux exposes a runtime tool named
 `tool_search`. The on-demand tools are searchable but are not included in the
 normal callable tool schemas until selected.
 
+Internally, `tool_search` is a `ToolBucket` with
+`capture={"on_demand": True}`. This keeps the search index and the deferred
+tool metadata together; selecting a tool promotes it back through normal
+library registration.
+
 ```python
 schema_names = [
     schema["function"]["name"]

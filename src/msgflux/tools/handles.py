@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
 from msgflux.runtime.context import execution_context, get_execution_context
-from msgflux.tools.types import ToolBucket
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolLibrary
@@ -149,145 +147,6 @@ class ToolLibraryHandle:
                 task=task,
                 message=message,
             )
-
-    def list_on_demand_tools(self) -> List[str]:
-        return list(self._library.on_demand_tools.keys())
-
-    def describe_tool(self, tool_name: str) -> dict[str, Any]:
-        metadata = self._library.on_demand_tools.get(tool_name)
-        if metadata is None and tool_name in self._library.library:
-            tool = self._library.library[tool_name]
-            return {
-                "name": tool.name,
-                "display_name": getattr(tool, "display_name", None) or tool.name,
-                "description": tool.description,
-                "usage_guidance": getattr(tool, "usage_guidance", None),
-                "tool_kind": getattr(tool, "tool_config", {}).get("tool_kind", "tool"),
-            }
-        if metadata is None:
-            metadata = ToolBucket.find_captured_metadata(
-                tool_name,
-                self._library.library,
-                self._library.tool_configs,
-            )
-        if metadata is None:
-            raise ValueError(f"Tool `{tool_name}` not found.")
-        return self._describe_metadata(metadata)
-
-    @staticmethod
-    def _describe_metadata(metadata: Any) -> dict[str, Any]:
-        return {
-            "name": metadata.name,
-            "display_name": metadata.display_name or metadata.name,
-            "description": metadata.description,
-            "usage_guidance": metadata.usage_guidance,
-            "tool_kind": metadata.tool_config.get("tool_kind", "tool"),
-        }
-
-    def search_on_demand_tools(
-        self,
-        *,
-        query: str,
-        max_results: int = 5,
-    ) -> List[str]:
-        query_lower = query.strip().lower()
-        terms = [term for term in query_lower.split() if term]
-        if not terms:
-            return []
-
-        matches = []
-        for tool_name, metadata in self._library.on_demand_tools.items():
-            name_parts = tool_name.lower().replace("__", " ").replace("_", " ")
-            description = (metadata.description or "").lower()
-            score = 0
-            if query_lower == tool_name.lower():
-                score += 100
-            if query_lower in name_parts:
-                score += 40
-            for term in terms:
-                if term in name_parts:
-                    score += 15
-                if description and term in description:
-                    score += 5
-            if score > 0:
-                matches.append((score, tool_name))
-
-        matches.sort(key=lambda item: (-item[0], item[1]))
-        return [tool_name for _, tool_name in matches[:max_results]]
-
-    def select_on_demand_tools(self, requested: List[str]) -> List[str]:
-        resolved = []
-        normalized = {
-            tool_name.lower(): tool_name for tool_name in self._library.on_demand_tools
-        }
-        for tool_name in requested:
-            match = normalized.get(tool_name.lower())
-            if match is not None and match not in resolved:
-                resolved.append(match)
-        return resolved
-
-    def activate_on_demand_tools(self, tool_names: List[str]) -> List[str]:
-        activated = []
-        for tool_name in tool_names:
-            metadata = self._library.on_demand_tools.get(tool_name)
-            if metadata is None:
-                continue
-            self._activate_on_demand_tool(metadata)
-            activated.append(tool_name)
-        self._library._sync_on_demand_operator_tools()
-        return activated
-
-    def _activate_on_demand_tool(self, metadata: Any) -> None:
-        """Promote one on-demand tool while restoring it if registration fails."""
-        tool_name = metadata.name
-        original_config = self._library.tool_configs.get(tool_name)
-        promoted = replace(
-            metadata,
-            tool_config={**metadata.tool_config, "on_demand": False},
-        )
-
-        # `ToolLibrary.add` rejects names still present in the on-demand registry.
-        self._library.on_demand_tools.pop(tool_name)
-        self._library.tool_configs.pop(tool_name, None)
-        try:
-            self._library.add(promoted)
-        except Exception:
-            self._library.on_demand_tools[tool_name] = metadata
-            if original_config is not None:
-                self._library.tool_configs[tool_name] = original_config
-            raise
-
-    def search_tools(
-        self,
-        *,
-        query: str | None,
-        select: List[str] | None,
-        include_descriptions: bool,
-        max_results: int,
-    ) -> dict[str, Any]:
-        """Search or promote on-demand tools through one stateful operation."""
-        total = len(self._library.on_demand_tools)
-        if select is not None:
-            matches = self.select_on_demand_tools(select)
-            loaded = self.activate_on_demand_tools(matches)
-        else:
-            matches = self.search_on_demand_tools(
-                query=query or "",
-                max_results=max_results,
-            )
-            loaded = []
-
-        descriptions = []
-        if include_descriptions:
-            descriptions = [self.describe_tool(tool_name) for tool_name in matches]
-
-        return {
-            "query": query,
-            "matches": matches,
-            "loaded": loaded,
-            "descriptions": descriptions,
-            "total_on_demand_tools": total,
-        }
 
     def build_notification_handle(
         self,

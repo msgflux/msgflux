@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
-from msgflux.tools.types import Hidden, ToolLibraryOperator
+from msgflux.tools.dataclasses import ToolMetadata
+from msgflux.tools.types import Hidden, ToolBucket, ToolLibraryOperator
 
 
-class ToolSearchTool(ToolLibraryOperator):
+class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     """Search and activate registered on-demand tools."""
 
     name = "tool_search"
-    tool_kind = "tool_search"
+    capture = {"on_demand": True}
+    expose_captured_names = True
     display_name = "Tool Search"
     description = """Find on-demand tools. `query` lists; `select` activates.
 
@@ -44,12 +47,98 @@ class ToolSearchTool(ToolLibraryOperator):
         if max_results <= 0:
             raise ValueError("`max_results` must be greater than 0.")
 
-        return handle.search_tools(
-            query=query,
-            select=select,
-            include_descriptions=description,
-            max_results=max_results,
-        )
+        total = len(self.tools)
+        if select is not None:
+            matches = self._select(select)
+            descriptions = self._describe_matches(matches) if description else []
+            loaded = self._activate(matches, handle)
+        else:
+            matches = self._search(query or "", max_results)
+            descriptions = self._describe_matches(matches) if description else []
+            loaded = []
+
+        if not self.tools:
+            handle.remove(self.name)
+
+        return {
+            "query": query,
+            "matches": matches,
+            "loaded": loaded,
+            "descriptions": descriptions,
+            "total_on_demand_tools": total,
+        }
+
+    def validate_capture(self, metadata: ToolMetadata) -> None:
+        if not self.captures(metadata):
+            raise ValueError(
+                f"Tool `{metadata.name}` does not match this bucket's capture rule."
+            )
+
+    def _search(self, query: str, max_results: int) -> List[str]:
+        query_lower = query.strip().lower()
+        terms = [term for term in query_lower.split() if term]
+        if not terms:
+            return []
+
+        matches = []
+        for tool_name, metadata in self.tools.items():
+            name_parts = tool_name.lower().replace("__", " ").replace("_", " ")
+            description = (metadata.description or "").lower()
+            score = 0
+            if query_lower == tool_name.lower():
+                score += 100
+            if query_lower in name_parts:
+                score += 40
+            for term in terms:
+                if term in name_parts:
+                    score += 15
+                if description and term in description:
+                    score += 5
+            if score > 0:
+                matches.append((score, tool_name))
+
+        matches.sort(key=lambda item: (-item[0], item[1]))
+        return [tool_name for _, tool_name in matches[:max_results]]
+
+    def _select(self, requested: List[str]) -> List[str]:
+        resolved = []
+        normalized = {tool_name.lower(): tool_name for tool_name in self.tools}
+        for tool_name in requested:
+            match = normalized.get(tool_name.lower())
+            if match is not None and match not in resolved:
+                resolved.append(match)
+        return resolved
+
+    def _describe_matches(self, tool_names: List[str]) -> List[dict[str, Any]]:
+        return [
+            self._describe_metadata(self.tools[tool_name]) for tool_name in tool_names
+        ]
+
+    @staticmethod
+    def _describe_metadata(metadata: ToolMetadata) -> dict[str, Any]:
+        return {
+            "name": metadata.name,
+            "display_name": metadata.display_name or metadata.name,
+            "description": metadata.description,
+            "usage_guidance": metadata.usage_guidance,
+            "tool_kind": metadata.tool_config.get("tool_kind", "tool"),
+        }
+
+    def _activate(self, tool_names: List[str], handle) -> List[str]:
+        activated = []
+        for tool_name in tool_names:
+            metadata = self.remove(tool_name)
+            promoted = replace(
+                metadata,
+                tool_config={**metadata.tool_config, "on_demand": False},
+            )
+            try:
+                handle.add(promoted)
+            except Exception:
+                self.add(metadata)
+                raise
+            activated.append(tool_name)
+        return activated
 
     @staticmethod
     def _normalize_selection(
