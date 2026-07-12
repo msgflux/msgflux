@@ -702,6 +702,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
             tool.register_buffer("tool_config", tool_config)
         self.tool_configs[tool.name] = tool_config
         self.library.update({tool.name: tool})
+        if isinstance(metadata.impl, ToolBucket):
+            metadata.impl.refresh()
+            self._sync_bucket_presentation(tool.name, metadata.impl)
 
         # An explicit re-add re-enables a builtin task control tool.
         config = tool_config
@@ -745,10 +748,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
         bucket_tool = self.library[bucket_name]
         if isinstance(getattr(bucket, "description", None), str):
             bucket_tool.set_description(bucket.description)
-        bucket_tool.register_buffer(
-            "usage_guidance",
-            getattr(bucket, "usage_guidance", None),
-        )
+        if hasattr(bucket, "usage_guidance"):
+            bucket_tool.register_buffer(
+                "usage_guidance",
+                bucket.usage_guidance,
+            )
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""

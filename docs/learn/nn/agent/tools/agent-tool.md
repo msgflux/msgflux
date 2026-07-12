@@ -79,9 +79,12 @@ print(library.get_tool_names())
 # ["agent"]
 ```
 
-The bucket updates its own description and usage guidance when agents are
-captured, so the single `agent` tool still tells the model which agents are
-available and when each one should be used.
+The bucket description is a compact list of the available agents. Explicit
+`usage_guidance` on individual agents is aggregated separately, so the model
+gets delegation guidance without inflating the tool description.
+
+The generic guidance for `agent` is opt-in through
+`apply_tool_guidance([AgentTool(...)])`, like other builtin guidance entries.
 
 `capture` can match any tool configuration field. `capture["tool_kind"]` can
 also group multiple kinds with `|`, for example

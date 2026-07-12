@@ -7,6 +7,7 @@ from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.runtime.context import execution_context
+from msgflux.tools import BUILTIN_TOOL_USAGE_GUIDANCE, apply_tool_guidance
 from msgflux.tools.builtin import AgentTool
 
 
@@ -76,6 +77,43 @@ def test_agent_tool_exposes_single_agent_tool_with_name_and_message_params():
     assert schema["function"]["name"] == "agent"
     properties = schema["function"]["parameters"]["properties"]
     assert set(properties) == {"name", "message"}
+
+
+def test_agent_tool_description_lists_available_agents():
+    reviewer = Agent(
+        name="reviewer",
+        model=_mock_model("reviewed"),
+        description="Reviews drafts for clarity.",
+    )
+
+    tool = AgentTool([reviewer])
+
+    assert (
+        tool.description == "Available agents:\n- reviewer: Reviews drafts for clarity."
+    )
+
+
+def test_agent_tool_builtin_usage_guidance_is_opt_in_and_survives_capture():
+    assert (
+        ToolLibrary(name="default", tools=[AgentTool()]).get_tool_usage_guidance() == []
+    )
+
+    [agent_tool] = apply_tool_guidance([AgentTool()])
+    reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
+    library = ToolLibrary(name="lib", tools=[agent_tool])
+
+    expected_guidance = [
+        {
+            "name": "agent",
+            "display_name": "Agent",
+            "guidance": BUILTIN_TOOL_USAGE_GUIDANCE["agent"],
+        }
+    ]
+    assert library.get_tool_usage_guidance() == expected_guidance
+
+    library.add(reviewer)
+
+    assert library.get_tool_usage_guidance() == expected_guidance
 
 
 def test_agent_tool_collects_agent_usage_guidance():

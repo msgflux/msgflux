@@ -27,10 +27,7 @@ class AgentTool(ToolBucket):
         "inject_messages": True,
         "inject_vars": True,
     }
-    description = (
-        "Send a message to one of the configured agents. Use this when a "
-        "specialized agent is better suited for the task."
-    )
+    description = "Available agents:"
     annotations = {"name": str, "message": str, "return": str}
 
     def __init__(self, agents: Sequence[Agent] = ()):
@@ -172,19 +169,24 @@ class AgentTool(ToolBucket):
                 agent_lines.append(f"- {agent_name}")
         if not agent_lines:
             agent_lines.append("- none")
-        return f"{self._base_description}\n\nAvailable agents:\n" + "\n".join(
-            agent_lines
-        )
+        return f"{self._base_description}\n" + "\n".join(agent_lines)
 
     def _build_usage_guidance(self) -> str | None:
+        guidance_sections: List[str] = []
+        configured_guidance = self.tool_config.get("usage_guidance")
+        if isinstance(configured_guidance, str) and configured_guidance.strip():
+            guidance_sections.append(" ".join(configured_guidance.split()))
+
         guidance_lines: List[str] = []
         for agent_name, metadata in sorted(self.tools.items()):
             guidance = metadata.usage_guidance
             if isinstance(guidance, str) and guidance.strip():
                 guidance_lines.append(f"- {agent_name}: {' '.join(guidance.split())}")
-        if not guidance_lines:
-            return None
-        return "Agent-specific guidance:\n" + "\n".join(guidance_lines)
+        if guidance_lines:
+            guidance_sections.append(
+                "Agent-specific guidance:\n" + "\n".join(guidance_lines)
+            )
+        return "\n\n".join(guidance_sections) or None
 
     @staticmethod
     def _get_agent_name(agent: Agent) -> str:
