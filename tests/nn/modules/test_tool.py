@@ -818,16 +818,8 @@ class TestToolLibrary:
         assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
         parameters = schemas[0]["function"]["parameters"]
         properties = parameters["properties"]
-        assert properties["query"]["description"] == "Keywords used to find tools."
-        assert properties["select"]["description"] == "Exact tool names to activate."
-        assert parameters["required"] == [
-            "query",
-            "select",
-            "description",
-            "max_results",
-        ]
-        assert {"type": "null"} in properties["query"]["anyOf"]
-        assert {"type": "null"} in properties["max_results"]["anyOf"]
+        assert properties == {"query": {"type": "string"}}
+        assert parameters["required"] == ["query"]
         assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
         assert isinstance(library.library["tool_search"].impl, ToolBucket)
         assert library.library["tool_search"].tool_config["handle"] == {
@@ -1042,13 +1034,13 @@ class TestToolLibrary:
             schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ] == ["tool_search"]
 
-        library([("call_1", "tool_search", {"select": ["deferred_operator"]})])
+        library([("call_1", "tool_search", {"query": "deferred_operator"})])
         response = library([("call_2", "deferred_operator", {})])
 
         assert "deferred_operator" in response.tool_calls[0].result
 
-    def test_tool_search_has_default_usage_guidance(self):
-        """Test tool_search exposes default guidance when on-demand tools exist."""
+    def test_tool_search_does_not_duplicate_schema_guidance(self):
+        """Tool search syntax lives in its schema description only."""
 
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
@@ -1059,16 +1051,7 @@ class TestToolLibrary:
 
         guidance = library.get_tool_usage_guidance()
 
-        assert guidance == [
-            {
-                "name": "tool_search",
-                "display_name": "Tool Search",
-                "guidance": (
-                    "Search first; activate an exact match with `select` before "
-                    "calling it."
-                ),
-            }
-        ]
+        assert guidance == []
 
     def test_tool_search_returns_matching_on_demand_tools_without_loading(self):
         """Test that keyword search describes matches without exposing them."""
@@ -1086,7 +1069,7 @@ class TestToolLibrary:
                     (
                         "call_1",
                         "tool_search",
-                        {"query": "remote lookup", "description": True},
+                        {"query": "remote lookup"},
                     )
                 ]
             )
@@ -1096,15 +1079,12 @@ class TestToolLibrary:
         schemas = library.get_tool_json_schemas()
         schema_names = [schema["function"]["name"] for schema in schemas]
 
-        assert result["matches"] == ["remote_lookup"]
-        assert result["loaded"] == []
-        assert result["descriptions"][0]["name"] == "remote_lookup"
-        assert "already_loaded" not in result
+        assert result == "remote_lookup: Look up external information."
         assert "tool_search" in schema_names
         assert "remote_lookup" not in schema_names
 
-    def test_tool_search_select_supports_explicit_and_legacy_names(self):
-        """Test that tool_search supports explicit selection and legacy syntax."""
+    def test_tool_search_exact_name_loads_and_regex_limit_searches(self):
+        """Exact names load; regex and :K keep search compact."""
 
         @mf.tool_config(on_demand=True)
         def read_cloud_file(path: str) -> str:
@@ -1121,21 +1101,37 @@ class TestToolLibrary:
             tools=[read_cloud_file, read_legacy_file],
         )
 
-        explicit_result = (
-            library([("call_1", "tool_search", {"select": ["read_cloud_file"]})])
+        regex_result = (
+            library([("call_1", "tool_search", {"query": "/read_.*_file/:1"})])
             .tool_calls[0]
             .result
         )
-        legacy_result = (
-            library([("call_2", "tool_search", {"query": "select:read_legacy_file"})])
+        loaded_result = (
+            library([("call_2", "tool_search", {"query": "read_cloud_file"})])
             .tool_calls[0]
             .result
         )
 
-        assert explicit_result["matches"] == ["read_cloud_file"]
-        assert explicit_result["loaded"] == ["read_cloud_file"]
-        assert legacy_result["matches"] == ["read_legacy_file"]
-        assert legacy_result["loaded"] == ["read_legacy_file"]
+        assert regex_result == "read_cloud_file: Read a cloud file."
+        assert loaded_result == "loaded=read_cloud_file"
+
+    def test_tool_search_rejects_unsafe_regex_and_invalid_limit(self):
+        @mf.tool_config(on_demand=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        unsafe = library(
+            [("call_1", "tool_search", {"query": "/(a+)+$/"})]
+        ).tool_calls[0]
+        invalid_limit = library(
+            [("call_2", "tool_search", {"query": "remote:0"})]
+        ).tool_calls[0]
+
+        assert "quantified groups" in unsafe.error
+        assert "between 1 and 20" in invalid_limit.error
 
     def test_tool_search_restores_tool_when_activation_fails(self):
         """Test failed promotion does not discard an on-demand tool."""
@@ -1170,7 +1166,7 @@ class TestToolLibrary:
             return query
 
         library = ToolLibrary(name="lib", tools=[bucket, delayed_lookup])
-        response = library([("call_1", "tool_search", {"select": ["lookup"]})])
+        response = library([("call_1", "tool_search", {"query": "lookup"})])
 
         assert "Duplicate tool name `lookup` in bucket." in response.tool_calls[0].error
         search = library.library["tool_search"].impl

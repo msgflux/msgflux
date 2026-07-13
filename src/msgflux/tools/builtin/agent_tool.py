@@ -27,7 +27,7 @@ class AgentTool(ToolBucket):
         "inject_messages": True,
         "inject_vars": True,
     }
-    description = "Available agents:"
+    description = "Delegate a message to an available agent. Available agents:"
     annotations = {"name": str, "message": str, "return": str}
 
     def __init__(self, agents: Sequence[Agent] = ()):
@@ -172,21 +172,12 @@ class AgentTool(ToolBucket):
         return f"{self._base_description}\n" + "\n".join(agent_lines)
 
     def _build_usage_guidance(self) -> str | None:
-        guidance_sections: List[str] = []
-        configured_guidance = self.tool_config.get("usage_guidance")
-        if isinstance(configured_guidance, str) and configured_guidance.strip():
-            guidance_sections.append(" ".join(configured_guidance.split()))
-
         guidance_lines: List[str] = []
         for agent_name, metadata in sorted(self.tools.items()):
             guidance = metadata.usage_guidance
             if isinstance(guidance, str) and guidance.strip():
-                guidance_lines.append(f"- {agent_name}: {' '.join(guidance.split())}")
-        if guidance_lines:
-            guidance_sections.append(
-                "Agent-specific guidance:\n" + "\n".join(guidance_lines)
-            )
-        return "\n\n".join(guidance_sections) or None
+                guidance_lines.append(f"{agent_name}: {' '.join(guidance.split())}")
+        return "\n".join(guidance_lines) or None
 
     @staticmethod
     def _get_agent_name(agent: Agent) -> str:
@@ -218,7 +209,7 @@ class AgentTool(ToolBucket):
     @staticmethod
     def _get_agent_usage_guidance(agent: Agent) -> str | None:
         guidance = getattr(agent, "usage_guidance", None)
-        if isinstance(guidance, str):
+        if isinstance(guidance, str) and guidance.strip():
             return guidance
         config = getattr(agent, "tool_config", None)
         if isinstance(config, dict):
@@ -227,4 +218,4 @@ class AgentTool(ToolBucket):
             value = getattr(config, "usage_guidance", None)
         else:
             value = None
-        return value if isinstance(value, str) else None
+        return value if isinstance(value, str) and value.strip() else None

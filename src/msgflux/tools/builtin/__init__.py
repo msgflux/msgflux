@@ -18,7 +18,6 @@ from msgflux.tools.builtin.task_tool import (
     build_background_dispatch_result,
     build_task_result,
     build_task_timeout_result,
-    build_task_timing_fields,
     format_task_activity_entry,
     truncate_activity_text,
 )
@@ -47,7 +46,6 @@ __all__ = [
     "build_background_dispatch_result",
     "build_task_result",
     "build_task_timeout_result",
-    "build_task_timing_fields",
     "format_task_activity_entry",
     "truncate_activity_text",
 ]

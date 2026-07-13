@@ -115,12 +115,12 @@ Background tasks should support both delivery paths from the start.
 
 The active path is explicit polling through tools:
 
-- `task_status(task_id)` returns rich state
+- `task_status(task_id)` returns compact non-null state
 - `task_interrupt(task_id)` requests a cooperative interrupt
 - `task_wait(task_id)` blocks until the task reaches a terminal state or times out
 - `task_output(task_id)` returns only the final output
-- `task_list(...)` returns tasks visible in the current scope
-- `task_activity(task_id)` returns compact activity entries for tasks with the
+- `task_list()` returns one compact line per task visible in the current scope
+- `task_activity(task_id)` returns compact newline-separated activity for tasks with the
   `activity` capability
 
 This path is canonical. A passive notification should never be the only way to

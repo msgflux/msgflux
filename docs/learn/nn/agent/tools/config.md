@@ -757,7 +757,10 @@ import msgflux.nn as nn
 from msgflux.tools import apply_tool_guidance
 from msgflux.tools.builtin import AgentTool, WebFetchTool, WebSearchTool
 
-tools = apply_tool_guidance([AgentTool(), WebSearchTool(), WebFetchTool()])
+tools = [
+    AgentTool(),
+    *apply_tool_guidance([WebSearchTool(), WebFetchTool()]),
+]
 
 agent = nn.Agent(
     name="assistant",

@@ -294,7 +294,7 @@ class TestToolLibraryMCPIntegration:
         assert initial_schema_names == ["tool_search"]
 
         result = (
-            library([("call_1", "tool_search", {"query": "select:fs__read_file"})])
+            library([("call_1", "tool_search", {"query": "fs__read_file"})])
             .tool_calls[0]
             .result
         )
@@ -302,8 +302,7 @@ class TestToolLibraryMCPIntegration:
         loaded_schema_names = [
             schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ]
-        assert result["matches"] == ["fs__read_file"]
-        assert result["loaded"] == ["fs__read_file"]
+        assert result == "loaded=fs__read_file"
         assert "tool_search" not in loaded_schema_names
         assert "fs__read_file" in loaded_schema_names
 

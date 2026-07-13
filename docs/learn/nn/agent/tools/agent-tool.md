@@ -83,8 +83,8 @@ The bucket description is a compact list of the available agents. Explicit
 `usage_guidance` on individual agents is aggregated separately, so the model
 gets delegation guidance without inflating the tool description.
 
-The generic guidance for `agent` is opt-in through
-`apply_tool_guidance([AgentTool(...)])`, like other builtin guidance entries.
+If no captured agent defines `usage_guidance`, the bucket guidance is `None` and
+no guidance block is added to the system prompt.
 
 `capture` can match any tool configuration field. `capture["tool_kind"]` can
 also group multiple kinds with `|`, for example
@@ -94,8 +94,8 @@ names and calls the bucket's `refresh()` hook so `AgentTool` can update its
 description and usage guidance.
 
 [Tool Search](tool-search.md) is compatible with `ToolBucket` capture.
-On-demand agents can stay outside the active tool set until `tool_search`
-selects them. When the selected agent is promoted into the `ToolLibrary`, the
+On-demand agents can stay outside the active tool set until `tool_search` loads
+them by exact name. When the agent is promoted into the `ToolLibrary`, the
 existing `AgentTool` bucket captures it and makes it available as another
 `agent(name, message)` target.
 

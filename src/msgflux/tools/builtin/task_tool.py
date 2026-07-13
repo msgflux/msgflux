@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import time
-from typing import Any, Collection, Dict, Optional
+from typing import Any, Optional
 
 from msgflux.core.registry import Registry
 from msgflux.runtime.context import get_execution_context
@@ -12,7 +11,6 @@ from msgflux.tools.helpers import (
     normalize_background_capabilities,
 )
 from msgflux.tools.types import Hidden, ToolBackground
-from msgflux.utils.time import parse_utc_timestamp
 
 _base_task_tools = Registry()
 _background_activity_tools = Registry()
@@ -22,40 +20,35 @@ _background_message_tools = Registry()
 @_base_task_tools
 class TaskStatusTool(ToolBackground):
     name = "task_status"
-    description = "Get the current status of a background task by task_id."
-    annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
+    description = "Get task state."
+    annotations = {"task_id": str, "handle": Hidden, "return": str}
     tool_config = {"handle": {"tasks": ["read"]}}
 
-    def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
-        payload = handle.tasks.read(task_id)
-        if payload is None:
-            return {"task_id": task_id, "status": "not_found"}
-        return payload
+    def __call__(self, task_id: str, handle: Hidden) -> str:
+        return handle.tasks.read(task_id)
 
 
 @_base_task_tools
 class TaskListTool(ToolBackground):
     name = "task_list"
-    description = "List background tasks registered in the current tool library."
+    description = "List tasks."
     annotations = {
-        "status": Optional[str],
         "handle": Hidden,
-        "return": list[Dict[str, Any]],
+        "return": str,
     }
     tool_config = {"handle": {"tasks": ["list"]}}
 
     def __call__(
         self,
-        status: str | None = None,
         handle: Hidden = None,
-    ) -> list[Dict[str, Any]]:
-        return handle.tasks.list(status=status)
+    ) -> str:
+        return handle.tasks.list()
 
 
 @_base_task_tools
 class TaskOutputTool(ToolBackground):
     name = "task_output"
-    description = "Get the final output of a background task by task_id."
+    description = "Get a completed task result."
     annotations = {"task_id": str, "handle": Hidden, "return": Any}
     tool_config = {"handle": {"tasks": ["output"]}}
 
@@ -66,10 +59,7 @@ class TaskOutputTool(ToolBackground):
 @_base_task_tools
 class TaskWaitTool(ToolBackground):
     name = "task_wait"
-    description = (
-        "Wait for a background task to finish. Returns the final output, failed "
-        "payload, or a timeout status."
-    )
+    description = "Wait for and return a task result."
     annotations = {
         "task_id": str,
         "timeout": Optional[float],
@@ -98,14 +88,11 @@ class TaskWaitTool(ToolBackground):
 @_base_task_tools
 class TaskInterruptTool(ToolBackground):
     name = "task_interrupt"
-    description = (
-        "Request a cooperative interrupt for a background task. Interrupts "
-        "immediately only if the task has not started yet."
-    )
-    annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
+    description = "Request task interruption."
+    annotations = {"task_id": str, "handle": Hidden, "return": str}
     tool_config = {"handle": {"tasks": ["interrupt"]}}
 
-    def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
+    def __call__(self, task_id: str, handle: Hidden) -> str:
         return handle.tasks.interrupt(task_id)
 
 
@@ -113,42 +100,32 @@ class TaskInterruptTool(ToolBackground):
 class TaskActivityTool(ToolBackground):
     name = "task_activity"
     tool_kind = BACKGROUND_ACTIVITY_TOOL_KIND
-    description = "List compact activity entries for a background task."
+    description = "Get recent task activity."
     annotations = {
         "task_id": str,
-        "limit": Optional[int],
         "handle": Hidden,
-        "return": Any,
+        "return": str,
     }
     tool_config = {"handle": {"tasks": ["activity"]}}
 
     def __call__(
         self,
         task_id: str,
-        limit: int | None = 10,
         handle: Hidden = None,
-    ) -> Any:
-        if limit is not None:
-            if isinstance(limit, bool) or not isinstance(limit, int):
-                raise TypeError(f"`limit` must be int or None, given `{type(limit)}`")
-            if limit <= 0:
-                raise ValueError("`limit` must be greater than 0.")
-        return handle.tasks.activity(task_id, limit=limit)
+    ) -> str:
+        return handle.tasks.activity(task_id, limit=10)
 
 
 @_background_message_tools
 class TaskMessageTool(ToolBackground):
     name = "task_message"
     tool_kind = BACKGROUND_MESSAGE_TOOL_KIND
-    description = (
-        "Send a message to a capable background task. Agent tasks can also "
-        "resume from their checkpoint."
-    )
+    description = "Message or resume an agent task."
     annotations = {
         "task_id": str,
         "message": str,
         "handle": Hidden,
-        "return": Dict[str, Any],
+        "return": str,
     }
     tool_config = {"handle": {"tasks": ["message"]}}
 
@@ -157,7 +134,7 @@ class TaskMessageTool(ToolBackground):
         task_id: str,
         message: str,
         handle: Hidden,
-    ) -> Dict[str, Any]:
+    ) -> str:
         if not isinstance(message, str) or not message.strip():
             raise ValueError("`message` must be a non-empty string.")
         return handle.tasks.message(task_id, message.strip())
@@ -202,61 +179,63 @@ def get_task_background_capabilities(task: Any) -> tuple[str, ...]:
     return normalize_background_capabilities(capabilities)
 
 
-def build_task_result(*, task_id: str, task: Any | None) -> Any:
+def build_task_result(*, task: Any | None) -> Any:
     if task is None:
-        return {"task_id": task_id, "status": "not_found"}
+        return "status=not_found"
     if task.status == "completed":
         return task.result
-    if task.status == "failed":
-        return {"task_id": task_id, "status": task.status, "error": task.error}
-    if task.status == "interrupted":
-        return {
-            "task_id": task_id,
-            "status": task.status,
-            "reason": task.metadata.get("interrupt_reason"),
-        }
-    return {
-        "task_id": task_id,
-        "status": task.status,
-        "progress": task.progress.to_dict(),
-    }
+    return format_task_status(task)
 
 
 def build_task_timeout_result(
     *,
-    task_id: str,
     task: Any | None,
-) -> Dict[str, Any]:
+) -> str:
     if task is None:
-        return {"task_id": task_id, "status": "not_found"}
-    payload = {
-        "task_id": task_id,
-        "status": "timeout",
-        "task_status": task.status,
-    }
-    if task.status not in {"completed", "failed"}:
-        if task.status == "interrupted":
-            payload["reason"] = task.metadata.get("interrupt_reason")
-            return payload
-        payload["progress"] = task.progress.to_dict()
-    elif task.status == "failed":
-        payload["error"] = task.error
-    return payload
+        return "status=not_found"
+    fields = ["status=timeout", f"task_status={task.status}"]
+    if task.status not in {"completed", "failed", "interrupted"}:
+        fields.extend(format_task_progress(task))
+    return " ".join(fields)
 
 
-def build_task_timing_fields(task: Any) -> Dict[str, Any]:
-    started_at = task.created_at
-    now = time.time()
-    created_ts = parse_utc_timestamp(task.created_at)
-    completed_ts = parse_utc_timestamp(task.completed_at)
-    payload: Dict[str, Any] = {"started_at": started_at}
-    if created_ts is None:
-        return payload
-    if completed_ts is not None:
-        payload["elapsed_seconds"] = round(completed_ts - created_ts, 3)
-    else:
-        payload["running_for_seconds"] = round(now - created_ts, 3)
-    return payload
+def format_task_status(
+    task: Any,
+    *,
+    include_id: bool = False,
+    include_tool: bool = False,
+) -> str:
+    fields = []
+    if include_id:
+        fields.append(f"task_id={task.task_id}")
+    fields.append(f"status={task.status}")
+    if include_tool:
+        fields.append(f"tool={task.tool_name}")
+    if task.status not in {"completed", "failed", "interrupted"}:
+        fields.extend(format_task_progress(task))
+    if task.status == "failed" and task.error:
+        fields.append(f"error={compact_task_text(task.error, limit=240)}")
+    if task.status == "interrupted":
+        reason = task.metadata.get("interrupt_reason")
+        if reason:
+            fields.append(f"reason={compact_task_text(reason, limit=240)}")
+    return " ".join(fields)
+
+
+def format_task_progress(task: Any) -> list[str]:
+    progress = task.progress
+    fields = []
+    if progress.stage:
+        fields.append(f"stage={compact_task_text(progress.stage)}")
+    if progress.percent is not None:
+        fields.append(f"progress={progress.percent:g}%")
+    elif progress.current is not None or progress.total is not None:
+        current = "?" if progress.current is None else progress.current
+        total = "?" if progress.total is None else progress.total
+        fields.append(f"progress={current}/{total}")
+    if progress.message:
+        fields.append(f"message={compact_task_text(progress.message)}")
+    return fields
 
 
 def format_task_activity_entry(activity: Any) -> str:
@@ -274,24 +253,15 @@ def format_task_activity_entry(activity: Any) -> str:
 def build_background_dispatch_result(
     *,
     task_id: str,
-    tool_name: str,
-    task_capabilities: Collection[str],
 ) -> str:
-    actions = ["`task_status`"]
-    if "activity" in task_capabilities:
-        actions.append("`task_activity`")
-    if "message" in task_capabilities:
-        actions.append("`task_message`")
-    actions.extend(["`task_interrupt`", "`task_wait`", "`task_output`"])
-    return (
-        f"The `{tool_name}` tool is running in the background with "
-        f"task_id='{task_id}'. Use that task_id with "
-        + ", ".join(actions[:-1])
-        + f", or {actions[-1]}."
-    )
+    return f"task_id={task_id} status=running"
 
 
 def truncate_activity_text(value: str, *, limit: int = 140) -> str:
+    return compact_task_text(value, limit=limit)
+
+
+def compact_task_text(value: Any, *, limit: int = 140) -> str:
     text = " ".join(str(value).split())
     if len(text) <= limit:
         return text

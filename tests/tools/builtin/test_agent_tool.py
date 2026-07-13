@@ -7,7 +7,6 @@ from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.runtime.context import execution_context
-from msgflux.tools import BUILTIN_TOOL_USAGE_GUIDANCE, apply_tool_guidance
 from msgflux.tools.builtin import AgentTool
 
 
@@ -42,7 +41,7 @@ def _mock_model(*texts: str) -> _ScriptedModel:
 
 
 def _extract_task_id(result: str) -> str:
-    return result.split("task_id='", maxsplit=1)[1].split("'", maxsplit=1)[0]
+    return result.split("task_id=", maxsplit=1)[1].split(maxsplit=1)[0]
 
 
 class _RecordingAgent:
@@ -89,31 +88,24 @@ def test_agent_tool_description_lists_available_agents():
     tool = AgentTool([reviewer])
 
     assert (
-        tool.description == "Available agents:\n- reviewer: Reviews drafts for clarity."
+        tool.description
+        == "Delegate a message to an available agent. Available agents:\n"
+        "- reviewer: Reviews drafts for clarity."
     )
 
 
-def test_agent_tool_builtin_usage_guidance_is_opt_in_and_survives_capture():
-    assert (
-        ToolLibrary(name="default", tools=[AgentTool()]).get_tool_usage_guidance() == []
-    )
-
-    [agent_tool] = apply_tool_guidance([AgentTool()])
+def test_agent_tool_usage_guidance_is_collected_only_from_agents():
+    agent_tool = AgentTool()
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
     library = ToolLibrary(name="lib", tools=[agent_tool])
 
-    expected_guidance = [
-        {
-            "name": "agent",
-            "display_name": "Agent",
-            "guidance": BUILTIN_TOOL_USAGE_GUIDANCE["agent"],
-        }
-    ]
-    assert library.get_tool_usage_guidance() == expected_guidance
+    assert agent_tool.usage_guidance is None
+    assert library.get_tool_usage_guidance() == []
 
     library.add(reviewer)
 
-    assert library.get_tool_usage_guidance() == expected_guidance
+    assert library.library["agent"].usage_guidance is None
+    assert library.get_tool_usage_guidance() == []
 
 
 def test_agent_tool_collects_agent_usage_guidance():
@@ -124,8 +116,9 @@ def test_agent_tool_collects_agent_usage_guidance():
 
     tool = AgentTool([reviewer, planner])
 
-    assert "reviewer: Use for code review." in tool.usage_guidance
-    assert "planner: Use for planning." in tool.usage_guidance
+    assert tool.usage_guidance == (
+        "planner: Use for planning.\nreviewer: Use for code review."
+    )
 
 
 def test_agent_tool_can_start_empty_and_capture_agents_from_library():
@@ -339,7 +332,7 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
                 (
                     "call_2",
                     "tool_search",
-                    {"select": ["reviewer"], "description": True},
+                    {"query": "reviewer"},
                 )
             ]
         )
@@ -354,8 +347,7 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
     assert before_search.tool_calls[0].result is None
     assert "Agent `reviewer` not found" in before_search.tool_calls[0].error
     assert schema_names_before == ["agent", "tool_search"]
-    assert search["loaded"] == ["reviewer"]
-    assert search["descriptions"][0]["name"] == "reviewer"
+    assert search == "loaded=reviewer"
     assert schema_names_after == ["agent"]
     assert response.tool_calls[0].result == "reviewed"
     assert "reviewer: Use for code review." in library.library["agent"].usage_guidance
@@ -391,8 +383,7 @@ def test_agent_tool_background_run_uses_task_id_as_child_run_id():
     task_id = _extract_task_id(dispatch.tool_calls[0].result)
     wait = library([("call_2", "task_wait", {"task_id": task_id, "timeout": 1.0})])
 
-    assert "`task_activity`" in dispatch.tool_calls[0].result
-    assert "`task_message`" in dispatch.tool_calls[0].result
+    assert dispatch.tool_calls[0].result == f"task_id={task_id} status=running"
     assert wait.tool_calls[0].result == "reviewed"
     assert store.load_state("reviewer", "user_42", task_id)["status"] == "completed"
 
@@ -433,7 +424,7 @@ def test_agent_tool_background_task_message_resumes_selected_agent():
         resumed = library(
             [("call_3", "task_message", {"task_id": task_id, "message": "Second"})]
         )
-        assert resumed.tool_calls[0].result["status"] == "resumed"
+        assert resumed.tool_calls[0].result == "status=resumed"
         wait_resumed = library(
             [("call_4", "task_wait", {"task_id": task_id, "timeout": 1.0})]
         )
@@ -441,8 +432,9 @@ def test_agent_tool_background_task_message_resumes_selected_agent():
     assert wait_resumed.tool_calls[0].result == "second"
     old_state = store.load_state("reviewer", "user_42", task_id)
     assert old_state["status"] == "completed"
-    task_state = library([("call_5", "task_status", {"task_id": task_id})])
-    resumed_run_id = task_state.tool_calls[0].result["metadata"]["checkpoint_run_id"]
+    resumed_run_id = library.get_task_store().get(task_id).metadata[
+        "checkpoint_run_id"
+    ]
     assert resumed_run_id != task_id
     new_state = store.load_state("reviewer", "user_42", resumed_run_id)
     assert new_state["status"] == "completed"

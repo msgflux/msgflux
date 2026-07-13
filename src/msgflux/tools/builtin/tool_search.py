@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from msgflux.tools.dataclasses import ToolMetadata
 from msgflux.tools.types import Hidden, ToolBucket, ToolLibraryOperator
@@ -14,60 +15,39 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     capture = {"on_demand": True}
     expose_captured_names = True
     display_name = "Tool Search"
-    description = """Find on-demand tools. `query` lists; `select` activates.
-
-    Args:
-        query: Keywords used to find tools.
-        select: Exact tool names to activate.
-    """
-    usage_guidance = (
-        "Search first; activate an exact match with `select` before calling it."
+    description = (
+        "Find tools by terms or /regex/; an exact name loads it. "
+        "Append :K to limit matches."
     )
+    usage_guidance = None
     tool_config = {"handle": {"tools": ["register", "remove"]}}
     annotations = {
-        "query": Optional[str],
-        "select": Optional[List[str]],
-        "description": bool,
-        "max_results": int,
+        "query": str,
         "handle": Hidden,
-        "return": dict,
+        "return": str,
     }
 
     def __call__(
         self,
-        query: str | None = None,
-        *,
-        select: List[str] | None = None,
-        description: bool = False,
-        max_results: int = 5,
+        query: str,
         handle,
-    ) -> Dict[str, Any]:
-        query, select = self._normalize_selection(query, select)
-        if isinstance(max_results, bool) or not isinstance(max_results, int):
-            raise TypeError(f"`max_results` must be int, given `{type(max_results)}")
-        if max_results <= 0:
-            raise ValueError("`max_results` must be greater than 0.")
-
-        total = len(self.tools)
-        if select is not None:
-            matches = self._select(select)
-            descriptions = self._describe_matches(matches) if description else []
-            loaded = self._activate(matches, handle)
+    ) -> str:
+        expression, max_results, pattern = self._parse_query(query)
+        exact = None if pattern is not None else self._exact_match(expression)
+        if exact is not None:
+            self._activate([exact], handle)
+            result = f"loaded={exact}"
         else:
-            matches = self._search(query or "", max_results)
-            descriptions = self._describe_matches(matches) if description else []
-            loaded = []
+            matches = (
+                self._regex_search(pattern, max_results)
+                if pattern is not None
+                else self._search(expression, max_results)
+            )
+            result = self._format_matches(matches)
 
         if not self.tools:
             handle.tools.remove(self.name)
-
-        return {
-            "query": query,
-            "matches": matches,
-            "loaded": loaded,
-            "descriptions": descriptions,
-            "total_on_demand_tools": total,
-        }
+        return result
 
     def validate_capture(self, metadata: ToolMetadata) -> None:
         if not self.captures(metadata):
@@ -84,7 +64,11 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
         matches = []
         for tool_name, metadata in self.tools.items():
             name_parts = tool_name.lower().replace("__", " ").replace("_", " ")
-            description = (metadata.description or "").lower()
+            description = " ".join(
+                value
+                for value in (metadata.description, metadata.usage_guidance)
+                if isinstance(value, str)
+            ).lower()
             score = 0
             if query_lower == tool_name.lower():
                 score += 100
@@ -101,32 +85,40 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
         matches.sort(key=lambda item: (-item[0], item[1]))
         return [tool_name for _, tool_name in matches[:max_results]]
 
-    def _select(self, requested: List[str]) -> List[str]:
-        resolved = []
-        normalized = {tool_name.lower(): tool_name for tool_name in self.tools}
-        for tool_name in requested:
-            match = normalized.get(tool_name.lower())
-            if match is not None and match not in resolved:
-                resolved.append(match)
-        return resolved
+    def _regex_search(self, pattern: re.Pattern[str], max_results: int) -> List[str]:
+        matches = []
+        for tool_name, metadata in self.tools.items():
+            searchable = " ".join(
+                value
+                for value in (
+                    tool_name,
+                    metadata.description,
+                    metadata.usage_guidance,
+                )
+                if isinstance(value, str)
+            )[:512]
+            if pattern.search(searchable):
+                matches.append(tool_name)
+        return sorted(matches)[:max_results]
 
-    def _describe_matches(self, tool_names: List[str]) -> List[dict[str, Any]]:
-        return [
-            self._describe_metadata(self.tools[tool_name]) for tool_name in tool_names
-        ]
+    def _exact_match(self, query: str) -> str | None:
+        return {name.lower(): name for name in self.tools}.get(query.lower())
 
-    @staticmethod
-    def _describe_metadata(metadata: ToolMetadata) -> dict[str, Any]:
-        return {
-            "name": metadata.name,
-            "display_name": metadata.display_name or metadata.name,
-            "description": metadata.description,
-            "usage_guidance": metadata.usage_guidance,
-            "tool_kind": metadata.tool_config.get("tool_kind", "tool"),
-        }
+    def _format_matches(self, tool_names: List[str]) -> str:
+        lines = []
+        for tool_name in tool_names:
+            metadata = self.tools[tool_name]
+            detail = metadata.usage_guidance or metadata.description
+            if isinstance(detail, str) and detail.strip():
+                detail = " ".join(detail.split())
+                if len(detail) > 160:
+                    detail = detail[:157] + "..."
+                lines.append(f"{tool_name}: {detail}")
+            else:
+                lines.append(tool_name)
+        return "\n".join(lines) or "none"
 
-    def _activate(self, tool_names: List[str], handle) -> List[str]:
-        activated = []
+    def _activate(self, tool_names: List[str], handle) -> None:
         for tool_name in tool_names:
             metadata = self.remove(tool_name)
             promoted = replace(
@@ -138,37 +130,44 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
             except Exception:
                 self.add(metadata)
                 raise
-            activated.append(tool_name)
-        return activated
 
     @staticmethod
-    def _normalize_selection(
-        query: str | None,
-        select: List[str] | None,
-    ) -> tuple[str | None, List[str] | None]:
-        if query is not None and not isinstance(query, str):
-            raise TypeError(f"`query` must be str or None, given `{type(query)}`")
-        query = query.strip() if query is not None else None
-        if select is not None:
-            if not isinstance(select, list) or not all(
-                isinstance(tool_name, str) for tool_name in select
+    def _parse_query(query: str) -> tuple[str, int, re.Pattern[str] | None]:
+        if not isinstance(query, str):
+            raise TypeError(f"`query` must be str, given `{type(query)}`")
+        query = query.strip()
+        if not query:
+            raise ValueError("`query` must be a non-empty string.")
+
+        max_results = 5
+        limit_match = re.search(r":(\d+)$", query)
+        if limit_match is not None:
+            max_results = int(limit_match.group(1))
+            if not 1 <= max_results <= 20:
+                raise ValueError("The `:K` result limit must be between 1 and 20.")
+            query = query[: limit_match.start()].rstrip()
+            if not query:
+                raise ValueError("`query` must include text before the `:K` limit.")
+
+        pattern = None
+        if query.startswith("/") or query.endswith("/"):
+            if len(query) < 3 or not (query.startswith("/") and query.endswith("/")):
+                raise ValueError("Regex queries must use the `/pattern/` form.")
+            expression = query[1:-1]
+            if len(expression) > 128:
+                raise ValueError("Regex queries cannot exceed 128 characters.")
+            if (
+                "(?" in expression
+                or re.search(r"\\[1-9]", expression)
+                or re.search(r"\)[+*{]", expression)
             ):
-                raise TypeError("`select` must be a list of strings or None.")
-            if query:
-                raise ValueError("`query` and `select` cannot be used together.")
-            select = [tool_name.strip() for tool_name in select if tool_name.strip()]
-            if not select:
-                raise ValueError("`select` must include at least one tool name.")
-        elif query and query.lower().startswith("select:"):
-            select = [
-                item.strip()
-                for item in query.split(":", 1)[1].split(",")
-                if item.strip()
-            ]
-            if not select:
-                raise ValueError("`select` must include at least one tool name.")
-        elif not query:
-            raise ValueError(
-                "`query` must be a non-empty string when `select` is absent."
-            )
-        return query, select
+                raise ValueError(
+                    "Regex queries do not support extensions, backreferences, "
+                    "or quantified groups."
+                )
+            try:
+                pattern = re.compile(expression, re.IGNORECASE)
+            except re.error as exc:
+                raise ValueError(f"Invalid regex query: {exc}.") from exc
+            return expression, max_results, pattern
+        return query, max_results, None

@@ -338,28 +338,19 @@ class TasksHandle(_HandleFacet):
 
         return get_scoped_task(self._store(), task_id)
 
-    def read(self, task_id: str) -> Dict[str, Any] | None:
+    def read(self, task_id: str) -> str:
         self._require("read")
         task = self._record(task_id)
         if task is None:
-            return None
-        from msgflux.tools.builtin.task_tool import (
-            build_task_timing_fields,
-            format_task_activity_entry,
-        )
+            return "status=not_found"
+        from msgflux.tools.builtin.task_tool import format_task_status
 
-        payload = task.to_dict()
-        payload.update(build_task_timing_fields(task))
-        last_activity = self._store().get_last_activity(task_id)
-        if last_activity is not None:
-            payload["last_activity_summary"] = format_task_activity_entry(last_activity)
-        return payload
+        return format_task_status(task)
 
-    def list(self, *, status: str | None = None) -> list[Dict[str, Any]]:
+    def list(self, *, status: str | None = None) -> str:
         self._require("list")
         from msgflux.tools.builtin.task_tool import (
-            build_task_timing_fields,
-            format_task_activity_entry,
+            format_task_status,
             task_is_in_current_scope,
         )
 
@@ -368,21 +359,16 @@ class TasksHandle(_HandleFacet):
         for task in store.list(status=status):
             if not task_is_in_current_scope(task):
                 continue
-            payload = task.to_dict()
-            payload.update(build_task_timing_fields(task))
-            last_activity = store.get_last_activity(task.task_id)
-            if last_activity is not None:
-                payload["last_activity_summary"] = format_task_activity_entry(
-                    last_activity
-                )
-            result.append(payload)
-        return result
+            result.append(
+                format_task_status(task, include_id=True, include_tool=True)
+            )
+        return "\n".join(result) or "none"
 
     def output(self, task_id: str) -> Any:
         self._require("output")
         from msgflux.tools.builtin.task_tool import build_task_result
 
-        return build_task_result(task_id=task_id, task=self._record(task_id))
+        return build_task_result(task=self._record(task_id))
 
     def wait(self, task_id: str, *, timeout: float | None = None) -> Any:
         self._require("wait")
@@ -400,39 +386,33 @@ class TasksHandle(_HandleFacet):
 
         task = self._record(task_id)
         if task is None or task.status in {"completed", "failed", "interrupted"}:
-            return build_task_result(task_id=task_id, task=task)
+            return build_task_result(task=task)
         future = self._handle.get_task_future(task_id)
         if future is not None:
             try:
                 future.result(timeout=timeout)
             except FutureTimeoutError:
-                return build_task_timeout_result(
-                    task_id=task_id, task=self._record(task_id)
-                )
+                return build_task_timeout_result(task=self._record(task_id))
             except Exception:
                 pass
-            return build_task_result(task_id=task_id, task=self._record(task_id))
+            return build_task_result(task=self._record(task_id))
 
         deadline = None if timeout is None else time.monotonic() + float(timeout)
         while True:
             task = self._record(task_id)
             if task is None or task.status in {"completed", "failed", "interrupted"}:
-                return build_task_result(task_id=task_id, task=task)
+                return build_task_result(task=task)
             if deadline is not None and time.monotonic() >= deadline:
-                return build_task_timeout_result(task_id=task_id, task=task)
+                return build_task_timeout_result(task=task)
             time.sleep(0.05)
 
-    def interrupt(self, task_id: str) -> Dict[str, Any]:
+    def interrupt(self, task_id: str) -> str:
         self._require("interrupt")
         task = self._record(task_id)
         if task is None:
-            return {"task_id": task_id, "status": "not_found"}
+            return "status=not_found"
         if task.status in {"completed", "failed", "interrupted"}:
-            return {
-                "task_id": task_id,
-                "status": task.status,
-                "message": "Task already reached a terminal state.",
-            }
+            return f"status={task.status}"
         store = self._store()
         store.request_interrupt(task_id)
         future = self._handle.get_task_future(task_id)
@@ -440,22 +420,9 @@ class TasksHandle(_HandleFacet):
             interrupted = store.interrupt(
                 task_id, reason="Task was cancelled before it started running."
             )
-            return {
-                "task_id": task_id,
-                "status": "interrupted",
-                "message": "Task interrupted before execution started.",
-                "task_status": (
-                    interrupted.status if interrupted is not None else "interrupted"
-                ),
-            }
-        return {
-            "task_id": task_id,
-            "status": "interrupt_requested",
-            "message": (
-                "Interrupt requested. The task will interrupt at the next "
-                "cooperative checkpoint."
-            ),
-        }
+            status = interrupted.status if interrupted is not None else "interrupted"
+            return f"status={status}"
+        return "status=interrupt_requested"
 
     def activity(self, task_id: str, *, limit: int | None = 10) -> Any:
         self._require("activity")
@@ -471,19 +438,16 @@ class TasksHandle(_HandleFacet):
 
         task = self._record(task_id)
         if task is None:
-            return {"task_id": task_id, "status": "not_found"}
+            return "status=not_found"
         if "activity" not in get_task_background_capabilities(task):
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "task_activity requires the task activity capability.",
-            }
-        return [
+            return "status=unsupported reason=no_activity"
+        entries = [
             format_task_activity_entry(item)
             for item in self._store().list_activity(task_id, limit=limit)
         ]
+        return "\n".join(entries) or "none"
 
-    def message(self, task_id: str, message: str) -> Dict[str, Any]:
+    def message(self, task_id: str, message: str) -> str:
         self._require("message")
         if not isinstance(message, str) or not message.strip():
             raise ValueError("`message` must be a non-empty string.")
@@ -495,21 +459,13 @@ class TasksHandle(_HandleFacet):
 
         task = self._record(task_id)
         if task is None:
-            return {"task_id": task_id, "status": "not_found"}
+            return "status=not_found"
         if "message" not in get_task_background_capabilities(task):
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "task_message requires the task message capability.",
-            }
+            return "status=unsupported reason=no_message"
         inbox = self._handle.get_task_inbox(task_id)
         if task.status == "running":
             if inbox is None:
-                return {
-                    "task_id": task_id,
-                    "status": "unsupported",
-                    "error": "The running task does not expose a message inbox.",
-                }
+                return "status=unsupported reason=no_inbox"
             inbox.publish(
                 {
                     "source": "task_message",
@@ -525,24 +481,11 @@ class TasksHandle(_HandleFacet):
                 summary=f"Root message: {truncate_activity_text(message)}",
                 metadata={"direction": "root_to_task"},
             )
-            return {
-                "task_id": task_id,
-                "status": "delivered",
-                "message": "Message delivered to the running background agent.",
-            }
+            return "status=delivered"
         if task.metadata.get("task_kind") != "agent":
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "Task continuation is not implemented for this task kind.",
-            }
-        return {
-            "task_id": task_id,
-            "status": "resumed",
-            "message": self._handle.resume_background_agent_task(
-                task=task, message=message
-            ),
-        }
+            return "status=unsupported reason=not_agent"
+        self._handle.resume_background_agent_task(task=task, message=message)
+        return "status=resumed"
 
 
 class BackgroundHandle(_HandleFacet):

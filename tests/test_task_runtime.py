@@ -36,6 +36,18 @@ def _wait_until(predicate, timeout: float = 2.0, interval: float = 0.02) -> None
     raise AssertionError("Timed out waiting for condition.")
 
 
+def _task_field(result: str, name: str) -> str:
+    prefix = f"{name}="
+    for field in result.split():
+        if field.startswith(prefix):
+            return field[len(prefix) :]
+    raise AssertionError(f"Missing `{name}` in task result: {result}")
+
+
+def _task_id(result: str) -> str:
+    return _task_field(result.splitlines()[0], "task_id")
+
+
 def _mock_model(text: str = "ok") -> MagicMock:
     model = MagicMock()
     model.model_type = "chat_completion"
@@ -202,16 +214,15 @@ def test_allow_background_dispatches_when_model_requests_background():
         ]
     )
 
-    assert "task_id='" in dispatch.tool_calls[0].result
+    assert "task_id=" in dispatch.tool_calls[0].result
     assert dispatch.tool_calls[0].parameters == {"query": "a"}
-    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    task_id = _task_id(dispatch.tool_calls[0].result)
 
     _wait_until(
         lambda: (
             library([("call_2", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
     output = library([("call_3", "task_output", {"task_id": task_id})])
@@ -231,7 +242,7 @@ def test_tool_library_uses_context_task_store_without_replacing_default():
 
     with execution_context(task_store=context_store):
         dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
-        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        task_id = _task_id(dispatch.tool_calls[0].result)
 
     _wait_until(
         lambda: (
@@ -247,14 +258,14 @@ def test_tool_library_uses_context_task_store_without_replacing_default():
         library([("call_2", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
 
-    assert outside_status == {"task_id": task_id, "status": "not_found"}
+    assert outside_status == "status=not_found"
     with execution_context(task_store=context_store):
         with_context_status = (
             library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
             .result
         )
-    assert with_context_status["status"] == "completed"
+    assert with_context_status == "status=completed"
 
 
 def test_background_task_tools_isolate_execution_scopes():
@@ -287,9 +298,9 @@ def test_background_task_tools_isolate_execution_scopes():
             [("call_3", "task_output", {"task_id": other.task_id})]
         ).tool_calls[0].result
 
-    assert [task["task_id"] for task in listed] == [own.task_id]
-    assert hidden_status == {"task_id": other.task_id, "status": "not_found"}
-    assert hidden_output == {"task_id": other.task_id, "status": "not_found"}
+    assert _task_id(listed) == own.task_id
+    assert hidden_status == "status=not_found"
+    assert hidden_output == "status=not_found"
 
 
 def test_background_task_tools_follow_background_tool_lifecycle():
@@ -339,7 +350,7 @@ def test_background_dispatch_retries_task_id_collision():
         ):
             dispatch = library([("call_1", "slow_job", {})])
 
-    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    task_id = _task_id(dispatch.tool_calls[0].result)
     assert task_id == "cafebabe"
 
     release.set()
@@ -681,17 +692,19 @@ def test_injected_handle_can_add_background_tool_with_task_tools():
     assert "task_output" in add_result.tool_calls[0].result
 
     dispatch = library([("call_2", "background_multiplier", {"value": 4})])
-    assert "task_id='" in dispatch.tool_calls[0].result
+    assert "task_id=" in dispatch.tool_calls[0].result
     assert "task_activity" not in dispatch.tool_calls[0].result
 
     _wait_until(
         lambda: (
-            library([("call_3", "task_list", {})]).tool_calls[0].result[0]["status"]
-            == "completed"
+            "status=completed"
+            in library([("call_3", "task_list", {})]).tool_calls[0].result
         )
     )
 
-    task_id = library([("call_4", "task_list", {})]).tool_calls[0].result[0]["task_id"]
+    task_id = _task_id(
+        library([("call_4", "task_list", {})]).tool_calls[0].result
+    )
     output_result = library([("call_5", "task_output", {"task_id": task_id})])
     assert output_result.tool_calls[0].result == 8
 
@@ -718,33 +731,27 @@ def test_background_task_reports_progress_and_output():
     assert "task_wait" in library.get_tool_names()
     assert "task_output" in library.get_tool_names()
     assert started.wait(timeout=1.0)
-    assert "task_id='" in dispatch.tool_calls[0].result
+    assert "task_id=" in dispatch.tool_calls[0].result
 
     list_result = library([("call_2", "task_list", {})])
-    task_id = list_result.tool_calls[0].result[0]["task_id"]
+    task_id = _task_id(list_result.tool_calls[0].result)
 
     get_result = library([("call_3", "task_status", {"task_id": task_id})])
     task_state = get_result.tool_calls[0].result
-    assert task_state["status"] == "running"
-    assert "started_at" in task_state
-    assert isinstance(task_state["running_for_seconds"], float)
-    assert task_state["metadata"]["background_capabilities"] == []
-    assert task_state["progress"]["stage"] == "work"
-    assert task_state["progress"]["percent"] == 50.0
+    assert task_state == "status=running stage=work progress=50% message=Halfway"
 
     release.set()
     _wait_until(
         lambda: (
             library([("call_4", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
-    final_state = (
-        library([("call_6", "task_status", {"task_id": task_id})]).tool_calls[0].result
-    )
-    assert "elapsed_seconds" in final_state
+    final_state = library(
+        [("call_6", "task_status", {"task_id": task_id})]
+    ).tool_calls[0].result
+    assert final_state == "status=completed"
 
     output_result = library([("call_5", "task_output", {"task_id": task_id})])
     assert output_result.tool_calls[0].result == 42
@@ -764,9 +771,10 @@ def test_task_wait_returns_final_output():
     dispatch = library([("call_1", "long_job", {"value": 21})])
     assert "task_wait" in library.get_tool_names()
     assert "task_interrupt" in library.get_tool_names()
-    task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
-    assert f"task_id='{task_id}'" in dispatch.tool_calls[0].result
-    assert "`task_wait`" in dispatch.tool_calls[0].result
+    task_id = _task_id(
+        library([("call_2", "task_list", {})]).tool_calls[0].result
+    )
+    assert f"task_id={task_id}" in dispatch.tool_calls[0].result
 
     timer = threading.Timer(0.1, release.set)
     timer.start()
@@ -793,26 +801,26 @@ def test_task_wait_returns_timeout_payload_with_progress():
     library = ToolLibrary(name="lib", tools=[long_job])
 
     library([("call_1", "long_job", {"value": 21})])
-    task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
+    task_id = _task_id(
+        library([("call_2", "task_list", {})]).tool_calls[0].result
+    )
 
     wait_result = library(
         [("call_3", "task_wait", {"task_id": task_id, "timeout": 0.05})]
     )
     payload = wait_result.tool_calls[0].result
 
-    assert payload["task_id"] == task_id
-    assert payload["status"] == "timeout"
-    assert payload["task_status"] == "running"
-    assert payload["progress"]["stage"] == "work"
-    assert payload["progress"]["percent"] == 50.0
+    assert payload == (
+        "status=timeout task_status=running stage=work "
+        "progress=50% message=Halfway"
+    )
 
     release.set()
     _wait_until(
         lambda: (
             library([("call_4", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
@@ -826,16 +834,16 @@ def test_task_wait_returns_failed_payload():
     library = ToolLibrary(name="lib", tools=[failing_job])
 
     library([("call_1", "failing_job", {})])
-    task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
+    task_id = _task_id(
+        library([("call_2", "task_list", {})]).tool_calls[0].result
+    )
 
     wait_result = library(
         [("call_3", "task_wait", {"task_id": task_id, "timeout": 1.0})]
     )
     payload = wait_result.tool_calls[0].result
 
-    assert payload["task_id"] == task_id
-    assert payload["status"] == "failed"
-    assert "boom" in payload["error"]
+    assert payload == "status=failed error=boom"
 
 
 def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
@@ -859,7 +867,7 @@ def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
 
     library = ToolLibrary(name="lib", tools=[worker])
     dispatch = library([("call_1", "worker", {"task": "Start worker."})])
-    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    task_id = _task_id(dispatch.tool_calls[0].result)
 
     assert slow_tool_started.wait(timeout=1.0)
     interrupt_result = (
@@ -867,27 +875,21 @@ def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
         .tool_calls[0]
         .result
     )
-    assert interrupt_result["status"] == "interrupt_requested"
+    assert interrupt_result == "status=interrupt_requested"
 
     release_tool.set()
     _wait_until(
         lambda: (
             library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "interrupted"
+            .result.startswith("status=interrupted")
         )
     )
 
     status = (
         library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
-    assert status["status"] == "interrupted"
-    assert status["metadata"]["background_capabilities"] == [
-        "activity",
-        "message",
-    ]
-    assert status["last_activity_summary"] == "Status: Task interrupted."
+    assert status.startswith("status=interrupted")
 
 
 def test_cancelled_background_future_is_not_logged_as_error():
@@ -938,10 +940,8 @@ def test_agent_injects_pending_task_notifications_as_system_note_messages():
     agent = Agent(name="Assistant", model=_mock_model(), tools=[long_job])
 
     agent.tool_library([("call_1", "long_job", {"value": 5})])
-    task_id = (
-        agent.tool_library([("call_2", "task_list", {})])
-        .tool_calls[0]
-        .result[0]["task_id"]
+    task_id = _task_id(
+        agent.tool_library([("call_2", "task_list", {})]).tool_calls[0].result
     )
 
     release.set()
@@ -949,8 +949,7 @@ def test_agent_injects_pending_task_notifications_as_system_note_messages():
         lambda: (
             agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
@@ -992,10 +991,8 @@ def test_inspect_model_execution_params_does_not_consume_notifications():
     agent = Agent(name="Assistant", model=model, tools=[long_job])
 
     agent.tool_library([("call_1", "long_job", {"value": 5})])
-    task_id = (
-        agent.tool_library([("call_2", "task_list", {})])
-        .tool_calls[0]
-        .result[0]["task_id"]
+    task_id = _task_id(
+        agent.tool_library([("call_2", "task_list", {})]).tool_calls[0].result
     )
 
     release.set()
@@ -1003,8 +1000,7 @@ def test_inspect_model_execution_params_does_not_consume_notifications():
         lambda: (
             agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
@@ -1200,10 +1196,8 @@ def test_task_progress_notifications_are_persisted():
     )
 
     agent.tool_library([("call_1", "long_job", {"value": 5})])
-    task_id = (
-        agent.tool_library([("call_2", "task_list", {})])
-        .tool_calls[0]
-        .result[0]["task_id"]
+    task_id = _task_id(
+        agent.tool_library([("call_2", "task_list", {})]).tool_calls[0].result
     )
     assert started.wait(timeout=1.0)
 
@@ -1234,8 +1228,7 @@ def test_task_progress_notifications_are_persisted():
         lambda: (
             agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
@@ -1270,10 +1263,8 @@ def test_injected_handle_publishes_task_status_updates():
     )
 
     agent.tool_library([("call_1", "long_job", {"value": 7})])
-    task_id = (
-        agent.tool_library([("call_2", "task_list", {})])
-        .tool_calls[0]
-        .result[0]["task_id"]
+    task_id = _task_id(
+        agent.tool_library([("call_2", "task_list", {})]).tool_calls[0].result
     )
     assert started.wait(timeout=1.0)
 
@@ -1295,8 +1286,7 @@ def test_injected_handle_publishes_task_status_updates():
         lambda: (
             agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
@@ -1335,29 +1325,28 @@ def test_background_agent_inherits_context_and_checkpoint_run_id():
     ):
         dispatch = library([("call_1", "worker", {"task": "Solve this"})])
 
-    assert "task_id='" in dispatch.tool_calls[0].result
-    task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
+    assert "task_id=" in dispatch.tool_calls[0].result
+    task_id = _task_id(
+        library([("call_2", "task_list", {})]).tool_calls[0].result
+    )
 
     _wait_until(
         lambda: (
             library([("call_3", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
-    task_state = (
-        library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
-    )
-    assert task_state["metadata"]["thread_id"] == "user_42"
-    assert task_state["metadata"]["parent_run_id"] == "run_root"
-    assert task_state["metadata"]["root_run_id"] == "run_root"
-    assert task_state["metadata"]["checkpoint_thread_id"] == "user_42"
-    assert task_state["metadata"]["checkpoint_run_id"] == task_id
+    task_state = library.get_task_store().get(task_id)
+    assert task_state.metadata["thread_id"] == "user_42"
+    assert task_state.metadata["parent_run_id"] == "run_root"
+    assert task_state.metadata["root_run_id"] == "run_root"
+    assert task_state.metadata["checkpoint_thread_id"] == "user_42"
+    assert task_state.metadata["checkpoint_run_id"] == task_id
 
 
-def test_background_agent_dispatch_mentions_task_message_and_activity():
+def test_background_agent_dispatch_is_compact():
     worker = Agent(name="worker", model=_mock_model("done"))
     worker.tool_config = {"background": True}
 
@@ -1366,11 +1355,8 @@ def test_background_agent_dispatch_mentions_task_message_and_activity():
     dispatch = library([("call_1", "worker", {"task": "Solve this"})])
     result = dispatch.tool_calls[0].result
 
-    assert "`task_activity`" in result
-    assert "`task_message`" in result
-    assert "`task_interrupt`" in result
-    assert "`task_wait`" in result
-    assert "`task_output`" in result
+    assert result.startswith("task_id=")
+    assert result.endswith(" status=running")
     assert "task_message" in library.get_tool_names()
     assert "task_activity" in library.get_tool_names()
     assert "task_interrupt" in library.get_tool_names()
@@ -1399,7 +1385,7 @@ def test_injected_handle_can_add_background_agent_with_agent_task_tools():
     assert "task_message" in add_result
 
 
-def test_background_tool_dispatch_does_not_mention_task_activity():
+def test_background_tool_dispatch_is_compact():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
         """Run a simple background tool."""
@@ -1410,12 +1396,8 @@ def test_background_tool_dispatch_does_not_mention_task_activity():
     dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
     result = dispatch.tool_calls[0].result
 
-    assert "`task_status`" in result
-    assert "`task_interrupt`" in result
-    assert "`task_wait`" in result
-    assert "`task_output`" in result
-    assert "`task_activity`" not in result
-    assert "`task_message`" not in result
+    assert result.startswith("task_id=")
+    assert result.endswith(" status=running")
     assert "task_activity" not in library.get_tool_names()
 
 
@@ -1428,25 +1410,21 @@ def test_background_activity_capability_is_available_for_non_agent_task():
     library = ToolLibrary(name="lib", tools=[monitored_pipeline])
 
     dispatch = library([("call_1", "monitored_pipeline", {"value": 4})])
-    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    task_id = _task_id(dispatch.tool_calls[0].result)
 
-    assert "`task_activity`" in dispatch.tool_calls[0].result
-    assert "`task_message`" not in dispatch.tool_calls[0].result
     assert "task_activity" in library.get_tool_names()
     assert "task_message" not in library.get_tool_names()
 
-    task = (
-        library([("call_2", "task_status", {"task_id": task_id})]).tool_calls[0].result
-    )
     activity = (
         library([("call_3", "task_activity", {"task_id": task_id})])
         .tool_calls[0]
         .result
     )
 
-    assert task["metadata"]["task_kind"] == "tool"
-    assert task["metadata"]["background_capabilities"] == ["activity"]
-    assert isinstance(activity, list)
+    task = library.get_task_store().get(task_id)
+    assert task.metadata["task_kind"] == "tool"
+    assert task.metadata["background_capabilities"] == ["activity"]
+    assert isinstance(activity, str)
 
 
 def test_task_activity_is_unsupported_without_activity_capability():
@@ -1461,7 +1439,7 @@ def test_task_activity_is_unsupported_without_activity_capability():
     library = ToolLibrary(name="lib", tools=[slow_pipeline, worker])
 
     dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
-    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    task_id = _task_id(dispatch.tool_calls[0].result)
 
     activity = (
         library([("call_2", "task_activity", {"task_id": task_id})])
@@ -1469,8 +1447,7 @@ def test_task_activity_is_unsupported_without_activity_capability():
         .result
     )
 
-    assert activity["status"] == "unsupported"
-    assert "activity capability" in activity["error"]
+    assert activity == "status=unsupported reason=no_activity"
 
 
 def test_task_activity_tracks_compact_subagent_tool_calls():
@@ -1489,14 +1466,13 @@ def test_task_activity_tracks_compact_subagent_tool_calls():
 
     library = ToolLibrary(name="lib", tools=[worker])
     dispatch = library([("call_1", "worker", {"task": "Multiply 4 by 2."})])
-    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    task_id = _task_id(dispatch.tool_calls[0].result)
 
     _wait_until(
         lambda: (
             library([("call_2", "task_status", {"task_id": task_id})])
             .tool_calls[0]
-            .result["status"]
-            == "completed"
+            .result.startswith("status=completed")
         )
     )
 
@@ -1506,9 +1482,9 @@ def test_task_activity_tracks_compact_subagent_tool_calls():
         .result
     )
 
-    assert any(entry == "Status: Task queued." for entry in activity)
-    assert any(entry == "Status: Task running." for entry in activity)
-    assert any("ToolCall: multiply({" in entry for entry in activity)
+    assert "Status: Task queued." in activity
+    assert "Status: Task running." in activity
+    assert "ToolCall: multiply({" in activity
     assert all("ToolResult:" not in entry for entry in activity)
 
 
@@ -1535,13 +1511,12 @@ def test_task_message_resumes_completed_background_agent():
         task_store=task_store,
     ):
         dispatch = library([("call_1", "worker", {"task": "Start worker."})])
-        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        task_id = _task_id(dispatch.tool_calls[0].result)
         _wait_until(
             lambda: (
                 library([("call_2", "task_status", {"task_id": task_id})])
                 .tool_calls[0]
-                .result["status"]
-                == "completed"
+                .result.startswith("status=completed")
             )
         )
 
@@ -1559,14 +1534,13 @@ def test_task_message_resumes_completed_background_agent():
             .result
         )
 
-        assert message_result["status"] == "resumed"
+        assert message_result == "status=resumed"
 
         _wait_until(
             lambda: (
                 library([("call_4", "task_status", {"task_id": task_id})])
                 .tool_calls[0]
-                .result["status"]
-                == "completed"
+                .result.startswith("status=completed")
             )
         )
         output = (
@@ -1576,12 +1550,7 @@ def test_task_message_resumes_completed_background_agent():
         )
 
         assert output == "resumed pass"
-        task_state = (
-            library([("call_6", "task_status", {"task_id": task_id})])
-            .tool_calls[0]
-            .result
-        )
-        resumed_run_id = task_state["metadata"]["checkpoint_run_id"]
+        resumed_run_id = task_store.get(task_id).metadata["checkpoint_run_id"]
         assert resumed_run_id != task_id
         assert store.load_state("worker", "user_42", task_id)["status"] == "completed"
         assert (
@@ -1621,7 +1590,7 @@ def test_task_message_resume_clears_previous_interrupt_reason():
         checkpoint_store=store,
     ):
         dispatch = library([("call_1", "worker", {"task": "Start worker."})])
-        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        task_id = _task_id(dispatch.tool_calls[0].result)
 
         assert slow_tool_started.wait(timeout=1.0)
         interrupt_result = (
@@ -1629,24 +1598,18 @@ def test_task_message_resume_clears_previous_interrupt_reason():
             .tool_calls[0]
             .result
         )
-        assert interrupt_result["status"] == "interrupt_requested"
+        assert interrupt_result == "status=interrupt_requested"
 
         release_tool.set()
         _wait_until(
             lambda: (
                 library([("call_3", "task_status", {"task_id": task_id})])
                 .tool_calls[0]
-                .result["status"]
-                == "interrupted"
+                .result.startswith("status=interrupted")
             )
         )
 
-        interrupted_state = (
-            library([("call_4", "task_status", {"task_id": task_id})])
-            .tool_calls[0]
-            .result
-        )
-        assert "interrupt_reason" in interrupted_state["metadata"]
+        assert "interrupt_reason" in library.get_task_store().get(task_id).metadata
 
         message_result = (
             library(
@@ -1661,23 +1624,17 @@ def test_task_message_resume_clears_previous_interrupt_reason():
             .tool_calls[0]
             .result
         )
-        assert message_result["status"] == "resumed"
+        assert message_result == "status=resumed"
 
         _wait_until(
             lambda: (
                 library([("call_6", "task_status", {"task_id": task_id})])
                 .tool_calls[0]
-                .result["status"]
-                == "completed"
+                .result.startswith("status=completed")
             )
         )
 
-        resumed_state = (
-            library([("call_7", "task_status", {"task_id": task_id})])
-            .tool_calls[0]
-            .result
-        )
-        assert "interrupt_reason" not in resumed_state["metadata"]
+        assert "interrupt_reason" not in library.get_task_store().get(task_id).metadata
 
     state = store.load_state("worker", "user_42", task_id)
     assert state is not None

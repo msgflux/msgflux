@@ -120,16 +120,13 @@ agent = nn.Agent(
 
 dispatch = agent.tool_library([("call_1", "long_sum", {"a": 20, "b": 22})])
 print(dispatch.tool_calls[0].result)
-# The `long_sum` tool is running in the background with task_id='...'
-# Use that task_id with `task_status`, `task_interrupt`, `task_wait`, or `task_output`
+# task_id=... status=running
+task_id = dispatch.tool_calls[0].result.split()[0].split("=", 1)[1]
 
-tasks = agent.tool_library([("call_2", "task_list", {})])
-task_id = tasks.tool_calls[0].result[0]["task_id"]
-
-state = agent.tool_library([("call_3", "task_status", {"task_id": task_id})])
+state = agent.tool_library([("call_2", "task_status", {"task_id": task_id})])
 print(state.tool_calls[0].result)
 
-result = agent.tool_library([("call_4", "task_output", {"task_id": task_id})])
+result = agent.tool_library([("call_3", "task_output", {"task_id": task_id})])
 print(result.tool_calls[0].result)
 ```
 
@@ -144,10 +141,10 @@ wait_result = agent.tool_library(
 print(wait_result.tool_calls[0].result)
 ```
 
-When the task completes, `task_wait` returns the same payload as
-`task_output(task_id)`. If the task fails, it returns the failed payload. If
-the timeout is reached first, it returns a timeout payload with the current
-task status and progress.
+When the task completes, `task_wait` returns the same result as
+`task_output(task_id)`. Other states use compact text such as
+`status=timeout task_status=running progress=50%` or
+`status=failed error=...`.
 
 ## Model-Chosen Background Execution
 
@@ -186,7 +183,7 @@ background subagents, that means before the next provider call.
 
 ## Reading Task Activity
 
-`task_activity(task_id)` returns a compact list of activity entries for tasks
+`task_activity(task_id)` returns compact newline-separated activity for tasks
 that declare the `activity` capability.
 
 ```python
@@ -196,12 +193,10 @@ print(activity.tool_calls[0].result)
 
 For background agents it can include compact tool call entries such as:
 
-```python
-[
-    "Status: Task queued.",
-    "Status: Task running.",
-    "ToolCall: search_docs({'query': 'task runtime'})",
-]
+```text
+Status: Task queued.
+Status: Task running.
+ToolCall: search_docs({'query': 'task runtime'})
 ```
 
 ## Task Messaging And Subagent Continuation

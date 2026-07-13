@@ -8,11 +8,6 @@ from typing import Any
 from msgflux.core.dotdict import dotdict
 
 BUILTIN_TOOL_USAGE_GUIDANCE: dict[str, str] = {
-    "agent": (
-        "Use when an available specialized agent is better suited for the task. "
-        "Choose the agent whose description matches the task and send a focused "
-        "message."
-    ),
     "web_fetch": (
         "Use when the user provides a URL or asks about a specific web page. "
         "Fetch the page before answering questions about its contents."

@@ -41,21 +41,20 @@ print(schema_names)
 
 ## Search Before Loading
 
-A normal search returns matching tool names without loading them:
+A normal search returns compact `name: guidance` or `name: description` lines
+without loading them:
 
 ```python
 result = agent.tool_library(
     [("call_1", "tool_search", {"query": "finance report"})]
 ).tool_calls[0].result
 
-print(result["matches"])
-# ["query_finance_report"]
-print(result["loaded"])
-# []
+print(result)
+# query_finance_report: Query archived finance reports for a company.
 ```
 
-Set `description=True` when the model needs details before deciding whether to
-activate a tool:
+Use `/pattern/` for a case-insensitive regex search and append `:K` to limit the
+number of matches:
 
 ```python
 result = agent.tool_library(
@@ -63,17 +62,20 @@ result = agent.tool_library(
         (
             "call_2",
             "tool_search",
-            {"query": "finance report", "description": True},
+            {"query": "/finance|billing/:3"},
         )
     ]
 ).tool_calls[0].result
 
-print(result["descriptions"])
+print(result)
 ```
 
-## Select Tools
+Regex extensions, backreferences, and quantified groups are rejected. Patterns
+are limited to 128 characters and search bounded metadata.
 
-Use `select` to activate exact on-demand tools:
+## Load Tools
+
+Pass an exact returned name through the same `query` argument to activate it:
 
 ```python
 result = agent.tool_library(
@@ -81,16 +83,14 @@ result = agent.tool_library(
         (
             "call_3",
             "tool_search",
-            {"select": ["query_finance_report"]},
+            {"query": "query_finance_report"},
         )
     ]
 ).tool_calls[0].result
 
-print(result["loaded"])
-# ["query_finance_report"]
+print(result)
+# loaded=query_finance_report
 ```
-
-`query="select:query_finance_report"` remains supported for compatibility.
 
 After selection, the tool is promoted into the normal library:
 
@@ -109,5 +109,5 @@ tools remain, msgFlux removes `tool_search` from the exposed runtime tools.
 ## Buckets And AgentTool
 
 On-demand agents work with [Agent Tool](agent-tool.md) as well. When an
-on-demand agent is selected, `ToolLibrary.add(...)` promotes it and the existing
+on-demand agent is loaded by exact name, `ToolLibrary.add(...)` promotes it and the existing
 `AgentTool` bucket captures it as an available `agent(name, message)` target.

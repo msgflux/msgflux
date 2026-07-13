@@ -417,8 +417,6 @@ class BackgroundTaskDispatcher:
             parameters=build_call_parameters_for_response(call_params),
             result=build_background_dispatch_result(
                 task_id=task.task_id,
-                tool_name=tool_name,
-                task_capabilities=task_capabilities,
             ),
         )
 
