@@ -130,8 +130,8 @@ observe task state.
 
 The passive path is automatic delivery when a task changes state.
 
-The runtime materializes that delivery as a synthetic system message wrapped in
-`<system_note>` and `<notification>` tags.
+The runtime materializes that delivery as a synthetic system message containing
+a compact `<notifications>` batch.
 
 That choice keeps notifications compatible with the existing message-driven
 agent loop without inventing a second message protocol.
@@ -196,7 +196,7 @@ later, on the next provider boundary:
 Agent._prepare_model_execution()
     |
     +--> AgentInbox.drain()
-    +--> render <system_note><notification>...</notification></system_note>
+    +--> render <notifications>...</notifications>
     `--> provider call sees the notification
 ```
 

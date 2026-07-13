@@ -137,10 +137,6 @@ class BackgroundTaskDispatcher:
                     task_id=task_handle.task_id,
                     tool_name=tool_name,
                     status="interrupted",
-                    hint=(
-                        f"Use task_status(task_id='{task_handle.task_id}') "
-                        "if you need interrupt details."
-                    ),
                     agent_inbox=agent_inbox,
                 )
                 raise
@@ -150,10 +146,6 @@ class BackgroundTaskDispatcher:
                     task_id=task_handle.task_id,
                     tool_name=tool_name,
                     status="paused",
-                    hint=(
-                        f"Use task_message(task_id='{task_handle.task_id}', "
-                        "message='...') to resume the paused task."
-                    ),
                     agent_inbox=agent_inbox,
                 )
                 raise
@@ -163,10 +155,6 @@ class BackgroundTaskDispatcher:
                     task_id=task_handle.task_id,
                     tool_name=tool_name,
                     status="failed",
-                    hint=(
-                        f"Use task_status(task_id='{task_handle.task_id}') "
-                        "if you need error details."
-                    ),
                     agent_inbox=agent_inbox,
                 )
                 raise
@@ -175,10 +163,6 @@ class BackgroundTaskDispatcher:
                 task_id=task_handle.task_id,
                 tool_name=tool_name,
                 status="completed",
-                hint=(
-                    f"Use task_output(task_id='{task_handle.task_id}') "
-                    "if you need the result."
-                ),
                 agent_inbox=agent_inbox,
             )
             return result
@@ -444,7 +428,7 @@ class BackgroundTaskDispatcher:
         task_id: str,
         tool_name: str,
         status: str,
-        hint: str,
+        hint: str | None = None,
         agent_inbox: AgentInbox | None = None,
     ) -> AgentNotification | None:
         inbox = agent_inbox
@@ -460,6 +444,6 @@ class BackgroundTaskDispatcher:
                 status=status,
                 hint=hint,
                 metadata={"tool": tool_name},
-                dedupe_key=f"task:{task_id}:{status}",
+                dedupe_key=f"task:{task_id}",
             )
         )

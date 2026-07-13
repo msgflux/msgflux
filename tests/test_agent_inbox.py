@@ -33,15 +33,14 @@ def test_agent_inbox_verbose_publish_and_drain_are_printed(capsys):
 
     captured = capsys.readouterr()
     assert "[assistant][notification_publish]" in captured.out
-    assert "<notification>" in captured.out
-    assert "source: task" in captured.out
-    assert "ref: task_123" in captured.out
-    assert "status: completed" in captured.out
-    assert "tool: worker" in captured.out
+    assert "source=task" in captured.out
+    assert "ref=task_123" in captured.out
+    assert "status=completed" in captured.out
+    assert "tool=worker" in captured.out
     assert "[assistant][notification_drain]" in captured.out
     assert "1 notification(s)" in captured.out
-    assert "<system_note>" in captured.out
-    assert "</system_note>" in captured.out
+    assert "<notifications>" in captured.out
+    assert "</notifications>" in captured.out
 
 
 def test_agent_inbox_verbose_replace_is_printed(capsys):
@@ -66,7 +65,7 @@ def test_agent_inbox_verbose_replace_is_printed(capsys):
 
     captured = capsys.readouterr()
     assert "[assistant][notification_replace]" in captured.out
-    assert "status: process" in captured.out
+    assert "status=process" in captured.out
     assert "dedupe_key: progress:task_123" in captured.out
 
 
@@ -126,11 +125,11 @@ def test_agent_inbox_renders_runtime_notifications_as_system_messages():
 
     assert isinstance(rendered, dict)
     assert rendered["role"] == "system"
-    assert "<system_note>" in rendered["content"]
-    assert "<notification>" in rendered["content"]
-    assert "source: task" in rendered["content"]
-    assert "ref: task_123" in rendered["content"]
-    assert "status: completed" in rendered["content"]
+    assert rendered["content"] == (
+        "<notifications>\n"
+        "source=task ref=task_123 status=completed tool=worker\n"
+        "</notifications>"
+    )
 
 
 def test_agent_inbox_separates_incoming_user_message_from_system_notifications():
@@ -141,9 +140,9 @@ def test_agent_inbox_separates_incoming_user_message_from_system_notifications()
     rendered = inbox.render_messages(inbox.drain())
 
     assert [message["role"] for message in rendered] == ["system", "user"]
-    assert "<system_note>" in rendered[0]["content"]
+    assert "<notifications>" in rendered[0]["content"]
     assert "<incoming_user_message>" in rendered[1]["content"]
-    assert "<system_note>" not in rendered[1]["content"]
+    assert "<notifications>" not in rendered[1]["content"]
 
 
 def test_agent_inbox_clear_user_messages_preserves_system_notifications():

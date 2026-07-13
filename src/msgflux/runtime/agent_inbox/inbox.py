@@ -291,12 +291,10 @@ class AgentInbox:
         self,
         notifications: List[AgentNotification],
     ) -> str:
-        lines: List[str] = ["<system_note>"]
+        lines: List[str] = ["<notifications>"]
         for notification in notifications:
-            lines.append("<notification>")
-            lines.extend(self._render_notification_body(notification))
-            lines.append("</notification>")
-        lines.append("</system_note>")
+            lines.append(self._render_notification(notification))
+        lines.append("</notifications>")
         return "\n".join(lines)
 
     def _render_incoming_user_messages(
@@ -313,18 +311,22 @@ class AgentInbox:
             return None
         return "\n".join(lines)
 
-    def _render_notification_body(self, notification: AgentNotification) -> List[str]:
-        body_lines: List[str] = [f"source: {self._escape_text(notification.source)}"]
+    def _render_notification(self, notification: AgentNotification) -> str:
+        fields = [f"source={self._escape_text(notification.source)}"]
         if notification.ref:
-            body_lines.append(f"ref: {self._escape_text(notification.ref)}")
+            fields.append(f"ref={self._escape_text(notification.ref)}")
         if notification.status:
-            body_lines.append(f"status: {self._escape_text(notification.status)}")
+            fields.append(f"status={self._escape_text(notification.status)}")
+
         for key, value in sorted(notification.metadata.items()):
-            rendered_value = self._escape_text(self._stringify(value))
-            body_lines.append(f"{self._escape_text(key)}: {rendered_value}")
+            fields.append(
+                f"{self._escape_text(key)}="
+                f"{self._escape_text(self._stringify(value))}"
+            )
+        rendered = " ".join(fields)
         if notification.hint:
-            body_lines.append(f"hint: {self._escape_text(notification.hint)}")
-        return body_lines
+            rendered += f" | {self._escape_text(notification.hint)}"
+        return rendered
 
     # --- Normalization Helpers ---
 
@@ -452,14 +454,10 @@ class AgentInbox:
             rendered = rendered[0]
         content = rendered["content"]
         lines = content.splitlines()
-        if len(lines) >= 4:
-            return "\n".join(lines[2:-2])
+        if len(lines) >= 3 and lines[0] == "<notifications>":
+            return "\n".join(lines[1:-1])
         return content
 
     @staticmethod
     def _escape_text(value: Any) -> str:
-        return escape(str(value), {'"': "&quot;"})
-
-    @staticmethod
-    def _escape_attr(value: Any) -> str:
         return escape(str(value), {'"': "&quot;"})

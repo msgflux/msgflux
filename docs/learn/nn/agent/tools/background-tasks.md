@@ -308,20 +308,15 @@ It also includes timing helpers such as:
 Completed and failed tasks are injected back into the next provider call as a
 synthetic system message:
 
-```text
-<system_note>
-<notification>
-source: task
-ref: abcd1234
-status: completed
-tool: long_sum
-hint: Use task_output(task_id='abcd1234') if you need the result.
-</notification>
-</system_note>
+```xml
+<notifications>
+source=task ref=abcd1234 status=completed tool=long_sum
+</notifications>
 ```
 
-That means the model can recover task output without polling manually on every
-turn, as long as the prompt tells it what to do with these notifications.
+That tells the model about an unexpected state change without repeating tool
+instructions. It can call `task_output`, `task_status`, or `task_activity` when
+it needs details.
 
 ```python
 agent = nn.Agent(

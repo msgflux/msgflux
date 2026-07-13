@@ -135,7 +135,7 @@ background tool / checkpoint / hook
      AgentInbox.drain() + render_messages()
               |
               v
-<system_note><notification>...</notification></system_note>
+<notifications>...</notifications>
               |
               v
          provider call
@@ -146,11 +146,10 @@ background tool / checkpoint / hook
 The renderer converts a drained batch into one or more synthetic messages.
 
 Runtime notifications are delivered as `role="system"` messages containing a
-`<system_note>` with one or more `<notification>` blocks. They are operational context,
-not user speech.
+compact `<notifications>` batch. They are operational context, not user speech.
 
 Incoming user messages are delivered separately as `role="user"` messages. They
-are not wrapped in `<system_note>`, because they represent new user input rather
+are not wrapped in `<notifications>`, because they represent new user input rather
 than runtime context.
 
 When a drain contains both runtime notifications and incoming user messages, the
@@ -164,21 +163,10 @@ That lets the model receive operational state before the new user turn.
 Example:
 
 ```xml
-<system_note>
-<notification>
-source: task
-ref: abcd1234
-status: completed
-hint: use task_output(task_id='abcd1234')
-</notification>
-<notification>
-source: context_budget
-ref: run_1
-status: warning
-usage_percent: 92
-hint: be concise and avoid repeating prior context
-</notification>
-</system_note>
+<notifications>
+source=task ref=abcd1234 status=completed tool=long_sum
+source=context_budget ref=run_1 status=warning usage_percent=92 | be concise and avoid repeating prior context
+</notifications>
 ```
 
 The corresponding ChatML message is:
@@ -186,7 +174,7 @@ The corresponding ChatML message is:
 ```python
 {
     "role": "system",
-    "content": "<system_note>...</system_note>",
+    "content": "<notifications>...</notifications>",
 }
 ```
 

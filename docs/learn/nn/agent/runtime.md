@@ -482,7 +482,7 @@ external_inbox.pause(reason="Need human review before continuing.")
 
 ### System Notifications
 
-Non-user inbox items are delivered as `system_note`:
+Non-user inbox items are delivered in a compact `notifications` batch:
 
 ```python
 agent_inbox.publish(
@@ -497,13 +497,9 @@ agent_inbox.publish(
 The model receives:
 
 ```xml
-<system_note>
-<notification>
-source: system_note
-status: policy_update
-hint: Use the enterprise refund policy for this answer.
-</notification>
-</system_note>
+<notifications>
+source=system_note status=policy_update | Use the enterprise refund policy for this answer.
+</notifications>
 ```
 
 Use `incoming_user_message` for new user turns. Use `system_note` or another
