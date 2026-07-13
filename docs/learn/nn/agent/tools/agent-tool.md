@@ -26,7 +26,10 @@ import msgflux as mf
 import msgflux.nn as nn
 from msgflux.tools.builtin import AgentTool
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+model = mf.Model.chat_completion(
+    "openai/gpt-5.6-luna",
+    reasoning_effort="none",
+)
 
 class Researcher(nn.Agent):
     model = model
@@ -94,7 +97,7 @@ names and calls the bucket's `refresh()` hook so `AgentTool` can update its
 description and usage guidance.
 
 [Tool Search](tool-search.md) is compatible with `ToolBucket` capture.
-On-demand agents can stay outside the active tool set until `tool_search` loads
+On-demand agents can stay outside the active tool set until `search_tools` loads
 them by exact name. When the agent is promoted into the `ToolLibrary`, the
 existing `AgentTool` bucket captures it and makes it available as another
 `agent(name, message)` target.
@@ -123,7 +126,10 @@ from msgflux.tools.builtin import AgentTool
 
 # mf.set_envs(OPENAI_API_KEY="...")
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+model = mf.Model.chat_completion(
+    "openai/gpt-5.6-luna",
+    reasoning_effort="none",
+)
 
 
 @mf.tool_config(handle={"tools": ["register"]})
@@ -238,7 +244,10 @@ top-level tool.
 
         # mf.set_envs(OPENAI_API_KEY="...")
 
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        model = mf.Model.chat_completion(
+            "openai/gpt-5.6-luna",
+            reasoning_effort="none",
+        )
 
         nutritionist = nn.Agent(
             name="nutritionist",
@@ -294,7 +303,10 @@ top-level tool.
 
         # mf.set_envs(OPENAI_API_KEY="...")
 
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        model = mf.Model.chat_completion(
+            "openai/gpt-5.6-luna",
+            reasoning_effort="none",
+        )
 
         reviewer = nn.Agent(
             name="reviewer",

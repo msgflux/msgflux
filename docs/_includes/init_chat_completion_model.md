@@ -8,7 +8,17 @@
         import msgflux as mf
 
         mf.set_envs(OPENAI_API_KEY="...")
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        model = mf.Model.chat_completion("openai/gpt-5.6-luna")
+        ```
+
+        When using `gpt-5.6-luna` with function tools through Chat
+        Completions, explicitly set `reasoning_effort="none"`:
+
+        ```python
+        tool_model = mf.Model.chat_completion(
+            "openai/gpt-5.6-luna",
+            reasoning_effort="none",
+        )
         ```
 
     === "Groq"

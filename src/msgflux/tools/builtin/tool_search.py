@@ -11,7 +11,7 @@ from msgflux.tools.types import Hidden, ToolBucket, ToolLibraryOperator
 class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     """Search and activate registered on-demand tools."""
 
-    name = "tool_search"
+    name = "search_tools"
     capture = {"on_demand": True}
     expose_captured_names = True
     display_name = "Tool Search"

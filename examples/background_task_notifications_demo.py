@@ -12,7 +12,12 @@ mf.load_dotenv()
 
 
 def build_agent(model_name: str) -> nn.Agent:
-    model = mf.Model.chat_completion(model_name)
+    model_kwargs = (
+        {"reasoning_effort": "none"}
+        if model_name.startswith("openai/gpt-5.6-luna")
+        else {}
+    )
+    model = mf.Model.chat_completion(model_name, **model_kwargs)
 
     @mf.tool_config(background=True)
     def slow_lookup(ticket_id: str) -> str:
@@ -37,7 +42,7 @@ def build_agent(model_name: str) -> nn.Agent:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="openai/gpt-4.1-mini")
+    parser.add_argument("--model", default="openai/gpt-5.6-luna")
     args = parser.parse_args()
 
     assistant = build_agent(args.model)

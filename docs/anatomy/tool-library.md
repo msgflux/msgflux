@@ -114,9 +114,9 @@ The contract is intentionally small:
 
 - `@tool_config(on_demand=True)` keeps the tool out of
   `get_tool_json_schemas()` and `get_tool_annotations()`
-- on-demand tools are captured by the builtin `tool_search` bucket
-- if at least one on-demand tool exists, `ToolLibrary` registers `tool_search`
-- `tool_search` can search both local and MCP-backed on-demand tools
+- on-demand tools are captured by the builtin `search_tools` bucket
+- if at least one on-demand tool exists, `ToolLibrary` registers `search_tools`
+- `search_tools` can search both local and MCP-backed on-demand tools
 - text and `/regex/` queries return compact matching tool summaries
 - an exact-name query promotes that tool by calling `ToolLibrary.add(...)`
   again without the `on_demand` flag
@@ -126,9 +126,9 @@ keep the active tool context small.
 
 An explicitly configured `ToolHandle` is the natural companion feature here: a
 tool with `tools.register` access can add a new on-demand tool at runtime, and
-`ToolLibrary` will expose `tool_search` automatically if needed.
+`ToolLibrary` will expose `search_tools` automatically if needed.
 
-`tool_search` is both a builtin operator and a `ToolBucket` with
+`search_tools` is both a builtin operator and a `ToolBucket` with
 `capture={"on_demand": True}`. It owns the searchable metadata and promotes a
 selected tool through `ToolLibrary.add(...)` with `on_demand=False`. The library
 only performs normal registration and bucket routing; search behavior remains in
@@ -171,7 +171,7 @@ such as `"catalog|orders"`.
 
 Two bucket captures cannot overlap. This makes routing deterministic without a
 priority system. A kind bucket that coexists with on-demand tools should include
-`"on_demand": False`, leaving `{"on_demand": True}` to `tool_search`. The
+`"on_demand": False`, leaving `{"on_demand": True}` to `search_tools`. The
 base bucket rejects captured tools that configure `background` or
 `allow_background`; configure those flags on the bucket itself instead.
 
@@ -217,7 +217,7 @@ The bucket then forwards those runtime values only when the selected subagent's
 own `tool_config` requests them.
 
 On-demand tools use the same path. An on-demand agent is first captured by
-`tool_search`; when it receives an exact-name query, `ToolLibrary.add(...)` runs
+`search_tools`; when it receives an exact-name query, `ToolLibrary.add(...)` runs
 again with `on_demand=False`, and `AgentTool` captures it.
 
 ## Typed Restoration

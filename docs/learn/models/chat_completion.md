@@ -33,7 +33,7 @@ Chat completion models are stateless - they don't maintain conversation history 
     # mf.set_envs(OPENAI_API_KEY="...")
 
     # Create model
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
     response = model("Hello!")
     print(response.consume())

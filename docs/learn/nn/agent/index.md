@@ -38,7 +38,7 @@ task to be treated in isolation.
 | [Tools](tools/index.md) | Tool calling overview |
 | [Builtin Tools](tools/builtin.md) | Built-in web, weather, agent, skill, and runtime tools |
 | [Tool Config](tools/config.md) | Per-tool behavior, runtime injection, retries, display names, and usage guidance |
-| [Tool Search](tools/tool-search.md) | On-demand tools and `tool_search` activation |
+| [Tool Search](tools/tool-search.md) | On-demand tools and `search_tools` activation |
 | [Agent Skills](skills.md) | Reusable `SKILL.md` workflows loaded through progressive disclosure |
 | [Background Tasks](tools/background-tasks.md) | Async tool dispatch, task polling, progress, and notifications |
 | [Agent Tool](tools/agent-tool.md) | Subagents, `AgentTool`, and tool buckets |

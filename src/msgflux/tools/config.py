@@ -92,7 +92,7 @@ def tool_config(
             context by itself.
         on_demand:
             If True, keep the tool registered in the library but hide its schema
-            from the model until it is loaded through `tool_search`.
+            from the model until it is loaded through `search_tools`.
         inject_message:
             If True, the tool receives the original `message` passed to the Agent
             at runtime. This injected parameter does not become part of the tool

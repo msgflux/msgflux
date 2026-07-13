@@ -13,7 +13,7 @@ import msgflux.nn as nn
 
 # mf.set_envs(OPENAI_API_KEY="...")
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
 agent = nn.Agent("assistant", model)
 
@@ -50,7 +50,7 @@ The **preferred** way to define agents is using class attributes. This approach,
 class Translator(nn.Agent):
     """Professional translator for Brazilian Portuguese."""
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
     system_message = "You are a professional translator."
     instructions = "Translate the user's message to Brazilian Portuguese."
     expected_output = "Return only the translation, nothing else."
@@ -79,7 +79,7 @@ call `Model.chat_completion` internally.
     ```python
     import msgflux.nn as nn
 
-    agent = nn.Agent("assistant", "openai/gpt-4.1-mini")
+    agent = nn.Agent("assistant", "openai/gpt-5.6-luna")
 
     response = agent("What is the capital of France?")
     print(response)  # "The capital of France is Paris."
@@ -114,7 +114,10 @@ def run_shell(command: str) -> str:
     return result.stdout or result.stderr
 
 class DevAssistant(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion(
+        "openai/gpt-5.6-luna",
+        reasoning_effort="none",
+    )
     instructions = "Help the user with system tasks using the shell."
     tools = [run_shell]
 

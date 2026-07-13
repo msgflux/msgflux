@@ -256,7 +256,7 @@ class TestToolLibraryMCPIntegration:
     def test_on_demand_mcp_tools_are_hidden_until_loaded(
         self, mock_convert_schema, mock_F, mock_filter_tools, mock_mcp_client
     ):
-        """Test that on-demand MCP tools are exposed only after tool_search."""
+        """Test that on-demand MCP tools are exposed only after search_tools."""
         from msgflux.nn.modules.tool import ToolLibrary
 
         mock_client_instance = MagicMock()
@@ -291,10 +291,10 @@ class TestToolLibraryMCPIntegration:
         initial_schema_names = [
             schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ]
-        assert initial_schema_names == ["tool_search"]
+        assert initial_schema_names == ["search_tools"]
 
         result = (
-            library([("call_1", "tool_search", {"query": "fs__read_file"})])
+            library([("call_1", "search_tools", {"query": "fs__read_file"})])
             .tool_calls[0]
             .result
         )
@@ -303,7 +303,7 @@ class TestToolLibraryMCPIntegration:
             schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ]
         assert result == "loaded=fs__read_file"
-        assert "tool_search" not in loaded_schema_names
+        assert "search_tools" not in loaded_schema_names
         assert "fs__read_file" in loaded_schema_names
 
     def test_mcp_servers_none(self):

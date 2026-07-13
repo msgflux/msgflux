@@ -814,21 +814,21 @@ class TestToolLibrary:
         schemas = library.get_tool_json_schemas()
 
         assert "remote_lookup" in names
-        assert "tool_search" in names
-        assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
+        assert "search_tools" in names
+        assert [schema["function"]["name"] for schema in schemas] == ["search_tools"]
         parameters = schemas[0]["function"]["parameters"]
         properties = parameters["properties"]
         assert properties == {"query": {"type": "string"}}
         assert parameters["required"] == ["query"]
-        assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
-        assert isinstance(library.library["tool_search"].impl, ToolBucket)
-        assert library.library["tool_search"].tool_config["handle"] == {
+        assert isinstance(library.library["search_tools"].impl, ToolLibraryOperator)
+        assert isinstance(library.library["search_tools"].impl, ToolBucket)
+        assert library.library["search_tools"].tool_config["handle"] == {
             "tools": ["register", "remove"]
         }
-        assert library.library["tool_search"].tool_config["tool_kind"] == "bucket"
+        assert library.library["search_tools"].tool_config["tool_kind"] == "bucket"
 
-    def test_tool_search_is_not_captured_by_tool_search_bucket(self):
-        """Test tool_search stays registered even if a search bucket is added."""
+    def test_search_tools_is_not_captured_by_search_tools_bucket(self):
+        """Test search_tools stays registered even if a search bucket is added."""
 
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
@@ -847,7 +847,7 @@ class TestToolLibrary:
         library = ToolLibrary(name="lib", tools=[remote_lookup])
         library.add(SearchBucket())
 
-        assert "tool_search" in library.library
+        assert "search_tools" in library.library
         assert library.library["search_bucket"].impl.tools == {}
 
     def test_tool_bucket_captures_multiple_tool_kinds(self):
@@ -1013,7 +1013,7 @@ class TestToolLibrary:
         }
         assert library.library["runtime_echo"].tool_config["tool_kind"] == "diagnostic"
 
-    def test_tool_search_captures_on_demand_operator_tools(self):
+    def test_search_tools_captures_on_demand_operator_tools(self):
         """Test on-demand operators use the same ToolSearch bucket."""
 
         class DeferredOperator(ToolLibraryOperator):
@@ -1032,14 +1032,14 @@ class TestToolLibrary:
 
         assert [
             schema["function"]["name"] for schema in library.get_tool_json_schemas()
-        ] == ["tool_search"]
+        ] == ["search_tools"]
 
-        library([("call_1", "tool_search", {"query": "deferred_operator"})])
+        library([("call_1", "search_tools", {"query": "deferred_operator"})])
         response = library([("call_2", "deferred_operator", {})])
 
         assert "deferred_operator" in response.tool_calls[0].result
 
-    def test_tool_search_does_not_duplicate_schema_guidance(self):
+    def test_search_tools_does_not_duplicate_schema_guidance(self):
         """Tool search syntax lives in its schema description only."""
 
         @mf.tool_config(on_demand=True)
@@ -1053,7 +1053,7 @@ class TestToolLibrary:
 
         assert guidance == []
 
-    def test_tool_search_returns_matching_on_demand_tools_without_loading(self):
+    def test_search_tools_returns_matching_on_demand_tools_without_loading(self):
         """Test that keyword search describes matches without exposing them."""
 
         @mf.tool_config(on_demand=True)
@@ -1068,7 +1068,7 @@ class TestToolLibrary:
                 [
                     (
                         "call_1",
-                        "tool_search",
+                        "search_tools",
                         {"query": "remote lookup"},
                     )
                 ]
@@ -1080,10 +1080,10 @@ class TestToolLibrary:
         schema_names = [schema["function"]["name"] for schema in schemas]
 
         assert result == "remote_lookup: Look up external information."
-        assert "tool_search" in schema_names
+        assert "search_tools" in schema_names
         assert "remote_lookup" not in schema_names
 
-    def test_tool_search_exact_name_loads_and_regex_limit_searches(self):
+    def test_search_tools_exact_name_loads_and_regex_limit_searches(self):
         """Exact names load; regex and :K keep search compact."""
 
         @mf.tool_config(on_demand=True)
@@ -1102,12 +1102,12 @@ class TestToolLibrary:
         )
 
         regex_result = (
-            library([("call_1", "tool_search", {"query": "/read_.*_file/:1"})])
+            library([("call_1", "search_tools", {"query": "/read_.*_file/:1"})])
             .tool_calls[0]
             .result
         )
         loaded_result = (
-            library([("call_2", "tool_search", {"query": "read_cloud_file"})])
+            library([("call_2", "search_tools", {"query": "read_cloud_file"})])
             .tool_calls[0]
             .result
         )
@@ -1115,7 +1115,7 @@ class TestToolLibrary:
         assert regex_result == "read_cloud_file: Read a cloud file."
         assert loaded_result == "loaded=read_cloud_file"
 
-    def test_tool_search_rejects_unsafe_regex_and_invalid_limit(self):
+    def test_search_tools_rejects_unsafe_regex_and_invalid_limit(self):
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
             """Look up external information."""
@@ -1124,16 +1124,16 @@ class TestToolLibrary:
         library = ToolLibrary(name="lib", tools=[remote_lookup])
 
         unsafe = library(
-            [("call_1", "tool_search", {"query": "/(a+)+$/"})]
+            [("call_1", "search_tools", {"query": "/(a+)+$/"})]
         ).tool_calls[0]
         invalid_limit = library(
-            [("call_2", "tool_search", {"query": "remote:0"})]
+            [("call_2", "search_tools", {"query": "remote:0"})]
         ).tool_calls[0]
 
         assert "quantified groups" in unsafe.error
         assert "between 1 and 20" in invalid_limit.error
 
-    def test_tool_search_restores_tool_when_activation_fails(self):
+    def test_search_tools_restores_tool_when_activation_fails(self):
         """Test failed promotion does not discard an on-demand tool."""
 
         class CatalogBucket(ToolBucket):
@@ -1166,14 +1166,14 @@ class TestToolLibrary:
             return query
 
         library = ToolLibrary(name="lib", tools=[bucket, delayed_lookup])
-        response = library([("call_1", "tool_search", {"query": "lookup"})])
+        response = library([("call_1", "search_tools", {"query": "lookup"})])
 
         assert "Duplicate tool name `lookup` in bucket." in response.tool_calls[0].error
-        search = library.library["tool_search"].impl
+        search = library.library["search_tools"].impl
         assert "lookup" in search.tools
         assert search.tools["lookup"].tool_config["on_demand"] is True
 
-    def test_tool_search_is_removed_when_last_on_demand_tool_is_removed(self):
+    def test_search_tools_is_removed_when_last_on_demand_tool_is_removed(self):
         """Test runtime tool cleanup when on-demand tools disappear."""
 
         @mf.tool_config(on_demand=True)
@@ -1183,13 +1183,13 @@ class TestToolLibrary:
 
         library = ToolLibrary(name="lib", tools=[remote_lookup])
 
-        assert "tool_search" in library.get_tool_names()
+        assert "search_tools" in library.get_tool_names()
 
         library.remove("remote_lookup")
 
-        assert "tool_search" not in library.get_tool_names()
+        assert "search_tools" not in library.get_tool_names()
 
-    def test_tool_search_cannot_be_removed_while_on_demand_tools_remain(self):
+    def test_search_tools_cannot_be_removed_while_on_demand_tools_remain(self):
         """Test Tool Search retains its captured on-demand tools."""
 
         @mf.tool_config(on_demand=True)
@@ -1200,9 +1200,9 @@ class TestToolLibrary:
         library = ToolLibrary(name="lib", tools=[remote_lookup])
 
         with pytest.raises(ValueError, match="still captures tools"):
-            library.remove("tool_search")
+            library.remove("search_tools")
 
-        assert "tool_search" in library.library
+        assert "search_tools" in library.library
 
     def test_injected_handle_can_add_on_demand_tool(self):
         """Test that injected handle can register on-demand tools."""
@@ -1230,8 +1230,8 @@ class TestToolLibrary:
         ]
 
         assert "remote_lookup" in add_result
-        assert "tool_search" in add_result
-        assert "tool_search" in schema_names
+        assert "search_tools" in add_result
+        assert "search_tools" in schema_names
         assert "remote_lookup" not in schema_names
 
     def test_injected_handle_add_returns_normalized_tool_name(self):

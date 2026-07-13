@@ -54,7 +54,7 @@ mf.set_envs(OPENAI_API_KEY="...")
 
 
 class SupportAgent(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
     system_message = "You are a helpful support agent."
     instructions = "You are assisting {{ user_name }}."
 
@@ -78,7 +78,7 @@ mf.set_envs(OPENAI_API_KEY="...")
 
 
 class SupportAgent(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
     system_message = "You are a helpful support agent."
     instructions = "You are assisting {{ user_name }}."
     message_fields = {"task": "issue", "vars": "variables"}

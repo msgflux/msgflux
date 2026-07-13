@@ -56,7 +56,7 @@ One of the core ideas in msgFlux is that **interaction style is a module-level d
     import msgflux as mf
     import msgflux.nn as nn
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
     class SupportAgent(nn.Agent):
         model = model
@@ -85,7 +85,7 @@ One of the core ideas in msgFlux is that **interaction style is a module-level d
     import msgflux as mf
     import msgflux.nn as nn
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
     class SupportAgent(nn.Agent):
         model = model
@@ -135,7 +135,7 @@ On top of this interaction model, msgFlux deliberately distinguishes between **p
     import msgflux.nn as nn
     from typing import Literal
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
     class ClassifySentiment(mf.Signature):
         """Classify the sentiment of a sentence."""  # (1)!
@@ -163,7 +163,7 @@ On top of this interaction model, msgFlux deliberately distinguishes between **p
     import msgflux as mf
     import msgflux.nn as nn
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
     class Classifier(nn.Agent):
         """Expert sentiment analyst."""
@@ -208,7 +208,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         import msgflux.nn as nn
 
         class Support(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion("openai/gpt-5.6-luna")
             instructions = "Help the customer based on their account information."
             config = {"verbose": True, "include_date": True}
 
@@ -267,7 +267,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         import msgflux.nn as nn
 
         class Extractor(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion("openai/gpt-5.6-luna")
             signature = "text -> summary, topics: list[str], sentiment"
             config = {"verbose": True}
 
@@ -292,7 +292,10 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         from msgflux.tools.builtin import WebFetchTool
 
         class ResearchAgent(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion(
+                "openai/gpt-5.6-luna",
+                reasoning_effort="none",
+            )
             generation_schema = ReAct
             tools = [WebFetchTool]
             config = {"verbose": True}
@@ -319,7 +322,10 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
             return balances.get(customer_id, "Customer not found.")
 
         class BankAgent(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion(
+                "openai/gpt-5.6-luna",
+                reasoning_effort="none",
+            )
             instructions = "You are helping customer {{customer_name}}."
             tools = [get_balance]
             config = {"verbose": True}
@@ -343,12 +349,15 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         class SentimentClassifier(nn.Agent):
             """Classify the sentiment of a given text."""  # (1)!
 
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion("openai/gpt-5.6-luna")
             signature = "sentence: str -> sentiment: str, confidence: float"
             config = {"verbose": True}
 
         class Orchestrator(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion(
+                "openai/gpt-5.6-luna",
+                reasoning_effort="none",
+            )
             tools = [SentimentClassifier]
             config = {"verbose": True}
 
@@ -374,7 +383,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
             confidence: float
 
         class SentimentAnalyzer(nn.Agent):
-            model            = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model            = mf.Model.chat_completion("openai/gpt-5.6-luna")
             generation_schema = Sentiment
             message_fields   = {"task": "review"}
             response_mode    = "sentiment"
@@ -402,7 +411,7 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         from msgflux.generation.reasoning import ChainOfThought
 
         class VisionAnalyzer(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion("openai/gpt-5.6-luna")
             generation_schema = ChainOfThought
             config = {"verbose": True}
 
@@ -537,7 +546,7 @@ A composition of modules is a **program** — each module handles one responsibi
         import msgflux as mf
         import msgflux.nn as nn
 
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
         class Researcher(nn.Agent):
             model = model
@@ -570,7 +579,7 @@ A composition of modules is a **program** — each module handles one responsibi
         import msgflux as mf
         import msgflux.nn as nn
 
-        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
         class Classifier(nn.Agent):
             model = model
@@ -619,7 +628,7 @@ A composition of modules is a **program** — each module handles one responsibi
             config = {"language": "en"}
 
         class Summarizer(nn.Agent):
-            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            model = mf.Model.chat_completion("openai/gpt-5.6-luna")
             instructions = "Generate a concise meeting summary with action items."
             config = {"verbose": True}
 
@@ -666,7 +675,7 @@ A composition of modules is a **program** — each module handles one responsibi
     import msgflux as mf
     import msgflux.nn as nn
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
 
     class Router(nn.Agent):

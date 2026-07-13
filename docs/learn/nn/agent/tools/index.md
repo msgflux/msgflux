@@ -24,7 +24,7 @@ In msgFlux, a **Tool can be any callable** (function, class with `__call__`/`aca
 
 - [Tool Config](config.md): per-tool behavior such as `return_direct`, runtime injection, retries, display names, and usage guidance.
 - [Builtin Tools](builtin.md): built-in web, weather, agent, skill, and runtime tools.
-- [Tool Search](tool-search.md): keep rarely used tools on demand and activate them with `tool_search`.
+- [Tool Search](tool-search.md): keep rarely used tools on demand and activate them with `search_tools`.
 - [Background Tasks](background-tasks.md): background dispatch, task tools, progress, notifications, and `task_message`.
 - [AgentTool](agent-tool.md): route many agents through one `agent(name, message)` tool and tool bucket.
 - [MCP](mcp.md): connecting external Model Context Protocol servers.

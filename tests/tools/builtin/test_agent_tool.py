@@ -312,7 +312,7 @@ def test_agent_tool_rejects_unknown_agent_name():
     assert "reviewer" in response.tool_calls[0].error
 
 
-def test_agent_tool_captures_on_demand_agents_after_tool_search():
+def test_agent_tool_captures_on_demand_agents_after_search_tools():
     reviewer = mf.tool_config(on_demand=True)(
         Agent(name="reviewer", model=_mock_model("reviewed"))
     )
@@ -331,7 +331,7 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
             [
                 (
                     "call_2",
-                    "tool_search",
+                    "search_tools",
                     {"query": "reviewer"},
                 )
             ]
@@ -346,7 +346,7 @@ def test_agent_tool_captures_on_demand_agents_after_tool_search():
 
     assert before_search.tool_calls[0].result is None
     assert "Agent `reviewer` not found" in before_search.tool_calls[0].error
-    assert schema_names_before == ["agent", "tool_search"]
+    assert schema_names_before == ["agent", "search_tools"]
     assert search == "loaded=reviewer"
     assert schema_names_after == ["agent"]
     assert response.tool_calls[0].result == "reviewed"

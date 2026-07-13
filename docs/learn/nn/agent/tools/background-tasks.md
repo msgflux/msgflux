@@ -49,7 +49,10 @@ scope = mf.ExecutionScope(
 
 agent = nn.Agent(
     name="assistant",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    model=mf.Model.chat_completion(
+        "openai/gpt-5.6-luna",
+        reasoning_effort="none",
+    ),
     tools=[long_sum],
 )
 
@@ -113,7 +116,10 @@ def long_sum(a: int, b: int) -> int:
 
 agent = nn.Agent(
     name="math_assistant",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    model=mf.Model.chat_completion(
+        "openai/gpt-5.6-luna",
+        reasoning_effort="none",
+    ),
     instructions="Use tools when needed.",
     tools=[long_sum],
 )
@@ -315,7 +321,10 @@ it needs details.
 ```python
 agent = nn.Agent(
     name="assistant",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    model=mf.Model.chat_completion(
+        "openai/gpt-5.6-luna",
+        reasoning_effort="none",
+    ),
     instructions=(
         "If you receive a task notification with status=completed, "
         "call task_output for that task before answering."

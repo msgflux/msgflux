@@ -16,16 +16,19 @@ def query_finance_report(company: str) -> str:
 
 agent = nn.Agent(
     name="analyst",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
+    model=mf.Model.chat_completion(
+        "openai/gpt-5.6-luna",
+        reasoning_effort="none",
+    ),
     tools=[query_finance_report],
 )
 ```
 
 When at least one on-demand tool exists, msgFlux exposes a runtime tool named
-`tool_search`. The on-demand tools are searchable but are not included in the
+`search_tools`. The on-demand tools are searchable but are not included in the
 normal callable tool schemas until selected.
 
-Internally, `tool_search` is a `ToolBucket` with
+Internally, `search_tools` is a `ToolBucket` with
 `capture={"on_demand": True}`. This keeps the search index and the deferred
 tool metadata together; selecting a tool promotes it back through normal
 library registration.
@@ -36,7 +39,7 @@ schema_names = [
     for schema in agent.tool_library.get_tool_json_schemas()
 ]
 print(schema_names)
-# ["tool_search"]
+# ["search_tools"]
 ```
 
 ## Search Before Loading
@@ -46,7 +49,7 @@ without loading them:
 
 ```python
 result = agent.tool_library(
-    [("call_1", "tool_search", {"query": "finance report"})]
+    [("call_1", "search_tools", {"query": "finance report"})]
 ).tool_calls[0].result
 
 print(result)
@@ -61,7 +64,7 @@ result = agent.tool_library(
     [
         (
             "call_2",
-            "tool_search",
+            "search_tools",
             {"query": "/finance|billing/:3"},
         )
     ]
@@ -82,7 +85,7 @@ result = agent.tool_library(
     [
         (
             "call_3",
-            "tool_search",
+            "search_tools",
             {"query": "query_finance_report"},
         )
     ]
@@ -103,8 +106,8 @@ print(schema_names)
 # ["query_finance_report"]
 ```
 
-If other on-demand tools remain, `tool_search` stays available. If no on-demand
-tools remain, msgFlux removes `tool_search` from the exposed runtime tools.
+If other on-demand tools remain, `search_tools` stays available. If no on-demand
+tools remain, msgFlux removes `search_tools` from the exposed runtime tools.
 
 ## Buckets And AgentTool
 
