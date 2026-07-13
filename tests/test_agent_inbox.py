@@ -33,8 +33,7 @@ def test_agent_inbox_verbose_publish_and_drain_are_printed(capsys):
 
     captured = capsys.readouterr()
     assert "[assistant][notification_publish]" in captured.out
-    assert "source=task" in captured.out
-    assert "ref=task_123" in captured.out
+    assert "task_id=task_123" in captured.out
     assert "status=completed" in captured.out
     assert "tool=worker" in captured.out
     assert "[assistant][notification_drain]" in captured.out
@@ -76,8 +75,58 @@ def test_agent_inbox_accepts_control_messages():
 
     notification = inbox.drain()[0]
     assert notification.source == "control"
+    assert notification.role is None
     assert notification.status == "pause"
     assert notification.hint == "operator request"
+    assert "reason" not in notification.metadata
+
+
+def test_agent_inbox_rejects_unknown_control_commands():
+    inbox = _memory_inbox()
+
+    with pytest.raises(ValueError, match="Unsupported control command"):
+        inbox.control("restart")
+
+
+def test_agent_inbox_does_not_render_internal_notifications():
+    inbox = _memory_inbox()
+
+    rendered = inbox.render([AgentControlMessage(command="pause").to_notification()])
+
+    assert rendered is None
+
+
+def test_agent_inbox_supports_explicit_user_role():
+    inbox = _memory_inbox()
+
+    rendered = inbox.render(
+        [{"source": "operator_message", "role": "user", "hint": "Continue."}]
+    )
+
+    assert rendered == {
+        "role": "user",
+        "content": "<incoming_user_message>\nContinue.\n</incoming_user_message>",
+    }
+
+
+def test_agent_inbox_rejects_unsupported_roles():
+    inbox = _memory_inbox()
+
+    with pytest.raises(ValueError, match="AgentNotification.role"):
+        inbox.publish({"source": "tool", "role": "assistant"})
+
+    with pytest.raises(ValueError, match="Only control"):
+        inbox.publish({"source": "tool", "role": None})
+
+
+def test_agent_inbox_infers_role_for_legacy_payloads():
+    inbox = _memory_inbox()
+
+    rendered = inbox.render(
+        [{"source": "incoming_user_message", "hint": "Legacy message."}]
+    )
+
+    assert rendered["role"] == "user"
 
 
 def test_agent_inbox_requires_store():
@@ -127,7 +176,7 @@ def test_agent_inbox_renders_runtime_notifications_as_system_messages():
     assert rendered["role"] == "system"
     assert rendered["content"] == (
         "<notifications>\n"
-        "source=task ref=task_123 status=completed tool=worker\n"
+        "task_id=task_123 status=completed tool=worker\n"
         "</notifications>"
     )
 

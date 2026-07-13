@@ -39,12 +39,15 @@ class AgentNotification:
     metadata: dict[str, Any] = field(default_factory=dict)
     dedupe_key: str | None = None
     created_at: str | None = None
+    role: Literal["system", "user"] | None = "system"
 ```
 
 Notes:
 
 - `source` identifies the origin, for example `task`, `context_budget`,
   `checkpoint`, or `tool_registry`
+- `role` controls delivery: `system` for runtime context, `user` for external
+  user input, and `None` for `control` events that never reach the model
 - `ref` points to the concrete object, for example `task_id` or `run_id`
 - `status` stays simple and machine-friendly
 - `hint` is the short instruction the model can act on
@@ -148,6 +151,10 @@ The renderer converts a drained batch into one or more synthetic messages.
 Runtime notifications are delivered as `role="system"` messages containing a
 compact `<notifications>` batch. They are operational context, not user speech.
 
+Delivery is independent from `source`. Trusted inbox publishers can set
+`role="user"`, but tool notification handles do not expose that option and
+therefore cannot manufacture user speech.
+
 Incoming user messages are delivered separately as `role="user"` messages. They
 are not wrapped in `<notifications>`, because they represent new user input rather
 than runtime context.
@@ -164,7 +171,7 @@ Example:
 
 ```xml
 <notifications>
-source=task ref=abcd1234 status=completed tool=long_sum
+task_id=abcd1234 status=completed tool=long_sum
 source=context_budget ref=run_1 status=warning usage_percent=92 | be concise and avoid repeating prior context
 </notifications>
 ```

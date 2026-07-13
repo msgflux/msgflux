@@ -310,7 +310,7 @@ synthetic system message:
 
 ```xml
 <notifications>
-source=task ref=abcd1234 status=completed tool=long_sum
+task_id=abcd1234 status=completed tool=long_sum
 </notifications>
 ```
 

@@ -20,6 +20,9 @@ from msgflux.runtime.context import (
 from msgflux.utils.console import cprint
 from msgflux.utils.time import utc_now_isoformat
 
+_CONTROL_COMMANDS = frozenset({"interrupt", "pause"})
+_TASK_NOTIFICATION_SOURCES = frozenset({"task", "task_progress", "tool_status"})
+
 
 class AgentInbox:
     """Small inbox for notifications delivered to an agent runtime."""
@@ -159,6 +162,11 @@ class AgentInbox:
         reason: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> AgentNotification:
+        if command not in _CONTROL_COMMANDS:
+            supported = ", ".join(sorted(_CONTROL_COMMANDS))
+            raise ValueError(
+                f"Unsupported control command `{command}`. Expected one of: {supported}."
+            )
         return self.publish(
             AgentControlMessage(
                 command=command,
@@ -182,6 +190,7 @@ class AgentInbox:
         return self.publish(
             {
                 "source": "incoming_user_message",
+                "role": "user",
                 "hint": content,
                 "metadata": deepcopy(dict(metadata or {})),
             }
@@ -234,7 +243,7 @@ class AgentInbox:
             kept = [
                 notification
                 for notification in notifications
-                if notification.source != "incoming_user_message"
+                if notification.role != "user"
             ]
             removed = len(notifications) - len(kept)
             if removed:
@@ -262,15 +271,15 @@ class AgentInbox:
         if not normalized:
             return []
 
-        incoming_messages = [
+        user_notifications = [
             notification
             for notification in normalized
-            if notification.source == "incoming_user_message"
+            if notification.role == "user"
         ]
         system_notifications = [
             notification
             for notification in normalized
-            if notification.source != "incoming_user_message"
+            if notification.role == "system"
         ]
 
         rendered_messages: List[Dict[str, str]] = []
@@ -282,9 +291,9 @@ class AgentInbox:
                 }
             )
 
-        incoming_content = self._render_incoming_user_messages(incoming_messages)
-        if incoming_content is not None:
-            rendered_messages.append({"role": "user", "content": incoming_content})
+        user_content = self._render_user_notifications(user_notifications)
+        if user_content is not None:
+            rendered_messages.append({"role": "user", "content": user_content})
         return rendered_messages
 
     def _render_system_notifications(
@@ -297,12 +306,12 @@ class AgentInbox:
         lines.append("</notifications>")
         return "\n".join(lines)
 
-    def _render_incoming_user_messages(
+    def _render_user_notifications(
         self,
-        incoming_messages: List[AgentNotification],
+        notifications: List[AgentNotification],
     ) -> str | None:
         lines: List[str] = []
-        for notification in incoming_messages:
+        for notification in notifications:
             lines.append("<incoming_user_message>")
             if notification.hint:
                 lines.append(self._escape_text(notification.hint))
@@ -312,9 +321,19 @@ class AgentInbox:
         return "\n".join(lines)
 
     def _render_notification(self, notification: AgentNotification) -> str:
-        fields = [f"source={self._escape_text(notification.source)}"]
-        if notification.ref:
-            fields.append(f"ref={self._escape_text(notification.ref)}")
+        if notification.source == "task" and notification.ref:
+            fields = [f"task_id={self._escape_text(notification.ref)}"]
+        elif (
+            notification.source in _TASK_NOTIFICATION_SOURCES and notification.ref
+        ):
+            fields = [
+                self._escape_text(notification.source),
+                f"task_id={self._escape_text(notification.ref)}",
+            ]
+        else:
+            fields = [f"source={self._escape_text(notification.source)}"]
+            if notification.ref:
+                fields.append(f"ref={self._escape_text(notification.ref)}")
         if notification.status:
             fields.append(f"status={self._escape_text(notification.status)}")
 
@@ -335,7 +354,9 @@ class AgentInbox:
         notification: AgentNotification | AgentControlMessage | Mapping[str, Any],
     ) -> AgentNotification:
         if isinstance(notification, AgentNotification):
-            return deepcopy(notification)
+            normalized = deepcopy(notification)
+            self._validate_role(normalized.source, normalized.role)
+            return normalized
         if isinstance(notification, AgentControlMessage):
             return notification.to_notification()
 
@@ -343,6 +364,16 @@ class AgentInbox:
         source = payload.get("source")
         if not isinstance(source, str) or not source:
             raise ValueError("`AgentNotification.source` must be a non-empty string.")
+
+        if "role" in payload:
+            role = payload["role"]
+        elif source == "control":
+            role = None
+        elif source == "incoming_user_message":
+            role = "user"
+        else:
+            role = "system"
+        self._validate_role(source, role)
 
         notification_id = payload.get("notification_id")
         if not isinstance(notification_id, str) or not notification_id:
@@ -362,6 +393,7 @@ class AgentInbox:
         return AgentNotification(
             notification_id=notification_id,
             source=source,
+            role=role,
             ref=payload.get("ref"),
             status=payload.get("status"),
             hint=payload.get("hint"),
@@ -369,6 +401,15 @@ class AgentInbox:
             dedupe_key=payload.get("dedupe_key"),
             created_at=created_at,
         )
+
+    @staticmethod
+    def _validate_role(source: str, role: Any) -> None:
+        if role not in {None, "system", "user"}:
+            raise ValueError(
+                "`AgentNotification.role` must be 'system', 'user', or None."
+            )
+        if (source == "control") != (role is None):
+            raise ValueError("Only control notifications can use a None role.")
 
     def _load_notifications_locked(self) -> List[AgentNotification]:
         return [

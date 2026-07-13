@@ -450,6 +450,7 @@ You can also publish directly:
 external_inbox.publish(
     {
         "source": "incoming_user_message",
+        "role": "user",
         "hint": "Use a shorter answer.",
         "metadata": {"origin": "chat-ui"},
     }
@@ -471,8 +472,8 @@ Behavior:
   when a checkpointer is configured.
 - `interrupt` raises `TaskInterruptRequestedError` and checkpoints the run as
   `interrupted` when a checkpointer is configured.
-- Unknown control commands remain normal notifications and are shown to the
-  model as `system_note`.
+- Control messages use no model role and are consumed before provider calls.
+- Unknown control commands are rejected.
 
 For a persistent writer:
 
@@ -505,3 +506,7 @@ source=system_note status=policy_update | Use the enterprise refund policy for t
 Use `incoming_user_message` for new user turns. Use `system_note` or another
 system-like source for runtime hints, progress, policy updates, or operator
 notes that should not be treated as a direct user request.
+
+Direct publishers can select `role="system"` or `role="user"`. A `None` role is
+reserved for `control` events. Handles injected into tools always
+publish system notifications and cannot select the user role.

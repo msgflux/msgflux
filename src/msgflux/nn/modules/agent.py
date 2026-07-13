@@ -2300,8 +2300,7 @@ class Agent(Module, metaclass=AutoParams):
                     task_id if isinstance(task_id, str) else None,
                     str(reason) if reason else None,
                 )
-
-            remaining.append(notification)
+            raise ValueError(f"Unsupported control command `{command}`.")
         return remaining
 
     def _drain_inbox_into_messages(

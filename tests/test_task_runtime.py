@@ -95,8 +95,10 @@ def _notification_messages(
         content = message.get("content")
         if not isinstance(content, str) or "<notifications>" not in content:
             continue
-        if source is not None and f"source={source}" not in content:
-            continue
+        if source is not None:
+            source_marker = "task_id=" if source == "task" else source
+            if source_marker not in content:
+                continue
         if status is not None and f"status={status}" not in content:
             continue
         result.append(message)
@@ -950,8 +952,7 @@ def test_agent_injects_pending_task_notifications_as_system_note_messages():
     assert notification_messages[0]["role"] == "system"
     content = notification_messages[0]["content"]
     assert "<notifications>" in content
-    assert "source=task" in content
-    assert f"ref={task_id}" in content
+    assert f"task_id={task_id}" in content
     assert "tool=long_job" in content
     assert "task_output" not in content
 
@@ -1192,7 +1193,7 @@ def test_task_progress_notifications_are_persisted():
     )
     assert len(progress_notifications) == 1
     assert progress_notifications[0]["role"] == "system"
-    assert f"ref={task_id}" in progress_notifications[0]["content"]
+    assert f"task_id={task_id}" in progress_notifications[0]["content"]
     assert "tool_stage=prepare" in progress_notifications[0]["content"]
 
     persisted_notifications = _notification_messages(
@@ -1260,7 +1261,7 @@ def test_injected_handle_publishes_task_status_updates():
         status="prepare",
     )
     assert len(status_notifications) == 1
-    assert f"ref={task_id}" in status_notifications[0]["content"]
+    assert f"task_id={task_id}" in status_notifications[0]["content"]
     assert "tool=long_job" in status_notifications[0]["content"]
     assert "step=1" in status_notifications[0]["content"]
 
