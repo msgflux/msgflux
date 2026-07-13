@@ -66,6 +66,17 @@ class TaskIdCollisionError(Exception):
         self.task_id = task_id
 
 
+class HandleAccessError(PermissionError):
+    """Raised when a tool uses a handle operation it was not granted."""
+
+    def __init__(self, domain: str, action: str):
+        super().__init__(
+            f"Tool handle access `{domain}.{action}` was not configured."
+        )
+        self.domain = domain
+        self.action = action
+
+
 class UnsafeUserInputError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe user input detected")

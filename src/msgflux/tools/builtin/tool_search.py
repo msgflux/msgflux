@@ -23,6 +23,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     usage_guidance = (
         "Search first; activate an exact match with `select` before calling it."
     )
+    tool_config = {"handle": {"tools": ["register", "remove"]}}
     annotations = {
         "query": Optional[str],
         "select": Optional[List[str]],
@@ -58,7 +59,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
             loaded = []
 
         if not self.tools:
-            handle.remove(self.name)
+            handle.tools.remove(self.name)
 
         return {
             "query": query,
@@ -133,7 +134,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
                 tool_config={**metadata.tool_config, "on_demand": False},
             )
             try:
-                handle.add(promoted)
+                handle.tools.register(promoted)
             except Exception:
                 self.add(metadata)
                 raise

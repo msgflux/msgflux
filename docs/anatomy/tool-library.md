@@ -125,9 +125,9 @@ The contract is intentionally small:
 This is useful when a session can register a large number of tools but should
 keep the active tool context small.
 
-An explicitly injected `ToolLibraryHandle` is the natural companion feature
-here: a tool can add a new on-demand tool at runtime, and `ToolLibrary` will
-expose `tool_search` automatically if needed.
+An explicitly configured `ToolHandle` is the natural companion feature here: a
+tool with `tools.register` access can add a new on-demand tool at runtime, and
+`ToolLibrary` will expose `tool_search` automatically if needed.
 
 `tool_search` is both a builtin operator and a `ToolBucket` with
 `capture={"on_demand": True}`. It owns the searchable metadata and promotes a

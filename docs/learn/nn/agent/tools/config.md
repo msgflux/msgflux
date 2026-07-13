@@ -236,24 +236,31 @@ This is useful for:
 
 ## Runtime Injection Options
 
-Tool config supports several `inject_*` flags for common agent state. Use
-`inject_handle=True` for runtime handle access, including tool mutation,
-background task progress, and notifications. `mf.Hidden` only hides a parameter
-from the model-facing schema; it does not inject a value by itself.
+Tool config supports several `inject_*` flags for common agent state. Use the
+`handle` access dictionary for runtime operations. `mf.Hidden` only hides a
+parameter from the model-facing schema; it does not inject a value by itself.
 
 | API | Runtime argument | Documentation |
 |-----|------------------|---------------|
 | `inject_vars=True` | `vars` | [inject_vars](#inject_vars) |
 | `inject_message=True` | `message` | [inject_message](#inject_message) |
 | `inject_messages=True` | `messages` | [inject_messages](#inject_messages) |
-| `inject_handle=True` | `handle` | [inject_handle](#inject_handle) |
+| `handle={...}` | `handle` | [handle](#handle) |
 | `mf.Hidden` | Hidden schema parameter | [Tools: Hidden Tool Parameters](index.md#hidden-tool-parameters) |
 
-## inject_handle
+## handle
 
-With `inject_handle=True`, the tool receives a `handle` argument at runtime. This
-argument is removed from the public tool schema. Use `mf.Hidden` on the
-parameter when you want the signature to make that schema boundary explicit.
+`handle` is a dictionary from domain names to non-empty action lists. The tool
+receives only those operations, and must declare `handle: mf.Hidden`. Missing or
+`None` means no injection; `{}`, booleans, unknown names, and `"all"` are invalid.
+
+| Domain | Actions |
+|--------|---------|
+| `notifications` | `publish` |
+| `task` | `read`, `progress`, `activity`, `interrupt_check` |
+| `tasks` | `list`, `read`, `wait`, `output`, `interrupt`, `activity`, `message` |
+| `tools` | `list`, `get`, `register`, `remove` |
+| `background` | `dispatch`, `resume` |
 
 ```python
 import msgflux as mf
@@ -264,11 +271,11 @@ def lookup_customer(customer_id: str) -> str:
     return customer_id
 
 
-@mf.tool_config(inject_handle=True)
+@mf.tool_config(handle={"tools": ["list", "register"]})
 def enable_lookup(handle: mf.Hidden) -> list[str]:
     """Register tools dynamically through the runtime handle."""
-    handle.add(lookup_customer)
-    return handle.list_tools()
+    handle.tools.register(lookup_customer)
+    return handle.tools.list()
 ```
 
 ## inject_message

@@ -44,7 +44,7 @@ from msgflux.tools.builtin.task_tool import (
 )
 from msgflux.tools.builtin.tool_search import ToolSearchTool
 from msgflux.tools.dataclasses import ToolMetadata
-from msgflux.tools.handles import ToolLibraryHandle
+from msgflux.tools.handles import ToolLibraryHandle, normalize_handle_access
 from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM,
     build_call_parameters_for_response,
@@ -60,6 +60,7 @@ from msgflux.tools.types import (
     ToolBackground,
     ToolBucket,
     ToolLibraryOperator,
+    is_hidden_annotation,
     unwrap_hidden_annotation,
 )
 from msgflux.utils.chat import generate_tool_json_schema
@@ -397,6 +398,12 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
     annotations, hidden_params = _split_hidden_annotations(annotations)
     if hidden_params:
         tool_config["_hidden_params"] = hidden_params
+    if tool_config.get("handle") is not None:
+        tool_config["handle"] = normalize_handle_access(tool_config["handle"])
+        if "handle" not in hidden_params:
+            raise ValueError(
+                "Tools configured with `handle` must declare `handle: mf.Hidden`."
+            )
 
     if tool_config.get("handoff", False) or tool_config.get("disable_input", False):
         annotations = {}  # pass only the model state
@@ -405,7 +412,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
             annotations.pop("message", None)
         if tool_config.get("inject_messages", False):
             annotations.pop("messages", None)
-        if tool_config.get("inject_handle", False):
+        if tool_config.get("handle") is not None:
             annotations.pop("handle", None)
         if tool_config.get("inject_vars", False):
             annotations.pop("vars", None)
@@ -572,6 +579,22 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
         metadata.tool_config = dotdict(metadata.tool_config)
         metadata.tool_config.setdefault("on_demand", False)
+        if "inject_handle" in metadata.tool_config:
+            raise ValueError(
+                "`inject_handle` was removed; configure exact access with `handle`."
+            )
+        if metadata.tool_config.get("handle") is not None:
+            metadata.tool_config["handle"] = normalize_handle_access(
+                metadata.tool_config["handle"]
+            )
+            hidden_params = metadata.tool_config.get("_hidden_params", {})
+            if "handle" not in hidden_params and not is_hidden_annotation(
+                metadata.annotations.get("handle")
+            ):
+                raise ValueError(
+                    "Tools configured with `handle` must declare "
+                    "`handle: mf.Hidden`."
+                )
 
         if metadata.name in self.library.keys():
             raise ValueError(
@@ -977,9 +1000,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("inject_message", False):
             call_params["message"] = message
 
-        if config.get("inject_handle", False):
+        if config.get("handle") is not None:
             context = get_execution_context()
-            call_params["handle"] = self.get_handle().for_tool(
+            call_params["handle"] = self.get_handle().tool_view(
+                access=config["handle"],
                 tool_name=tool_name,
                 agent_inbox=context.get("agent_inbox"),
                 task_store=context.get("task_store"),

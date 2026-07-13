@@ -830,7 +830,9 @@ class TestToolLibrary:
         assert {"type": "null"} in properties["max_results"]["anyOf"]
         assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
         assert isinstance(library.library["tool_search"].impl, ToolBucket)
-        assert library.library["tool_search"].tool_config["inject_handle"] is True
+        assert library.library["tool_search"].tool_config["handle"] == {
+            "tools": ["register", "remove"]
+        }
         assert library.library["tool_search"].tool_config["tool_kind"] == "bucket"
 
     def test_tool_search_is_not_captured_by_tool_search_bucket(self):
@@ -1002,7 +1004,7 @@ class TestToolLibrary:
             annotations = {"handle": mf.Hidden, "return": str}
 
             def __call__(self, handle):
-                return ",".join(handle.list_tools())
+                return ",".join(handle.tools.list())
 
         library = ToolLibrary(name="lib", tools=[RuntimeEchoTool()])
         schema = next(
@@ -1014,7 +1016,9 @@ class TestToolLibrary:
 
         assert "handle" not in schema["function"]["parameters"].get("properties", {})
         assert result.tool_calls[0].result == "runtime_echo"
-        assert library.library["runtime_echo"].tool_config["inject_handle"] is True
+        assert library.library["runtime_echo"].tool_config["handle"] == {
+            "tools": ["list"]
+        }
         assert library.library["runtime_echo"].tool_config["tool_kind"] == "diagnostic"
 
     def test_tool_search_captures_on_demand_operator_tools(self):
@@ -1024,10 +1028,13 @@ class TestToolLibrary:
             name = "deferred_operator"
             description = "List the currently registered tools."
             annotations = {"handle": mf.Hidden, "return": list[str]}
-            tool_config = {"inject_handle": True, "on_demand": True}
+            tool_config = {
+                "handle": {"tools": ["list"]},
+                "on_demand": True,
+            }
 
             def __call__(self, handle) -> list[str]:
-                return handle.list_tools()
+                return handle.tools.list()
 
         library = ToolLibrary(name="lib", tools=[DeferredOperator()])
 
@@ -1209,13 +1216,13 @@ class TestToolLibrary:
             """Look up external information."""
             return query
 
-        @mf.tool_config(inject_handle=True)
+        @mf.tool_config(handle={"tools": ["list", "register"]})
         def enable_remote_lookup(
             handle: mf.Hidden,
         ) -> list[str]:
             """Register an on-demand tool."""
-            handle.add(remote_lookup)
-            return handle.list_tools()
+            handle.tools.register(remote_lookup)
+            return handle.tools.list()
 
         library = ToolLibrary(name="lib", tools=[enable_remote_lookup])
 
@@ -1232,17 +1239,17 @@ class TestToolLibrary:
         assert "remote_lookup" not in schema_names
 
     def test_injected_handle_add_returns_normalized_tool_name(self):
-        """Test that ToolLibraryHandle.add returns the registered tool name."""
+        """Test that ToolHandle.tools.register returns the registered name."""
 
         @mf.tool_config(name_override="remote_lookup")
         def lookup(query: str) -> str:
             """Look up external information."""
             return query
 
-        @mf.tool_config(inject_handle=True)
+        @mf.tool_config(handle={"tools": ["register"]})
         def enable_lookup(handle: mf.Hidden) -> str:
             """Register a tool."""
-            return handle.add(lookup)
+            return handle.tools.register(lookup)
 
         library = ToolLibrary(name="lib", tools=[enable_lookup])
 
@@ -1593,13 +1600,13 @@ class TestToolLibrary:
 
         assert result.tool_calls[0].result == "5-value"
 
-    def test_tool_library_with_inject_handle(self):
-        """Test ToolLibrary with inject_handle config."""
+    def test_tool_library_with_handle_access(self):
+        """Test ToolLibrary with exact handle access."""
 
-        @mf.tool_config(inject_handle=True)
+        @mf.tool_config(handle={"tools": ["list"]})
         def runtime_tool(handle: mf.Hidden) -> str:
             """Tool that uses the runtime handle."""
-            return ",".join(handle.list_tools())
+            return ",".join(handle.tools.list())
 
         library = ToolLibrary(name="lib", tools=[runtime_tool])
         schema = next(
@@ -1854,14 +1861,14 @@ class TestToolLibrary:
         assert "8-state_value" in result.tool_calls[0].result
 
     @pytest.mark.asyncio
-    async def test_tool_library_aforward_inject_handle(self):
-        """Test async ToolLibrary inject_handle."""
+    async def test_tool_library_aforward_handle_access(self):
+        """Test async ToolLibrary handle access."""
 
         async def async_tool(handle: mf.Hidden) -> str:
             """Tool with runtime handle."""
-            return ",".join(handle.list_tools())
+            return ",".join(handle.tools.list())
 
-        async_tool.tool_config = {"inject_handle": True}
+        async_tool.tool_config = {"handle": {"tools": ["list"]}}
         library = ToolLibrary(name="lib", tools=[async_tool])
 
         tool_callings = [("call_1", "async_tool", {})]

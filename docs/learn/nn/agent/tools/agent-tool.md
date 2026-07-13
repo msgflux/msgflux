@@ -106,12 +106,11 @@ tools.
 
 ## Dynamic Agent Registration
 
-A tool can use `inject_handle=True` to register agents while the coordinator is
-running. The model writes the subagent specification through normal tool
-arguments, and the injected `handle` gives the Python tool access to the current
-`ToolLibrary`.
+A tool can request `tools.register` access to register agents while the
+coordinator is running. The model writes the subagent specification through
+normal tool arguments.
 
-When the library already contains `AgentTool()`, `handle.add(agent)` follows the
+When the library already contains `AgentTool()`, `handle.tools.register(agent)` follows the
 same `ToolLibrary.add(...)` path as static registration. Because `nn.Agent`
 uses `tool_kind="agent"`, the existing `AgentTool` bucket captures the new
 agent instead of exposing it as another top-level tool.
@@ -127,7 +126,7 @@ from msgflux.tools.builtin import AgentTool
 model = mf.Model.chat_completion("openai/gpt-4.1-mini")
 
 
-@mf.tool_config(inject_handle=True)
+@mf.tool_config(handle={"tools": ["register"]})
 def create_specialist(
     agent_name: str,
     description: str,
@@ -142,7 +141,7 @@ def create_specialist(
         instructions=instructions,
     )
 
-    registered_name = handle.add(specialist)
+    registered_name = handle.tools.register(specialist)
     return (
         f"Registered `{registered_name}`. Delegate with "
         f"agent(name='{registered_name}', message='...')."

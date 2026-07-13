@@ -237,7 +237,7 @@ with execution_context(
 
 Any runtime component should be able to publish directly to the inbox through
 the current execution context or through an explicitly injected
-`ToolLibraryHandle`.
+`ToolHandle` with `notifications.publish` access.
 
 Current and planned producers include:
 
@@ -245,7 +245,7 @@ Current and planned producers include:
 - task progress updates
 - checkpoint restore/replay signals
 - context budget warnings
-- tool registry changes made through injected `ToolLibraryHandle` values
+- tool registry changes made through injected `ToolHandle` values
 
 The important rule is:
 

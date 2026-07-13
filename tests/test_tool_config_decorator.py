@@ -118,7 +118,7 @@ def test_tool_config_values_are_correct():
         disable_input=False,
         inject_message=False,
         inject_messages=False,
-        inject_handle=False,
+        handle=None,
         inject_vars=["var1", "var2"],
         handoff=False,
         tool_kind="specialist",
@@ -138,7 +138,7 @@ def test_tool_config_values_are_correct():
     assert config.disable_input is False
     assert config.inject_message is False
     assert config.inject_messages is False
-    assert config.inject_handle is False
+    assert config.handle is None
     assert config.inject_vars == ["var1", "var2"]
     assert config.handoff is False
     assert config.tool_kind == "specialist"

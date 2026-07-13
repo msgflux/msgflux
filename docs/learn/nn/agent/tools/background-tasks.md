@@ -246,27 +246,26 @@ talking to the same subagent task, use `task_message` with the existing
 
 ## Reporting Progress
 
-Use `inject_handle=True` when the tool should update its own progress. The
-handle is hidden from the model schema, and the runtime passes it to the Python
-function.
+Grant `task.progress` when the tool should update its own progress. The handle
+is hidden from the model schema and receives only the configured operations.
 
 ```python
 import time
 import msgflux as mf
 
 
-@mf.tool_config(background=True, inject_handle=True)
+@mf.tool_config(background=True, handle={"task": ["progress"]})
 def process_items(
     items: list[str],
     handle: mf.Hidden,
 ) -> int:
     """Process items and report progress."""
-    handle.set_running(stage="prepare", message="Preparing work")
+    handle.task.progress(stage="prepare", message="Preparing work")
 
     total = len(items)
     for index, item in enumerate(items, 1):
         time.sleep(0.2)
-        handle.update_progress(
+        handle.task.progress(
             stage="process",
             message=f"Processed {item}",
             current=index,
@@ -335,7 +334,10 @@ agent = nn.Agent(
 The same injected handle can publish lightweight agent-visible updates.
 
 ```python
-@mf.tool_config(background=True, inject_handle=True)
+@mf.tool_config(
+    background=True,
+    handle={"notifications": ["publish"], "task": ["read"]},
+)
 def process_items(
     items: list[str],
     handle: mf.Hidden,
@@ -343,11 +345,11 @@ def process_items(
     """Process items and publish progress notifications."""
     total = len(items)
     for index, item in enumerate(items, 1):
-        handle.notify(
+        handle.notifications.publish(
             source="task_progress",
             status="update",
             metadata={"item": item, "current": index, "total": total},
-            dedupe_key=f"task_progress:{handle.get_task_id()}",
+            dedupe_key=f"task_progress:{handle.task.read()['task_id']}",
         )
     return total
 ```
@@ -374,45 +376,44 @@ but has a checkpoint, msgFlux resumes it with the same `task_id`.
 
 ## Status Updates With The Handle
 
-Use `handle.get_notification()` when the tool should publish lightweight status
+Grant `notifications.publish` when the tool should publish lightweight status
 updates.
 
 ```python
-@mf.tool_config(background=True, inject_handle=True)
+@mf.tool_config(background=True, handle={"notifications": ["publish"]})
 def process_items(
     items: list[str],
     handle: mf.Hidden,
 ) -> int:
     """Process items and publish task-scoped status updates."""
-    handle.get_notification().update(
-        "prepare",
+    handle.notifications.publish(
+        status="prepare",
         hint="Background work has started.",
         metadata={"total": len(items)},
         dedupe_key="process-items-status",
     )
     for index, item in enumerate(items, 1):
-        handle.get_notification().update(
-            "process",
+        handle.notifications.publish(
+            status="process",
             metadata={"item": item, "current": index, "total": len(items)},
             dedupe_key="process-items-status",
         )
     return len(items)
 ```
 
-For background tools, `handle.get_notification()` is automatically bound to the
-current `task_id`, so the agent sees a normal notification block with
-`ref: <task_id>`.
+For background tools, `handle.notifications` is automatically bound to the
+current `task_id`.
 
 ## Dynamic Tool Mutation With The Handle
 
-`inject_handle=True` exposes a small handle to the tool without exposing that
+The `handle` dictionary exposes only named operations without exposing the
 parameter to the model.
 
 The current handle supports:
 
-- `handle.add(tool)`
-- `handle.remove(tool_name)`
-- `handle.list_tools()`
+- `handle.tools.register(tool)`
+- `handle.tools.remove(tool_name)`
+- `handle.tools.list()`
 
 ```python
 import msgflux as mf
@@ -423,21 +424,21 @@ def multiply(x: int) -> int:
     return x * 2
 
 
-@mf.tool_config(inject_handle=True)
+@mf.tool_config(handle={"tools": ["list", "register"]})
 def enable_multiplier(handle: mf.Hidden) -> list[str]:
     """Register the multiply tool."""
-    handle.add(multiply)
-    return handle.list_tools()
+    handle.tools.register(multiply)
+    return handle.tools.list()
 
 
-@mf.tool_config(inject_handle=True)
+@mf.tool_config(handle={"tools": ["list", "remove"]})
 def disable_tool(
     handle: mf.Hidden,
     name: str,
 ) -> list[str]:
     """Remove a tool by name."""
-    handle.remove(name)
-    return handle.list_tools()
+    handle.tools.remove(name)
+    return handle.tools.list()
 ```
 
 If a hidden-handle tool adds a new background tool, the task control functions

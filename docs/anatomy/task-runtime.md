@@ -213,7 +213,7 @@ Recommended public configuration:
 - `background=True`
 - `allow_background=True`
 - `background_capabilities=["activity", "message"]`
-- `inject_handle=True` for runtime-only handle parameters
+- `handle={...}` for exact runtime-only handle access
 - `mf.Hidden` when a parameter should be excluded from the model-facing schema
 
 `background=True` means the developer has chosen background execution for every
@@ -230,13 +230,12 @@ The important detail is that `Hidden` only removes the parameter from the
 model-facing schema. `ToolLibrary` remains responsible for building the actual
 runtime kwargs.
 
-An injected `ToolLibraryHandle` can add, remove, and list tools without exposing
-the whole `ToolLibrary` object.
+An injected `ToolHandle` exposes only the configured domains and actions without
+exposing the whole `ToolLibrary` object.
 
-For background tools, the same handle exposes task helpers such as
-`set_running`, `update_progress`, `task`, and `task_id`. It also exposes
-`notification` and `notify(...)` for agent-visible status updates. Background
-notifications are automatically bound to the current `task_id`.
+For background tools, `handle.task` exposes configured operations such as
+`progress` and `interrupt_check`. `handle.notifications.publish(...)` emits
+agent-visible status updates bound to the current `task_id`.
 
 When the background source is an `Agent`, it receives `activity` and `message`
 capabilities by default. The task runtime uses the union of capabilities across
@@ -296,7 +295,8 @@ src/msgflux/runtime/agent_inbox/
   -> ToolNotificationHandle
 
 src/msgflux/tools/handles.py
-  -> ToolLibraryHandle
+  -> ToolHandle facades
+  -> internal ToolLibraryHandle
 
 src/msgflux/nn/modules/tool.py
   -> background dispatch integration

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Collection, Dict, Optional
 
 from msgflux.core.registry import Registry
@@ -25,17 +24,12 @@ class TaskStatusTool(ToolBackground):
     name = "task_status"
     description = "Get the current status of a background task by task_id."
     annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
+    tool_config = {"handle": {"tasks": ["read"]}}
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
-        task_store = handle.get_task_store()
-        task = get_scoped_task(task_store, task_id)
-        if task is None:
+        payload = handle.tasks.read(task_id)
+        if payload is None:
             return {"task_id": task_id, "status": "not_found"}
-        payload = task.to_dict()
-        payload.update(build_task_timing_fields(task))
-        last_activity = task_store.get_last_activity(task_id)
-        if last_activity is not None:
-            payload["last_activity_summary"] = format_task_activity_entry(last_activity)
         return payload
 
 
@@ -48,26 +42,14 @@ class TaskListTool(ToolBackground):
         "handle": Hidden,
         "return": list[Dict[str, Any]],
     }
+    tool_config = {"handle": {"tasks": ["list"]}}
 
     def __call__(
         self,
         status: str | None = None,
         handle: Hidden = None,
     ) -> list[Dict[str, Any]]:
-        task_store = handle.get_task_store()
-        tasks = []
-        for task in task_store.list(status=status):
-            if not task_is_in_current_scope(task):
-                continue
-            payload = task.to_dict()
-            payload.update(build_task_timing_fields(task))
-            last_activity = task_store.get_last_activity(task.task_id)
-            if last_activity is not None:
-                payload["last_activity_summary"] = format_task_activity_entry(
-                    last_activity
-                )
-            tasks.append(payload)
-        return tasks
+        return handle.tasks.list(status=status)
 
 
 @_base_task_tools
@@ -75,10 +57,10 @@ class TaskOutputTool(ToolBackground):
     name = "task_output"
     description = "Get the final output of a background task by task_id."
     annotations = {"task_id": str, "handle": Hidden, "return": Any}
+    tool_config = {"handle": {"tasks": ["output"]}}
 
     def __call__(self, task_id: str, handle: Hidden) -> Any:
-        task = get_scoped_task(handle.get_task_store(), task_id)
-        return build_task_result(task_id=task_id, task=task)
+        return handle.tasks.output(task_id)
 
 
 @_base_task_tools
@@ -94,6 +76,7 @@ class TaskWaitTool(ToolBackground):
         "handle": Hidden,
         "return": Any,
     }
+    tool_config = {"handle": {"tasks": ["wait"]}}
 
     def __call__(  # noqa: C901
         self,
@@ -109,40 +92,7 @@ class TaskWaitTool(ToolBackground):
             if timeout < 0:
                 raise ValueError("`timeout` must be greater than or equal to 0.")
 
-        task_store = handle.get_task_store()
-        task = get_scoped_task(task_store, task_id)
-        if task is None:
-            return {"task_id": task_id, "status": "not_found"}
-        if task.status in {"completed", "failed", "interrupted"}:
-            return build_task_result(task_id=task_id, task=task)
-
-        future = handle.get_task_future(task_id)
-        if future is not None:
-            try:
-                future.result(timeout=timeout)
-            except FutureTimeoutError:
-                task = get_scoped_task(task_store, task_id)
-                return build_task_timeout_result(
-                    task_id=task_id,
-                    task=task,
-                )
-            except Exception:
-                task = get_scoped_task(task_store, task_id)
-                return build_task_result(task_id=task_id, task=task)
-            task = get_scoped_task(task_store, task_id)
-            return build_task_result(task_id=task_id, task=task)
-
-        deadline = None if timeout is None else time.monotonic() + float(timeout)
-        while True:
-            task = get_scoped_task(task_store, task_id)
-            if task is None or task.status in {"completed", "failed", "interrupted"}:
-                return build_task_result(task_id=task_id, task=task)
-            if deadline is not None and time.monotonic() >= deadline:
-                return build_task_timeout_result(
-                    task_id=task_id,
-                    task=task,
-                )
-            time.sleep(0.05)
+        return handle.tasks.wait(task_id, timeout=timeout)
 
 
 @_base_task_tools
@@ -153,44 +103,10 @@ class TaskInterruptTool(ToolBackground):
         "immediately only if the task has not started yet."
     )
     annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
+    tool_config = {"handle": {"tasks": ["interrupt"]}}
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
-        task_store = handle.get_task_store()
-        task = get_scoped_task(task_store, task_id)
-        if task is None:
-            return {"task_id": task_id, "status": "not_found"}
-
-        if task.status in {"completed", "failed", "interrupted"}:
-            return {
-                "task_id": task_id,
-                "status": task.status,
-                "message": "Task already reached a terminal state.",
-            }
-
-        task_store.request_interrupt(task_id)
-        future = handle.get_task_future(task_id)
-        if future is not None and future.cancel():
-            interrupted = task_store.interrupt(
-                task_id,
-                reason="Task was cancelled before it started running.",
-            )
-            return {
-                "task_id": task_id,
-                "status": "interrupted",
-                "message": "Task interrupted before execution started.",
-                "task_status": (
-                    interrupted.status if interrupted is not None else "interrupted"
-                ),
-            }
-
-        return {
-            "task_id": task_id,
-            "status": "interrupt_requested",
-            "message": (
-                "Interrupt requested. The task will interrupt at the next "
-                "cooperative checkpoint."
-            ),
-        }
+        return handle.tasks.interrupt(task_id)
 
 
 @_background_activity_tools
@@ -204,6 +120,7 @@ class TaskActivityTool(ToolBackground):
         "handle": Hidden,
         "return": Any,
     }
+    tool_config = {"handle": {"tasks": ["activity"]}}
 
     def __call__(
         self,
@@ -216,21 +133,7 @@ class TaskActivityTool(ToolBackground):
                 raise TypeError(f"`limit` must be int or None, given `{type(limit)}`")
             if limit <= 0:
                 raise ValueError("`limit` must be greater than 0.")
-        task_store = handle.get_task_store()
-        task = get_scoped_task(task_store, task_id)
-        if task is None:
-            return {"task_id": task_id, "status": "not_found"}
-        if "activity" not in get_task_background_capabilities(task):
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "task_activity requires the task activity capability.",
-            }
-        activity = task_store.list_activity(
-            task_id,
-            limit=limit,
-        )
-        return [format_task_activity_entry(item) for item in activity]
+        return handle.tasks.activity(task_id, limit=limit)
 
 
 @_background_message_tools
@@ -247,6 +150,7 @@ class TaskMessageTool(ToolBackground):
         "handle": Hidden,
         "return": Dict[str, Any],
     }
+    tool_config = {"handle": {"tasks": ["message"]}}
 
     def __call__(
         self,
@@ -254,65 +158,9 @@ class TaskMessageTool(ToolBackground):
         message: str,
         handle: Hidden,
     ) -> Dict[str, Any]:
-        task_store = handle.get_task_store()
-        task = get_scoped_task(task_store, task_id)
-        if task is None:
-            return {"task_id": task_id, "status": "not_found"}
         if not isinstance(message, str) or not message.strip():
             raise ValueError("`message` must be a non-empty string.")
-
-        capabilities = get_task_background_capabilities(task)
-        if "message" not in capabilities:
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "task_message requires the task message capability.",
-            }
-
-        task_inbox = handle.get_task_inbox(task_id)
-        if task.status == "running":
-            if task_inbox is None:
-                return {
-                    "task_id": task_id,
-                    "status": "unsupported",
-                    "error": "The running task does not expose a message inbox.",
-                }
-            task_inbox.publish(
-                {
-                    "source": "task_message",
-                    "ref": task_id,
-                    "status": "message",
-                    "hint": message.strip(),
-                    "metadata": {"direction": "root_to_task"},
-                }
-            )
-            task_store.add_activity(
-                task_id,
-                kind="message",
-                summary=f"Root message: {truncate_activity_text(message)}",
-                metadata={"direction": "root_to_task"},
-            )
-            return {
-                "task_id": task_id,
-                "status": "delivered",
-                "message": "Message delivered to the running background agent.",
-            }
-
-        if task.metadata.get("task_kind") != "agent":
-            return {
-                "task_id": task_id,
-                "status": "unsupported",
-                "error": "Task continuation is not implemented for this task kind.",
-            }
-        resumed = handle.resume_background_agent_task(
-            task=task,
-            message=message.strip(),
-        )
-        return {
-            "task_id": task_id,
-            "status": "resumed",
-            "message": resumed,
-        }
+        return handle.tasks.message(task_id, message.strip())
 
 
 BASE_TASK_TOOLS = _base_task_tools.to_list()

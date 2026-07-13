@@ -45,7 +45,7 @@ if TYPE_CHECKING:
         parse_skill_file,
     )
     from msgflux.telemetry import Spans
-    from msgflux.tools import Hidden, ToolLibraryHandle
+    from msgflux.tools import Hidden, ToolHandle
     from msgflux.tools.config import tool_config
     from msgflux.utils.chat import ChatBlock, ChatML
     from msgflux.utils.console import cprint
@@ -71,6 +71,7 @@ __all__ = [
     "File",
     "Image",
     "Hidden",
+    "HandleAccessError",
     "InMemoryCheckpointStore",
     "InMemoryAgentInboxStore",
     "Inline",
@@ -90,7 +91,7 @@ __all__ = [
     "Store",
     "TaskError",
     "ToolNotificationHandle",
-    "ToolLibraryHandle",
+    "ToolHandle",
     "Video",
     "cprint",
     "default_skill_paths",
@@ -127,6 +128,7 @@ _LAZY_IMPORTS = {
     "File": ("msgflux.data.types", "File"),
     "Image": ("msgflux.data.types", "Image"),
     "Hidden": ("msgflux.tools", "Hidden"),
+    "HandleAccessError": ("msgflux.exceptions", "HandleAccessError"),
     "InMemoryCheckpointStore": ("msgflux.data.stores", "InMemoryCheckpointStore"),
     "InMemoryAgentInboxStore": ("msgflux.runtime", "InMemoryAgentInboxStore"),
     "Inline": ("msgflux.dsl.inline", "Inline"),
@@ -146,7 +148,7 @@ _LAZY_IMPORTS = {
     "Store": ("msgflux.data.stores", "Store"),
     "TaskError": ("msgflux.exceptions", "TaskError"),
     "ToolNotificationHandle": ("msgflux.runtime", "ToolNotificationHandle"),
-    "ToolLibraryHandle": ("msgflux.tools", "ToolLibraryHandle"),
+    "ToolHandle": ("msgflux.tools", "ToolHandle"),
     "Video": ("msgflux.data.types", "Video"),
     "cprint": ("msgflux.utils.console", "cprint"),
     "default_skill_paths": ("msgflux.runtime", "default_skill_paths"),

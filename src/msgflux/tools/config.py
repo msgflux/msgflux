@@ -4,6 +4,7 @@ from typing import Any, Callable, Collection, Dict, List, Optional, Union
 
 from msgflux.core.dotdict import dotdict
 from msgflux.tools.helpers import normalize_background_capabilities
+from msgflux.tools.handles import normalize_handle_access
 
 
 def _normalize_configured_background_capabilities(
@@ -36,7 +37,7 @@ def tool_config(
     on_demand: Optional[bool] = False,
     inject_message: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
-    inject_handle: Optional[bool] = False,
+    handle: Optional[Dict[str, List[str]]] = None,
     inject_vars: Optional[Union[bool, List[str]]] = False,
     handoff: Optional[bool] = False,
     tool_kind: Optional[str] = None,
@@ -100,10 +101,10 @@ def tool_config(
             If True, the tool receives the current conversation history as
             `messages` at runtime. This injected parameter does not become part of
             the tool schema exposed to the model.
-        inject_handle:
-            If True, the tool receives the current `ToolLibraryHandle` as
-            `handle` at runtime. This injected parameter does not become part of
-            the tool schema exposed to the model.
+        handle:
+            Exact runtime handle access granted to the tool, grouped by domain.
+            Values must be non-empty lists of actions. The injected `handle`
+            parameter does not become part of the model-facing tool schema.
         inject_vars:
             Indicates if the tool should receive vars. If True, the tool receives all
             vars as a named argument `vars`. If a list of vars is passed, only those
@@ -204,6 +205,7 @@ def tool_config(
                 capabilities=background_capabilities,
             )
         )
+        normalized_handle = normalize_handle_access(handle)
 
         if inject_vars is not False and call_as_response is True:
             raise ValueError(
@@ -225,7 +227,7 @@ def tool_config(
                     "on_demand": on_demand,
                     "inject_message": _inject_message,
                     "inject_messages": _inject_messages,
-                    "inject_handle": inject_handle,
+                    "handle": normalized_handle,
                     "inject_vars": inject_vars,
                     "return_direct": _return_direct,
                     "tool_kind": tool_kind,

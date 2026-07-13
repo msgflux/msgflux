@@ -68,7 +68,7 @@ class TestToolConfig:
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
-        assert config.inject_handle is False
+        assert config.handle is None
         assert config.display_name is None
         assert config.usage_guidance is None
 
@@ -306,14 +306,14 @@ class TestToolConfigCombinations:
 
         assert sample.tool_config.inject_message is True
 
-    def test_inject_handle_true(self):
-        """Test inject_handle=True configuration."""
+    def test_handle_access(self):
+        """Test exact handle access configuration."""
 
-        @tool_config(inject_handle=True)
+        @tool_config(handle={"tools": ["list", "register", "list"]})
         def sample():
             pass
 
-        assert sample.tool_config.inject_handle is True
+        assert sample.tool_config.handle == {"tools": ["list", "register"]}
 
     def test_disable_input_true(self):
         """Test disable_input=True configuration."""
@@ -332,7 +332,7 @@ class TestToolConfigCombinations:
             disable_input=True,
             inject_vars=["var1", "var2"],
             inject_messages=True,
-            inject_handle=True,
+            handle={"notifications": ["publish"]},
         )
         def sample():
             pass
@@ -342,7 +342,7 @@ class TestToolConfigCombinations:
         assert config.disable_input is True
         assert config.inject_vars == ["var1", "var2"]
         assert config.inject_messages is True
-        assert config.inject_handle is True
+        assert config.handle == {"notifications": ["publish"]}
 
     def test_all_false_parameters(self):
         """Test all parameters set to False."""
@@ -357,7 +357,7 @@ class TestToolConfigCombinations:
             inject_vars=False,
             inject_message=False,
             inject_messages=False,
-            inject_handle=False,
+            handle=None,
         )
         def sample():
             pass
@@ -372,7 +372,28 @@ class TestToolConfigCombinations:
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
-        assert config.inject_handle is False
+        assert config.handle is None
+
+    @pytest.mark.parametrize("value", [True, False, [], "tools"])
+    def test_handle_rejects_non_dict_values(self, value):
+        with pytest.raises(TypeError, match="must be a dict"):
+            tool_config(handle=value)(lambda: None)
+
+    def test_handle_rejects_empty_access(self):
+        with pytest.raises(ValueError, match="at least one action"):
+            tool_config(handle={})(lambda: None)
+
+    def test_handle_rejects_unknown_domain_and_action(self):
+        with pytest.raises(ValueError, match="Unknown handle domain"):
+            tool_config(handle={"library": ["read"]})(lambda: None)
+        with pytest.raises(ValueError, match="Unknown handle action"):
+            tool_config(handle={"tools": ["all"]})(lambda: None)
+
+    def test_handle_requires_non_empty_action_lists(self):
+        with pytest.raises(ValueError, match="at least one action"):
+            tool_config(handle={"tools": []})(lambda: None)
+        with pytest.raises(TypeError, match="must be a list"):
+            tool_config(handle={"tools": ("list",)})(lambda: None)
 
 
 class TestToolConfigEdgeCases:
