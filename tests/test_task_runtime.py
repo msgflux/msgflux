@@ -255,6 +255,41 @@ def test_tool_library_uses_context_task_store_without_replacing_default():
     assert with_context_status["status"] == "completed"
 
 
+def test_background_task_tools_isolate_execution_scopes():
+    @mf.tool_config(background=True)
+    def background_job() -> str:
+        """Run a background job."""
+        return "done"
+
+    task_store = InMemoryTaskStore()
+    own = task_store.create(
+        "background_job",
+        task_id="own_task",
+        metadata={"namespace": "agent", "thread_id": "thread_a"},
+    )
+    other = task_store.create(
+        "background_job",
+        task_id="other_task",
+        metadata={"namespace": "agent", "thread_id": "thread_b"},
+    )
+    task_store.complete(own.task_id, "own result")
+    task_store.complete(other.task_id, "other result")
+    library = ToolLibrary(name="lib", tools=[background_job], task_store=task_store)
+
+    with execution_context(namespace="agent", thread_id="thread_a"):
+        listed = library([("call_1", "task_list", {})]).tool_calls[0].result
+        hidden_status = library(
+            [("call_2", "task_status", {"task_id": other.task_id})]
+        ).tool_calls[0].result
+        hidden_output = library(
+            [("call_3", "task_output", {"task_id": other.task_id})]
+        ).tool_calls[0].result
+
+    assert [task["task_id"] for task in listed] == [own.task_id]
+    assert hidden_status == {"task_id": other.task_id, "status": "not_found"}
+    assert hidden_output == {"task_id": other.task_id, "status": "not_found"}
+
+
 def test_background_task_tools_follow_background_tool_lifecycle():
     @mf.tool_config(background=True)
     def first_job(value: int) -> int:

@@ -265,9 +265,8 @@ class LocalTool(Tool):
             return await self.impl.acall(*args, **kwargs)
         elif inspect.iscoroutinefunction(self.impl):
             return await self.impl(*args, **kwargs)
-        # Fall back to sync call in executor to avoid blocking event loop
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.impl(*args, **kwargs))
+        # `to_thread` preserves the runtime ContextVars used by injected handles.
+        return await asyncio.to_thread(self.impl, *args, **kwargs)
 
 
 def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901

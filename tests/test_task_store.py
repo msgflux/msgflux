@@ -107,3 +107,20 @@ def test_sqlite_task_store_serializes_concurrent_updates(tmp_path):
     assert task.status == "running"
     assert len([item for item in activity if item.kind == "progress"]) == 20
     store.close()
+
+
+def test_sqlite_task_store_holds_lock_across_read_modify_write(tmp_path):
+    store = SQLiteTaskStore(path=str(tmp_path / "tasks.sqlite3"))
+    store.create("worker", task_id="task_1")
+    original_get = store.get
+
+    def checked_get(task_id: str):
+        assert store._lock._is_owned()
+        return original_get(task_id)
+
+    store.get = checked_get
+    task = store.update_progress("task_1", stage="running", message="working")
+
+    assert task.progress.stage == "running"
+    assert task.progress.message == "working"
+    store.close()

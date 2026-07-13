@@ -25,7 +25,9 @@ import hashlib
 import json
 import sqlite3
 import time
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List, Mapping
 
 from msgflux.data.stores.base import CheckpointStore
@@ -110,6 +112,15 @@ CREATE INDEX IF NOT EXISTS idx_events_run
 """
 
 
+def _locked(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 @register_store()
 class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     """SQLite-backed checkpoint store."""
@@ -119,7 +130,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     def __init__(self, path: str = ".msgflux/checkpoints.sqlite3") -> None:
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(path)
+        self._lock = RLock()
+        self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_CREATE_TABLES)
@@ -335,6 +347,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             params,
         )
 
+    @_locked
     def save_state(
         self,
         namespace: str,
@@ -352,6 +365,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         )
         self._conn.commit()
 
+    @_locked
     def load_state(
         self,
         namespace: str,
@@ -366,6 +380,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             return None
         return self._denormalize_state(namespace, thread_id, row[0])
 
+    @_locked
     def append_event(
         self,
         namespace: str,
@@ -382,6 +397,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         )
         self._conn.commit()
 
+    @_locked
     def load_events(
         self,
         namespace: str,
@@ -398,6 +414,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         ).fetchall()
         return [self._deserialize(r[0]) for r in rows if r[0]]
 
+    @_locked
     def fork_run(
         self,
         namespace: str,
@@ -474,6 +491,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
         return loaded
 
+    @_locked
     def save_with_event(
         self,
         namespace: str,
@@ -507,6 +525,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             self._conn.rollback()
             raise
 
+    @_locked
     def list_runs(
         self,
         namespace: str,
@@ -531,6 +550,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         rows = self._conn.execute(query, tuple(params)).fetchall()
         return [{"run_id": r[0], "status": r[1], "updated_at": r[2]} for r in rows]
 
+    @_locked
     def delete_run(
         self,
         namespace: str,
@@ -545,6 +565,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self._conn.commit()
         return bool(deleted)
 
+    @_locked
     def clear(
         self,
         namespace: str | None = None,
@@ -565,5 +586,6 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self._conn.commit()
         return deleted or 0
 
+    @_locked
     def close(self) -> None:
         self._conn.close()

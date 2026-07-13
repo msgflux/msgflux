@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from functools import wraps
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Mapping
@@ -43,6 +44,15 @@ CREATE TABLE IF NOT EXISTS task_activity (
 CREATE INDEX IF NOT EXISTS idx_task_activity_task
     ON task_activity(task_id, id ASC);
 """
+
+
+def _locked(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 @register_task_store
@@ -316,6 +326,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             self._conn.commit()
             return self.get(task.task_id)  # type: ignore[return-value]
 
+    @_locked
     def set_running(
         self,
         task_id: str,
@@ -347,6 +358,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def update_progress(
         self,
         task_id: str,
@@ -392,6 +404,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def complete(self, task_id: str, result: Any) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -415,6 +428,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def fail(self, task_id: str, error: Any) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -435,6 +449,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def interrupt(
         self,
         task_id: str,
@@ -462,6 +477,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def pause(self, task_id: str, *, reason: str | None = None) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -483,6 +499,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def request_interrupt(self, task_id: str) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -500,6 +517,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ),
         )
 
+    @_locked
     def clear_interrupt_request(self, task_id: str) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -508,6 +526,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task.updated_at = utc_now_isoformat()
         return self._update_task(task, activity=None)
 
+    @_locked
     def requeue(self, task_id: str) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:

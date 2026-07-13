@@ -1,5 +1,7 @@
-import pytest
+from concurrent.futures import ThreadPoolExecutor
+
 import msgspec
+import pytest
 
 from msgflux.data.stores import InMemoryCheckpointStore, SQLiteCheckpointStore
 from msgflux.data.stores import Store
@@ -217,6 +219,25 @@ def test_sqlite_checkpoint_store_roundtrip(tmp_path):
     assert runs[0]["run_id"] == "run_1"
     assert runs[0]["status"] == "completed"
 
+    store.close()
+
+
+def test_sqlite_checkpoint_store_supports_worker_threads(tmp_path):
+    store = SQLiteCheckpointStore(path=str(tmp_path / "checkpoints.sqlite3"))
+
+    def save(index: int) -> None:
+        store.save_state(
+            "agent:test",
+            "session_1",
+            f"run_{index}",
+            {"status": "completed", "result": index},
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(save, range(20)))
+
+    assert len(store.list_runs("agent:test", "session_1")) == 20
+    assert store.load_state("agent:test", "session_1", "run_7")["result"] == 7
     store.close()
 
 

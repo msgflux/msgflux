@@ -335,6 +335,7 @@ class BackgroundTaskDispatcher:
             "checkpoint_namespace": checkpoint_namespace if is_agent_task else None,
             "task_resume_params": task_resume_params,
             "thread_id": thread_id,
+            "namespace": context.get("namespace"),
             "parent_run_id": parent_run_id,
             "root_run_id": root_run_id,
             "checkpoint_thread_id": thread_id,
