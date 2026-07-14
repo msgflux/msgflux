@@ -71,6 +71,56 @@ background-capable tools. Removing the last `background=True` or
 remove an individual task tool manually; msgFlux will not reinstall that tool
 while the current background tool set remains active.
 
+### Compact Task Bucket
+
+By default, the common controls are exposed as separate tools. Add `TaskTool()`
+to the agent's normal `tools` list to capture them behind one mode-based tool:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+
+from msgflux.tools.builtin import TaskTool
+
+mf.load_dotenv()
+
+@mf.tool_config(background=True)
+def long_sum(a: int, b: int) -> int:
+    """Add two integers in the background."""
+    return a + b
+
+model = mf.Model.chat_completion(
+    "openai/gpt-5.6-luna",
+    reasoning_effort="none",
+)
+agent = nn.Agent(
+    name="assistant",
+    model=model,
+    tools=[TaskTool(), long_sum],
+)
+
+response = agent("Use long_sum to add 20 and 22, then get its task output.")
+print(response)
+```
+
+The model then sees `task_tool(mode, task_id, timeout)` with the common modes
+`status`, `list`, `output`, `wait`, and `interrupt`. When a registered tool
+supports activity, `activity` is added as another mode without adding a public
+parameter. The original task controls and their handle permissions remain
+independent implementations inside the bucket. `task_message` remains separate
+because it requires a `message` parameter.
+
+The three public parameters and their types remain fixed as modes are added or
+removed. `TaskTool` updates only its description with the currently available
+modes. This keeps the parameter schema stable while background capabilities
+change. The bucket uses `on_demand=False`, so it can coexist with
+`search_tools`; activating an on-demand background tool reuses controls already
+captured by `TaskTool` instead of exposing duplicate task tools.
+
+Built-in buckets do not declare a capture policy and therefore trust the tools
+they capture. Applications that define their own bucket can restrict accepted
+handle access with [`capture["policy"]`](config.md#tool_kind).
+
 ## Background Capabilities
 
 All background-capable tools install the common task controls. Optional controls

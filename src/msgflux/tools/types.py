@@ -23,6 +23,7 @@ from msgflux.tools.helpers import (
     is_reserved_tool_kind,
     normalize_background_capabilities,
 )
+from msgflux.tools.handles import normalize_handle_access
 
 T = TypeVar("T")
 
@@ -97,9 +98,39 @@ class ToolBucket:
             raise ValueError("A bucket tool must define a non-empty `capture` mapping.")
         if not all(isinstance(key, str) and key for key in capture):
             raise ValueError("Bucket capture keys must be non-empty strings.")
-        for key, value in capture.items():
+        rules = {key: value for key, value in capture.items() if key != "policy"}
+        if not rules:
+            raise ValueError("A bucket must define at least one capture predicate.")
+        for key, value in rules.items():
             self._capture_values(key, value)
-        return capture
+        self.capture_policy
+        return rules
+
+    @property
+    def capture_policy(self) -> Mapping[str, Any]:
+        """Return optional restrictions applied to captured tool metadata."""
+        capture = getattr(self, "capture", None)
+        if not isinstance(capture, Mapping):
+            return {}
+        policy = capture.get("policy")
+        if policy is None:
+            return {}
+        if not isinstance(policy, Mapping) or not policy:
+            raise ValueError("Bucket capture `policy` must be a non-empty mapping.")
+        supported = {"handle"}
+        unknown = sorted(set(policy) - supported)
+        if unknown:
+            names = ", ".join(sorted(supported))
+            raise ValueError(
+                f"Unknown bucket capture policy `{unknown[0]}`. "
+                f"Supported policies: {names}."
+            )
+        handle = normalize_handle_access(policy.get("handle"))
+        if handle is None:
+            raise ValueError(
+                "Bucket capture policy `handle` must declare allowed access."
+            )
+        return {"handle": handle}
 
     @staticmethod
     def _capture_values(key: str, value: Any) -> tuple[Any, ...]:
@@ -136,6 +167,19 @@ class ToolBucket:
             raise ValueError(
                 f"Tool `{metadata.name}` does not match this bucket's capture rule."
             )
+        allowed_handle = self.capture_policy.get("handle")
+        required_handle = metadata.tool_config.get("handle")
+        if allowed_handle is not None and required_handle is not None:
+            for domain, actions in required_handle.items():
+                unsupported = sorted(
+                    set(actions) - set(allowed_handle.get(domain, ()))
+                )
+                if unsupported:
+                    raise ValueError(
+                        f"Tool `{metadata.name}` requires handle access "
+                        f"`{domain}.{unsupported[0]}` outside this bucket's "
+                        "capture policy."
+                    )
 
     @classmethod
     def find_bucket(
@@ -440,6 +484,15 @@ class ToolBackground(ToolLibraryOperator):
             tool_name = metadata.name
             if tool_name in disabled_tool_names:
                 continue
+            if (
+                ToolBucket.find_capturing_bucket(
+                    tool_name,
+                    library.library,
+                    library.tool_configs,
+                )
+                is not None
+            ):
+                continue
             if tool_name in library.library:
                 existing_config = library.tool_configs.get(tool_name, {})
                 if not is_reserved_tool_kind(existing_config):
@@ -460,6 +513,14 @@ class ToolBackground(ToolLibraryOperator):
     ) -> None:
         for tool in tools:
             tool_name = metadata_factory(tool).name
+            bucket_name = ToolBucket.find_capturing_bucket(
+                tool_name,
+                library.library,
+                library.tool_configs,
+            )
+            if bucket_name is not None:
+                library._remove_from_bucket(bucket_name, tool_name)
+                continue
             config = library.tool_configs.get(tool_name, {})
             if tool_name in library.library and is_reserved_tool_kind(config):
                 library._remove_registered_tool(tool_name)

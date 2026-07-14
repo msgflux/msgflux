@@ -126,6 +126,39 @@ The active path is explicit polling through tools:
 This path is canonical. A passive notification should never be the only way to
 observe task state.
 
+### Compact Control Bucket
+
+The separate controls remain the default runtime surface. Applications can add
+the builtin `TaskTool` explicitly to a tool list to capture the common controls
+behind one public tool:
+
+```text
+task_tool(mode, task_id, timeout)
+```
+
+`TaskTool` captures reserved controls with `tool_kind="background"` and
+`tool_kind="background_activity"`, both with `on_demand=False`. The common
+modes are `status`, `list`, `output`, `wait`, and `interrupt`; `activity` is
+added when the active background capability union requires it. `task_message`
+stays separate because messaging requires its own `message` argument and agent
+resume semantics.
+
+The public parameter annotations are always `mode: str`, optional `task_id`,
+and optional `timeout`. Reconciliation changes only the bucket description that
+lists available modes. The parameter schema does not gain an enum or change
+when activity appears or disappears.
+
+Task reconciliation checks both directly registered controls and controls
+already owned by a bucket. Adding or activating another background tool does
+not reinstall captured controls. Removing the last relevant source removes the
+corresponding captured modes; explicitly removed controls remain disabled until
+they are explicitly added again or the background tool set is reset.
+
+`TaskTool` does not configure `capture["policy"]`. Like the other built-in
+buckets, it treats captured implementations as trusted runtime code. A custom
+bucket that requires an authorization boundary must declare an explicit handle
+capture policy.
+
 ### Passive Path
 
 The passive path is automatic delivery when a task changes state.

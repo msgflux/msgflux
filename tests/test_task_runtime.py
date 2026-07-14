@@ -2,6 +2,7 @@
 library-aware tools."""
 
 from concurrent.futures import CancelledError as FutureCancelledError
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -17,7 +18,7 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
-from msgflux.tools.builtin import AgentTool, TaskActivityTool, TaskStatusTool
+from msgflux.tools.builtin import AgentTool, TaskActivityTool, TaskStatusTool, TaskTool
 from msgflux.tools.builtin.task_tool import (
     BACKGROUND_ACTIVITY_TOOLS,
     BACKGROUND_MESSAGE_TOOLS,
@@ -380,6 +381,278 @@ def test_background_task_tools_are_registered_as_classes():
     assert isinstance(installed.impl, ToolBackground)
     assert installed.tool_config["handle"] == {"tasks": ["read"]}
     assert installed.tool_config["tool_kind"] == "background"
+
+
+def test_explicit_task_bucket_captures_common_task_tools():
+    @mf.tool_config(background=True)
+    def first_job(value: int) -> int:
+        """Run the first background job."""
+        return value
+
+    @mf.tool_config(background=True)
+    def second_job(value: int) -> int:
+        """Run the second background job."""
+        return value
+
+    library = ToolLibrary(
+        name="lib",
+        tools=[TaskTool(), first_job, second_job],
+    )
+    schemas = {
+        schema["function"]["name"]: schema
+        for schema in library.get_tool_json_schemas()
+    }
+    task_schema = schemas["task_tool"]
+
+    assert library.get_tool_display_names()["task_tool"] == "Task"
+    assert "policy" not in library.library["task_tool"].impl.capture
+    assert not {
+        "task_status",
+        "task_list",
+        "task_output",
+        "task_wait",
+        "task_interrupt",
+    }.intersection(schemas)
+    assert task_schema["function"]["parameters"]["properties"]["mode"] == {
+        "type": "string"
+    }
+    assert task_schema["function"]["description"].endswith(
+        "Available modes: interrupt, list, output, status, wait."
+    )
+    assert len(json.dumps(task_schema, separators=(",", ":"))) < 500
+
+    task = library.get_task_store().create("first_job", task_id="abcd1234")
+    status = library(
+        [
+            (
+                "call_1",
+                "task_tool",
+                {"mode": "status", "task_id": task.task_id},
+            )
+        ]
+    )
+    listed = library([("call_2", "task_tool", {"mode": "list"})])
+
+    assert status.tool_calls[0].result == "status=queued"
+    assert f"task_id={task.task_id}" in listed.tool_calls[0].result
+
+    late_bucket = ToolLibrary(
+        name="late_bucket",
+        tools=[first_job, TaskTool(), second_job],
+    )
+    assert "task_tool" in late_bucket.get_tool_names()
+    assert "task_status" not in late_bucket.get_tool_names()
+
+
+def test_explicit_task_bucket_preserves_background_lifecycle():
+    @mf.tool_config(background=True)
+    def job(value: int) -> int:
+        """Run in the background."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[TaskTool(), job])
+    library.remove("job")
+    schema = library.library["task_tool"].get_json_schema()
+
+    assert library.get_tool_names() == ["task_tool"]
+    assert schema["function"]["parameters"]["properties"]["mode"] == {
+        "type": "string"
+    }
+    assert schema["function"]["description"].endswith("Available modes: none.")
+
+    library.add(job)
+
+    assert "task_status" in library.library["task_tool"].impl.tools
+
+
+def test_explicit_task_bucket_preserves_manual_task_tool_removal():
+    @mf.tool_config(background=True)
+    def first_job(value: int) -> int:
+        """Run the first background job."""
+        return value
+
+    @mf.tool_config(background=True)
+    def second_job(value: int) -> int:
+        """Run the second background job."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[TaskTool(), first_job])
+    library.remove("task_status")
+    library.add(second_job)
+
+    assert "task_status" not in library.library["task_tool"].impl.tools
+    assert "status" not in library.library["task_tool"].description
+
+    library.add(TaskStatusTool)
+
+    assert "task_status" in library.library["task_tool"].impl.tools
+    assert "status" in library.library["task_tool"].description
+
+
+def test_explicit_task_bucket_leaves_capability_tools_separate():
+    @mf.tool_config(background=True)
+    def job(value: int) -> int:
+        """Run in the background."""
+        return value
+
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+
+    library = ToolLibrary(name="lib", tools=[TaskTool(), job])
+    parameters_before = library.library["task_tool"].get_json_schema()["function"][
+        "parameters"
+    ]
+    library.add(worker)
+    parameters_after = library.library["task_tool"].get_json_schema()["function"][
+        "parameters"
+    ]
+
+    assert "task_tool" in library.get_tool_names()
+    assert "task_activity" not in library.get_tool_names()
+    assert "task_message" in library.get_tool_names()
+    assert "task_activity" in library.library["task_tool"].impl.tools
+    assert "task_message" not in library.library["task_tool"].impl.tools
+    assert "activity" in library.library["task_tool"].description
+    assert parameters_after == parameters_before
+
+
+def test_explicit_task_bucket_coexists_with_on_demand_background_tool():
+    @mf.tool_config(background=True)
+    def active_job(value: int) -> int:
+        """Run an active background job."""
+        return value
+
+    @mf.tool_config(on_demand=True, background=True)
+    def deferred_job(value: int) -> int:
+        """Run a deferred background job."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[TaskTool(), active_job])
+    captured_before = set(library.library["task_tool"].impl.tools)
+    library.add(deferred_job)
+
+    assert set(library.get_tool_names()) == {
+        "task_tool",
+        "active_job",
+        "search_tools",
+        "deferred_job",
+    }
+
+    response = library(
+        [("call_1", "search_tools", {"query": "deferred_job"})]
+    )
+
+    assert response.tool_calls[0].result == "loaded=deferred_job"
+    assert "search_tools" not in library.get_tool_names()
+    assert set(library.library["task_tool"].impl.tools) == captured_before
+    schema_names = {
+        schema["function"]["name"] for schema in library.get_tool_json_schemas()
+    }
+    assert "task_status" not in schema_names
+
+
+def test_explicit_task_bucket_controls_background_agent_tool():
+    worker = Agent(name="reviewer", model=_mock_model("reviewed"))
+    agent_tool = mf.tool_config(allow_background=True)(AgentTool([worker]))
+    library = ToolLibrary(name="lib", tools=[TaskTool(), agent_tool])
+
+    dispatch = library(
+        [
+            (
+                "call_1",
+                "agent",
+                {
+                    "name": "reviewer",
+                    "message": "Review this.",
+                    "run_in_background": True,
+                },
+            )
+        ]
+    )
+    task_id = _task_id(dispatch.tool_calls[0].result)
+    activity = library(
+        [("call_2", "task_tool", {"mode": "activity", "task_id": task_id})]
+    )
+    waited = library(
+        [
+            (
+                "call_3",
+                "task_tool",
+                {"mode": "wait", "task_id": task_id, "timeout": 1.0},
+            )
+        ]
+    )
+
+    assert "task_id=" in dispatch.tool_calls[0].result
+    assert "Task queued." in activity.tool_calls[0].result
+    assert waited.tool_calls[0].result == "reviewed"
+    assert "task_message" in library.get_tool_names()
+    assert "task_message" not in library.library["task_tool"].impl.tools
+
+
+def test_explicit_task_bucket_captures_compatible_extension():
+    class TaskSummaryTool(ToolBackground):
+        name = "task_summary"
+        description = "Get a compact task summary."
+        annotations = {"task_id": str, "handle": mf.Hidden, "return": str}
+        tool_config = {"handle": {"tasks": ["read"]}}
+
+        def __call__(self, task_id: str, handle: mf.Hidden) -> str:
+            return "summary " + handle.tasks.read(task_id)
+
+    @mf.tool_config(background=True)
+    def job(value: int) -> int:
+        """Run in the background."""
+        return value
+
+    library = ToolLibrary(name="lib", tools=[TaskTool(), job, TaskSummaryTool])
+    task = library.get_task_store().create("job", task_id="abcd1234")
+    response = library(
+        [
+            (
+                "call_1",
+                "task_tool",
+                {"mode": "summary", "task_id": task.task_id},
+            )
+        ]
+    )
+    task_schema = library.library["task_tool"].get_json_schema()["function"]
+
+    assert "task_summary" not in library.get_tool_names()
+    assert task_schema["parameters"]["properties"]["mode"] == {"type": "string"}
+    assert "summary" in task_schema["description"]
+    assert response.tool_calls[0].result == "summary status=queued"
+
+
+def test_explicit_task_bucket_rolls_back_conflicting_modes():
+    class TaskSummaryTool(ToolBackground):
+        name = "task_summary"
+        description = "Get a task summary."
+        annotations = {"task_id": str, "handle": mf.Hidden, "return": str}
+        tool_config = {"handle": {"tasks": ["read"]}}
+
+        def __call__(self, task_id: str, handle: mf.Hidden) -> str:
+            return handle.tasks.read(task_id)
+
+    class SummaryTool(TaskSummaryTool):
+        name = "summary"
+
+    @mf.tool_config(background=True)
+    def job(value: int) -> int:
+        """Run in the background."""
+        return value
+
+    library = ToolLibrary(
+        name="lib",
+        tools=[job, TaskSummaryTool, SummaryTool],
+    )
+    names_before = library.get_tool_names()
+
+    with pytest.raises(ValueError, match="Duplicate task mode `summary`"):
+        library.add(TaskTool())
+
+    assert library.get_tool_names() == names_before
+    assert "task_tool" not in library.library
 
 
 def test_removed_background_task_tool_is_not_reinstalled_while_background_active():

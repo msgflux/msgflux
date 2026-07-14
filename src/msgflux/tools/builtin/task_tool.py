@@ -7,10 +7,12 @@ from msgflux.runtime.context import get_execution_context
 from msgflux.tools.helpers import (
     BACKGROUND_ACTIVITY_TOOL_KIND,
     BACKGROUND_MESSAGE_TOOL_KIND,
+    BACKGROUND_TASK_TOOL_KIND,
     DEFAULT_AGENT_BACKGROUND_CAPABILITIES,
     normalize_background_capabilities,
 )
-from msgflux.tools.types import Hidden, ToolBackground
+from msgflux.tools.types import Hidden, ToolBackground, ToolBucket
+from msgflux.utils.inspect import get_fn_param_defaults
 
 _base_task_tools = Registry()
 _background_activity_tools = Registry()
@@ -138,6 +140,117 @@ class TaskMessageTool(ToolBackground):
         if not isinstance(message, str) or not message.strip():
             raise ValueError("`message` must be a non-empty string.")
         return handle.tasks.message(task_id, message.strip())
+
+
+class TaskTool(ToolBucket):
+    """Expose captured background task controls through one mode-based tool."""
+
+    name = "task_tool"
+    display_name = "Task"
+    capture = {
+        "tool_kind": (
+            f"{BACKGROUND_TASK_TOOL_KIND}|{BACKGROUND_ACTIVITY_TOOL_KIND}"
+        ),
+        "on_demand": False,
+    }
+    _base_description = "Inspect or control background work by mode."
+    description = _base_description
+    usage_guidance = None
+    tool_config = {
+        "handle": {
+            "tasks": [
+                "read",
+                "list",
+                "output",
+                "wait",
+                "interrupt",
+                "activity",
+            ],
+        }
+    }
+    annotations = {
+        "mode": str,
+        "task_id": Optional[str],
+        "timeout": Optional[float],
+        "handle": Hidden,
+        "return": Any,
+    }
+
+    def refresh(self) -> None:
+        modes = tuple(sorted(self._mode_name(name) for name in self.tools))
+        available = ", ".join(modes) if modes else "none"
+        self.description = f"{self._base_description} Available modes: {available}."
+
+    def validate_capture(self, metadata: Any) -> None:
+        super().validate_capture(metadata)
+        public_params = set(metadata.annotations) - {"return"}
+        unsupported = public_params - {"task_id", "timeout"}
+        if unsupported:
+            names = ", ".join(sorted(f"`{name}`" for name in unsupported))
+            raise ValueError(
+                f"Task mode `{metadata.name}` has unsupported parameters: {names}."
+            )
+        mode = self._mode_name(metadata.name)
+        if any(self._mode_name(name) == mode for name in self.tools):
+            raise ValueError(f"Duplicate task mode `{mode}` in bucket.")
+
+    def __call__(
+        self,
+        mode: str,
+        task_id: str | None = None,
+        timeout: float | None = None,
+        handle: Hidden = None,
+    ) -> Any:
+        metadata = self._resolve_mode(mode)
+        accepted = set(metadata.annotations) - {"return"}
+        supplied = {"task_id": task_id, "timeout": timeout}
+        unexpected = [
+            name
+            for name, value in supplied.items()
+            if value is not None and name not in accepted
+        ]
+        if unexpected:
+            names = ", ".join(f"`{name}`" for name in unexpected)
+            raise ValueError(f"Task mode `{mode}` does not accept {names}.")
+
+        defaults = get_fn_param_defaults(metadata.impl)
+        missing = [
+            name
+            for name in accepted
+            if supplied.get(name) is None and name not in defaults
+        ]
+        if missing:
+            names = ", ".join(f"`{name}`" for name in missing)
+            raise ValueError(f"Task mode `{mode}` requires {names}.")
+
+        params = {
+            name: supplied[name]
+            for name in accepted
+            if supplied.get(name) is not None
+        }
+        access = metadata.tool_config.get("handle")
+        if access is not None:
+            from msgflux.tools.handles import ToolHandle
+
+            params["handle"] = ToolHandle(
+                handle.tasks._handle.for_tool(tool_name=metadata.name),
+                access,
+            )
+        return metadata.impl(**params)
+
+    def _resolve_mode(self, mode: str):
+        if not isinstance(mode, str) or not mode.strip():
+            raise ValueError("`mode` must be a non-empty string.")
+        normalized = mode.strip().lower()
+        for tool_name, metadata in self.tools.items():
+            if self._mode_name(tool_name) == normalized:
+                return metadata
+        available = ", ".join(sorted(self._mode_name(name) for name in self.tools))
+        raise ValueError(f"Unknown task mode `{mode}`. Available modes: {available}.")
+
+    @staticmethod
+    def _mode_name(tool_name: str) -> str:
+        return tool_name.removeprefix("task_")
 
 
 BASE_TASK_TOOLS = _base_task_tools.to_list()

@@ -621,6 +621,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
         )
         if bucket_name is not None:
             self._add_to_bucket(bucket_name, metadata)
+            if is_reserved_tool_kind(metadata.tool_config):
+                self._disabled_background_task_tool_names.discard(metadata.name)
             return metadata.name
 
         capturing_bucket = ToolBucket.find_capturing_bucket(
@@ -675,7 +677,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
         )
         if bucket_name is None:
             raise ValueError(f"The tool name `{tool_name}` is not in tool library")
-        self._remove_from_bucket(bucket_name, tool_name)
+        metadata = self._remove_from_bucket(bucket_name, tool_name)
+        if is_reserved_tool_kind(metadata.tool_config):
+            self._disabled_background_task_tool_names.add(tool_name)
 
     def _remove_registered_tool(self, tool_name: str) -> None:
         if tool_name in self.library:
@@ -736,11 +740,21 @@ class ToolLibrary(Module, metaclass=AutoParams):
         # Background-capable sources determine the shared task control surface.
         self._sync_background_task_tools_for_source(config)
 
-        # Move matching local tools into a newly registered bucket.
-        for captured_name, captured_tool in captures:
-            captured_metadata = _metadata_from_tool(captured_tool)
-            self.remove(captured_name)
-            self._add_to_bucket(tool.name, captured_metadata)
+        # Capture every candidate before removing its direct registration so a
+        # rejected candidate can roll back the bucket without losing tools.
+        captured_names = []
+        try:
+            for captured_name, captured_tool in captures:
+                captured_metadata = _metadata_from_tool(captured_tool)
+                self._add_to_bucket(tool.name, captured_metadata)
+                captured_names.append(captured_name)
+        except Exception:
+            for captured_name in reversed(captured_names):
+                self._remove_from_bucket(tool.name, captured_name)
+            self._remove_registered_tool(tool.name)
+            raise
+        for captured_name in captured_names:
+            self._remove_registered_tool(captured_name)
         return tool
 
     def _add_to_bucket(self, bucket_name: str, metadata: ToolMetadata) -> None:
@@ -770,6 +784,12 @@ class ToolLibrary(Module, metaclass=AutoParams):
         bucket_tool = self.library[bucket_name]
         if isinstance(getattr(bucket, "description", None), str):
             bucket_tool.set_description(bucket.description)
+        annotations = getattr(bucket, "annotations", None)
+        if isinstance(annotations, Mapping):
+            public_annotations, _ = _split_hidden_annotations(dict(annotations))
+            if getattr(bucket, "tool_config", {}).get("handle") is not None:
+                public_annotations.pop("handle", None)
+            bucket_tool.set_annotations(public_annotations)
         if hasattr(bucket, "usage_guidance"):
             bucket_tool.register_buffer(
                 "usage_guidance",

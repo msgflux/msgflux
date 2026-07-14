@@ -576,6 +576,24 @@ class TestToolLibrary:
         assert "regular_tool" in library.library
         validate.assert_not_called()
 
+    def test_tool_library_defaults_all_registered_tools_to_not_on_demand(self):
+        def plain_tool() -> str:
+            """A plain callable tool."""
+            return "ok"
+
+        metadata = ToolMetadata(
+            name="metadata_tool",
+            description="A regular tool.",
+            annotations={"return": str},
+            tool_config={},
+            impl=lambda: "ok",
+        )
+        library = ToolLibrary(name="lib", tools=[plain_tool, metadata])
+
+        assert metadata.tool_config["on_demand"] is False
+        assert library.tool_configs["plain_tool"]["on_demand"] is False
+        assert library.tool_configs["metadata_tool"]["on_demand"] is False
+
     def test_tool_library_add_duplicate_raises_error(self):
         """Test that adding duplicate tool raises error."""
 
@@ -957,6 +975,75 @@ class TestToolLibrary:
 
         with pytest.raises(ValueError, match="cannot be empty"):
             ToolLibrary(name="lib", tools=[InvalidBucket()])
+
+    def test_tool_bucket_capture_policy_restricts_declared_handle_access(self):
+        class RestrictedBucket(ToolBucket):
+            """Capture tools with restricted handles."""
+
+            name = "restricted"
+            capture = {
+                "tool_kind": "operation",
+                "policy": {"handle": {"tools": ["list"]}},
+            }
+
+            def __call__(self) -> str:
+                return "restricted"
+
+        @mf.tool_config(tool_kind="operation", handle={"tools": ["list"]})
+        def allowed(handle: mf.Hidden) -> str:
+            """List tools."""
+            return ",".join(handle.tools.list())
+
+        @mf.tool_config(tool_kind="operation", handle={"tools": ["remove"]})
+        def denied(handle: mf.Hidden) -> str:
+            """Remove tools."""
+            return handle.tools.remove("allowed")
+
+        library = ToolLibrary(name="lib", tools=[RestrictedBucket(), allowed])
+
+        assert "allowed" in library.library["restricted"].impl.tools
+        with pytest.raises(ValueError, match=r"tools\.remove.*capture policy"):
+            library.add(denied)
+        assert "denied" not in library.get_tool_names()
+
+    def test_tool_bucket_without_capture_policy_trusts_declared_handle_access(self):
+        class TrustedBucket(ToolBucket):
+            """Capture trusted tools."""
+
+            name = "trusted"
+            capture = {"tool_kind": "operation"}
+
+            def __call__(self) -> str:
+                return "trusted"
+
+        @mf.tool_config(tool_kind="operation", handle={"tools": ["remove"]})
+        def trusted_operation(handle: mf.Hidden) -> str:
+            """Use trusted handle access."""
+            return "ok"
+
+        library = ToolLibrary(
+            name="lib",
+            tools=[TrustedBucket(), trusted_operation],
+        )
+
+        assert "policy" not in library.library["trusted"].impl.capture
+        assert "trusted_operation" in library.library["trusted"].impl.tools
+
+    def test_tool_bucket_rejects_unknown_capture_policy(self):
+        class InvalidPolicyBucket(ToolBucket):
+            """Declare an unknown capture policy."""
+
+            name = "invalid_policy"
+            capture = {
+                "tool_kind": "operation",
+                "policy": {"unknown": {}},
+            }
+
+            def __call__(self) -> str:
+                return "invalid"
+
+        with pytest.raises(ValueError, match="Supported policies: handle"):
+            ToolLibrary(name="lib", tools=[InvalidPolicyBucket()])
 
     def test_tool_bucket_captures_generic_configuration(self):
         class PreviewBucket(ToolBucket):

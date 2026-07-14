@@ -169,6 +169,36 @@ class ToolBucket:
 `capture["tool_kind"]` can name one kind or several kinds separated by `|`,
 such as `"catalog|orders"`.
 
+`ToolLibrary` normalizes `on_demand=False` for every registered tool, including
+plain callables, `Tool` instances, and manually constructed `ToolMetadata`.
+Opting into on-demand registration therefore always requires an explicit
+`on_demand=True`.
+
+### Capture Policies
+
+The reserved `capture["policy"]` entry does not participate in predicate
+matching. It lists optional restrictions that the bucket applies after a tool
+matches. `handle` is currently the only supported policy:
+
+```python
+class ReadOnlyBucket(ToolBucket):
+    capture = {
+        "tool_kind": "operation",
+        "on_demand": False,
+        "policy": {
+            "handle": {
+                "tools": ["list", "get"],
+            }
+        },
+    }
+```
+
+For a handle policy, every domain and action requested by the captured tool
+must be a subset of the policy. Unknown policy names and undeclared handle
+actions fail registration. Without `capture["policy"]`, the bucket trusts the
+captured tool and does not restrict its declared handle access. Built-in
+buckets intentionally use this trusted default.
+
 Two bucket captures cannot overlap. This makes routing deterministic without a
 priority system. A kind bucket that coexists with on-demand tools should include
 `"on_demand": False`, leaving `{"on_demand": True}` to `search_tools`. The
@@ -188,6 +218,19 @@ The registration rule is:
 When a bucket is registered, it also captures matching tools that are already
 registered. Therefore, the order of `tools` in `ToolLibrary(...)` does not
 change capture behavior.
+
+Late bucket registration is transactional from the library's perspective. The
+library first adds every matching tool to the bucket while retaining their
+direct registrations. If any candidate is rejected, it removes the candidates
+already added to the bucket and unregisters the new bucket. Only after every
+capture succeeds does it remove the original direct registrations. A duplicate
+derived mode or another bucket-specific validation error therefore leaves the
+previous library surface intact.
+
+After each successful add or removal, `ToolLibrary` synchronizes the wrapping
+tool's description, public annotations, and usage guidance from the bucket.
+This lets a bucket keep a fixed public schema or intentionally derive one from
+its contents without replacing the wrapping `Tool` instance.
 
 For agents, `nn.Agent` is normalized to `tool_config["tool_kind"]="agent"`.
 `AgentTool` is a bucket with

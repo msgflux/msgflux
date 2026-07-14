@@ -678,6 +678,54 @@ Overlapping captures are rejected. Configure `background` or
 `allow_background` on the bucket, not on a tool it captures with the base
 `ToolBucket` validation.
 
+Buckets trust captured tools by default. To restrict the handle access a bucket
+will accept, declare the optional `handle` policy inside `capture`:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools import ToolBucket
+
+@mf.tool_config(
+    tool_kind="operation",
+    handle={"tools": ["list"]},
+)
+def list_registered_tools(handle: mf.Hidden) -> list[str]:
+    """List registered tools."""
+    return handle.tools.list()
+
+class ReadOnlyOperations(ToolBucket):
+    """Capture read-only tool operations."""
+
+    name = "read_only_operations"
+    capture = {
+        "tool_kind": "operation",
+        "on_demand": False,
+        "policy": {
+            "handle": {
+                "tools": ["list", "get"],
+            }
+        },
+    }
+    annotations = {"return": str}
+
+    def __call__(self) -> str:
+        return ",".join(sorted(self.tools))
+
+library = nn.ToolLibrary(
+    name="read_only",
+    tools=[ReadOnlyOperations(), list_registered_tools],
+)
+
+print(library.get_tool_names())
+# ["read_only_operations"]
+```
+
+Every handle domain and action requested by a captured tool must be included in
+the policy. A bucket without `capture["policy"]` applies no capture restriction;
+built-in buckets use this trusted behavior by default. `handle` is currently the
+only supported capture policy.
+
 ## display_name
 
 Assign a human-readable name for UI surfaces and events while keeping the tool's
