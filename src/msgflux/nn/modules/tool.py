@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+from contextlib import suppress
 from copy import deepcopy
 from functools import partial
 from typing import (
@@ -43,6 +44,7 @@ from msgflux.tools.builtin.task_tool import (
     BASE_TASK_TOOLS,
 )
 from msgflux.tools.builtin.tool_search import ToolSearchTool
+from msgflux.tools.bucket_graph import ToolBucketGraph
 from msgflux.tools.dataclasses import ToolMetadata
 from msgflux.tools.handles import ToolLibraryHandle, normalize_handle_access
 from msgflux.tools.helpers import (
@@ -52,6 +54,7 @@ from msgflux.tools.helpers import (
     is_background_capable,
     is_reserved_tool_kind,
     normalize_background_capabilities,
+    normalize_tool_capabilities,
     should_copy_injected_messages,
     should_dispatch_background,
 )
@@ -568,6 +571,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
             )
         return self._agent_inbox
 
+    @property
+    def _bucket_graph(self) -> ToolBucketGraph:
+        """Return a read-only view over the current bucket ownership tree."""
+        return ToolBucketGraph(self.library, self.tool_configs)
+
     def add(self, tool: Callable) -> str:
         """Add a local tool in library."""
         if isinstance(tool, ToolMetadata):
@@ -579,6 +587,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
         metadata.tool_config = dotdict(metadata.tool_config)
         metadata.tool_config.setdefault("on_demand", False)
+        metadata.tool_config["capabilities"] = normalize_tool_capabilities(
+            metadata.tool_config.get("capabilities")
+        )
         if "inject_handle" in metadata.tool_config:
             raise ValueError(
                 "`inject_handle` was removed; configure exact access with `handle`."
@@ -596,7 +607,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     "`handle: mf.Hidden`."
                 )
 
-        if metadata.name in self.library.keys():
+        if metadata.name in self.library.keys() or (
+            isinstance(metadata.impl, ToolBucket)
+            and self._bucket_graph.find_node(metadata.name) is not None
+        ):
             raise ValueError(
                 f"The tool name `{metadata.name}` is already in tool library"
             )
@@ -613,23 +627,21 @@ class ToolLibrary(Module, metaclass=AutoParams):
         ):
             self.add(ToolSearchTool())
 
-        # A matching registered bucket owns the tool instead of direct registration.
-        bucket_name = ToolBucket.find_bucket(
-            metadata,
-            self.library,
-            self.tool_configs,
-        )
-        if bucket_name is not None:
+        # Buckets first assemble their own children, then may become a child.
+        if isinstance(metadata.impl, ToolBucket):
+            self._register_tool(metadata)
+            return metadata.name
+
+        # A matching bucket owns the tool instead of direct registration.
+        bucket_names = self._bucket_graph.matching_buckets(metadata)
+        if bucket_names:
+            bucket_name = bucket_names[0]
             self._add_to_bucket(bucket_name, metadata)
             if is_reserved_tool_kind(metadata.tool_config):
                 self._disabled_background_task_tool_names.discard(metadata.name)
             return metadata.name
 
-        capturing_bucket = ToolBucket.find_capturing_bucket(
-            metadata.name,
-            self.library,
-            self.tool_configs,
-        )
+        capturing_bucket = self._bucket_graph.find_owner(metadata.name)
         if capturing_bucket is not None:
             raise ValueError(
                 f"The tool name `{metadata.name}` is already in tool library"
@@ -640,13 +652,16 @@ class ToolLibrary(Module, metaclass=AutoParams):
         return metadata.name
 
     def remove(self, tool_name: str):
+        node = self._bucket_graph.find_node(tool_name)
+        if node is None:
+            raise ValueError(f"The tool name `{tool_name}` is not in tool library")
+        node_bucket = node.bucket
+        if isinstance(node_bucket, ToolBucket) and node_bucket.tools:
+            raise ValueError(
+                f"The bucket tool `{tool_name}` still captures tools and cannot "
+                "be removed."
+            )
         if tool_name in self.library.keys():
-            bucket = getattr(self.library[tool_name], "impl", None)
-            if isinstance(bucket, ToolBucket) and bucket.tools:
-                raise ValueError(
-                    f"The bucket tool `{tool_name}` still captures tools and cannot "
-                    "be removed."
-                )
             config = self.tool_configs.get(tool_name, {})
             is_task_tool = ToolBackground.is_active_task_tool(
                 library=self,
@@ -670,11 +685,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 self._sync_background_task_tools()
             return
 
-        bucket_name = ToolBucket.find_capturing_bucket(
-            tool_name,
-            self.library,
-            self.tool_configs,
-        )
+        bucket_name = self._bucket_graph.find_owner(tool_name)
         if bucket_name is None:
             raise ValueError(f"The tool name `{tool_name}` is not in tool library")
         metadata = self._remove_from_bucket(bucket_name, tool_name)
@@ -699,21 +710,23 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def _register_tool(self, metadata: ToolMetadata) -> Tool:
         # A bucket must be valid before it becomes visible in the library.
         captures = []
+        parent_names: list[str] = []
         if metadata.tool_config.get("tool_kind") == ToolBucket.tool_kind:
-            ToolBucket.validate_registration(
+            bucket = metadata.impl
+            captures = self._bucket_graph.validate_registration(
                 metadata,
-                self.library,
-                self.tool_configs,
-            )
-            captures = ToolBucket.find_capture_candidates(
-                metadata.impl,
-                self.library,
-                self.tool_configs,
+                _metadata_from_tool,
             )
 
             # Check every pending capture before changing the current library state.
-            for _, captured_tool in captures:
-                metadata.impl.validate_capture(_metadata_from_tool(captured_tool))
+            for captured in captures:
+                bucket.validate_capture(_metadata_from_tool(captured.tool))
+
+            parent_names = self._bucket_graph.matching_buckets(metadata)
+            if parent_names:
+                self._bucket_graph.require_bucket(parent_names[0]).validate_capture(
+                    metadata
+                )
 
         # Convert callable metadata to the local executable representation when needed.
         tool = (
@@ -744,10 +757,10 @@ class ToolLibrary(Module, metaclass=AutoParams):
         # rejected candidate can roll back the bucket without losing tools.
         captured_names = []
         try:
-            for captured_name, captured_tool in captures:
-                captured_metadata = _metadata_from_tool(captured_tool)
+            for captured in captures:
+                captured_metadata = _metadata_from_tool(captured.tool)
                 self._add_to_bucket(tool.name, captured_metadata)
-                captured_names.append(captured_name)
+                captured_names.append(captured.name)
         except Exception:
             for captured_name in reversed(captured_names):
                 self._remove_from_bucket(tool.name, captured_name)
@@ -755,33 +768,77 @@ class ToolLibrary(Module, metaclass=AutoParams):
             raise
         for captured_name in captured_names:
             self._remove_registered_tool(captured_name)
+
+        if isinstance(metadata.impl, ToolBucket) and parent_names:
+            try:
+                self._add_to_bucket(parent_names[0], _metadata_from_tool(tool))
+            except Exception:
+                # Restore the former roots if the parent's refresh rejects the
+                # fully assembled child after pre-validation.
+                restored = [metadata.impl.remove(name) for name in captured_names]
+                self._remove_registered_tool(tool.name)
+                for captured_metadata in restored:
+                    self._register_tool(captured_metadata)
+                raise
+            self._remove_registered_tool(tool.name)
         return tool
 
     def _add_to_bucket(self, bucket_name: str, metadata: ToolMetadata) -> None:
         # Resolve the bucket implementation before changing its captured tools.
-        bucket_tool = self.library[bucket_name]
-        bucket = getattr(bucket_tool, "impl", None)
-        if not isinstance(bucket, ToolBucket):
-            raise ValueError(f"The bucket tool `{bucket_name}` cannot capture tools.")
+        bucket = self._bucket_graph.require_bucket(bucket_name)
 
         # Let the bucket validate, retain, and refresh its captured state.
         bucket.add(metadata)
-        self._sync_bucket_presentation(bucket_name, bucket)
+        try:
+            self._sync_bucket_presentation(bucket_name, bucket)
+        except Exception:
+            # An ancestor may reject presentation derived from the new child.
+            # Restore the inner bucket before returning that failure to add().
+            if metadata.name in bucket.tools:
+                bucket.remove(metadata.name)
+                with suppress(Exception):
+                    self._sync_bucket_presentation(bucket_name, bucket)
+            raise
 
     def _remove_from_bucket(self, bucket_name: str, tool_name: str) -> ToolMetadata:
-        bucket_tool = self.library[bucket_name]
-        bucket = getattr(bucket_tool, "impl", None)
-        if not isinstance(bucket, ToolBucket):
-            raise ValueError(f"The bucket tool `{bucket_name}` cannot release tools.")
+        bucket = self._bucket_graph.require_bucket(bucket_name)
         metadata = bucket.remove(tool_name)
-        if bucket.expose_captured_names and not bucket.tools:
-            self._remove_registered_tool(bucket_name)
-        else:
+        try:
             self._sync_bucket_presentation(bucket_name, bucket)
+        except Exception:
+            bucket.add(metadata)
+            with suppress(Exception):
+                self._sync_bucket_presentation(bucket_name, bucket)
+            raise
+
+        if not bucket.expose_captured_names or bucket.tools:
+            return metadata
+
+        owner_name = self._bucket_graph.find_owner(bucket_name)
+        if owner_name is None:
+            self._remove_registered_tool(bucket_name)
+            return metadata
+
+        owner = self._bucket_graph.require_bucket(owner_name)
+        bucket_metadata = owner.tools[bucket_name]
+        try:
+            owner.remove(bucket_name)
+            self._sync_bucket_presentation(owner_name, owner)
+        except Exception:
+            if bucket_name not in owner.tools:
+                owner.add(bucket_metadata)
+            bucket.add(metadata)
+            with suppress(Exception):
+                self._sync_bucket_presentation(bucket_name, bucket)
+            raise
         return metadata
 
     def _sync_bucket_presentation(self, bucket_name: str, bucket: ToolBucket) -> None:
-        bucket_tool = self.library[bucket_name]
+        node = self._bucket_graph.find_node(bucket_name)
+        if node is None:
+            raise ValueError(f"The bucket tool `{bucket_name}` is not registered.")
+        bucket_tool = node.tool
+        parent_name = node.parent
         if isinstance(getattr(bucket, "description", None), str):
             bucket_tool.set_description(bucket.description)
         annotations = getattr(bucket, "annotations", None)
@@ -795,6 +852,11 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 "usage_guidance",
                 bucket.usage_guidance,
             )
+        if parent_name is not None:
+            parent = self._bucket_graph.require_bucket(parent_name)
+            parent.tools[bucket_name] = _metadata_from_tool(bucket_tool)
+            parent.refresh()
+            self._sync_bucket_presentation(parent_name, parent)
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
@@ -886,8 +948,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def get_tool_names(self) -> List[str]:
         """Get names of all tools."""
         names = list(self.library.keys())
-        for tool in self.library.values():
-            bucket = getattr(tool, "impl", None)
+        for node in self._bucket_graph.iter_nodes():
+            bucket = node.bucket
             if isinstance(bucket, ToolBucket) and bucket.expose_captured_names:
                 names.extend(name for name in bucket.tools if name not in names)
         return names

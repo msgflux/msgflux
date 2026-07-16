@@ -1073,6 +1073,153 @@ class TestToolLibrary:
         assert list(library.library) == ["preview"]
         assert set(bucket.tools) == {"render_preview"}
 
+    def test_tool_bucket_captures_by_name_and_capabilities(self):
+        @mf.tool_config(capabilities=["python_callable", "filesystem_read"])
+        def inspect_file(path: str) -> str:
+            """Inspect a file."""
+            return path
+
+        @mf.tool_config(capabilities=["filesystem_read"])
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        class InterpreterBucket(ToolBucket):
+            """Expose tools available to an interpreter."""
+
+            name = "interpreter"
+            capture = {
+                "source": "tool",
+                "match": {
+                    "any": [
+                        {"name": ["read_file"]},
+                        {"capabilities": {"all": ["python_callable"]}},
+                    ]
+                },
+            }
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "ready"
+
+        bucket = InterpreterBucket()
+        library = ToolLibrary(
+            name="lib",
+            tools=[bucket, inspect_file, read_file],
+        )
+
+        assert set(bucket.tools) == {"inspect_file", "read_file"}
+        assert bucket.tools["inspect_file"].tool_config["capabilities"] == (
+            "python_callable",
+            "filesystem_read",
+        )
+        assert list(library.library) == ["interpreter"]
+
+    def test_tool_bucket_rejects_capture_cycle(self):
+        class FirstBucket(ToolBucket):
+            """Capture the second bucket."""
+
+            name = "first"
+            capture = {"source": "bucket", "name": "second"}
+
+            def __call__(self) -> str:
+                return "first"
+
+        class SecondBucket(ToolBucket):
+            """Capture the first bucket."""
+
+            name = "second"
+            capture = {"source": "bucket", "name": "first"}
+
+            def __call__(self) -> str:
+                return "second"
+
+        library = ToolLibrary(name="lib", tools=[FirstBucket()])
+
+        with pytest.raises(ValueError, match="capture cycle"):
+            library.add(SecondBucket())
+
+        assert list(library.library) == ["first"]
+
+    def test_nested_bucket_parent_refresh_failure_restores_child_roots(self):
+        def leaf() -> str:
+            """Return a leaf value."""
+            return "leaf"
+
+        class ChildBucket(ToolBucket):
+            """Capture the leaf tool."""
+
+            name = "child"
+            capture = {"name": "leaf"}
+
+            def __call__(self) -> str:
+                return "child"
+
+        class RejectingParent(ToolBucket):
+            """Reject a populated child during refresh."""
+
+            name = "parent"
+            capture = {"source": "bucket", "name": "child"}
+
+            def refresh(self):
+                if self.tools:
+                    raise ValueError("parent rejected child")
+
+            def __call__(self) -> str:
+                return "parent"
+
+        library = ToolLibrary(name="lib", tools=[RejectingParent(), leaf])
+
+        with pytest.raises(ValueError, match="parent rejected child"):
+            library.add(ChildBucket())
+
+        assert list(library.library) == ["parent", "leaf"]
+        assert library.library["parent"].impl.tools == {}
+
+    def test_nested_bucket_ancestor_refresh_failure_rolls_back_late_child(self):
+        def late_leaf() -> str:
+            """Return a late leaf value."""
+            return "late"
+
+        class InnerBucket(ToolBucket):
+            """Capture and describe the late leaf."""
+
+            name = "inner"
+            capture = {"name": "late_leaf"}
+            description = "Inner tools: none."
+
+            def refresh(self):
+                names = ", ".join(self.tools) or "none"
+                self.description = f"Inner tools: {names}."
+
+            def __call__(self) -> str:
+                return "inner"
+
+        class OuterBucket(ToolBucket):
+            """Reject an inner presentation containing the late leaf."""
+
+            name = "outer"
+            capture = {"source": "bucket", "name": "inner"}
+
+            def refresh(self):
+                inner = self.tools.get("inner")
+                if inner is not None and "late_leaf" in inner.description:
+                    raise ValueError("outer rejected late leaf")
+
+            def __call__(self) -> str:
+                return "outer"
+
+        inner = InnerBucket()
+        library = ToolLibrary(name="lib", tools=[OuterBucket(), inner])
+
+        with pytest.raises(ValueError, match="outer rejected late leaf"):
+            library.add(late_leaf)
+
+        assert inner.tools == {}
+        assert list(library.library) == ["outer"]
+        inner_description = library.library["outer"].impl.tools["inner"].description
+        assert "late_leaf" not in inner_description
+
     def test_tool_library_operator_injects_handle_by_default(self):
         """Test operator tools inherit handle injection."""
 

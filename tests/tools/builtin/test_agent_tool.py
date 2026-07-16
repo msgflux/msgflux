@@ -7,7 +7,8 @@ from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.runtime.context import execution_context
-from msgflux.tools.builtin import AgentTool
+from msgflux.tools import ToolBucket
+from msgflux.tools.builtin import AgentTool, TaskTool
 
 
 class _ScriptedModel:
@@ -143,6 +144,71 @@ def test_agent_tool_can_start_empty_and_capture_agents_from_library():
     response = library([("call_1", "agent", {"name": "reviewer", "message": "Go"})])
 
     assert response.tool_calls[0].result == "reviewed"
+
+
+def test_nested_bucket_composes_agent_and_task_tools_with_late_updates():
+    class PythonInterpreterTool(ToolBucket):
+        name = "python_interpreter"
+        capture = {
+            "source": "bucket",
+            "name": ["agent", "task_tool"],
+        }
+        description = "Run Python with these tools: none."
+        annotations = {"code": str, "return": str}
+
+        def refresh(self):
+            available = ", ".join(sorted(self.tools)) or "none"
+            self.description = f"Run Python with these tools: {available}."
+
+        def __call__(self, code: str) -> str:
+            return code
+
+    reviewer = Agent(
+        name="reviewer",
+        model=_mock_model("reviewed"),
+        description="Reviews code changes.",
+    )
+    agent_tool = mf.tool_config(allow_background=True)(AgentTool())
+    interpreter = PythonInterpreterTool()
+    task_tool = TaskTool()
+    library = ToolLibrary(
+        name="lib",
+        tools=[interpreter, task_tool, agent_tool, reviewer],
+    )
+
+    assert set(library.library) == {"python_interpreter", "task_message"}
+    assert set(interpreter.tools) == {"agent", "task_tool"}
+    assert "reviewer" in interpreter.tools["agent"].impl.tools
+    assert "reviewer" in interpreter.tools["agent"].description
+    assert "task_status" in interpreter.tools["task_tool"].impl.tools
+    assert "status" in interpreter.tools["task_tool"].description
+    assert "agent, task_tool" in library.library["python_interpreter"].description
+
+    planner = Agent(
+        name="planner",
+        model=_mock_model("planned"),
+        description="Plans implementation work.",
+    )
+    library.add(planner)
+
+    nested_agent = interpreter.tools["agent"]
+    assert set(nested_agent.impl.tools) == {"reviewer", "planner"}
+    assert "planner: Plans implementation work." in nested_agent.description
+
+    architect = Agent(
+        name="architect",
+        model=_mock_model("designed"),
+        description="Designs system changes.",
+    )
+    inner_first = AgentTool([architect])
+    outer_late = PythonInterpreterTool()
+    reversed_library = ToolLibrary(
+        name="reversed",
+        tools=[inner_first, outer_late],
+    )
+
+    assert list(reversed_library.library) == ["python_interpreter"]
+    assert "architect" in outer_late.tools["agent"].description
 
 
 def test_agent_tool_rejects_background_agent_on_initialization():

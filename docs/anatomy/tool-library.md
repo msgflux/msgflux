@@ -169,6 +169,16 @@ class ToolBucket:
 `capture["tool_kind"]` can name one kind or several kinds separated by `|`,
 such as `"catalog|orders"`.
 
+Capture also provides structural selectors. `source` accepts `tool`, `bucket`,
+or `any` and defaults to `tool`. `name` matches an exact canonical name.
+`capabilities={"all": [...]}` requires every semantic label, while
+`capabilities={"any": [...]}` requires at least one. `match.any` provides OR
+alternatives; predicates in each alternative and at the top level use AND.
+
+`policy`, `source`, and `match` are reserved control entries rather than
+ordinary `tool_config` predicates. `name` and `capabilities` are evaluated from
+normalized metadata. Other entries retain exact `tool_config` matching.
+
 `ToolLibrary` normalizes `on_demand=False` for every registered tool, including
 plain callables, `Tool` instances, and manually constructed `ToolMetadata`.
 Opting into on-demand registration therefore always requires an explicit
@@ -199,11 +209,15 @@ actions fail registration. Without `capture["policy"]`, the bucket trusts the
 captured tool and does not restrict its declared handle access. Built-in
 buckets intentionally use this trusted default.
 
-Two bucket captures cannot overlap. This makes routing deterministic without a
-priority system. A kind bucket that coexists with on-demand tools should include
+Two bucket captures that accept the same source cannot overlap. This makes
+routing deterministic without a priority system. Disjoint canonical-name or
+configuration selectors can coexist, as can a leaf bucket using `source=tool`
+and a composition bucket using `source=bucket`. A kind bucket that coexists
+with on-demand tools should include
 `"on_demand": False`, leaving `{"on_demand": True}` to `search_tools`. The
 base bucket rejects captured tools that configure `background` or
-`allow_background`; configure those flags on the bucket itself instead.
+`allow_background`; configure those flags on the bucket itself instead. A
+bucket candidate may retain those flags when another bucket composes it.
 
 `ToolLibrary` routes matching tools to `ToolBucket.add(...)`. The base method
 keeps metadata in `bucket.tools`, rejects duplicate names, and calls
@@ -231,6 +245,49 @@ After each successful add or removal, `ToolLibrary` synchronizes the wrapping
 tool's description, public annotations, and usage guidance from the bucket.
 This lets a bucket keep a fixed public schema or intentionally derive one from
 its contents without replacing the wrapping `Tool` instance.
+
+### Nested Ownership
+
+Bucket composition is represented as an exclusive ownership tree. Top-level
+nodes live in `ToolLibrary.library` and become model-facing schemas. Captured
+nodes remain in `ToolBucket.tools` as `ToolMetadata`. When a captured node is a
+bucket, its metadata retains the wrapping `Tool` in `source_tool`; the wrapper
+and its execution configuration are not reconstructed.
+
+`ToolBucketGraph` is the read-only structural view over those mutable mappings.
+It owns traversal, node and owner lookup, nested-first matching, capture
+candidates, overlap validation, and cycle detection. `ToolBucket` remains
+responsible for evaluating one selector and enforcing its capture policy.
+`ToolLibrary` owns mutations, presentation synchronization, background
+reconciliation, and transactional rollback. Keeping the graph read-only avoids
+two components independently changing ownership.
+
+The library traverses this tree for four operations:
+
+1. **Routing:** nested buckets are checked before their parents. A newly added
+   agent can still reach an `AgentTool` owned by another bucket.
+2. **Ownership:** bucket names identify structural nodes, and each node has at
+   most one parent. A candidate matching multiple parents is rejected.
+3. **Removal:** captured nodes can be located below a public root. A bucket
+   cannot be removed while it owns children.
+4. **Background reconciliation:** background sources and generated task
+   controls remain discoverable when `AgentTool` or `TaskTool` is nested.
+
+Bucket registration is bottom-up. A new bucket first captures matching visible
+candidates and refreshes its presentation. Only then may an existing
+composition bucket capture it. The parent therefore receives a fully assembled
+child, regardless of constructor order.
+
+Presentation updates move upward. When an inner bucket captures or releases a
+child, the library synchronizes its wrapper, replaces the metadata snapshot in
+its parent, calls the parent's `refresh()`, and repeats to the public root. An
+outer interpreter catalog can therefore reflect a late-added Reviewer through
+its nested `AgentTool` without exposing Reviewer directly.
+
+Cycles are rejected before ownership changes. If bucket `a` selects bucket `b`
+by name and `b` selects `a`, registration of the second edge fails and the
+existing tree remains intact. Composition currently uses consuming semantics
+only; one node cannot be referenced by multiple bucket parents.
 
 For agents, `nn.Agent` is normalized to `tool_config["tool_kind"]="agent"`.
 `AgentTool` is a bucket with

@@ -3,7 +3,10 @@ from types import FunctionType, MethodType
 from typing import Any, Callable, Collection, Dict, List, Optional, Union
 
 from msgflux.core.dotdict import dotdict
-from msgflux.tools.helpers import normalize_background_capabilities
+from msgflux.tools.helpers import (
+    normalize_background_capabilities,
+    normalize_tool_capabilities,
+)
 from msgflux.tools.handles import normalize_handle_access
 
 
@@ -33,6 +36,7 @@ def tool_config(
     background: Optional[bool] = False,
     allow_background: Optional[bool] = False,
     background_capabilities: Optional[Collection[str]] = None,
+    capabilities: Optional[Collection[str]] = None,
     disable_input: Optional[bool] = False,
     on_demand: Optional[bool] = False,
     inject_message: Optional[bool] = False,
@@ -85,6 +89,10 @@ def tool_config(
             Optional task controls supported by this background tool. Valid
             values are `activity` and `message`. Agents receive their defaults
             when this option is omitted.
+        capabilities:
+            Stable semantic labels that buckets can use to capture this tool.
+            Names are exact, case-sensitive strings and are not exposed in the
+            model-facing tool schema.
         disable_input:
             If True, removes public input parameters from the tool schema. The model
             will call the tool with no explicit arguments, and any arguments supplied
@@ -207,6 +215,7 @@ def tool_config(
             )
         )
         normalized_handle = normalize_handle_access(handle)
+        normalized_capabilities = normalize_tool_capabilities(capabilities)
 
         if inject_vars is not False and call_as_response is True:
             raise ValueError(
@@ -220,6 +229,7 @@ def tool_config(
                     "background": background,
                     "allow_background": allow_background,
                     "background_capabilities": normalized_background_capabilities,
+                    "capabilities": normalized_capabilities,
                     "display_name": display_name,
                     "usage_guidance": usage_guidance,
                     "call_as_response": call_as_response,

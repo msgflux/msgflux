@@ -678,6 +678,128 @@ Overlapping captures are rejected. Configure `background` or
 `allow_background` on the bucket, not on a tool it captures with the base
 `ToolBucket` validation.
 
+### Capture selectors
+
+Buckets can select tools by configuration, canonical name, semantic
+capabilities, or a combination of them:
+
+| Entry | Meaning |
+| --- | --- |
+| `source` | Candidate type: `"tool"` (default), `"bucket"`, or `"any"` |
+| `name` | Exact canonical name, or a list of exact canonical names |
+| `capabilities` | Capability set using `{"all": [...]}` or `{"any": [...]}` |
+| `match.any` | A non-empty list of alternative selector mappings |
+| any other key | Exact match against the candidate's `tool_config` |
+| `policy` | Post-match restrictions; it is not a selector |
+
+Names are case-sensitive and match the registered name, not `display_name`.
+Predicates in one mapping use AND. Entries in `match.any` use OR, while
+top-level predicates apply to every alternative. Capture does not use regular
+expressions or priorities.
+
+Declare stable semantic labels with `capabilities` in `tool_config`:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools import ToolBucket
+
+@mf.tool_config(capabilities=["python_callable", "filesystem_read"])
+def inspect_file(path: str) -> str:
+    """Inspect a file."""
+    return path
+
+@mf.tool_config(capabilities=["filesystem_read"])
+def read_file(path: str) -> str:
+    """Read a file."""
+    return path
+
+class InterpreterTools(ToolBucket):
+    """Collect tools available to an interpreter."""
+
+    name = "interpreter_tools"
+    capture = {
+        "source": "tool",
+        "match": {
+            "any": [
+                {"name": ["read_file"]},
+                {"capabilities": {"all": ["python_callable"]}},
+            ]
+        },
+    }
+    annotations = {"return": str}
+
+    def __call__(self) -> str:
+        return ",".join(sorted(self.tools))
+
+library = nn.ToolLibrary(
+    name="interpreter",
+    tools=[InterpreterTools(), inspect_file, read_file],
+)
+
+print(library.get_tool_names())
+# ["interpreter_tools"]
+```
+
+The name alternative captures `read_file`; the capability alternative captures
+`inspect_file`. `capabilities={"any": [...]}` instead requires at least one of
+the labels. Capabilities are metadata only and add no model-facing parameters.
+
+### Composing buckets
+
+A bucket may consume another bucket with `source="bucket"`. The outer bucket
+then sees the inner consolidated tool, not every leaf owned by it:
+
+```python
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.tools import ToolBucket
+
+@mf.tool_config(tool_kind="worker")
+def reviewer(message: str) -> str:
+    """Review a change."""
+    return f"reviewed: {message}"
+
+class WorkerTool(ToolBucket):
+    """Dispatch work to a named worker."""
+
+    name = "worker"
+    capture = {"tool_kind": "worker"}
+    annotations = {"name": str, "message": str, "return": str}
+
+    def __call__(self, name: str, message: str) -> str:
+        return self.tools[name].impl(message)
+
+class SandboxTool(ToolBucket):
+    """Expose selected composite tools in a sandbox."""
+
+    name = "sandbox"
+    capture = {"source": "bucket", "name": ["worker"]}
+    annotations = {"return": str}
+
+    def __call__(self) -> str:
+        return ",".join(sorted(self.tools))
+
+library = nn.ToolLibrary(
+    name="nested",
+    tools=[SandboxTool(), WorkerTool(), reviewer],
+)
+
+print(library.get_tool_names())
+# ["sandbox"]
+```
+
+Registration order does not change the result. `reviewer` is routed to the
+nested `worker` bucket even after `worker` leaves the top-level schema. A later
+`library.add(...)` also reaches the nested bucket, and presentation changes
+from `refresh()` propagate through its parents.
+
+Capture is exclusive: a node has one consuming parent. The library rejects
+overlapping owners and cycles instead of selecting a winner, and a bucket that
+still owns children cannot be removed. Use `source="any"` only when a selector
+intentionally accepts both regular and bucket tools. The `source="tool"`
+default prevents existing buckets from consuming one another unexpectedly.
+
 Buckets trust captured tools by default. To restrict the handle access a bucket
 will accept, declare the optional `handle` policy inside `capture`:
 

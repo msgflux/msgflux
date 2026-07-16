@@ -48,6 +48,27 @@ def normalize_background_capabilities(value: Collection[str]) -> tuple[str, ...]
     return capabilities
 
 
+def normalize_tool_capabilities(
+    value: Collection[str] | None,
+) -> tuple[str, ...]:
+    """Normalize semantic labels used by ToolBucket capability selectors."""
+    if value is None:
+        return ()
+    if isinstance(value, (str, Mapping)) or not isinstance(value, Collection):
+        raise TypeError("`capabilities` must be a collection of strings.")
+
+    values = sorted(value) if isinstance(value, (set, frozenset)) else value
+    capabilities = tuple(values)
+    if not all(
+        isinstance(capability, str) and capability.strip()
+        for capability in capabilities
+    ):
+        raise ValueError("`capabilities` values must be non-empty strings.")
+    if len(set(capabilities)) != len(capabilities):
+        raise ValueError("`capabilities` values must be unique.")
+    return capabilities
+
+
 def should_dispatch_background(
     config: Mapping[str, Any],
     call_params: dict[str, Any],
