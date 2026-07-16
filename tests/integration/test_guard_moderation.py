@@ -11,7 +11,7 @@ Requires: OPENAI_API_KEY in environment.
 import pytest
 
 import msgflux as mf
-import msgflux.nn as nn
+from msgflux import nn
 from msgflux.nn.hooks import Guard
 
 chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")

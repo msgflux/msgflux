@@ -60,12 +60,15 @@ class TestToolConfig:
         config = sample_function.tool_config
         assert config.return_direct is False
         assert config.spawn is False
+        assert config.background is False
         assert config.handoff is False
         assert config.call_as_response is False
         assert config.disable_input is False
+        assert config.on_demand is False
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
+        assert config.handle is None
         assert config.display_name is None
         assert config.usage_guidance is None
 
@@ -122,6 +125,14 @@ class TestToolConfig:
             def sample_function():
                 pass
 
+    def test_tool_config_background_incompatible_with_spawn(self):
+        """Test that background=True is incompatible with spawn=True."""
+        with pytest.raises(ValueError, match="`background=True` is not compatible"):
+
+            @tool_config(background=True, spawn=True)
+            def sample_function():
+                pass
+
     def test_tool_config_inject_vars_incompatible_with_call_as_response(self):
         """Test that inject_vars is incompatible with call_as_response=True."""
         with pytest.raises(ValueError, match="`inject_vars` is not compatible"):
@@ -153,6 +164,15 @@ class TestToolConfig:
             pass
 
         assert sample_function.tool_config.inject_vars is True
+
+    def test_tool_config_on_demand_true(self):
+        """Test that on_demand=True is stored correctly."""
+
+        @tool_config(on_demand=True)
+        def sample_function():
+            pass
+
+        assert sample_function.tool_config.on_demand is True
 
     def test_tool_config_name_override(self):
         """Test that name_override changes the function name."""
@@ -286,6 +306,15 @@ class TestToolConfigCombinations:
 
         assert sample.tool_config.inject_message is True
 
+    def test_handle_access(self):
+        """Test exact handle access configuration."""
+
+        @tool_config(handle={"tools": ["list", "register", "list"]})
+        def sample():
+            pass
+
+        assert sample.tool_config.handle == {"tools": ["list", "register"]}
+
     def test_disable_input_true(self):
         """Test disable_input=True configuration."""
 
@@ -303,6 +332,7 @@ class TestToolConfigCombinations:
             disable_input=True,
             inject_vars=["var1", "var2"],
             inject_messages=True,
+            handle={"notifications": ["publish"]},
         )
         def sample():
             pass
@@ -312,6 +342,7 @@ class TestToolConfigCombinations:
         assert config.disable_input is True
         assert config.inject_vars == ["var1", "var2"]
         assert config.inject_messages is True
+        assert config.handle == {"notifications": ["publish"]}
 
     def test_all_false_parameters(self):
         """Test all parameters set to False."""
@@ -322,9 +353,11 @@ class TestToolConfigCombinations:
             handoff=False,
             call_as_response=False,
             disable_input=False,
+            on_demand=False,
             inject_vars=False,
             inject_message=False,
             inject_messages=False,
+            handle=None,
         )
         def sample():
             pass
@@ -335,9 +368,32 @@ class TestToolConfigCombinations:
         assert config.handoff is False
         assert config.call_as_response is False
         assert config.disable_input is False
+        assert config.on_demand is False
         assert config.inject_vars is False
         assert config.inject_message is False
         assert config.inject_messages is False
+        assert config.handle is None
+
+    @pytest.mark.parametrize("value", [True, False, [], "tools"])
+    def test_handle_rejects_non_dict_values(self, value):
+        with pytest.raises(TypeError, match="must be a dict"):
+            tool_config(handle=value)(lambda: None)
+
+    def test_handle_rejects_empty_access(self):
+        with pytest.raises(ValueError, match="at least one action"):
+            tool_config(handle={})(lambda: None)
+
+    def test_handle_rejects_unknown_domain_and_action(self):
+        with pytest.raises(ValueError, match="Unknown handle domain"):
+            tool_config(handle={"library": ["read"]})(lambda: None)
+        with pytest.raises(ValueError, match="Unknown handle action"):
+            tool_config(handle={"tools": ["all"]})(lambda: None)
+
+    def test_handle_requires_non_empty_action_lists(self):
+        with pytest.raises(ValueError, match="at least one action"):
+            tool_config(handle={"tools": []})(lambda: None)
+        with pytest.raises(TypeError, match="must be a list"):
+            tool_config(handle={"tools": ("list",)})(lambda: None)
 
 
 class TestToolConfigEdgeCases:

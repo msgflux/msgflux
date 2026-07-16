@@ -13,7 +13,7 @@ import msgflux.nn as nn
 
 # mf.set_envs(OPENAI_API_KEY="...")
 
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
 agent = nn.Agent("assistant", model)
 
@@ -50,7 +50,7 @@ The **preferred** way to define agents is using class attributes. This approach,
 class Translator(nn.Agent):
     """Professional translator for Brazilian Portuguese."""
 
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion("openai/gpt-5.6-luna")
     system_message = "You are a professional translator."
     instructions = "Translate the user's message to Brazilian Portuguese."
     expected_output = "Return only the translation, nothing else."
@@ -66,7 +66,7 @@ print(response)  # "O clima está lindo hoje."
 
 Any `__init__` parameter can be set as a class attribute: `model`, `system_message`, `instructions`, `expected_output`, `examples`, `tools`, `config`, `templates`, `generation_schema`, `signature`, and others.
 
-The `description` is especially useful when using an [agent as a tool](tools.md#agent-as-tool) — the calling agent uses it to understand what the tool-agent does.
+The `description` is especially useful when using an [agent as a tool](tools/agent-tool.md) — the calling agent uses it to understand what the tool-agent does.
 
 ## String shorthand
 
@@ -79,7 +79,7 @@ call `Model.chat_completion` internally.
     ```python
     import msgflux.nn as nn
 
-    agent = nn.Agent("assistant", "openai/gpt-4.1-mini")
+    agent = nn.Agent("assistant", "openai/gpt-5.6-luna")
 
     response = agent("What is the capital of France?")
     print(response)  # "The capital of France is Paris."
@@ -114,7 +114,10 @@ def run_shell(command: str) -> str:
     return result.stdout or result.stderr
 
 class DevAssistant(nn.Agent):
-    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    model = mf.Model.chat_completion(
+        "openai/gpt-5.6-luna",
+        reasoning_effort="none",
+    )
     instructions = "Help the user with system tasks using the shell."
     tools = [run_shell]
 
@@ -124,7 +127,7 @@ print(response)
 # "You have 142 GB available out of 256 GB on your main disk."
 ```
 
-The model decides when and how to call the tool. The Agent handles the full loop: model suggests a call, the function executes, the result goes back to the model, and the model produces the final answer. See [Tools](tools.md) for advanced usage.
+The model decides when and how to call the tool. The Agent handles the full loop: model suggests a call, the function executes, the result goes back to the model, and the model produces the final answer. See [Tools](tools/index.md) for advanced usage.
 
 ## What's Next
 
@@ -133,6 +136,6 @@ The model decides when and how to call the tool. The Agent handles the full loop
 | [System Prompt Components](system-prompt.md) | Customize behavior with system_message, instructions, examples |
 | [Async](async.md) | Non-blocking execution with `acall` |
 | [Streaming](streaming.md) | Real-time token-by-token output |
-| [Tools](tools.md) | Function calling, MCP, agent-as-tool |
+| [Tools](tools/index.md) | Function calling, MCP, agent-as-tool |
 | [Generation Schemas](generation-schemas.md) | Structured output and reasoning strategies |
 | [Reasoning](reasoning.md) | Model-level reasoning with `response.reasoning` |

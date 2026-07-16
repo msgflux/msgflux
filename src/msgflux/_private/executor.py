@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -26,9 +27,15 @@ class AsyncWorker:
         self._shutdown = False
         self.thread.start()
 
-    def submit(self, coro):
+    def submit(self, coro, context=None):
         """Submits a coroutine to the worker's event loop."""
-        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+        context = context or contextvars.copy_context()
+
+        async def run_in_context():
+            task = context.run(asyncio.create_task, coro)
+            return await task
+
+        return asyncio.run_coroutine_threadsafe(run_in_context(), self.loop)
 
     def shutdown(self):
         """Terminates the event loop and worker thread."""
@@ -77,21 +84,24 @@ class Executor:
         """Submits a task to the appropriate pool based on the function type.
         Returns a Future to track the result.
         """
+        context = contextvars.copy_context()
         mode, target = self._resolve_submission_target(f, args, kwargs)
         if mode == "async":
-            return self._submit_to_async_worker(target)
+            return self._submit_to_async_worker(target, context)
 
         sync_callable, sync_args, sync_kwargs = target
+        sync_callable = partial(context.run, sync_callable)
         if self._is_in_thread_pool_worker():
             return self._execute_inline(sync_callable, *sync_args, **sync_kwargs)
 
         return self.thread_pool.submit(sync_callable, *sync_args, **sync_kwargs)
 
-    def _submit_to_async_worker(self, coro):
+    def _submit_to_async_worker(self, coro, context=None):
         """Distribute a coroutine to an asynchronous worker using round-robin."""
+        context = context or contextvars.copy_context()
         worker = self.async_workers[self.async_worker_index]
         self.async_worker_index = (self.async_worker_index + 1) % self.num_async_workers
-        return worker.submit(coro)
+        return worker.submit(coro, context)
 
     def _resolve_submission_target(
         self,

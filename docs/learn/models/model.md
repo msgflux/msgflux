@@ -14,7 +14,7 @@ import msgflux as mf
 Instead of learning different APIs for each provider, you use a single factory method:
 
 ```python
-model = mf.Model.chat_completion("openai/gpt-4.1-mini", temperature=0.7)
+model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 ```
 
 All models follow the pattern: `provider/model-id`
@@ -36,7 +36,7 @@ import msgflux as mf
 mf.set_envs(OPENAI_API_KEY="sk-...")
 
 # Create model
-model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+model = mf.Model.chat_completion("openai/gpt-5.6-luna")
 
 # Use model (see chat_completion.md for details)
 response = model(messages=[{"role": "user", "content": "Hello!"}])

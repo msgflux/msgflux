@@ -1,4 +1,13 @@
 from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.agent_inbox import (
+    AgentControlMessage,
+    AgentInbox,
+    AgentInboxStore,
+    AgentNotification,
+    InMemoryAgentInboxStore,
+    SQLiteAgentInboxStore,
+    ToolNotificationHandle,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -23,13 +32,20 @@ from msgflux.runtime.skills import (
 )
 
 __all__ = [
+    "AgentControlMessage",
+    "AgentInbox",
+    "AgentInboxStore",
+    "AgentNotification",
     "AgentSkill",
     "AgentSkillManager",
     "AbortSignal",
     "ExecutionScope",
+    "InMemoryAgentInboxStore",
+    "SQLiteAgentInboxStore",
     "SkillPath",
     "SkillPaths",
     "SkillsConfig",
+    "ToolNotificationHandle",
     "_CURRENT_NAMESPACE",
     "_CURRENT_THREAD_ID",
     "default_skill_paths",

@@ -26,7 +26,7 @@ except ImportError:
 import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
 from msgflux.dsl.typed_parsers import typed_parser_registry
-from msgflux.exceptions import TypedParserNotFoundError
+from msgflux.exceptions import AbortRequestedError, TypedParserNotFoundError
 from msgflux.generation.control_flow import ToolFlowControl
 from msgflux.models.base import BaseModel
 from msgflux.models.cache import ResponseCache, generate_cache_key
@@ -43,6 +43,7 @@ from msgflux.models.types import (
     TextToImageModel,
     TextToSpeechModel,
 )
+from msgflux.runtime.context import get_execution_context
 from msgflux.tools.definitions import ToolDefinitions
 from msgflux.utils.chat import ChatBlock, response_format_from_msgspec_struct
 from msgflux.utils.console import cprint
@@ -69,13 +70,22 @@ class _BaseOpenAI(BaseModel):
         self.current_key_index = 0
         max_retries = getenv("OPENAI_MAX_RETRIES", openai.DEFAULT_MAX_RETRIES)
         timeout = getenv("OPENAI_TIMEOUT", None)
+        verify_ssl = getenv("OPENAI_SSL_VERIFY", "true").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
         self.client = OpenAI(
             **self.sampling_params,
             api_key=self._get_api_key(),
             timeout=timeout,
             max_retries=max_retries,
             http_client=httpx.Client(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                limits=httpx.Limits(
+                    max_connections=1000,
+                    max_keepalive_connections=100,
+                ),
+                verify=verify_ssl,
             ),
         )
         self.aclient = AsyncOpenAI(
@@ -84,7 +94,11 @@ class _BaseOpenAI(BaseModel):
             timeout=timeout,
             max_retries=max_retries,
             http_client=httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                limits=httpx.Limits(
+                    max_connections=1000,
+                    max_keepalive_connections=100,
+                ),
+                verify=verify_ssl,
             ),
         )
         # Initialize response cache
@@ -445,7 +459,14 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
     def _stream_add_reasoning_chunk(stream_response, chunk):
         stream_response.add_reasoning(chunk)
 
+    @staticmethod
+    def _raise_if_aborted() -> None:
+        abort_signal = get_execution_context().get("abort_signal")
+        if abort_signal is not None:
+            abort_signal.raise_if_aborted()
+
     def _execute_model(self, **kwargs):
+        self._raise_if_aborted()
         prefilling = kwargs.get("prefilling")
         params = {**self.sampling_run_params, **kwargs}
         params.pop("prefilling", None)
@@ -456,10 +477,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ]
         adapted_params = self._adapt_params(params)
         model_output = self.client.chat.completions.create(**adapted_params)
+        self._raise_if_aborted()
 
         return model_output
 
     async def _aexecute_model(self, **kwargs):
+        self._raise_if_aborted()
         prefilling = kwargs.get("prefilling")
         params = {**self.sampling_run_params, **kwargs}
         params.pop("prefilling", None)
@@ -470,6 +493,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             ]
         adapted_params = self._adapt_params(params)
         model_output = await self.aclient.chat.completions.create(**adapted_params)
+        self._raise_if_aborted()
 
         return model_output
 
@@ -758,12 +782,15 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         metadata = dotdict()
         reasoning_tool_call = ""
         reasoning_accumulated = ""
+        reasoning_stream_started = False
+        final_status = "completed"
 
         try:
             aggregator = ToolCallAggregator()
             model_output = self._execute_model(**kwargs)
             finish_reason = None
 
+            self._raise_if_aborted()
             for chunk in model_output:
                 if chunk.choices:
                     choice = chunk.choices[0]
@@ -792,6 +819,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                             reasoning_tool_call += reasoning_chunk
                         if self.return_reasoning:
                             reasoning_accumulated += reasoning_chunk
+                            reasoning_stream_started = True
                             self._stream_add_reasoning_chunk(
                                 stream_response,
                                 reasoning_chunk,
@@ -799,6 +827,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         continue
 
                     if getattr(delta, "content", None):
+                        if reasoning_stream_started:
+                            stream_response.finish_reasoning()
+                            reasoning_stream_started = False
                         self._stream_add_chunk(
                             stream_response,
                             delta.content,
@@ -807,6 +838,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         continue
 
                     if getattr(delta, "tool_calls", None):
+                        if reasoning_stream_started:
+                            stream_response.finish_reasoning()
+                            reasoning_stream_started = False
                         self._process_stream_tool_calls(
                             delta,
                             stream_response,
@@ -828,6 +862,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
         except Exception as e:
+            final_status = (
+                "interrupted"
+                if isinstance(e, AbortRequestedError)
+                and stream_response.response_type is None
+                else "failed"
+            )
             stream_response.set_error(e)
         finally:
             if not stream_response.first_chunk_event.is_set():
@@ -835,8 +875,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             if not stream_response._response_type_event.is_set():
                 stream_response._response_type_event.set()
             stream_response.set_metadata(metadata)
-            stream_response.add_reasoning(None)
-            stream_response.add(None)
+            stream_response.finish(status=final_status)
 
     async def _astream_generate(  # noqa: C901
         self, **kwargs: Mapping[str, Any]
@@ -845,12 +884,15 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
         metadata = dotdict()
         reasoning_tool_call = ""
         reasoning_accumulated = ""
+        reasoning_stream_started = False
+        final_status = "completed"
 
         try:
             aggregator = ToolCallAggregator()
             model_output = await self._aexecute_model(**kwargs)
             finish_reason = None
 
+            self._raise_if_aborted()
             async for chunk in model_output:
                 if chunk.choices:
                     choice = chunk.choices[0]
@@ -879,6 +921,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                             reasoning_tool_call += reasoning_chunk
                         if self.return_reasoning:
                             reasoning_accumulated += reasoning_chunk
+                            reasoning_stream_started = True
                             self._stream_add_reasoning_chunk(
                                 stream_response,
                                 reasoning_chunk,
@@ -886,6 +929,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         continue
 
                     if getattr(delta, "content", None):
+                        if reasoning_stream_started:
+                            stream_response.finish_reasoning()
+                            reasoning_stream_started = False
                         self._stream_add_chunk(
                             stream_response,
                             delta.content,
@@ -894,6 +940,9 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
                         continue
 
                     if getattr(delta, "tool_calls", None):
+                        if reasoning_stream_started:
+                            stream_response.finish_reasoning()
+                            reasoning_stream_started = False
                         self._process_stream_tool_calls(
                             delta,
                             stream_response,
@@ -915,6 +964,12 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
         except Exception as e:
+            final_status = (
+                "interrupted"
+                if isinstance(e, AbortRequestedError)
+                and stream_response.response_type is None
+                else "failed"
+            )
             stream_response.set_error(e)
         finally:
             if not stream_response.first_chunk_event.is_set():
@@ -922,8 +977,7 @@ class OpenAIChatCompletion(_BaseOpenAI, ChatCompletionModel):
             if not stream_response._response_type_event.is_set():
                 stream_response._response_type_event.set()
             stream_response.set_metadata(metadata)
-            stream_response.add_reasoning(None)
-            stream_response.add(None)
+            stream_response.finish(status=final_status)
 
     def _build_generation_params(
         self,
@@ -1288,27 +1342,33 @@ class OpenAITextToSpeech(_BaseOpenAI, TextToSpeechModel):
         stream_response = kwargs.pop("stream_response")
         stream_response.set_response_type("audio_generation")
 
-        with self._execute_model(**kwargs) as model_output:
-            for chunk in model_output.iter_bytes(chunk_size=self.stream_chunk_size):
-                stream_response.add(chunk)
-                if not stream_response.first_chunk_event.is_set():
-                    stream_response.first_chunk_event.set()
-
-        stream_response.add(None)
+        try:
+            with self._execute_model(**kwargs) as model_output:
+                for chunk in model_output.iter_bytes(chunk_size=self.stream_chunk_size):
+                    stream_response.add(chunk)
+                    if not stream_response.first_chunk_event.is_set():
+                        stream_response.first_chunk_event.set()
+        except Exception as exc:
+            stream_response.finish(error=exc, status="failed")
+        else:
+            stream_response.finish(status="completed")
 
     async def _astream_generate(self, **kwargs):
         stream_response = kwargs.pop("stream_response")
         stream_response.set_response_type("audio_generation")
 
-        async with self._aexecute_model(**kwargs) as model_output:
-            async for chunk in model_output.iter_bytes(
-                chunk_size=self.stream_chunk_size
-            ):
-                stream_response.add(chunk)
-                if not stream_response.first_chunk_event.is_set():
-                    stream_response.first_chunk_event.set()
-
-        stream_response.add(None)
+        try:
+            async with self._aexecute_model(**kwargs) as model_output:
+                async for chunk in model_output.iter_bytes(
+                    chunk_size=self.stream_chunk_size
+                ):
+                    stream_response.add(chunk)
+                    if not stream_response.first_chunk_event.is_set():
+                        stream_response.first_chunk_event.set()
+        except Exception as exc:
+            stream_response.finish(error=exc, status="failed")
+        else:
+            stream_response.finish(status="completed")
 
     def __call__(
         self,
@@ -1762,17 +1822,22 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         stream_response = kwargs.pop("stream_response")
         stream_response.set_response_type("transcript")
 
-        model_output = self._execute_model(**kwargs)
+        try:
+            model_output = self._execute_model(**kwargs)
 
-        for event in model_output:
-            if event.type == "transcript.text.delta":
-                chunk = event.delta
-                if chunk:
-                    stream_response.add(chunk)
-                    if not stream_response.first_chunk_event.is_set():
-                        stream_response.first_chunk_event.set()
-            elif event.type == "transcript.text.done":
-                stream_response.add(None)
+            for event in model_output:
+                if event.type == "transcript.text.delta":
+                    chunk = event.delta
+                    if chunk:
+                        stream_response.add(chunk)
+                        if not stream_response.first_chunk_event.is_set():
+                            stream_response.first_chunk_event.set()
+                elif event.type == "transcript.text.done":
+                    break
+        except Exception as exc:
+            stream_response.finish(error=exc, status="failed")
+        else:
+            stream_response.finish(status="completed")
 
         return stream_response
 
@@ -1780,17 +1845,22 @@ class OpenAISpeechToText(_BaseOpenAI, SpeechToTextModel):
         stream_response = kwargs.pop("stream_response")
         stream_response.set_response_type("transcript")
 
-        model_output = await self._aexecute_model(**kwargs)
+        try:
+            model_output = await self._aexecute_model(**kwargs)
 
-        async for event in model_output:
-            if event.type == "transcript.text.delta":
-                chunk = event.delta
-                if chunk:
-                    stream_response.add(chunk)
-                    if not stream_response.first_chunk_event.is_set():
-                        stream_response.first_chunk_event.set()
-            elif event.type == "transcript.text.done":
-                stream_response.add(None)
+            async for event in model_output:
+                if event.type == "transcript.text.delta":
+                    chunk = event.delta
+                    if chunk:
+                        stream_response.add(chunk)
+                        if not stream_response.first_chunk_event.is_set():
+                            stream_response.first_chunk_event.set()
+                elif event.type == "transcript.text.done":
+                    break
+        except Exception as exc:
+            stream_response.finish(error=exc, status="failed")
+        else:
+            stream_response.finish(status="completed")
 
         return stream_response
 

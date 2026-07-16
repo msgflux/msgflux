@@ -1,8 +1,29 @@
 from functools import wraps
 from types import FunctionType, MethodType
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Collection, Dict, List, Optional, Union
 
 from msgflux.core.dotdict import dotdict
+from msgflux.tools.handles import normalize_handle_access
+from msgflux.tools.helpers import (
+    normalize_background_capabilities,
+    normalize_tool_capabilities,
+)
+
+
+def _normalize_configured_background_capabilities(
+    *,
+    background: Optional[bool],
+    allow_background: Optional[bool],
+    capabilities: Optional[Collection[str]],
+) -> tuple[str, ...] | None:
+    if capabilities is None:
+        return None
+    if not (background or allow_background):
+        raise ValueError(
+            "`background_capabilities` requires `background=True` or "
+            "`allow_background=True`."
+        )
+    return normalize_background_capabilities(capabilities)
 
 
 def tool_config(
@@ -12,11 +33,18 @@ def tool_config(
     return_direct: Optional[bool] = False,
     call_as_response: Optional[bool] = False,
     spawn: Optional[bool] = False,
+    background: Optional[bool] = False,
+    allow_background: Optional[bool] = False,
+    background_capabilities: Optional[Collection[str]] = None,
+    capabilities: Optional[Collection[str]] = None,
     disable_input: Optional[bool] = False,
+    on_demand: Optional[bool] = False,
     inject_message: Optional[bool] = False,
     inject_messages: Optional[bool] = False,
+    handle: Optional[Dict[str, List[str]]] = None,
     inject_vars: Optional[Union[bool, List[str]]] = False,
     handoff: Optional[bool] = False,
+    tool_kind: Optional[str] = None,
     name_override: Optional[str] = None,
     retry: Optional[Any] = None,
 ) -> Callable:
@@ -48,11 +76,32 @@ def tool_config(
         spawn:
             If True, the tool will be dispatched without waiting for a result.
             The model receives a confirmation that the task was started.
+        background:
+            If True, the tool runs in the background and returns a `task_id`
+            immediately. The result can be retrieved later via `task_status`
+            and `task_output`.
+        allow_background:
+            If True, the model can choose whether to run the tool in the
+            background by setting the reserved `run_in_background` tool
+            argument. When false or null, the tool runs normally. Manual
+            callers may omit the argument, which is treated as false.
+        background_capabilities:
+            Optional task controls supported by this background tool. Valid
+            values are `activity` and `message`. Agents receive their defaults
+            when this option is omitted.
+        capabilities:
+            Stable semantic labels that buckets can use to capture this tool.
+            Names are exact, case-sensitive strings and are not exposed in the
+            model-facing tool schema.
         disable_input:
             If True, removes public input parameters from the tool schema. The model
             will call the tool with no explicit arguments, and any arguments supplied
             by the model are ignored at runtime. This does not inject any runtime
             context by itself.
+        on_demand:
+            If True, keep the tool registered in the library but hide its schema
+            from the model until it is loaded through `search_tools`. Defaults to
+            False; tools must opt in explicitly.
         inject_message:
             If True, the tool receives the original `message` passed to the Agent
             at runtime. This injected parameter does not become part of the tool
@@ -61,6 +110,10 @@ def tool_config(
             If True, the tool receives the current conversation history as
             `messages` at runtime. This injected parameter does not become part of
             the tool schema exposed to the model.
+        handle:
+            Exact runtime handle access granted to the tool, grouped by domain.
+            Values must be non-empty lists of actions. The injected `handle`
+            parameter does not become part of the model-facing tool schema.
         inject_vars:
             Indicates if the tool should receive vars. If True, the tool receives all
             vars as a named argument `vars`. If a list of vars is passed, only those
@@ -68,6 +121,8 @@ def tool_config(
         handoff:
             If True, indicates that this function will receive the `messages`
             from the Agent.
+        tool_kind:
+            Optional kind used by `ToolBucket` to group related tools.
         name_override:
             A custom name to override the default tool name derived from the function
             or class. If not provided, the original name is used.
@@ -86,6 +141,12 @@ def tool_config(
         ValueError:
            `spawn=True` is not compatible with `return_direct=True`
            and `call_as_response=True`.
+        ValueError:
+           `background=True` is not compatible with `return_direct=True`,
+           `call_as_response=True`, `spawn=True`, and `handoff=True`.
+        ValueError:
+           `allow_background=True` is not compatible with `return_direct=True`,
+           `call_as_response=True`, `spawn=True`, and `handoff=True`.
         ValueError:
            `inject_vars=True` is not compatible with `call_as_response=True`.
 
@@ -131,6 +192,31 @@ def tool_config(
                 " and `call_as_response=True`."
             )
 
+        if background and (_return_direct or call_as_response or spawn or handoff):
+            raise ValueError(
+                "`background=True` is not compatible with `return_direct=True`,"
+                " `call_as_response=True`, `spawn=True`, and `handoff=True`."
+            )
+
+        if allow_background and (
+            _return_direct or call_as_response or spawn or handoff
+        ):
+            raise ValueError(
+                "`allow_background=True` is not compatible with "
+                "`return_direct=True`, `call_as_response=True`, `spawn=True`, "
+                "and `handoff=True`."
+            )
+
+        normalized_background_capabilities = (
+            _normalize_configured_background_capabilities(
+                background=background,
+                allow_background=allow_background,
+                capabilities=background_capabilities,
+            )
+        )
+        normalized_handle = normalize_handle_access(handle)
+        normalized_capabilities = normalize_tool_capabilities(capabilities)
+
         if inject_vars is not False and call_as_response is True:
             raise ValueError(
                 "`inject_vars` is not compatible with `call_as_response=True`"
@@ -140,15 +226,22 @@ def tool_config(
             "tool_config": dotdict(
                 {
                     "spawn": spawn,
+                    "background": background,
+                    "allow_background": allow_background,
+                    "background_capabilities": normalized_background_capabilities,
+                    "capabilities": normalized_capabilities,
                     "display_name": display_name,
                     "usage_guidance": usage_guidance,
                     "call_as_response": call_as_response,
                     "handoff": handoff,
                     "disable_input": disable_input,
+                    "on_demand": on_demand,
                     "inject_message": _inject_message,
                     "inject_messages": _inject_messages,
+                    "handle": normalized_handle,
                     "inject_vars": inject_vars,
                     "return_direct": _return_direct,
+                    "tool_kind": tool_kind,
                     "name_overridden": name_override,
                     "retry": retry,
                 }
