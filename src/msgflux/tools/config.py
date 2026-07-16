@@ -3,11 +3,11 @@ from types import FunctionType, MethodType
 from typing import Any, Callable, Collection, Dict, List, Optional, Union
 
 from msgflux.core.dotdict import dotdict
+from msgflux.tools.handles import normalize_handle_access
 from msgflux.tools.helpers import (
     normalize_background_capabilities,
     normalize_tool_capabilities,
 )
-from msgflux.tools.handles import normalize_handle_access
 
 
 def _normalize_configured_background_capabilities(

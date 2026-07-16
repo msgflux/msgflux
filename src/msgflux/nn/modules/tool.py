@@ -38,13 +38,13 @@ from msgflux.telemetry.span import (
     aset_tool_attributes,
     set_tool_attributes,
 )
+from msgflux.tools.bucket_graph import ToolBucketGraph
+from msgflux.tools.bucket_manager import ToolBucketManager
 from msgflux.tools.builtin.task_tool import (
     BACKGROUND_CAPABILITY_TOOLS,
     BASE_TASK_TOOLS,
 )
 from msgflux.tools.builtin.tool_search import ToolSearchTool
-from msgflux.tools.bucket_graph import ToolBucketGraph
-from msgflux.tools.bucket_manager import ToolBucketManager
 from msgflux.tools.dataclasses import PreparedToolExecution, ToolMetadata
 from msgflux.tools.exceptions import ToolNotAvailableError
 from msgflux.tools.handles import (
@@ -63,8 +63,8 @@ from msgflux.tools.helpers import (
     should_copy_injected_messages,
     should_dispatch_background,
 )
-from msgflux.tools.responses import ToolCall, ToolResponses
 from msgflux.tools.registration import ToolRegistrationTransaction
+from msgflux.tools.responses import ToolCall, ToolResponses
 from msgflux.tools.types import (
     ToolBackground,
     ToolBucket,
@@ -622,8 +622,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 metadata.annotations.get("handle")
             ):
                 raise ValueError(
-                    "Tools configured with `handle` must declare "
-                    "`handle: mf.Hidden`."
+                    "Tools configured with `handle` must declare `handle: mf.Hidden`."
                 )
 
         self._bucket_graph.validate_unique_names(metadata)
@@ -733,8 +732,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
     ) -> None:
         config["exposed"] = exposed
         trailing = [
-            (name, self.library.pop(name))
-            for name in list(self.library)[position:]
+            (name, self.library.pop(name)) for name in list(self.library)[position:]
         ]
         self.library.update({tool_name: tool})
         self.library.update(dict(trailing))
@@ -819,6 +817,15 @@ class ToolLibrary(Module, metaclass=AutoParams):
             bucket.refresh()
             self._buckets.sync_presentation(tool.name, bucket)
 
+        self._update_background_registration(tool, tool_config, transaction)
+        return tool
+
+    def _update_background_registration(
+        self,
+        tool: Tool,
+        tool_config: Mapping[str, Any],
+        transaction: ToolRegistrationTransaction,
+    ) -> None:
         if is_reserved_tool_kind(tool_config):
             was_disabled = tool.name in self._disabled_background_task_tool_names
             self._disabled_background_task_tool_names.discard(tool.name)
@@ -831,7 +838,6 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 )
         elif is_background_capable(tool_config):
             transaction.reconcile_background = True
-        return tool
 
     def _undo_registered_tool(
         self,
@@ -852,6 +858,42 @@ class ToolLibrary(Module, metaclass=AutoParams):
             remove_owner=self.remove,
         )
 
+    @staticmethod
+    def _create_mcp_client(
+        server_config: Mapping[str, Any],
+        namespace: str,
+    ) -> Any:
+        transport_type = server_config.get("transport", "stdio")
+        if transport_type == "stdio":
+            command = server_config.get("command")
+            if not command:
+                raise ValueError(
+                    f"MCP server '{namespace}' stdio transport requires 'command'"
+                )
+            return MCPClient.from_stdio(
+                command=command,
+                args=server_config.get("args"),
+                cwd=server_config.get("cwd"),
+                env=server_config.get("env"),
+                timeout=server_config.get("timeout", 30.0),
+            )
+        if transport_type == "http":
+            base_url = server_config.get("base_url")
+            if not base_url:
+                raise ValueError(
+                    f"MCP server '{namespace}' http transport requires 'base_url'"
+                )
+            return MCPClient.from_http(
+                base_url=base_url,
+                timeout=server_config.get("timeout", 30.0),
+                headers=server_config.get("headers"),
+                auth=server_config.get("auth"),
+            )
+        raise ValueError(
+            f"Unknown transport type: {transport_type}. "
+            "Supported types: 'stdio', 'http'"
+        )
+
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
         for server_config in mcp_servers:
@@ -859,44 +901,17 @@ class ToolLibrary(Module, metaclass=AutoParams):
             if not namespace:
                 raise ValueError("MCP server config must include 'name' field")
 
-            transport_type = server_config.get("transport", "stdio")
-
-            # Create client based on transport type
-            if transport_type == "stdio":
-                command = server_config.get("command")
-                if not command:
-                    raise ValueError(
-                        f"MCP server '{namespace}' stdio transport requires 'command'"
-                    )
-                client = MCPClient.from_stdio(
-                    command=command,
-                    args=server_config.get("args"),
-                    cwd=server_config.get("cwd"),
-                    env=server_config.get("env"),
-                    timeout=server_config.get("timeout", 30.0),
-                )
-            elif transport_type == "http":
-                base_url = server_config.get("base_url")
-                if not base_url:
-                    raise ValueError(
-                        f"MCP server '{namespace}' http transport requires 'base_url'"
-                    )
-                client = MCPClient.from_http(
-                    base_url=base_url,
-                    timeout=server_config.get("timeout", 30.0),
-                    headers=server_config.get("headers"),
-                    auth=server_config.get("auth"),
-                )
-            else:
-                raise ValueError(
-                    f"Unknown transport type: {transport_type}. "
-                    "Supported types: 'stdio', 'http'"
-                )
+            client = self._create_mcp_client(server_config, namespace)
 
             # Connect and list tools with error handling
             try:
-                F.wait_for(client.connect)
+                connection = F.wait_for(client.connect)
+                if isinstance(connection, TaskError):
+                    raise connection.exception
+
                 all_tools = F.wait_for(client.list_tools, use_cache=False)
+                if isinstance(all_tools, TaskError):
+                    raise all_tools.exception
 
                 # Apply filters
                 include_tools = server_config.get("include_tools")
@@ -954,8 +969,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             node = self._bucket_graph.find_node(owner)
             if node is not None and node.bucket is not None:
                 return [
-                    child.name
-                    for child in self._bucket_graph.bucket_descendants(owner)
+                    child.name for child in self._bucket_graph.bucket_descendants(owner)
                 ]
         names = [
             name
@@ -1094,9 +1108,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
             if isinstance(inject_vars, list):
                 missing = [key for key in inject_vars if key not in vars]
                 if missing:
-                    subject = (
-                        "agent" if config.get("tool_kind") == "agent" else "tool"
-                    )
+                    subject = "agent" if config.get("tool_kind") == "agent" else "tool"
                     raise ValueError(
                         f"The {subject} `{tool_name}` requires the injected "
                         f"parameter `{missing[0]}`, but it was not found."
@@ -1209,9 +1221,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
     ) -> PreparedToolExecution:
         """Resolve one tool call and inject its runtime arguments."""
         node = self._bucket_graph.find_node(tool_name)
-        if node is None or (
-            exposed_only and not node.config.get("exposed", True)
-        ):
+        if node is None or (exposed_only and not node.config.get("exposed", True)):
             raise ToolNotAvailableError(f"Tool `{tool_name}` not found.")
         if owner is not None:
             owner_node = self._bucket_graph.find_node(owner)

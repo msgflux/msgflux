@@ -121,6 +121,27 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
             handle.tools.activate(tool_name)
 
     @staticmethod
+    def _parse_regex_query(query: str) -> tuple[str, re.Pattern[str]]:
+        if len(query) < 3 or not (query.startswith("/") and query.endswith("/")):
+            raise ValueError("Regex queries must use the `/pattern/` form.")
+        expression = query[1:-1]
+        if len(expression) > 128:
+            raise ValueError("Regex queries cannot exceed 128 characters.")
+        if (
+            "(?" in expression
+            or re.search(r"\\[1-9]", expression)
+            or re.search(r"\)[+*{]", expression)
+        ):
+            raise ValueError(
+                "Regex queries do not support extensions, backreferences, "
+                "or quantified groups."
+            )
+        try:
+            return expression, re.compile(expression, re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError(f"Invalid regex query: {exc}.") from exc
+
+    @staticmethod
     def _parse_query(query: str) -> tuple[str, int, re.Pattern[str] | None]:
         if not isinstance(query, str):
             raise TypeError(f"`query` must be str, given `{type(query)}`")
@@ -138,25 +159,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
             if not query:
                 raise ValueError("`query` must include text before the `:K` limit.")
 
-        pattern = None
         if query.startswith("/") or query.endswith("/"):
-            if len(query) < 3 or not (query.startswith("/") and query.endswith("/")):
-                raise ValueError("Regex queries must use the `/pattern/` form.")
-            expression = query[1:-1]
-            if len(expression) > 128:
-                raise ValueError("Regex queries cannot exceed 128 characters.")
-            if (
-                "(?" in expression
-                or re.search(r"\\[1-9]", expression)
-                or re.search(r"\)[+*{]", expression)
-            ):
-                raise ValueError(
-                    "Regex queries do not support extensions, backreferences, "
-                    "or quantified groups."
-                )
-            try:
-                pattern = re.compile(expression, re.IGNORECASE)
-            except re.error as exc:
-                raise ValueError(f"Invalid regex query: {exc}.") from exc
+            expression, pattern = ToolSearchTool._parse_regex_query(query)
             return expression, max_results, pattern
         return query, max_results, None

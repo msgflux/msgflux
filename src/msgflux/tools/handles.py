@@ -8,7 +8,6 @@ from msgflux.exceptions import HandleAccessError
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
 from msgflux.runtime.context import execution_context, get_execution_context
 
-
 HANDLE_ACTIONS = {
     "notifications": frozenset({"publish"}),
     "task": frozenset({"read", "progress", "activity", "interrupt_check"}),
@@ -53,6 +52,7 @@ def normalize_handle_access(
             )
         normalized[domain] = list(dict.fromkeys(actions))
     return normalized
+
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolLibrary
@@ -303,7 +303,7 @@ class ToolLibraryHandle:
 
 
 class _HandleFacet:
-    __slots__ = ("_handle", "_actions", "_domain")
+    __slots__ = ("_actions", "_domain", "_handle")
 
     def __init__(self, handle: ToolLibraryHandle, domain: str, actions: frozenset[str]):
         self._handle = handle
@@ -457,9 +457,7 @@ class TasksHandle(_HandleFacet):
         for task in store.list(status=status):
             if not task_is_in_current_scope(task):
                 continue
-            result.append(
-                format_task_status(task, include_id=True, include_tool=True)
-            )
+            result.append(format_task_status(task, include_id=True, include_tool=True))
         return "\n".join(result) or "none"
 
     def output(self, task_id: str) -> Any:
@@ -470,13 +468,14 @@ class TasksHandle(_HandleFacet):
 
     def wait(self, task_id: str, *, timeout: float | None = None) -> Any:
         self._require("wait")
-        if timeout is not None:
-            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-                raise TypeError(
-                    f"`timeout` must be float, int or None, given `{type(timeout)}`"
-                )
-            if timeout < 0:
-                raise ValueError("`timeout` must be greater than or equal to 0.")
+        if timeout is not None and (
+            isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+        ):
+            raise TypeError(
+                f"`timeout` must be float, int or None, given `{type(timeout)}`"
+            )
+        if timeout is not None and timeout < 0:
+            raise ValueError("`timeout` must be greater than or equal to 0.")
         from msgflux.tools.builtin.task_tool import (
             build_task_result,
             build_task_timeout_result,
@@ -492,7 +491,7 @@ class TasksHandle(_HandleFacet):
             except FutureTimeoutError:
                 return build_task_timeout_result(task=self._record(task_id))
             except Exception:
-                pass
+                return build_task_result(task=self._record(task_id))
             return build_task_result(task=self._record(task_id))
 
         deadline = None if timeout is None else time.monotonic() + float(timeout)
@@ -608,7 +607,7 @@ class BackgroundHandle(_HandleFacet):
 class ToolHandle:
     """Least-privilege runtime handle injected into a configured tool."""
 
-    __slots__ = ("notifications", "task", "tasks", "tools", "background")
+    __slots__ = ("background", "notifications", "task", "tasks", "tools")
 
     def __init__(
         self,
@@ -618,7 +617,8 @@ class ToolHandle:
         normalized = normalize_handle_access(
             {domain: list(actions) for domain, actions in access.items()}
         )
-        assert normalized is not None
+        if normalized is None:
+            raise ValueError("`access` must grant at least one handle action.")
         self.notifications = NotificationHandle(
             handle, "notifications", frozenset(normalized.get("notifications", ()))
         )

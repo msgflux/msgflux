@@ -292,12 +292,16 @@ def test_background_task_tools_isolate_execution_scopes():
 
     with execution_context(namespace="agent", thread_id="thread_a"):
         listed = library([("call_1", "task_list", {})]).tool_calls[0].result
-        hidden_status = library(
-            [("call_2", "task_status", {"task_id": other.task_id})]
-        ).tool_calls[0].result
-        hidden_output = library(
-            [("call_3", "task_output", {"task_id": other.task_id})]
-        ).tool_calls[0].result
+        hidden_status = (
+            library([("call_2", "task_status", {"task_id": other.task_id})])
+            .tool_calls[0]
+            .result
+        )
+        hidden_output = (
+            library([("call_3", "task_output", {"task_id": other.task_id})])
+            .tool_calls[0]
+            .result
+        )
 
     assert _task_id(listed) == own.task_id
     assert hidden_status == "status=not_found"
@@ -399,8 +403,7 @@ def test_explicit_task_bucket_captures_common_task_tools():
         tools=[TaskTool(), first_job, second_job],
     )
     schemas = {
-        schema["function"]["name"]: schema
-        for schema in library.get_tool_json_schemas()
+        schema["function"]["name"]: schema for schema in library.get_tool_json_schemas()
     }
     task_schema = schemas["task_tool"]
 
@@ -455,9 +458,7 @@ def test_explicit_task_bucket_preserves_background_lifecycle():
     schema = library.library["task_tool"].get_json_schema()
 
     assert library.get_tool_names() == ["task_tool"]
-    assert schema["function"]["parameters"]["properties"]["mode"] == {
-        "type": "string"
-    }
+    assert schema["function"]["parameters"]["properties"]["mode"] == {"type": "string"}
     assert schema["function"]["description"].endswith("Available modes: none.")
 
     library.add(job)
@@ -538,9 +539,7 @@ def test_explicit_task_bucket_coexists_with_on_demand_background_tool():
         "deferred_job",
     }
 
-    response = library(
-        [("call_1", "search_tools", {"query": "deferred_job"})]
-    )
+    response = library([("call_1", "search_tools", {"query": "deferred_job"})])
 
     assert response.tool_calls[0].result == "loaded=deferred_job"
     assert "search_tools" not in library.get_tool_names()
@@ -975,9 +974,7 @@ def test_injected_handle_can_add_background_tool_with_task_tools():
         )
     )
 
-    task_id = _task_id(
-        library([("call_4", "task_list", {})]).tool_calls[0].result
-    )
+    task_id = _task_id(library([("call_4", "task_list", {})]).tool_calls[0].result)
     output_result = library([("call_5", "task_output", {"task_id": task_id})])
     assert output_result.tool_calls[0].result == 8
 
@@ -1021,9 +1018,9 @@ def test_background_task_reports_progress_and_output():
             .result.startswith("status=completed")
         )
     )
-    final_state = library(
-        [("call_6", "task_status", {"task_id": task_id})]
-    ).tool_calls[0].result
+    final_state = (
+        library([("call_6", "task_status", {"task_id": task_id})]).tool_calls[0].result
+    )
     assert final_state == "status=completed"
 
     output_result = library([("call_5", "task_output", {"task_id": task_id})])
@@ -1044,9 +1041,7 @@ def test_task_wait_returns_final_output():
     dispatch = library([("call_1", "long_job", {"value": 21})])
     assert "task_wait" in library.get_tool_names()
     assert "task_interrupt" in library.get_tool_names()
-    task_id = _task_id(
-        library([("call_2", "task_list", {})]).tool_calls[0].result
-    )
+    task_id = _task_id(library([("call_2", "task_list", {})]).tool_calls[0].result)
     assert f"task_id={task_id}" in dispatch.tool_calls[0].result
 
     timer = threading.Timer(0.1, release.set)
@@ -1074,9 +1069,7 @@ def test_task_wait_returns_timeout_payload_with_progress():
     library = ToolLibrary(name="lib", tools=[long_job])
 
     library([("call_1", "long_job", {"value": 21})])
-    task_id = _task_id(
-        library([("call_2", "task_list", {})]).tool_calls[0].result
-    )
+    task_id = _task_id(library([("call_2", "task_list", {})]).tool_calls[0].result)
 
     wait_result = library(
         [("call_3", "task_wait", {"task_id": task_id, "timeout": 0.05})]
@@ -1084,8 +1077,7 @@ def test_task_wait_returns_timeout_payload_with_progress():
     payload = wait_result.tool_calls[0].result
 
     assert payload == (
-        "status=timeout task_status=running stage=work "
-        "progress=50% message=Halfway"
+        "status=timeout task_status=running stage=work progress=50% message=Halfway"
     )
 
     release.set()
@@ -1107,9 +1099,7 @@ def test_task_wait_returns_failed_payload():
     library = ToolLibrary(name="lib", tools=[failing_job])
 
     library([("call_1", "failing_job", {})])
-    task_id = _task_id(
-        library([("call_2", "task_list", {})]).tool_calls[0].result
-    )
+    task_id = _task_id(library([("call_2", "task_list", {})]).tool_calls[0].result)
 
     wait_result = library(
         [("call_3", "task_wait", {"task_id": task_id, "timeout": 1.0})]
@@ -1599,9 +1589,7 @@ def test_background_agent_inherits_context_and_checkpoint_run_id():
         dispatch = library([("call_1", "worker", {"task": "Solve this"})])
 
     assert "task_id=" in dispatch.tool_calls[0].result
-    task_id = _task_id(
-        library([("call_2", "task_list", {})]).tool_calls[0].result
-    )
+    task_id = _task_id(library([("call_2", "task_list", {})]).tool_calls[0].result)
 
     _wait_until(
         lambda: (

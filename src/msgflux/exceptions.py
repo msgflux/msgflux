@@ -70,9 +70,7 @@ class HandleAccessError(PermissionError):
     """Raised when a tool uses a handle operation it was not granted."""
 
     def __init__(self, domain: str, action: str):
-        super().__init__(
-            f"Tool handle access `{domain}.{action}` was not configured."
-        )
+        super().__init__(f"Tool handle access `{domain}.{action}` was not configured.")
         self.domain = domain
         self.action = action
 

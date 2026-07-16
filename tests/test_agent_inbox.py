@@ -112,7 +112,7 @@ def test_agent_inbox_supports_explicit_user_role():
 def test_agent_inbox_rejects_unsupported_roles():
     inbox = _memory_inbox()
 
-    with pytest.raises(ValueError, match="AgentNotification.role"):
+    with pytest.raises(ValueError, match=r"AgentNotification\.role"):
         inbox.publish({"source": "tool", "role": "assistant"})
 
     with pytest.raises(ValueError, match="Only control"):

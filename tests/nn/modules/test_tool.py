@@ -8,6 +8,7 @@ import msgflux as mf
 import pytest
 
 from msgflux.core.dotdict import dotdict
+from msgflux.exceptions import TaskError
 from msgflux.nn.modules.agent import Agent
 from msgflux.nn.modules.tool import (
     ToolCall,
@@ -1638,8 +1639,7 @@ class TestToolLibrary:
                 "loaded=second_lookup",
             ]
             assert [
-                schema["function"]["name"]
-                for schema in library.get_tool_json_schemas()
+                schema["function"]["name"] for schema in library.get_tool_json_schemas()
             ] == ["echo", "first_lookup", "second_lookup"]
 
     def test_search_tools_rejects_unsafe_regex_and_invalid_limit(self):
@@ -1749,21 +1749,17 @@ class TestToolLibrary:
             "deferred_bucket": "search_tools",
         }
         assert [
-            schema["function"]["name"]
-            for schema in library.get_tool_json_schemas()
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ] == ["search_tools"]
 
-        response = library(
-            [("call_1", "search_tools", {"query": "deferred_bucket"})]
-        )
+        response = library([("call_1", "search_tools", {"query": "deferred_bucket"})])
 
         assert response.tool_calls[0].result == "loaded=deferred_bucket"
         assert library.tool_owners == {"leaf": "deferred_bucket"}
         assert library.library["deferred_bucket"] is bucket_wrapper
         assert library.library["leaf"] is leaf_wrapper
         assert [
-            schema["function"]["name"]
-            for schema in library.get_tool_json_schemas()
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
         ] == ["deferred_bucket"]
 
     def test_search_tools_activation_failure_restores_original_capture(self):
@@ -1795,18 +1791,14 @@ class TestToolLibrary:
         )
         wrapper = library.library["deferred_lookup"]
 
-        response = library(
-            [("call_1", "search_tools", {"query": "deferred_lookup"})]
-        )
+        response = library([("call_1", "search_tools", {"query": "deferred_lookup"})])
 
         assert "catalog rejected promotion" in response.tool_calls[0].error
         assert library.library["deferred_lookup"] is wrapper
         assert library.tool_owners["deferred_lookup"] == "search_tools"
         assert library.tool_configs["deferred_lookup"]["on_demand"] is True
         assert library.tool_configs["deferred_lookup"]["exposed"] is False
-        assert set(library.library["search_tools"].impl.tools) == {
-            "deferred_lookup"
-        }
+        assert set(library.library["search_tools"].impl.tools) == {"deferred_lookup"}
 
     @pytest.mark.asyncio
     async def test_model_calls_to_captured_tools_return_not_found(self):
@@ -1827,9 +1819,7 @@ class TestToolLibrary:
         library = ToolLibrary(name="lib", tools=[Bucket(), hidden_leaf])
 
         sync_response = library([("sync", "hidden_leaf", {})])
-        async_response = await library.aforward(
-            [("async", "hidden_leaf", {})]
-        )
+        async_response = await library.aforward([("async", "hidden_leaf", {})])
 
         assert sync_response.tool_calls[0].error == (
             "Error: Tool `hidden_leaf` not found."
@@ -2683,9 +2673,12 @@ class TestToolLibrary:
             }
         ]
 
-        with patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class:
+        with (
+            patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class,
+            patch("msgflux.nn.modules.tool.F.wait_for") as mock_wait_for,
+        ):
             mock_client = Mock()
-            mock_client.connect = AsyncMock(side_effect=Exception("Connection failed"))
+            mock_wait_for.return_value = TaskError(Exception("Connection failed"), 0)
             mock_mcp_client_class.from_stdio.return_value = mock_client
 
             # Should not raise, but log error
@@ -2693,6 +2686,33 @@ class TestToolLibrary:
 
             # Server should not be added to mcp_clients
             assert "failing_server" not in library.mcp_clients
+            mock_wait_for.assert_called_once_with(mock_client.connect)
+
+    def test_tool_library_mcp_initialization_list_tools_error(self):
+        """Test MCP tool-list errors do not register a partially initialized client."""
+        mcp_servers = [
+            {
+                "name": "failing_server",
+                "transport": "stdio",
+                "command": "fail",
+            }
+        ]
+
+        with (
+            patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class,
+            patch("msgflux.nn.modules.tool.F.wait_for") as mock_wait_for,
+        ):
+            mock_client = Mock()
+            mock_wait_for.side_effect = [
+                None,
+                TaskError(Exception("Tool listing failed"), 0),
+            ]
+            mock_mcp_client_class.from_stdio.return_value = mock_client
+
+            library = ToolLibrary(name="lib", tools=[], mcp_servers=mcp_servers)
+
+            assert "failing_server" not in library.mcp_clients
+            assert mock_wait_for.call_count == 2
 
 
 class TestMCPTool:

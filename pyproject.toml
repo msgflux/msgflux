@@ -162,6 +162,8 @@ unfixable = ["F401"]
 # Allow vars parameter name in agent and tool modules (core library feature)
 "src/msgflux/nn/modules/agent.py" = ["A001","A002"]
 "src/msgflux/nn/modules/tool.py" = ["A001","A002"]
+# Task helpers are imported lazily to avoid the handles/types/task_tool cycle.
+"src/msgflux/tools/handles.py" = ["PLC0415"]
 # Allow MCP protocol's camelCase naming convention
 "src/msgflux/protocols/mcp/types.py" = ["N815"]
 # Regex patterns in html.py are inherently long and cannot be split

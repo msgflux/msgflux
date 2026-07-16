@@ -147,8 +147,7 @@ class ToolBucketGraph:
         matches = [
             node.name
             for node in self.iter_nodes()
-            if node.bucket is not None
-            and node.bucket.captures(metadata)
+            if node.bucket is not None and node.bucket.captures(metadata)
         ]
         matches.reverse()
         if len(matches) > 1:
@@ -227,7 +226,7 @@ class ToolBucketGraph:
             raise ValueError(
                 f"The bucket tool `{metadata.name}` must inherit ToolBucket."
             )
-        bucket.capture_rules
+        _ = bucket.capture_rules
 
         for node in self.iter_nodes():
             if node.bucket is None:

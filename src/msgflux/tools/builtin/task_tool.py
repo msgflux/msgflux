@@ -70,7 +70,7 @@ class TaskWaitTool(ToolBackground):
     }
     tool_config = {"handle": {"tasks": ["wait"]}}
 
-    def __call__(  # noqa: C901
+    def __call__(
         self,
         task_id: str,
         timeout: float | None = None,
@@ -148,9 +148,7 @@ class TaskTool(ToolBucket):
     name = "task_tool"
     display_name = "Task"
     capture = {
-        "tool_kind": (
-            f"{BACKGROUND_TASK_TOOL_KIND}|{BACKGROUND_ACTIVITY_TOOL_KIND}"
-        ),
+        "tool_kind": (f"{BACKGROUND_TASK_TOOL_KIND}|{BACKGROUND_ACTIVITY_TOOL_KIND}"),
         "on_demand": False,
     }
     _base_description = "Inspect or control background work by mode."
@@ -213,9 +211,7 @@ class TaskTool(ToolBucket):
             raise ValueError(f"Task mode `{mode}` requires {names}.")
 
         params = {
-            name: supplied[name]
-            for name in accepted
-            if supplied.get(name) is not None
+            name: supplied[name] for name in accepted if supplied.get(name) is not None
         }
         return tools(metadata.name, **params)
 

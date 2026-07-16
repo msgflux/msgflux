@@ -322,15 +322,18 @@ def test_nested_bucket_runs_and_resumes_background_agent_tool():
             },
         )
         task_id = _extract_task_id(dispatch)
-        assert library.execute(
-            "task_wait", {"task_id": task_id, "timeout": 1.0}
-        ) == "first"
-        assert library.execute(
-            "task_message", {"task_id": task_id, "message": "Second"}
-        ) == "status=resumed"
-        assert library.execute(
-            "task_wait", {"task_id": task_id, "timeout": 1.0}
-        ) == "second"
+        assert (
+            library.execute("task_wait", {"task_id": task_id, "timeout": 1.0})
+            == "first"
+        )
+        assert (
+            library.execute("task_message", {"task_id": task_id, "message": "Second"})
+            == "status=resumed"
+        )
+        assert (
+            library.execute("task_wait", {"task_id": task_id, "timeout": 1.0})
+            == "second"
+        )
 
 
 def test_removing_nested_background_bucket_reconciles_task_tools():
@@ -652,9 +655,7 @@ def test_agent_tool_background_task_message_resumes_selected_agent():
     assert wait_resumed.tool_calls[0].result == "second"
     old_state = store.load_state("reviewer", "user_42", task_id)
     assert old_state["status"] == "completed"
-    resumed_run_id = library.get_task_store().get(task_id).metadata[
-        "checkpoint_run_id"
-    ]
+    resumed_run_id = library.get_task_store().get(task_id).metadata["checkpoint_run_id"]
     assert resumed_run_id != task_id
     new_state = store.load_state("reviewer", "user_42", resumed_run_id)
     assert new_state["status"] == "completed"

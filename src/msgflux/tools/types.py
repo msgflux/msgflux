@@ -15,6 +15,7 @@ from typing import (
 )
 
 from msgflux.tools.dataclasses import ToolMetadata
+from msgflux.tools.handles import normalize_handle_access
 from msgflux.tools.helpers import (
     BACKGROUND_TASK_TOOL_KIND,
     DEFAULT_AGENT_BACKGROUND_CAPABILITIES,
@@ -24,7 +25,6 @@ from msgflux.tools.helpers import (
     is_reserved_tool_kind,
     normalize_background_capabilities,
 )
-from msgflux.tools.handles import normalize_handle_access
 
 T = TypeVar("T")
 
@@ -195,9 +195,9 @@ class ToolBucket:
                 raise ValueError("A bucket must define at least one capture predicate.")
         for key, value in rules.items():
             self._capture_values(key, value)
-        self.capture_source
-        self.capture_alternatives
-        self.capture_policy
+        _ = self.capture_source
+        _ = self.capture_alternatives
+        _ = self.capture_policy
         return rules
 
     @property
@@ -205,9 +205,7 @@ class ToolBucket:
         """Return which candidate type this bucket can capture."""
         capture = getattr(self, "capture", None)
         source = (
-            capture.get("source", "tool")
-            if isinstance(capture, Mapping)
-            else "tool"
+            capture.get("source", "tool") if isinstance(capture, Mapping) else "tool"
         )
         if not isinstance(source, str) or source not in self._CAPTURE_SOURCES:
             expected = ", ".join(sorted(self._CAPTURE_SOURCES))
@@ -227,40 +225,43 @@ class ToolBucket:
         if not isinstance(match, Mapping) or set(match) != {"any"}:
             raise ValueError("Bucket capture `match` must contain only `any`.")
         alternatives = match["any"]
-        if (
-            isinstance(alternatives, (str, bytes, Mapping))
-            or not isinstance(alternatives, Sequence)
+        if isinstance(alternatives, (str, bytes, Mapping)) or not isinstance(
+            alternatives, Sequence
         ):
             raise ValueError("Bucket capture `match.any` must be a list of mappings.")
         normalized = tuple(alternatives)
         if not normalized:
             raise ValueError("Bucket capture `match.any` cannot be empty.")
         for alternative in normalized:
-            if not isinstance(alternative, Mapping) or not alternative:
-                raise ValueError(
-                    "Each bucket capture `match.any` entry must be a non-empty mapping."
-                )
-            if not all(isinstance(key, str) and key for key in alternative):
-                raise ValueError(
-                    "Bucket capture `match.any` keys must be non-empty strings."
-                )
-            unknown = set(alternative) & {"policy", "source", "match"}
-            if unknown:
-                raise ValueError(
-                    f"Bucket capture `{sorted(unknown)[0]}` is only valid at the "
-                    "top level."
-                )
-            duplicate = set(alternative) & (
-                set(capture) - {"policy", "source", "match"}
-            )
-            if duplicate:
-                raise ValueError(
-                    f"Bucket capture predicate `{sorted(duplicate)[0]}` cannot be "
-                    "declared both at the top level and in `match.any`."
-                )
-            for key, value in alternative.items():
-                self._capture_values(key, value)
+            self._validate_capture_alternative(alternative, capture)
         return normalized
+
+    def _validate_capture_alternative(
+        self,
+        alternative: Any,
+        capture: Mapping[str, Any],
+    ) -> None:
+        if not isinstance(alternative, Mapping) or not alternative:
+            raise ValueError(
+                "Each bucket capture `match.any` entry must be a non-empty mapping."
+            )
+        if not all(isinstance(key, str) and key for key in alternative):
+            raise ValueError(
+                "Bucket capture `match.any` keys must be non-empty strings."
+            )
+        unknown = set(alternative) & {"policy", "source", "match"}
+        if unknown:
+            raise ValueError(
+                f"Bucket capture `{sorted(unknown)[0]}` is only valid at the top level."
+            )
+        duplicate = set(alternative) & (set(capture) - {"policy", "source", "match"})
+        if duplicate:
+            raise ValueError(
+                f"Bucket capture predicate `{sorted(duplicate)[0]}` cannot be "
+                "declared both at the top level and in `match.any`."
+            )
+        for key, value in alternative.items():
+            self._capture_values(key, value)
 
     @property
     def capture_policy(self) -> Mapping[str, Any]:
@@ -289,52 +290,57 @@ class ToolBucket:
         return {"handle": handle}
 
     @staticmethod
-    def _capture_values(key: str, value: Any) -> tuple[Any, ...]:
+    def _capture_names(value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            values = (value,)
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            values = tuple(value)
+        else:
+            values = ()
+        if not values or not all(
+            isinstance(item, str) and item.strip() for item in values
+        ):
+            raise ValueError(
+                "Bucket `capture['name']` must be a non-empty string or list "
+                "of strings."
+            )
+        if len(set(values)) != len(values):
+            raise ValueError("Bucket `capture['name']` values must be unique.")
+        return values
+
+    @staticmethod
+    def _capture_capabilities(value: Any) -> tuple[Any, ...]:
+        if not isinstance(value, Mapping) or len(value) != 1:
+            raise ValueError(
+                "Bucket `capture['capabilities']` must contain `all` or `any`."
+            )
+        mode, capabilities = next(iter(value.items()))
+        if mode not in {"all", "any"}:
+            raise ValueError(
+                "Bucket `capture['capabilities']` must contain `all` or `any`."
+            )
+        if isinstance(capabilities, (str, bytes, Mapping)) or not isinstance(
+            capabilities, Sequence
+        ):
+            raise ValueError(f"Bucket capability `{mode}` must be a list of strings.")
+        values = tuple(capabilities)
+        if not values or not all(
+            isinstance(item, str) and item.strip() for item in values
+        ):
+            raise ValueError(
+                f"Bucket capability `{mode}` must be a non-empty list of strings."
+            )
+        if len(set(values)) != len(values):
+            raise ValueError("Bucket capability values must be unique.")
+        return ((mode, values),)
+
+    @classmethod
+    def _capture_values(cls, key: str, value: Any) -> tuple[Any, ...]:
         """Normalize a capture value for matching and overlap validation."""
         if key == "name":
-            if isinstance(value, str):
-                values = (value,)
-            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-                values = tuple(value)
-            else:
-                values = ()
-            if not values or not all(
-                isinstance(item, str) and item.strip() for item in values
-            ):
-                raise ValueError(
-                    "Bucket `capture['name']` must be a non-empty string or list "
-                    "of strings."
-                )
-            if len(set(values)) != len(values):
-                raise ValueError("Bucket `capture['name']` values must be unique.")
-            return values
+            return cls._capture_names(value)
         if key == "capabilities":
-            if not isinstance(value, Mapping) or len(value) != 1:
-                raise ValueError(
-                    "Bucket `capture['capabilities']` must contain `all` or `any`."
-                )
-            mode, capabilities = next(iter(value.items()))
-            if mode not in {"all", "any"}:
-                raise ValueError(
-                    "Bucket `capture['capabilities']` must contain `all` or `any`."
-                )
-            if (
-                isinstance(capabilities, (str, bytes, Mapping))
-                or not isinstance(capabilities, Sequence)
-            ):
-                raise ValueError(
-                    f"Bucket capability `{mode}` must be a list of strings."
-                )
-            values = tuple(capabilities)
-            if not values or not all(
-                isinstance(item, str) and item.strip() for item in values
-            ):
-                raise ValueError(
-                    f"Bucket capability `{mode}` must be a non-empty list of strings."
-                )
-            if len(set(values)) != len(values):
-                raise ValueError("Bucket capability values must be unique.")
-            return ((mode, values),)
+            return cls._capture_capabilities(value)
         if key != "tool_kind":
             return (value,)
         if not isinstance(value, str) or not value.strip():
@@ -376,8 +382,7 @@ class ToolBucket:
             return False
         base = self.capture_rules
         if not all(
-            self._matches_rule(metadata, key, value)
-            for key, value in base.items()
+            self._matches_rule(metadata, key, value) for key, value in base.items()
         ):
             return False
         return any(
@@ -389,10 +394,9 @@ class ToolBucket:
         )
 
     def validate_capture(self, metadata: ToolMetadata) -> None:
-        if (
-            metadata.tool_config.get("tool_kind") != self.tool_kind
-            and is_background_capable(metadata.tool_config)
-        ):
+        if metadata.tool_config.get(
+            "tool_kind"
+        ) != self.tool_kind and is_background_capable(metadata.tool_config):
             raise ValueError(
                 "Bucket-captured tools cannot use `background=True` or "
                 f"`allow_background=True`. Tool `{metadata.name}` cannot be captured."
@@ -405,9 +409,7 @@ class ToolBucket:
         required_handle = metadata.tool_config.get("handle")
         if allowed_handle is not None and required_handle is not None:
             for domain, actions in required_handle.items():
-                unsupported = sorted(
-                    set(actions) - set(allowed_handle.get(domain, ()))
-                )
+                unsupported = sorted(set(actions) - set(allowed_handle.get(domain, ())))
                 if unsupported:
                     raise ValueError(
                         f"Tool `{metadata.name}` requires handle access "

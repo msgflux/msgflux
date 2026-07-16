@@ -165,7 +165,8 @@ class AgentInbox:
         if command not in _CONTROL_COMMANDS:
             supported = ", ".join(sorted(_CONTROL_COMMANDS))
             raise ValueError(
-                f"Unsupported control command `{command}`. Expected one of: {supported}."
+                f"Unsupported control command `{command}`. "
+                f"Expected one of: {supported}."
             )
         return self.publish(
             AgentControlMessage(
@@ -272,14 +273,10 @@ class AgentInbox:
             return []
 
         user_notifications = [
-            notification
-            for notification in normalized
-            if notification.role == "user"
+            notification for notification in normalized if notification.role == "user"
         ]
         system_notifications = [
-            notification
-            for notification in normalized
-            if notification.role == "system"
+            notification for notification in normalized if notification.role == "system"
         ]
 
         rendered_messages: List[Dict[str, str]] = []
@@ -323,9 +320,7 @@ class AgentInbox:
     def _render_notification(self, notification: AgentNotification) -> str:
         if notification.source == "task" and notification.ref:
             fields = [f"task_id={self._escape_text(notification.ref)}"]
-        elif (
-            notification.source in _TASK_NOTIFICATION_SOURCES and notification.ref
-        ):
+        elif notification.source in _TASK_NOTIFICATION_SOURCES and notification.ref:
             fields = [
                 self._escape_text(notification.source),
                 f"task_id={self._escape_text(notification.ref)}",
@@ -339,8 +334,7 @@ class AgentInbox:
 
         for key, value in sorted(notification.metadata.items()):
             fields.append(
-                f"{self._escape_text(key)}="
-                f"{self._escape_text(self._stringify(value))}"
+                f"{self._escape_text(key)}={self._escape_text(self._stringify(value))}"
             )
         rendered = " ".join(fields)
         if notification.hint:
