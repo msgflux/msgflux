@@ -156,7 +156,8 @@ api.register_command(
 
 Handlers receive `(args, ctx)`, as in Pi. `args` is the raw string after the
 slash-command name. `ctx` carries the extension-owned `ExtensionApi`, the
-correlation id, the event emitter, and the runtime command view.
+correlation id, the durable `ExecutionScope`, the event emitter, and the runtime
+command view.
 `api.command(...)` is Python decorator sugar over `register_command`; internal
 commands use the same core `ExtensionApi`. This is the stable customization
 boundary, without exposing the private `VulcanoRuntime` object. The raw
@@ -233,6 +234,77 @@ async def goal(args, ctx):
 `context.emit()` publishes immediately with the command correlation id. Events
 returned in `CommandResult` are published after the handler returns. The TUI
 does not know how `/goal` works; it only projects the runtime event stream.
+
+### Durable execution scopes
+
+Execution identity belongs to the runtime, not to the TUI. A Vulcano runtime
+creates one `thread_id` for its session and a new root `run_id` for each
+`SubmitInput`. Slash commands receive the materialized identity as `ctx.scope`:
+
+```python
+@api.command("scope", "Show the current durable identity.")
+def show_scope(args, ctx):
+    del args
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": str(ctx.scope.to_dict())},
+            ),
+        )
+    )
+```
+
+`ctx.correlation_id` identifies the client request and is used to associate
+events with a TUI submission. `ctx.scope.thread_id` identifies the durable
+conversation, while `ctx.scope.run_id` identifies the current execution. They
+are intentionally independent.
+
+Custom flows derive child executions through the context. The child keeps the
+same thread and root run, records the current run as `parent_run_id`, inherits
+the abort signal, and receives a new run id:
+
+```python
+@api.command("goal", "Plan a goal in a child execution.")
+async def goal(args, ctx):
+    planner_scope = ctx.child_scope(namespace="goal-planner")
+    planner_ctx = ctx.with_scope(planner_scope)
+
+    with planner_ctx.use_scope():
+        plan = await planner_ctx.api.agent.run(
+            f"Plan this objective: {args}",
+        )
+
+    return CommandResult(
+        events=(
+            EventDraft(EventType.COMMAND_OUTPUT, {"text": str(plan)}),
+        )
+    )
+```
+
+`api.agent.run()`, `stream_events()`, and `respond()` inherit the active scope.
+They also accept `scope=...` when a flow only needs to override one Agent call.
+Using `ctx.use_scope()` additionally propagates the identity to tools,
+background work, subagents, hooks, and any other msgflux component that reads
+the execution context.
+
+To resume a durable execution, construct the runtime with its persisted scope:
+
+```python
+from msgflux import ExecutionScope
+
+runtime = VulcanoRuntime(
+    agent=agent,
+    scope=ExecutionScope(
+        thread_id="thd_persisted",
+        run_id="run_interrupted",
+    ),
+)
+```
+
+The first submission uses that run id. Later submissions create new root runs
+under the same thread. The runtime or its persistence layer supplies this
+scope; the terminal client continues to send only actions and render events.
 
 ### Observing runtime events
 

@@ -5,6 +5,11 @@ import inspect
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
+from msgflux.runtime.context import (
+    ExecutionScope,
+    execution_context,
+    get_execution_scope,
+)
 from msgflux.vulcano.events import EventDraft, EventType
 
 __all__ = [
@@ -313,45 +318,56 @@ class AgentApi:
     async def run(
         self,
         message: object | None = None,
+        *,
+        scope: ExecutionScope | None = None,
         **kwargs: object,
     ) -> object:
         """Run the main Agent without projecting its response to a client."""
         self._assert_active()
-        return await self._binding.adapter.run(
-            self._binding.agent(),
-            message,
-            **kwargs,
-        )
+        resolved_scope = _resolve_scope(scope)
+        with execution_context(scope=resolved_scope):
+            return await self._binding.adapter.run(
+                self._binding.agent(),
+                message,
+                **kwargs,
+            )
 
     async def stream_events(
         self,
         message: object | None = None,
+        *,
+        scope: ExecutionScope | None = None,
         **kwargs: object,
     ) -> AsyncIterator[EventDraft]:
         """Yield stable Vulcano events for one main-Agent execution."""
         self._assert_active()
-        stream = self._binding.adapter.stream_events(
-            self._binding.agent(),
-            message,
-            **kwargs,
-        )
-        async for event in stream:
-            self._assert_active()
-            if not isinstance(event, EventDraft):
-                raise TypeError("AgentAdapter.stream_events() must yield EventDraft")
-            yield event
+        resolved_scope = _resolve_scope(scope)
+        with execution_context(scope=resolved_scope):
+            stream = self._binding.adapter.stream_events(
+                self._binding.agent(),
+                message,
+                **kwargs,
+            )
+            async for event in stream:
+                self._assert_active()
+                if not isinstance(event, EventDraft):
+                    raise TypeError(
+                        "AgentAdapter.stream_events() must yield EventDraft"
+                    )
+                yield event
 
     async def respond(
         self,
         message: object | None = None,
         *,
         emit: Callable[[EventDraft], Awaitable[None]],
+        scope: ExecutionScope | None = None,
         **kwargs: object,
     ) -> AgentRunResult:
         """Run the Agent and forward its event stream to a runtime emitter."""
         content = ""
         status = "completed"
-        async for event in self.stream_events(message, **kwargs):
+        async for event in self.stream_events(message, scope=scope, **kwargs):
             await emit(event)
             if event.type == EventType.ASSISTANT_DELTA:
                 content += str(event.payload.get("delta", ""))
@@ -359,6 +375,12 @@ class AgentApi:
                 content = str(event.payload.get("content", content))
                 status = str(event.payload.get("status", status))
         return AgentRunResult(content=content, status=status)
+
+
+def _resolve_scope(scope: ExecutionScope | None) -> ExecutionScope:
+    if scope is not None and not isinstance(scope, ExecutionScope):
+        raise TypeError("scope must be an ExecutionScope or None")
+    return scope or get_execution_scope()
 
 
 def _registered_tool_name(

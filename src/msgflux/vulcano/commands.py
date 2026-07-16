@@ -4,9 +4,16 @@ import inspect
 import re
 import shlex
 import weakref
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, Mapping, Protocol
 
+from msgflux.runtime.context import (
+    ExecutionScope,
+    execution_context,
+    new_run_id,
+    new_thread_id,
+)
 from msgflux.vulcano.events import EventDraft
 
 if TYPE_CHECKING:
@@ -63,6 +70,7 @@ CommandEventEmitter = Callable[[EventDraft], Awaitable[None]]
 class CommandContext:
     commands: CommandRegistry
     api: CommandApi
+    scope: ExecutionScope = field(default_factory=ExecutionScope)
     correlation_id: str | None = None
     _event_emitter: CommandEventEmitter | None = field(default=None, repr=False)
 
@@ -76,11 +84,52 @@ class CommandContext:
             raise RuntimeError("This command context is not bound to a runtime emitter")
         await self._event_emitter(event)
 
+    def child_scope(
+        self,
+        *,
+        namespace: str | None = None,
+        run_id: str | None = None,
+    ) -> ExecutionScope:
+        """Derive a child execution while preserving durable lineage."""
+        child_run_id = run_id or new_run_id()
+        parent_run_id = self.scope.run_id
+        return ExecutionScope(
+            thread_id=self.scope.thread_id or new_thread_id(),
+            namespace=namespace or self.scope.namespace,
+            run_id=child_run_id,
+            parent_run_id=parent_run_id,
+            root_run_id=self.scope.root_run_id or parent_run_id or child_run_id,
+            abort_signal=self.scope.abort_signal,
+        )
+
+    def use_scope(
+        self,
+        scope: ExecutionScope | None = None,
+    ) -> AbstractContextManager[ExecutionScope]:
+        """Activate this command's scope, or an explicitly derived scope."""
+        active_scope = scope if scope is not None else self.scope
+        if not isinstance(active_scope, ExecutionScope):
+            raise TypeError("scope must be an ExecutionScope")
+        return execution_context(scope=active_scope)
+
+    def with_scope(self, scope: ExecutionScope) -> CommandContext:
+        """Copy the context with a different durable execution scope."""
+        if not isinstance(scope, ExecutionScope):
+            raise TypeError("scope must be an ExecutionScope")
+        return CommandContext(
+            commands=self.commands,
+            api=self.api,
+            scope=scope,
+            correlation_id=self.correlation_id,
+            _event_emitter=self._event_emitter,
+        )
+
     def with_api(self, api: CommandApi) -> CommandContext:
         """Copy runtime capabilities while rebinding extension ownership."""
         return CommandContext(
             commands=self.commands,
             api=api,
+            scope=self.scope,
             correlation_id=self.correlation_id,
             _event_emitter=self._event_emitter,
         )

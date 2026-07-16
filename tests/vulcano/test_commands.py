@@ -1,5 +1,6 @@
 import pytest
 
+from msgflux.runtime import ExecutionScope, get_execution_scope
 from msgflux.vulcano import CommandContext, CommandResult
 from msgflux.vulcano.commands import CommandRegistry, CommandSpec
 
@@ -87,3 +88,32 @@ async def test_registry_accepts_async_extension_handler():
     )
 
     assert result == CommandResult()
+
+
+def test_command_context_derives_and_activates_child_scope():
+    registry = CommandRegistry()
+    parent = ExecutionScope(
+        thread_id="thd_command",
+        namespace="vulcano",
+        run_id="run_parent",
+        root_run_id="run_parent",
+    )
+    context = CommandContext(
+        commands=registry,
+        api=_CommandApi(),
+        scope=parent,
+        correlation_id="request-1",
+    )
+
+    child = context.child_scope(namespace="planner", run_id="run_child")
+    child_context = context.with_scope(child)
+
+    assert child.thread_id == parent.thread_id
+    assert child.namespace == "planner"
+    assert child.run_id == "run_child"
+    assert child.parent_run_id == parent.run_id
+    assert child.root_run_id == parent.root_run_id
+    assert child_context.correlation_id == context.correlation_id
+
+    with child_context.use_scope():
+        assert get_execution_scope() == child

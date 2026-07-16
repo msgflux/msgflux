@@ -3,6 +3,7 @@ from textwrap import dedent
 import pytest
 
 from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.runtime import get_execution_scope
 from msgflux.vulcano import CommandResult, EventType, SubmitInput, VulcanoRuntime
 from msgflux.vulcano.extensions import loader as extension_loader
 
@@ -13,9 +14,11 @@ class _FakeAgent:
     def __init__(self):
         self.tool_library = ToolLibrary(self.name, [])
         self.calls = []
+        self.scopes = []
 
     async def acall(self, message, **kwargs):
         self.calls.append((message, kwargs))
+        self.scopes.append(get_execution_scope())
         return f"Agent completed: {message}"
 
 
@@ -310,9 +313,11 @@ async def test_extension_owns_main_agent_tool_and_streaming_command_flow(tmp_pat
 
             @api.command("goal", "Run a custom flow over the main Agent.")
             async def goal(arguments, context):
+                flow_scope = context.child_scope(namespace="goal")
                 result = await context.api.agent.respond(
                     "Plan and execute: " + arguments,
                     emit=context.emit,
+                    scope=flow_scope,
                     vars={"flow": "goal"},
                 )
                 return CommandResult(events=(
@@ -352,6 +357,12 @@ async def test_extension_owns_main_agent_tool_and_streaming_command_flow(tmp_pat
         "Agent completed: Plan and execute: ship it"
     )
     assert agent.calls == [("Plan and execute: ship it", {"vars": {"flow": "goal"}})]
+    flow_scope = agent.scopes[0]
+    assert flow_scope.thread_id is not None
+    assert flow_scope.namespace == "goal"
+    assert flow_scope.run_id is not None
+    assert flow_scope.parent_run_id is not None
+    assert flow_scope.root_run_id == flow_scope.parent_run_id
 
     await runtime.stop()
     assert agent.tool_library.get_tool_names() == []

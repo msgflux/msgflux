@@ -3,6 +3,7 @@ import json
 import pytest
 
 from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.runtime import ExecutionScope, get_execution_scope
 from msgflux.vulcano import (
     CommandOptions,
     CommandResult,
@@ -18,10 +19,12 @@ class _FakeAgent:
 
     def __init__(self):
         self.calls = []
+        self.scopes = []
         self.tool_library = ToolLibrary(self.name, [])
 
     async def acall(self, message, **kwargs):
         self.calls.append((message, kwargs))
+        self.scopes.append(get_execution_scope())
         return f"Agent response: {message}"
 
 
@@ -119,6 +122,44 @@ async def test_extension_command_executes_inside_runtime():
 
 
 @pytest.mark.asyncio
+async def test_runtime_manages_durable_scope_for_each_command_submission():
+    initial_scope = ExecutionScope(
+        thread_id="thd_saved",
+        namespace="vulcano",
+        run_id="run_resumed",
+    )
+    runtime = VulcanoRuntime(
+        scope=initial_scope,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    captured_scopes = []
+
+    def capture(arguments, context):
+        del arguments
+        assert get_execution_scope() == context.scope
+        captured_scopes.append(context.scope)
+        return CommandResult()
+
+    runtime.extensions.api.register_command(
+        "capture-scope",
+        CommandOptions(description="Capture the execution scope.", handler=capture),
+    )
+
+    await runtime.dispatch(SubmitInput("/capture-scope"))
+    await runtime.dispatch(SubmitInput("/capture-scope"))
+
+    resumed, fresh = captured_scopes
+    assert resumed.thread_id == "thd_saved"
+    assert resumed.run_id == "run_resumed"
+    assert resumed.root_run_id == "run_resumed"
+    assert fresh.thread_id == resumed.thread_id
+    assert fresh.run_id != resumed.run_id
+    assert fresh.root_run_id == fresh.run_id
+    assert fresh.parent_run_id is None
+
+
+@pytest.mark.asyncio
 async def test_clear_and_quit_are_runtime_owned_commands():
     runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
 
@@ -176,6 +217,11 @@ async def test_bound_main_agent_drives_the_runtime_event_stream():
     assert started.payload["runtime"] == "agent"
     assert started.payload["agent"] == "runtime_agent"
     assert agent.calls == [("use the agent", {})]
+    agent_scope = agent.scopes[0]
+    assert agent_scope.thread_id is not None
+    assert agent_scope.run_id is not None
+    assert agent_scope.root_run_id == agent_scope.run_id
+    assert agent_scope.parent_run_id is None
     assert [
         event.type for event in runtime.history if event.correlation_id == "agent-1"
     ] == [

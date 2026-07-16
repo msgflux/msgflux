@@ -5,6 +5,13 @@ import re
 from pathlib import Path
 from typing import AsyncIterator, Mapping, Protocol, Sequence, cast
 
+from msgflux.runtime.context import (
+    ExecutionScope,
+    execution_context,
+    get_execution_scope,
+    new_run_id,
+    new_thread_id,
+)
 from msgflux.vulcano.actions import RuntimeAction, StopRuntime, SubmitInput
 from msgflux.vulcano.commands import (
     CommandContext,
@@ -72,6 +79,7 @@ class VulcanoRuntime:
         responder: Responder | None = None,
         agent: object | None = None,
         agent_adapter: AgentAdapter | None = None,
+        scope: ExecutionScope | None = None,
         stream_delay: float = 0.01,
         services: Mapping[str, object] | None = None,
         cwd: str | Path | None = None,
@@ -83,6 +91,27 @@ class VulcanoRuntime:
     ) -> None:
         if responder is not None and agent is not None:
             raise ValueError("Configure either responder or agent, not both")
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("scope must be an ExecutionScope or None")
+        requested_scope = scope or ExecutionScope()
+        thread_id = requested_scope.thread_id or new_thread_id()
+        self._thread_scope = ExecutionScope(
+            thread_id=thread_id,
+            namespace=requested_scope.namespace,
+            abort_signal=requested_scope.abort_signal,
+        )
+        self._pending_scope = (
+            ExecutionScope(
+                thread_id=thread_id,
+                namespace=requested_scope.namespace,
+                run_id=requested_scope.run_id,
+                parent_run_id=requested_scope.parent_run_id,
+                root_run_id=requested_scope.root_run_id or requested_scope.run_id,
+                abort_signal=requested_scope.abort_signal,
+            )
+            if requested_scope.run_id is not None
+            else None
+        )
         self.commands = CommandRegistry()
         self._events = EventStream()
         self._history: list[DomainEvent] = []
@@ -200,7 +229,9 @@ class VulcanoRuntime:
             if self._stopped:
                 raise RuntimeError("Vulcano runtime is stopped")
             if isinstance(action, SubmitInput):
-                await self._handle_input(action)
+                scope = self._next_submission_scope()
+                with execution_context(scope=scope):
+                    await self._handle_input(action)
                 return
             if isinstance(action, StopRuntime):
                 await self.stop(
@@ -295,6 +326,7 @@ class VulcanoRuntime:
         context = CommandContext(
             commands=self.commands,
             api=self.extensions.api,
+            scope=get_execution_scope(),
             correlation_id=correlation_id,
             _event_emitter=self._draft_emitter(correlation_id),
         )
@@ -329,6 +361,17 @@ class VulcanoRuntime:
                 reason=f"command:/{command.name}",
                 correlation_id=correlation_id,
             )
+
+    def _next_submission_scope(self) -> ExecutionScope:
+        if self._pending_scope is not None:
+            scope = self._pending_scope
+            self._pending_scope = None
+            return scope
+        run_id = new_run_id()
+        return self._thread_scope.with_overrides(
+            run_id=run_id,
+            root_run_id=run_id,
+        )
 
     def _draft_emitter(self, correlation_id: str | None):
         async def emit(event: EventDraft) -> None:
