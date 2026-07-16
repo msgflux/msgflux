@@ -15,7 +15,7 @@ HANDLE_ACTIONS = {
     "tasks": frozenset(
         {"list", "read", "wait", "output", "interrupt", "activity", "message"}
     ),
-    "tools": frozenset({"list", "get", "register", "remove"}),
+    "tools": frozenset({"list", "get", "register", "remove", "activate"}),
     "background": frozenset({"dispatch", "resume"}),
 }
 
@@ -69,11 +69,17 @@ class ToolLibraryHandle:
         tool_name: str | None = None,
         agent_inbox: AgentInbox | None = None,
         task_store: Any = None,
+        message: Any = None,
+        messages: List[Dict[str, Any]] | None = None,
+        vars: Mapping[str, Any] | None = None,  # noqa: A002
     ):
         self._library = library
         self._tool_name = tool_name
         self._agent_inbox = agent_inbox
         self._task_store = task_store
+        self._message = message
+        self._messages = messages
+        self._vars = vars
 
     def for_tool(
         self,
@@ -81,12 +87,18 @@ class ToolLibraryHandle:
         tool_name: str,
         agent_inbox: AgentInbox | None = None,
         task_store: Any = None,
+        message: Any = None,
+        messages: List[Dict[str, Any]] | None = None,
+        vars: Mapping[str, Any] | None = None,  # noqa: A002
     ) -> ToolLibraryHandle:
         return ToolLibraryHandle(
             self._library,
             tool_name=tool_name,
             agent_inbox=agent_inbox if agent_inbox is not None else self._agent_inbox,
             task_store=task_store if task_store is not None else self._task_store,
+            message=self._message if message is None else message,
+            messages=self._messages if messages is None else messages,
+            vars=self._vars if vars is None else vars,
         )
 
     def tool_view(
@@ -96,11 +108,17 @@ class ToolLibraryHandle:
         tool_name: str,
         agent_inbox: AgentInbox | None = None,
         task_store: Any = None,
+        message: Any = None,
+        messages: List[Dict[str, Any]] | None = None,
+        vars: Mapping[str, Any] | None = None,  # noqa: A002
     ) -> ToolHandle:
         scoped = self.for_tool(
             tool_name=tool_name,
             agent_inbox=agent_inbox,
             task_store=task_store,
+            message=message,
+            messages=messages,
+            vars=vars,
         )
         return ToolHandle(scoped, access)
 
@@ -111,6 +129,11 @@ class ToolLibraryHandle:
         self._library.remove(tool_name)
         return tool_name
 
+    def activate_tool(self, tool_name: str) -> str:
+        if self._tool_name is None:
+            raise RuntimeError("Tool activation requires a tool-scoped handle.")
+        return self._library._activate_on_demand(self._tool_name, tool_name)
+
     def get_agent_inbox(self) -> AgentInbox:
         if self._agent_inbox is not None:
             return self._agent_inbox
@@ -120,9 +143,56 @@ class ToolLibraryHandle:
         return self._library.get_task_store(self._task_store)
 
     def list_tools(self) -> List[str]:
-        return self._library.get_tool_names()
+        return self._library.get_tool_names(owner=self._tool_name)
+
+    def __call__(self, tool_name: str, /, **arguments: Any) -> Any:
+        if self._tool_name is None:
+            return self._library.execute(
+                tool_name,
+                arguments,
+                message=self._message,
+                messages=self._messages,
+                vars=self._vars,
+            )
+        return self._library._execute_scoped(
+            self._tool_name,
+            tool_name,
+            arguments,
+            message=self._message,
+            messages=self._messages,
+            vars=self._vars,
+        )
+
+    def execute_inline(self, tool_name: str, /, **arguments: Any) -> Any:
+        return self._library._execute_inline(
+            tool_name,
+            arguments,
+            message=self._message,
+            messages=self._messages,
+            vars=self._vars,
+        )
+
+    async def acall(self, tool_name: str, /, **arguments: Any) -> Any:
+        if self._tool_name is None:
+            return await self._library.aexecute(
+                tool_name,
+                arguments,
+                message=self._message,
+                messages=self._messages,
+                vars=self._vars,
+            )
+        return await self._library._aexecute_scoped(
+            self._tool_name,
+            tool_name,
+            arguments,
+            message=self._message,
+            messages=self._messages,
+            vars=self._vars,
+        )
 
     def get_tool(self, tool_name: str) -> Any:
+        if self._tool_name is None:
+            return self._library.get_tool(tool_name)
         if tool_name not in self._library.library:
             raise ValueError(f"The tool `{tool_name}` is no longer available.")
         return self._library.library[tool_name]
@@ -311,6 +381,30 @@ class CurrentTaskHandle(_HandleFacet):
         self._handle.raise_if_paused()
 
 
+class ToolBucketHandle:
+    """Scoped execution facade over one bucket's captured descendants."""
+
+    __slots__ = ("_handle",)
+
+    def __init__(self, handle: ToolLibraryHandle):
+        self._handle = handle
+
+    def list(self) -> List[str]:
+        return self._handle.list_tools()
+
+    def __call__(self, tool_name: str, /, **arguments: Any) -> Any:
+        return self.execute(tool_name, **arguments)
+
+    def execute(self, tool_name: str, /, **arguments: Any) -> Any:
+        return self._handle(tool_name, **arguments)
+
+    async def acall(self, tool_name: str, /, **arguments: Any) -> Any:
+        return await self.aexecute(tool_name, **arguments)
+
+    async def aexecute(self, tool_name: str, /, **arguments: Any) -> Any:
+        return await self._handle.acall(tool_name, **arguments)
+
+
 class ToolsHandle(_HandleFacet):
     def list(self) -> List[str]:
         self._require("list")
@@ -327,6 +421,10 @@ class ToolsHandle(_HandleFacet):
     def remove(self, tool_name: str) -> str:
         self._require("remove")
         return self._handle.remove(tool_name)
+
+    def activate(self, tool_name: str) -> str:
+        self._require("activate")
+        return self._handle.activate_tool(tool_name)
 
 
 class TasksHandle(_HandleFacet):

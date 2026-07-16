@@ -241,7 +241,7 @@ class BackgroundTaskDispatcher:
         future = Executor.get_instance().submit(
             partial(
                 self.run_tool,
-                tool=tool,
+                tool=partial(self.library_handle.execute_inline, tool_name),
                 task_handle=TaskHandle(
                     task.task_id,
                     task_store,
@@ -289,6 +289,7 @@ class BackgroundTaskDispatcher:
         tool_name: str,
         call_params: Dict[str, Any],
         config: Mapping[str, Any],
+        response_params: Dict[str, Any] | None = None,
     ) -> Any:
         task_kind = config.get("tool_kind", "tool")
         task_capabilities = ToolBackground.get_background_capabilities(tool, config)
@@ -414,7 +415,11 @@ class BackgroundTaskDispatcher:
         return ToolCall(
             id=tool_id,
             name=tool_name,
-            parameters=build_call_parameters_for_response(call_params),
+            parameters=(
+                response_params
+                if response_params is not None
+                else build_call_parameters_for_response(call_params)
+            ),
             result=build_background_dispatch_result(
                 task_id=task.task_id,
             ),

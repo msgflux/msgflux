@@ -29,6 +29,37 @@ from msgflux.tools.handles import normalize_handle_access
 T = TypeVar("T")
 
 
+class _ToolMetadataView(Mapping[str, ToolMetadata]):
+    """Read-only live view of one bucket's children in a tool library."""
+
+    def __init__(self, loader: Callable[[], Mapping[str, ToolMetadata]]) -> None:
+        self._loader = loader
+
+    def __getitem__(self, key: str) -> ToolMetadata:
+        return self._loader()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._loader())
+
+    def __len__(self) -> int:
+        return len(self._loader())
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._loader()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._loader().get(key, default)
+
+    def items(self):
+        return self._loader().items()
+
+    def keys(self):
+        return self._loader().keys()
+
+    def values(self):
+        return self._loader().values()
+
+
 class Hidden(Generic[T]):
     """Type marker for parameters hidden from the model-facing tool schema."""
 
@@ -48,6 +79,23 @@ def unwrap_hidden_annotation(annotation: Any) -> Any | None:
     return args[0] if args else Any
 
 
+def split_hidden_annotations(
+    annotations: Mapping[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Separate model-facing annotations from runtime-injected parameters."""
+    public_annotations: Dict[str, Any] = {}
+    hidden_params: Dict[str, Any] = {}
+    for name, annotation in annotations.items():
+        hidden_type = unwrap_hidden_annotation(annotation)
+        if hidden_type is None:
+            public_annotations[name] = annotation
+        elif name == "return":
+            raise ValueError("`Hidden[...]` cannot be used as a return type.")
+        else:
+            hidden_params[name] = hidden_type
+    return public_annotations, hidden_params
+
+
 class ToolBucket:
     """Base class for tools that exclusively own matching library tools.
 
@@ -65,7 +113,11 @@ class ToolBucket:
     _CAPTURE_SOURCES = {"tool", "bucket", "any"}
 
     def add(self, tool: ToolMetadata) -> None:
-        """Store a captured tool and refresh metadata derived from its contents."""
+        """Stage a tool before this bucket is registered in a library."""
+        if hasattr(self, "_tools_view"):
+            raise RuntimeError(
+                "Registered buckets are mutated through ToolLibrary, not bucket.add()."
+            )
         self.validate_capture(tool)
         if tool.name in self.tools:
             raise ValueError(f"Duplicate tool name `{tool.name}` in bucket.")
@@ -77,7 +129,12 @@ class ToolBucket:
             raise
 
     def remove(self, tool_name: str) -> ToolMetadata:
-        """Release a captured tool and refresh metadata derived from its contents."""
+        """Remove a staged tool before this bucket is registered."""
+        if hasattr(self, "_tools_view"):
+            raise RuntimeError(
+                "Registered buckets are mutated through ToolLibrary, not "
+                "bucket.remove()."
+            )
         try:
             tool = self.tools.pop(tool_name)
         except KeyError as exc:
@@ -92,10 +149,29 @@ class ToolBucket:
         return tool
 
     @property
-    def tools(self) -> Dict[str, ToolMetadata]:
+    def tools(self) -> Mapping[str, ToolMetadata]:
+        view = getattr(self, "_tools_view", None)
+        if view is not None:
+            return view
         if not hasattr(self, "_tools"):
             self._tools = {}
         return self._tools
+
+    def _bind_tools(
+        self,
+        loader: Callable[[], Mapping[str, ToolMetadata]],
+    ) -> list[ToolMetadata]:
+        """Bind the live library view and return previously staged tools."""
+        pending = list(getattr(self, "_tools", {}).values())
+        self._tools = {}
+        self._tools_view = _ToolMetadataView(loader)
+        return pending
+
+    def _unbind_tools(self, pending: Iterable[ToolMetadata] = ()) -> None:
+        """Restore an unregistered bucket with optional staged tools."""
+        if hasattr(self, "_tools_view"):
+            del self._tools_view
+        self._tools = {metadata.name: metadata for metadata in pending}
 
     def refresh(self) -> None:
         """Refresh presentation metadata after the library captures a tool."""
@@ -291,11 +367,6 @@ class ToolBucket:
                 else bool(expected_set & declared)
             )
         return metadata.tool_config.get(key) in cls._capture_values(key, value)
-
-    def captures_config(self, tool_config: Mapping[str, Any]) -> bool:
-        """Compatibility matcher for configuration-only legacy callers."""
-        metadata = ToolMetadata("", "", {}, dict(tool_config), lambda: None)
-        return self.captures(metadata)
 
     def captures(self, metadata: ToolMetadata) -> bool:
         is_bucket = metadata.tool_config.get("tool_kind") == self.tool_kind
@@ -501,6 +572,7 @@ class ToolBackground(ToolLibraryOperator):
         base_tools: Iterable[Callable],
         capability_tools: Mapping[str, Iterable[Callable]],
         metadata_factory: Callable[[Callable], ToolMetadata],
+        transaction: Any = None,
     ) -> None:
         background_tools = list(cls._iter_background_tools(library))
         all_task_tools = cls._all_task_tools(
@@ -525,6 +597,7 @@ class ToolBackground(ToolLibraryOperator):
                 disabled_tool_names=disabled_tool_names,
                 tools=required_task_tools,
                 metadata_factory=metadata_factory,
+                transaction=transaction,
             )
             required_names = {
                 metadata_factory(task_tool).name for task_tool in required_task_tools
@@ -537,6 +610,7 @@ class ToolBackground(ToolLibraryOperator):
                     if metadata_factory(task_tool).name not in required_names
                 ),
                 metadata_factory=metadata_factory,
+                transaction=transaction,
             )
             return
 
@@ -544,6 +618,7 @@ class ToolBackground(ToolLibraryOperator):
             library=library,
             tools=all_task_tools,
             metadata_factory=metadata_factory,
+            transaction=transaction,
         )
         disabled_tool_names.clear()
 
@@ -602,6 +677,7 @@ class ToolBackground(ToolLibraryOperator):
         disabled_tool_names: set[str],
         tools: Iterable[Callable],
         metadata_factory: Callable[[Callable], ToolMetadata],
+        transaction: Any = None,
     ) -> None:
         for tool in tools:
             metadata = metadata_factory(tool)
@@ -619,7 +695,10 @@ class ToolBackground(ToolLibraryOperator):
                         "an existing tool."
                     )
                 continue
-            library.add(metadata)
+            if transaction is None:
+                library.add(metadata)
+            else:
+                library._add(metadata, transaction=transaction)
 
     @classmethod
     def _remove_task_tools(
@@ -628,13 +707,13 @@ class ToolBackground(ToolLibraryOperator):
         library: Any,
         tools: Iterable[Callable],
         metadata_factory: Callable[[Callable], ToolMetadata],
+        transaction: Any = None,
     ) -> None:
         for tool in tools:
             tool_name = metadata_factory(tool).name
-            bucket_name = library._bucket_graph.find_owner(tool_name)
-            if bucket_name is not None:
-                library._remove_from_bucket(bucket_name, tool_name)
-                continue
             config = library.tool_configs.get(tool_name, {})
             if tool_name in library.library and is_reserved_tool_kind(config):
-                library._remove_registered_tool(tool_name)
+                library._remove_reconciled_tool(
+                    tool_name,
+                    transaction=transaction,
+                )

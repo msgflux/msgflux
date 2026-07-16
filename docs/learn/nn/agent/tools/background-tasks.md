@@ -71,6 +71,11 @@ background-capable tools. Removing the last `background=True` or
 remove an individual task tool manually; msgFlux will not reinstall that tool
 while the current background tool set remains active.
 
+This reconciliation traverses nested buckets. A background-capable
+`AgentTool`, for example, continues to provide task controls after an
+interpreter bucket captures it; removing that nested source removes controls
+that are no longer required.
+
 ### Compact Task Bucket
 
 By default, the common controls are exposed as separate tools. Add `TaskTool()`

@@ -5,6 +5,7 @@ import pytest
 
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.tools import ToolBucket
+from msgflux.tools.dataclasses import ToolMetadata
 
 
 class _InnerBucket(ToolBucket):
@@ -55,3 +56,35 @@ def test_bucket_graph_rejects_non_bucket_nodes():
 
     with pytest.raises(ValueError, match="cannot capture tools"):
         library._bucket_graph.require_bucket("_leaf")
+
+
+def test_library_rejects_collision_inside_prepopulated_bucket():
+    def lookup() -> str:
+        """Return a lookup result."""
+        return "root"
+
+    class LookupBucket(ToolBucket):
+        """Capture lookup tools."""
+
+        name = "lookup_bucket"
+        capture = {"name": "lookup"}
+
+        def __call__(self) -> str:
+            return "bucket"
+
+    bucket = LookupBucket()
+    bucket.add(
+        ToolMetadata(
+            name="lookup",
+            description="Captured lookup.",
+            annotations={"return": str},
+            tool_config={"tool_kind": "tool", "on_demand": False},
+            impl=lambda: "captured",
+        )
+    )
+    library = ToolLibrary(name="graph", tools=[lookup])
+
+    with pytest.raises(ValueError, match="Duplicate tool name `lookup`"):
+        library.add(bucket)
+
+    assert list(library.library) == ["lookup"]

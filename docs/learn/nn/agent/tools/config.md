@@ -259,8 +259,12 @@ receives only those operations, and must declare `handle: mf.Hidden`. Missing or
 | `notifications` | `publish` |
 | `task` | `read`, `progress`, `activity`, `interrupt_check` |
 | `tasks` | `list`, `read`, `wait`, `output`, `interrupt`, `activity`, `message` |
-| `tools` | `list`, `get`, `register`, `remove` |
+| `tools` | `list`, `get`, `register`, `remove`, `activate` |
 | `background` | `dispatch`, `resume` |
+
+The builtin Tool Search uses `tools.activate` to promote one of its directly
+captured on-demand tools atomically. Other tools normally do not need this
+action.
 
 ```python
 import msgflux as mf
@@ -765,20 +769,30 @@ class WorkerTool(ToolBucket):
 
     name = "worker"
     capture = {"tool_kind": "worker"}
-    annotations = {"name": str, "message": str, "return": str}
+    annotations = {
+        "name": str,
+        "message": str,
+        "tools": mf.Hidden,
+        "return": str,
+    }
 
-    def __call__(self, name: str, message: str) -> str:
-        return self.tools[name].impl(message)
+    def __call__(
+        self,
+        name: str,
+        message: str,
+        tools: mf.Hidden,
+    ) -> str:
+        return tools(name, message=message)
 
 class SandboxTool(ToolBucket):
     """Expose selected composite tools in a sandbox."""
 
     name = "sandbox"
     capture = {"source": "bucket", "name": ["worker"]}
-    annotations = {"return": str}
+    annotations = {"message": str, "tools": mf.Hidden, "return": str}
 
-    def __call__(self) -> str:
-        return ",".join(sorted(self.tools))
+    def __call__(self, message: str, tools: mf.Hidden) -> str:
+        return tools("worker", name="reviewer", message=message)
 
 library = nn.ToolLibrary(
     name="nested",
@@ -787,6 +801,9 @@ library = nn.ToolLibrary(
 
 print(library.get_tool_names())
 # ["sandbox"]
+
+print(library.execute("sandbox", {"message": "check this change"}))
+# reviewed: check this change
 ```
 
 Registration order does not change the result. `reviewer` is routed to the
@@ -794,11 +811,19 @@ nested `worker` bucket even after `worker` leaves the top-level schema. A later
 `library.add(...)` also reaches the nested bucket, and presentation changes
 from `refresh()` propagate through its parents.
 
+`tools` is hidden from the model schema. It is a bucket-scoped proxy over the
+library, not the captured implementation itself. Calling `tools(...)` or
+`tools.acall(...)` applies the same argument injection, retry, telemetry, and
+background rules as a normal library call. `tools.list()` returns direct and
+transitive descendants; attempting to execute a tool outside that list raises
+an error.
+
 Capture is exclusive: a node has one consuming parent. The library rejects
-overlapping owners and cycles instead of selecting a winner, and a bucket that
-still owns children cannot be removed. Use `source="any"` only when a selector
-intentionally accepts both regular and bucket tools. The `source="tool"`
-default prevents existing buckets from consuming one another unexpectedly.
+overlapping owners, duplicate canonical names, and cycles instead of selecting
+a winner, and a bucket that still owns children cannot be removed. Use
+`source="any"` only when a selector intentionally accepts both regular and
+bucket tools. The `source="tool"` default prevents existing buckets from
+consuming one another unexpectedly.
 
 Buckets trust captured tools by default. To restrict the handle access a bucket
 will accept, declare the optional `handle` policy inside `capture`:

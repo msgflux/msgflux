@@ -137,7 +137,8 @@ def test_agent_tool_can_start_empty_and_capture_agents_from_library():
     )
 
     assert schema_names == ["agent"]
-    assert "reviewer" not in library.library
+    assert "reviewer" in library.library
+    assert library.tool_configs["reviewer"]["exposed"] is False
     assert "reviewer: Use for code review." in library.library["agent"].usage_guidance
     assert "reviewer" in agent_schema["function"]["description"]
 
@@ -176,7 +177,10 @@ def test_nested_bucket_composes_agent_and_task_tools_with_late_updates():
         tools=[interpreter, task_tool, agent_tool, reviewer],
     )
 
-    assert set(library.library) == {"python_interpreter", "task_message"}
+    assert set(library.get_tool_names()) == {"python_interpreter", "task_message"}
+    assert {"agent", "task_tool", "reviewer"}.issubset(library.library)
+    assert library.tool_configs["agent"]["exposed"] is False
+    assert library.tool_configs["task_tool"]["exposed"] is False
     assert set(interpreter.tools) == {"agent", "task_tool"}
     assert "reviewer" in interpreter.tools["agent"].impl.tools
     assert "reviewer" in interpreter.tools["agent"].description
@@ -207,8 +211,157 @@ def test_nested_bucket_composes_agent_and_task_tools_with_late_updates():
         tools=[inner_first, outer_late],
     )
 
-    assert list(reversed_library.library) == ["python_interpreter"]
+    assert set(reversed_library.library) == {
+        "agent",
+        "architect",
+        "python_interpreter",
+    }
+    assert reversed_library.get_tool_names() == ["python_interpreter"]
     assert "architect" in outer_late.tools["agent"].description
+
+
+@pytest.mark.asyncio
+async def test_nested_bucket_executes_transitive_agent_through_scoped_proxy():
+    class PythonInterpreterTool(ToolBucket):
+        name = "python_interpreter"
+        capture = {"source": "bucket", "name": "agent"}
+        description = "Execute a captured tool."
+        annotations = {
+            "target": str,
+            "message": str,
+            "tools": mf.Hidden,
+            "return": str,
+        }
+
+        def __call__(self, target: str, message: str, tools: mf.Hidden) -> str:
+            return tools(target, message=message)
+
+        async def acall(
+            self,
+            target: str,
+            message: str,
+            tools: mf.Hidden,
+        ) -> str:
+            return await tools.acall(target, message=message)
+
+    reviewer = Agent(name="reviewer", model=_mock_model("sync", "async"))
+
+    def unrelated() -> str:
+        """Return an unrelated value."""
+        return "outside"
+
+    library = ToolLibrary(
+        name="lib",
+        tools=[PythonInterpreterTool(), AgentTool(), reviewer, unrelated],
+    )
+
+    sync_result = library.execute(
+        "python_interpreter",
+        {"target": "reviewer", "message": "Review"},
+    )
+    async_result = await library.aexecute(
+        "python_interpreter",
+        {"target": "reviewer", "message": "Review again"},
+    )
+
+    assert sync_result == "sync"
+    assert async_result == "async"
+    with pytest.raises(ValueError, match="outside bucket `python_interpreter`"):
+        library.execute(
+            "python_interpreter",
+            {"target": "unrelated", "message": "No"},
+        )
+
+
+def test_nested_bucket_runs_and_resumes_background_agent_tool():
+    class PythonInterpreterTool(ToolBucket):
+        """Execute the captured agent bucket."""
+
+        name = "python_interpreter"
+        capture = {
+            "source": "bucket",
+            "name": ["agent", "task_tool"],
+        }
+        annotations = {
+            "name": str,
+            "message": str,
+            "background": bool,
+            "tools": mf.Hidden,
+            "return": str,
+        }
+
+        def __call__(
+            self,
+            name: str,
+            message: str,
+            background: bool,
+            tools: mf.Hidden,
+        ) -> str:
+            return tools(
+                "agent",
+                name=name,
+                message=message,
+                run_in_background=background,
+            )
+
+    store = InMemoryCheckpointStore()
+    reviewer = Agent(name="reviewer", model=_mock_model("first", "second"))
+    agent_tool = mf.tool_config(allow_background=True)(AgentTool([reviewer]))
+    library = ToolLibrary(
+        name="lib",
+        tools=[PythonInterpreterTool(), TaskTool(), agent_tool],
+    )
+
+    with execution_context(checkpoint_store=store):
+        dispatch = library.execute(
+            "python_interpreter",
+            {
+                "name": "reviewer",
+                "message": "First",
+                "background": True,
+            },
+        )
+        task_id = _extract_task_id(dispatch)
+        assert library.execute(
+            "task_wait", {"task_id": task_id, "timeout": 1.0}
+        ) == "first"
+        assert library.execute(
+            "task_message", {"task_id": task_id, "message": "Second"}
+        ) == "status=resumed"
+        assert library.execute(
+            "task_wait", {"task_id": task_id, "timeout": 1.0}
+        ) == "second"
+
+
+def test_removing_nested_background_bucket_reconciles_task_tools():
+    class RuntimeTool(ToolBucket):
+        """Capture runtime bucket tools."""
+
+        name = "runtime"
+        capture = {"source": "bucket", "name": ["agent", "task_tool"]}
+
+        def __call__(self) -> str:
+            return "runtime"
+
+    agent_tool = mf.tool_config(allow_background=True)(AgentTool())
+    runtime = RuntimeTool()
+    library = ToolLibrary(
+        name="lib",
+        tools=[runtime, TaskTool(), agent_tool],
+    )
+
+    assert set(runtime.tools["task_tool"].impl.tools) >= {
+        "task_status",
+        "task_wait",
+        "task_activity",
+    }
+    assert "task_message" in library.library
+
+    library.remove("agent")
+
+    assert set(runtime.tools) == {"task_tool"}
+    assert runtime.tools["task_tool"].impl.tools == {}
+    assert "task_message" not in library.library
 
 
 def test_agent_tool_rejects_background_agent_on_initialization():
@@ -238,7 +391,8 @@ def test_agent_tool_captures_registered_agents_when_added_later():
     response = library([("call_1", "agent", {"name": "reviewer", "message": "Go"})])
 
     assert schema_names == ["agent"]
-    assert "reviewer" not in library.library
+    assert "reviewer" in library.library
+    assert library.tool_configs["reviewer"]["exposed"] is False
     assert response.tool_calls[0].result == "reviewed"
 
 

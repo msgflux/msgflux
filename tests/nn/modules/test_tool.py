@@ -1,9 +1,11 @@
 """Tests for msgflux.nn.modules.tool module."""
 
+from copy import deepcopy
+from typing import Optional
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import msgflux as mf
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from typing import Optional
 
 from msgflux.core.dotdict import dotdict
 from msgflux.nn.modules.agent import Agent
@@ -19,6 +21,7 @@ from msgflux.nn.modules.tool import (
 from msgflux.runtime.context import execution_context
 from msgflux.tasks import InMemoryTaskStore, TaskActivityRecorder
 from msgflux.tools import ToolBackground, ToolBucket, ToolLibraryOperator, ToolMetadata
+from msgflux.tools.builtin.task_tool import TaskActivityTool, TaskMessageTool
 from msgflux.tools.helpers import (
     build_call_parameters_for_response,
     should_copy_injected_messages,
@@ -732,6 +735,53 @@ class TestToolLibrary:
         assert "tool1" in names
         assert "tool2" in names
 
+    def test_exposed_false_hides_schema_without_unregistering_tool(self):
+        def internal_lookup(query: str) -> str:
+            """Run an internal lookup."""
+            return f"internal:{query}"
+
+        metadata = ToolMetadata(
+            name="internal_lookup",
+            description="Run an internal lookup.",
+            annotations={"query": str, "return": str},
+            tool_config={"exposed": False},
+            impl=internal_lookup,
+        )
+        library = ToolLibrary(name="lib", tools=[metadata])
+
+        assert "internal_lookup" in library.library
+        assert library.get_tool_names() == []
+        assert library.get_tool_json_schemas() == []
+        assert library.get_tool_annotations() == {}
+        assert library.get_tool_display_names() == {}
+        assert library.execute("internal_lookup", {"query": "cache"}) == (
+            "internal:cache"
+        )
+
+    def test_tools_default_to_exposed_when_configuration_omits_it(self):
+        def lookup(query: str) -> str:
+            """Run a lookup."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[lookup])
+
+        assert library.tool_configs["lookup"]["exposed"] is True
+        assert library.get_tool_names() == ["lookup"]
+
+    def test_exposed_must_be_boolean(self):
+        def invalid() -> None:
+            """Declare invalid exposure."""
+
+        metadata = ToolMetadata(
+            name="invalid",
+            description="Declare invalid exposure.",
+            annotations={"return": None},
+            tool_config={"exposed": "no"},
+            impl=invalid,
+        )
+        with pytest.raises(TypeError, match="`exposed` must be a bool"):
+            ToolLibrary(name="lib", tools=[metadata])
+
     def test_tool_library_get_tool_display_names(self):
         """Test getting human-readable tool display names."""
 
@@ -841,7 +891,7 @@ class TestToolLibrary:
         assert isinstance(library.library["search_tools"].impl, ToolLibraryOperator)
         assert isinstance(library.library["search_tools"].impl, ToolBucket)
         assert library.library["search_tools"].tool_config["handle"] == {
-            "tools": ["register", "remove"]
+            "tools": ["activate"]
         }
         assert library.library["search_tools"].tool_config["tool_kind"] == "bucket"
 
@@ -900,7 +950,14 @@ class TestToolLibrary:
             tools=[find_product, list_products, get_order, bucket],
         )
 
-        assert list(library.library) == ["commerce"]
+        assert set(library.library) == {
+            "find_product",
+            "list_products",
+            "get_order",
+            "commerce",
+        }
+        assert library.get_tool_names() == ["commerce"]
+        assert library.tool_configs["find_product"]["exposed"] is False
         assert set(bucket.tools) == {"find_product", "list_products", "get_order"}
         assert library.tool_configs["commerce"]["tool_kind"] == "bucket"
         assert bucket.tools["find_product"].tool_config["tool_kind"] == "catalog"
@@ -938,7 +995,12 @@ class TestToolLibrary:
             tools=[background_job, optional_background_job, bucket],
         )
 
-        assert list(library.library) == ["background_jobs"]
+        assert set(library.library) == {
+            "background_job",
+            "optional_background_job",
+            "background_jobs",
+        }
+        assert library.get_tool_names() == ["background_jobs"]
         assert set(bucket.tools) == {"background_job", "optional_background_job"}
 
     def test_tool_bucket_rejects_overlapping_capture_rules(self):
@@ -1070,7 +1132,8 @@ class TestToolLibrary:
         bucket = PreviewBucket()
         library = ToolLibrary(name="lib", tools=[metadata, bucket])
 
-        assert list(library.library) == ["preview"]
+        assert set(library.library) == {"render_preview", "preview"}
+        assert library.get_tool_names() == ["preview"]
         assert set(bucket.tools) == {"render_preview"}
 
     def test_tool_bucket_captures_by_name_and_capabilities(self):
@@ -1113,7 +1176,8 @@ class TestToolLibrary:
             "python_callable",
             "filesystem_read",
         )
-        assert list(library.library) == ["interpreter"]
+        assert set(library.library) == {"interpreter", "inspect_file", "read_file"}
+        assert library.get_tool_names() == ["interpreter"]
 
     def test_tool_bucket_rejects_capture_cycle(self):
         class FirstBucket(ToolBucket):
@@ -1216,9 +1280,178 @@ class TestToolLibrary:
             library.add(late_leaf)
 
         assert inner.tools == {}
-        assert list(library.library) == ["outer"]
+        assert set(library.library) == {"outer", "inner"}
+        assert library.tool_configs["inner"]["exposed"] is False
+        assert library.get_tool_names() == ["outer"]
         inner_description = library.library["outer"].impl.tools["inner"].description
         assert "late_leaf" not in inner_description
+
+    def test_background_reconciliation_restores_removed_captured_task_tools(self):
+        class OptionalControls(ToolBucket):
+            """Capture optional background controls."""
+
+            name = "optional_controls"
+            capture = {
+                "tool_kind": "background_activity|background_message",
+            }
+
+            def refresh(self):
+                if not self.tools:
+                    raise ValueError("optional controls cannot become empty")
+
+            def __call__(self) -> str:
+                return "controls"
+
+        @mf.tool_config(background=True)
+        def background_job() -> str:
+            """Run a background job."""
+            return "done"
+
+        bucket = OptionalControls()
+        library = ToolLibrary(
+            name="lib",
+            tools=[TaskActivityTool(), TaskMessageTool(), bucket],
+        )
+        activity_wrapper = library.library["task_activity"]
+        message_wrapper = library.library["task_message"]
+
+        with pytest.raises(ValueError, match="cannot become empty"):
+            library.add(background_job)
+
+        assert list(library.library) == [
+            "task_activity",
+            "task_message",
+            "optional_controls",
+        ]
+        assert library.tool_owners == {
+            "task_activity": "optional_controls",
+            "task_message": "optional_controls",
+        }
+        assert library.library["task_activity"] is activity_wrapper
+        assert library.library["task_message"] is message_wrapper
+        assert library.tool_configs["task_activity"]["exposed"] is False
+        assert library.tool_configs["task_message"]["exposed"] is False
+        assert library.get_tool_names() == ["optional_controls"]
+        assert set(bucket.tools) == {"task_activity", "task_message"}
+
+    def test_bucket_metadata_items_load_one_snapshot(self):
+        def leaf() -> str:
+            """Return a leaf."""
+            return "leaf"
+
+        class Bucket(ToolBucket):
+            """Capture the leaf."""
+
+            name = "bucket"
+            capture = {"name": "leaf"}
+
+            def __call__(self) -> str:
+                return "bucket"
+
+        bucket = Bucket()
+        library = ToolLibrary(name="lib", tools=[bucket, leaf])
+        loader = Mock(wraps=bucket._tools_view._loader)
+        bucket._tools_view._loader = loader
+
+        assert [name for name, _ in bucket.tools.items()] == ["leaf"]
+        loader.assert_called_once_with()
+
+    def test_deepcopied_bucket_uses_copied_registry_view(self):
+        @mf.tool_config(tool_kind="leaf")
+        def first() -> str:
+            """Return the first leaf."""
+            return "first"
+
+        @mf.tool_config(tool_kind="leaf")
+        def second() -> str:
+            """Return the second leaf."""
+            return "second"
+
+        class Bucket(ToolBucket):
+            """Capture leaf tools."""
+
+            name = "bucket"
+            capture = {"tool_kind": "leaf"}
+
+            def __call__(self) -> str:
+                return "bucket"
+
+        original = ToolLibrary(name="original", tools=[Bucket(), first])
+        copied = deepcopy(original)
+
+        copied.add(second)
+
+        assert set(original.library["bucket"].impl.tools) == {"first"}
+        assert set(copied.library["bucket"].impl.tools) == {"first", "second"}
+
+    def test_nested_staged_bucket_rollback_restores_complete_subtree(self):
+        def leaf() -> str:
+            """Return a staged leaf."""
+            return "leaf"
+
+        class InnerBucket(ToolBucket):
+            """Capture the staged leaf."""
+
+            name = "inner"
+            capture = {"name": "leaf"}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "inner"
+
+        class MiddleBucket(ToolBucket):
+            """Capture the staged inner bucket."""
+
+            name = "middle"
+            capture = {"source": "bucket", "name": "inner"}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "middle"
+
+        class RejectingParent(ToolBucket):
+            """Reject the populated middle bucket."""
+
+            name = "parent"
+            capture = {"source": "bucket", "name": "middle"}
+            annotations = {"return": str}
+
+            def refresh(self):
+                if self.tools:
+                    raise ValueError("parent rejected middle")
+
+            def __call__(self) -> str:
+                return "parent"
+
+        inner = InnerBucket()
+        inner.add(
+            ToolMetadata(
+                name="leaf",
+                description="Return a staged leaf.",
+                annotations={"return": str},
+                tool_config={},
+                impl=leaf,
+            )
+        )
+        middle = MiddleBucket()
+        middle.add(
+            ToolMetadata(
+                name="inner",
+                description="Capture the staged leaf.",
+                annotations={"return": str},
+                tool_config={"tool_kind": "bucket"},
+                impl=inner,
+            )
+        )
+        library = ToolLibrary(name="lib", tools=[RejectingParent()])
+
+        with pytest.raises(ValueError, match="parent rejected middle"):
+            library.add(middle)
+
+        assert list(library.library) == ["parent"]
+        assert library.tool_owners == {}
+        assert list(middle.tools) == ["inner"]
+        assert list(inner.tools) == ["leaf"]
 
     def test_tool_library_operator_injects_handle_by_default(self):
         """Test operator tools inherit handle injection."""
@@ -1246,6 +1479,18 @@ class TestToolLibrary:
             "tools": ["list"]
         }
         assert library.library["runtime_echo"].tool_config["tool_kind"] == "diagnostic"
+
+    def test_public_tools_parameter_is_preserved_in_response(self):
+        def echo_tools(tools: str) -> str:
+            """Echo a public tools value."""
+            return tools
+
+        library = ToolLibrary(name="lib", tools=[echo_tools])
+
+        result = library([("call_1", "echo_tools", {"tools": "public"})])
+
+        assert result.tool_calls[0].parameters == {"tools": "public"}
+        assert result.tool_calls[0].result == "public"
 
     def test_search_tools_captures_on_demand_operator_tools(self):
         """Test on-demand operators use the same ToolSearch bucket."""
@@ -1349,6 +1594,54 @@ class TestToolLibrary:
         assert regex_result == "read_cloud_file: Read a cloud file."
         assert loaded_result == "loaded=read_cloud_file"
 
+    @pytest.mark.asyncio
+    async def test_search_tools_loads_two_tools_in_one_turn(self):
+        def echo(value: str) -> str:
+            """Echo a value."""
+            return value
+
+        @mf.tool_config(on_demand=True)
+        def first_lookup(query: str) -> str:
+            """Run the first lookup."""
+            return query
+
+        @mf.tool_config(on_demand=True)
+        def second_lookup(query: str) -> str:
+            """Run the second lookup."""
+            return query
+
+        calls = [
+            ("call_0", "echo", {"value": "ready"}),
+            ("call_1", "search_tools", {"query": "first_lookup"}),
+            ("call_2", "search_tools", {"query": "second_lookup"}),
+        ]
+
+        sync_library = ToolLibrary(
+            name="sync",
+            tools=[echo, first_lookup, second_lookup],
+        )
+        async_library = ToolLibrary(
+            name="async",
+            tools=[echo, first_lookup, second_lookup],
+        )
+
+        sync_response = sync_library(calls)
+        async_response = await async_library.acall(calls)
+
+        for library, response in (
+            (sync_library, sync_response),
+            (async_library, async_response),
+        ):
+            assert [call.result for call in response.tool_calls] == [
+                "ready",
+                "loaded=first_lookup",
+                "loaded=second_lookup",
+            ]
+            assert [
+                schema["function"]["name"]
+                for schema in library.get_tool_json_schemas()
+            ] == ["echo", "first_lookup", "second_lookup"]
+
     def test_search_tools_rejects_unsafe_regex_and_invalid_limit(self):
         @mf.tool_config(on_demand=True)
         def remote_lookup(query: str) -> str:
@@ -1367,8 +1660,8 @@ class TestToolLibrary:
         assert "quantified groups" in unsafe.error
         assert "between 1 and 20" in invalid_limit.error
 
-    def test_search_tools_restores_tool_when_activation_fails(self):
-        """Test failed promotion does not discard an on-demand tool."""
+    def test_search_tools_rejects_duplicate_canonical_name_before_activation(self):
+        """An on-demand tool cannot shadow a tool captured elsewhere."""
 
         class CatalogBucket(ToolBucket):
             name = "catalog"
@@ -1399,13 +1692,11 @@ class TestToolLibrary:
             """Look up a catalog item later."""
             return query
 
-        library = ToolLibrary(name="lib", tools=[bucket, delayed_lookup])
-        response = library([("call_1", "search_tools", {"query": "lookup"})])
+        with pytest.raises(ValueError, match="Duplicate tool name `lookup`"):
+            ToolLibrary(name="lib", tools=[bucket, delayed_lookup])
 
-        assert "Duplicate tool name `lookup` in bucket." in response.tool_calls[0].error
-        search = library.library["search_tools"].impl
-        assert "lookup" in search.tools
-        assert search.tools["lookup"].tool_config["on_demand"] is True
+        assert set(bucket.tools) == {"lookup"}
+        assert bucket.tools["lookup"].tool_config["on_demand"] is False
 
     def test_search_tools_is_removed_when_last_on_demand_tool_is_removed(self):
         """Test runtime tool cleanup when on-demand tools disappear."""
@@ -1422,6 +1713,130 @@ class TestToolLibrary:
         library.remove("remote_lookup")
 
         assert "search_tools" not in library.get_tool_names()
+
+    def test_search_tools_activates_populated_bucket_without_replacing_nodes(self):
+        def leaf() -> str:
+            """Return a deferred leaf."""
+            return "leaf"
+
+        class DeferredBucket(ToolBucket):
+            """Expose one deferred bucket."""
+
+            name = "deferred_bucket"
+            capture = {"name": "leaf", "on_demand": False}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "ready"
+
+        bucket = DeferredBucket()
+        bucket.add(
+            ToolMetadata(
+                name="leaf",
+                description="Return a deferred leaf.",
+                annotations={"return": str},
+                tool_config={"on_demand": False},
+                impl=leaf,
+            )
+        )
+        deferred = mf.tool_config(on_demand=True)(bucket)
+        library = ToolLibrary(name="lib", tools=[deferred])
+        bucket_wrapper = library.library["deferred_bucket"]
+        leaf_wrapper = library.library["leaf"]
+
+        assert library.tool_owners == {
+            "leaf": "deferred_bucket",
+            "deferred_bucket": "search_tools",
+        }
+        assert [
+            schema["function"]["name"]
+            for schema in library.get_tool_json_schemas()
+        ] == ["search_tools"]
+
+        response = library(
+            [("call_1", "search_tools", {"query": "deferred_bucket"})]
+        )
+
+        assert response.tool_calls[0].result == "loaded=deferred_bucket"
+        assert library.tool_owners == {"leaf": "deferred_bucket"}
+        assert library.library["deferred_bucket"] is bucket_wrapper
+        assert library.library["leaf"] is leaf_wrapper
+        assert [
+            schema["function"]["name"]
+            for schema in library.get_tool_json_schemas()
+        ] == ["deferred_bucket"]
+
+    def test_search_tools_activation_failure_restores_original_capture(self):
+        @mf.tool_config(
+            on_demand=True,
+            tool_kind="catalog",
+        )
+        def deferred_lookup(query: str) -> str:
+            """Run a deferred lookup."""
+            return query
+
+        class RejectingCatalog(ToolBucket):
+            """Reject promoted catalog tools."""
+
+            name = "catalog"
+            capture = {"tool_kind": "catalog", "on_demand": False}
+            annotations = {"return": str}
+
+            def refresh(self):
+                if self.tools:
+                    raise ValueError("catalog rejected promotion")
+
+            def __call__(self) -> str:
+                return "catalog"
+
+        library = ToolLibrary(
+            name="lib",
+            tools=[RejectingCatalog(), deferred_lookup],
+        )
+        wrapper = library.library["deferred_lookup"]
+
+        response = library(
+            [("call_1", "search_tools", {"query": "deferred_lookup"})]
+        )
+
+        assert "catalog rejected promotion" in response.tool_calls[0].error
+        assert library.library["deferred_lookup"] is wrapper
+        assert library.tool_owners["deferred_lookup"] == "search_tools"
+        assert library.tool_configs["deferred_lookup"]["on_demand"] is True
+        assert library.tool_configs["deferred_lookup"]["exposed"] is False
+        assert set(library.library["search_tools"].impl.tools) == {
+            "deferred_lookup"
+        }
+
+    @pytest.mark.asyncio
+    async def test_model_calls_to_captured_tools_return_not_found(self):
+        class Bucket(ToolBucket):
+            """Capture a hidden leaf."""
+
+            name = "bucket"
+            capture = {"name": "hidden_leaf"}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "bucket"
+
+        def hidden_leaf() -> str:
+            """Return a hidden value."""
+            return "hidden"
+
+        library = ToolLibrary(name="lib", tools=[Bucket(), hidden_leaf])
+
+        sync_response = library([("sync", "hidden_leaf", {})])
+        async_response = await library.aforward(
+            [("async", "hidden_leaf", {})]
+        )
+
+        assert sync_response.tool_calls[0].error == (
+            "Error: Tool `hidden_leaf` not found."
+        )
+        assert async_response.tool_calls[0].error == (
+            "Error: Tool `hidden_leaf` not found."
+        )
 
     def test_search_tools_cannot_be_removed_while_on_demand_tools_remain(self):
         """Test Tool Search retains its captured on-demand tools."""

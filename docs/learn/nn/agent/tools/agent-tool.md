@@ -49,10 +49,10 @@ coordinator = nn.Agent(
 )
 ```
 
-`AgentTool` also accepts runtime-injected `messages` and `vars`; those are
-provided by msgFlux and are not exposed as normal model parameters. Before
-dispatching, it only forwards those runtime values to the selected agent when
-that agent's own `tool_config` requests them.
+`AgentTool` delegates through the library's bucket-scoped execution proxy. The
+library carries the current `messages` and `vars` context into that nested call
+and injects them only when the selected agent's own `tool_config` requests
+them. These runtime values and the proxy are not exposed as model parameters.
 
 ## Tool Bucket Capture
 
@@ -81,6 +81,13 @@ library.add(Reviewer())
 print(library.get_tool_names())
 # ["agent"]
 ```
+
+The selected agent remains a registered node in the bucket graph but is absent
+from the model-facing schema. `AgentTool` calls it through the same
+`ToolLibrary.execute/aexecute` pipeline used by normal tool calls; it does not
+call the captured agent implementation directly. This preserves handle and
+message injection, retry, telemetry, execution scope, and background resume
+behavior.
 
 The bucket description is a compact list of the available agents. Explicit
 `usage_guidance` on individual agents is aggregated separately, so the model

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
 from typing import List
 
 from msgflux.tools.dataclasses import ToolMetadata
@@ -11,8 +10,9 @@ from msgflux.tools.types import Hidden, ToolBucket, ToolLibraryOperator
 class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     """Search and activate registered on-demand tools."""
 
+    _serial_execution = True
     name = "search_tools"
-    capture = {"on_demand": True}
+    capture = {"source": "any", "on_demand": True}
     expose_captured_names = True
     display_name = "Tool Search"
     description = (
@@ -20,7 +20,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
         "Append :K to limit matches."
     )
     usage_guidance = None
-    tool_config = {"handle": {"tools": ["register", "remove"]}}
+    tool_config = {"handle": {"tools": ["activate"]}}
     annotations = {
         "query": str,
         "handle": Hidden,
@@ -30,7 +30,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     def __call__(
         self,
         query: str,
-        handle,
+        handle: Hidden,
     ) -> str:
         expression, max_results, pattern = self._parse_query(query)
         exact = None if pattern is not None else self._exact_match(expression)
@@ -45,8 +45,6 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
             )
             result = self._format_matches(matches)
 
-        if not self.tools:
-            handle.tools.remove(self.name)
         return result
 
     def validate_capture(self, metadata: ToolMetadata) -> None:
@@ -120,16 +118,7 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
 
     def _activate(self, tool_names: List[str], handle) -> None:
         for tool_name in tool_names:
-            metadata = self.remove(tool_name)
-            promoted = replace(
-                metadata,
-                tool_config={**metadata.tool_config, "on_demand": False},
-            )
-            try:
-                handle.tools.register(promoted)
-            except Exception:
-                self.add(metadata)
-                raise
+            handle.tools.activate(tool_name)
 
     @staticmethod
     def _parse_query(query: str) -> tuple[str, int, re.Pattern[str] | None]:

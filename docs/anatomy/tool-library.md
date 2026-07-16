@@ -52,7 +52,9 @@ Those methods are used for different reasons.
 
 Once tool calls are produced, `ToolLibrary.forward(...)` or
 `ToolLibrary.aforward(...)` executes them and returns a `ToolResponses`
-container.
+container. Programmatic single-tool calls use `execute(...)` and
+`aexecute(...)`. All four entry points share the same preparation and execution
+pipeline.
 
 That runtime path applies tool configuration rules such as:
 
@@ -78,13 +80,22 @@ tool_callings
   -> resolve tool by name
   -> apply tool config
   -> prepare call params
-  -> execute tools with scatter_gather
+  -> execute prepared calls with scatter_gather
   -> collect ToolCall results
   -> return ToolResponses
 ```
 
 The async path mirrors the same structure through `aforward(...)` and
-`ascatter_gather(...)`.
+`ascatter_gather(...)`. `execute(...)` and `aexecute(...)` run one prepared call
+and return its result directly. They still apply transport restoration, hidden
+parameter removal, runtime injection, retry, telemetry, spawn, and background
+dispatch rules.
+
+The resolved state passed through this loop is represented by
+`PreparedToolExecution` in `msgflux.tools.dataclasses`. Model calls to schemas
+that are absent or currently hidden raise the internal `ToolNotAvailableError`
+from `msgflux.tools.exceptions`; the loop converts that condition into the
+normal `ToolCall.error` response.
 
 ## Local And Remote Tools
 
@@ -118,8 +129,7 @@ The contract is intentionally small:
 - if at least one on-demand tool exists, `ToolLibrary` registers `search_tools`
 - `search_tools` can search both local and MCP-backed on-demand tools
 - text and `/regex/` queries return compact matching tool summaries
-- an exact-name query promotes that tool by calling `ToolLibrary.add(...)`
-  again without the `on_demand` flag
+- an exact-name query promotes the existing wrapper in place
 
 This is useful when a session can register a large number of tools but should
 keep the active tool context small.
@@ -130,9 +140,9 @@ tool with `tools.register` access can add a new on-demand tool at runtime, and
 
 `search_tools` is both a builtin operator and a `ToolBucket` with
 `capture={"on_demand": True}`. It owns the searchable metadata and promotes a
-selected tool through `ToolLibrary.add(...)` with `on_demand=False`. The library
-only performs normal registration and bucket routing; search behavior remains in
-the builtin tool.
+selected tool through its scoped handle. `ToolBucketManager` changes the
+ownership edge and exposure flags without unregistering the wrapper. Search
+behavior remains in the builtin tool.
 
 Background task control tools follow the same pattern through `ToolBackground`.
 The `task_status`, `task_wait`, `task_output`, `task_interrupt`,
@@ -219,10 +229,11 @@ base bucket rejects captured tools that configure `background` or
 `allow_background`; configure those flags on the bucket itself instead. A
 bucket candidate may retain those flags when another bucket composes it.
 
-`ToolLibrary` routes matching tools to `ToolBucket.add(...)`. The base method
-keeps metadata in `bucket.tools`, rejects duplicate names, and calls
-`bucket.refresh()`. The base refresh hook does nothing; a subclass can rebuild
-derived presentation data such as its description and usage guidance.
+Before registration, `ToolBucket.add(...)` can stage constructor-provided
+tools. Once the bucket belongs to a library, `bucket.tools` becomes a read-only,
+live metadata view derived from the library. The base refresh hook does nothing;
+a subclass can rebuild presentation data such as its description and usage
+guidance from that view.
 
 The registration rule is:
 
@@ -234,33 +245,80 @@ registered. Therefore, the order of `tools` in `ToolLibrary(...)` does not
 change capture behavior.
 
 Late bucket registration is transactional from the library's perspective. The
-library first adds every matching tool to the bucket while retaining their
-direct registrations. If any candidate is rejected, it removes the candidates
-already added to the bucket and unregisters the new bucket. Only after every
-capture succeeds does it remove the original direct registrations. A duplicate
-derived mode or another bucket-specific validation error therefore leaves the
-previous library surface intact.
+library registers the bucket once, assigns matching candidates to it, and sets
+their `exposed` configuration to `False`. If any candidate is rejected, it
+removes the ownership edges, restores the previous exposure values, and
+unregisters the new bucket. A duplicate derived mode or another bucket-specific
+validation error therefore leaves the previous library surface intact.
 
-After each successful add or removal, `ToolLibrary` synchronizes the wrapping
-tool's description, public annotations, and usage guidance from the bucket.
-This lets a bucket keep a fixed public schema or intentionally derive one from
-its contents without replacing the wrapping `Tool` instance.
+One undo journal spans the complete recursive registration. Registering a
+staged bucket, its staged child bucket, and that child's tools is one
+transaction rather than several nested commits. Rollback runs the recorded
+ownership and registration operations in reverse order, restoring staged
+metadata at every level and preventing descendants from retaining missing
+owners.
+
+After each successful capture or release, `ToolBucketManager` synchronizes the
+wrapping tool's description, public annotations, and usage guidance from the
+bucket. This lets a bucket keep a fixed public schema or intentionally derive
+one from its contents without replacing the wrapping `Tool` instance.
 
 ### Nested Ownership
 
-Bucket composition is represented as an exclusive ownership tree. Top-level
-nodes live in `ToolLibrary.library` and become model-facing schemas. Captured
-nodes remain in `ToolBucket.tools` as `ToolMetadata`. When a captured node is a
-bucket, its metadata retains the wrapping `Tool` in `source_tool`; the wrapper
-and its execution configuration are not reconstructed.
+Bucket composition is represented as an exclusive ownership tree over one flat
+registry. Every executable wrapper, including captured tools and nested
+buckets, lives exactly once in `ToolLibrary.library`. `tool_owners[child] =
+bucket` stores the structural edge; there is no second captured-tool registry
+and no redundant `captured` flag.
 
-`ToolBucketGraph` is the read-only structural view over those mutable mappings.
-It owns traversal, node and owner lookup, nested-first matching, capture
-candidates, overlap validation, and cycle detection. `ToolBucket` remains
-responsible for evaluating one selector and enforcing its capture policy.
-`ToolLibrary` owns mutations, presentation synchronization, background
-reconciliation, and transactional rollback. Keeping the graph read-only avoids
-two components independently changing ownership.
+`tool_configs[name]["exposed"]` controls the model-facing projection and
+defaults to `True` when omitted. Capture changes it to `False`, so schema,
+annotation, display-name, and usage-guidance builders skip that node without
+removing its executable wrapper. `ToolBucket.tools` is a non-owning view that
+materializes fresh `ToolMetadata` for the bucket's direct children.
+
+On-demand activation changes this internal projection and its ownership edge
+in place. It does not unregister or reconstruct the wrapper. This is required
+for deferred buckets because their captured descendants must remain attached
+while the bucket moves from `search_tools` to the public projection or another
+matching bucket.
+
+Canonical names are unique across the complete tree, not only among public
+roots. This lets execution and removal resolve one node without relying on an
+ambiguous path.
+
+Buckets do not execute `ToolMetadata.impl` directly. A bucket that declares a
+hidden `tools` parameter receives a `ToolBucketHandle`. That handle is an
+execution facade over `ToolLibrary`: `tools(...)` and `tools.acall(...)` enter
+the same pipeline as normal calls, while `tools.list()` returns captured
+descendants. The handle is bound to the current bucket, so a call is rejected
+when its target is not a direct or transitive descendant.
+
+This creates two distinct projections of the same ownership graph:
+
+- the model schema projection contains only public roots
+- the bucket execution projection contains only that bucket's descendants
+
+Nested buckets can therefore reuse agents, task controls, and future
+interpreter capabilities without moving implementations between objects or
+bypassing runtime injection.
+
+`ToolBucketGraph` is the read-only structural view over the flat registry,
+configuration map, and ownership edges. It owns traversal, node and owner
+lookup, nested-first matching, capture candidates, global-name validation,
+descendant authorization, overlap validation, and cycle detection.
+
+`ToolBucketManager` receives references to those same canonical maps. It owns
+capture, release, on-demand promotion, live child metadata, bucket binding, and
+presentation propagation. It does not store a second collection of tools.
+`ToolBucket` remains responsible for evaluating one selector and enforcing its
+capture policy.
+
+`ToolLibrary` owns canonical wrapper registration, background reconciliation,
+the transaction boundary, and execution. `ToolRegistrationTransaction` holds
+the undo journal used by recursive registration. Keeping graph queries and
+bucket mutations in separate focused objects prevents ownership logic from
+spreading through the execution loop.
 
 The library traverses this tree for four operations:
 
@@ -279,10 +337,10 @@ composition bucket capture it. The parent therefore receives a fully assembled
 child, regardless of constructor order.
 
 Presentation updates move upward. When an inner bucket captures or releases a
-child, the library synchronizes its wrapper, replaces the metadata snapshot in
-its parent, calls the parent's `refresh()`, and repeats to the public root. An
-outer interpreter catalog can therefore reflect a late-added Reviewer through
-its nested `AgentTool` without exposing Reviewer directly.
+child, the manager synchronizes its wrapper, calls the parent's `refresh()` over
+its live metadata view, and repeats to the public root. An outer interpreter
+catalog can therefore reflect a late-added Reviewer through its nested
+`AgentTool` without exposing Reviewer directly.
 
 Cycles are rejected before ownership changes. If bucket `a` selects bucket `b`
 by name and `b` selects `a`, registration of the second edge fails and the
@@ -310,11 +368,11 @@ The model only sees `agent(...)`. The bucket description and usage guidance are
 refreshed on the wrapping `LocalTool`, so provider schemas and prompt guidance
 reflect the captured agents.
 
-`AgentTool` still receives runtime context as explicitly injected kwargs. The
-public agent parameters stay as `agent(name, message)`, while `ToolLibrary`
-passes the current `messages`, `vars`, and execution `scope` into the bucket.
-The bucket then forwards those runtime values only when the selected subagent's
-own `tool_config` requests them.
+The public agent parameters stay as `agent(name, message)`. `AgentTool` receives
+a hidden bucket proxy, and that proxy carries the current runtime context into
+the selected agent's normal library execution path. Values such as `messages`
+and `vars` are injected only when the selected subagent's own `tool_config`
+requests them.
 
 On-demand tools use the same path. An on-demand agent is first captured by
 `search_tools`; when it receives an exact-name query, `ToolLibrary.add(...)` runs

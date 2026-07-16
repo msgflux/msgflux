@@ -29,9 +29,8 @@ When at least one on-demand tool exists, msgFlux exposes a runtime tool named
 normal callable tool schemas until selected.
 
 Internally, `search_tools` is a `ToolBucket` with
-`capture={"on_demand": True}`. This keeps the search index and the deferred
-tool metadata together; selecting a tool promotes it back through normal
-library registration.
+`capture={"source": "any", "on_demand": True}`. This keeps the search index
+and deferred metadata together for both regular tools and bucket tools.
 
 ```python
 schema_names = [
@@ -95,7 +94,7 @@ print(result)
 # loaded=query_finance_report
 ```
 
-After selection, the tool is promoted into the normal library:
+After selection, the tool is promoted into the model-facing schemas:
 
 ```python
 schema_names = [
@@ -109,8 +108,32 @@ print(schema_names)
 If other on-demand tools remain, `search_tools` stays available. If no on-demand
 tools remain, msgFlux removes `search_tools` from the exposed runtime tools.
 
+Promotion does not remove or register the tool again. The library atomically
+releases the ownership edge from `search_tools`, changes its internal loading
+state, and routes it to another matching bucket when applicable. The executable
+wrapper and any descendants keep their identity throughout activation.
+
+Bucket tools can also be loaded on demand. Their child capture should explicitly
+select `on_demand=False`, keeping the bucket's children disjoint from the Tool
+Search capture:
+
+```python
+from msgflux.tools import ToolBucket
+
+@mf.tool_config(on_demand=True)
+class DeferredWorkspace(ToolBucket):
+    """Expose workspace operations only after loading."""
+
+    name = "workspace"
+    capture = {"tool_kind": "workspace", "on_demand": False}
+    annotations = {"return": str}
+
+    def __call__(self) -> str:
+        return "ready"
+```
+
 ## Buckets And AgentTool
 
 On-demand agents work with [Agent Tool](agent-tool.md) as well. When an
-on-demand agent is loaded by exact name, `ToolLibrary.add(...)` promotes it and the existing
-`AgentTool` bucket captures it as an available `agent(name, message)` target.
+on-demand agent is loaded by exact name, the existing `AgentTool` bucket
+captures it as an available `agent(name, message)` target.

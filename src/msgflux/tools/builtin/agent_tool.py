@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Sequence
+from typing import TYPE_CHECKING, List, Sequence
 
 from msgflux.runtime.context import (
     ExecutionScope,
@@ -9,7 +8,7 @@ from msgflux.runtime.context import (
     new_thread_id,
 )
 from msgflux.tools.dataclasses import ToolMetadata
-from msgflux.tools.types import ToolBucket
+from msgflux.tools.types import Hidden, ToolBucket
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.agent import Agent
@@ -23,12 +22,9 @@ class AgentTool(ToolBucket):
     task_checkpoint_namespace_param = "name"
     name = "agent"
     display_name = "Agent"
-    tool_config = {
-        "inject_messages": True,
-        "inject_vars": True,
-    }
+    tool_config = {}
     description = "Delegate a message to an available agent. Available agents:"
-    annotations = {"name": str, "message": str, "return": str}
+    annotations = {"name": str, "message": str, "tools": Hidden, "return": str}
 
     def __init__(self, agents: Sequence[Agent] = ()):
         self._base_description = type(self).description
@@ -61,20 +57,14 @@ class AgentTool(ToolBucket):
         name: str,
         message: str,
         *,
-        messages: Sequence[Mapping[str, Any]] | None = None,
-        vars: Mapping[str, Any] | None = None,  # noqa: A002
         scope: ExecutionScope | None = None,
+        tools: Hidden = None,
     ) -> str:
         selected = self.resolve_agent(name)
-        return selected(
-            message,
-            **self._build_agent_kwargs(
-                name,
-                selected,
-                messages=messages,
-                runtime_vars=vars,
-                scope=scope,
-            ),
+        return tools(
+            name,
+            message=message,
+            scope=scope or self._build_scope(selected),
         )
 
     async def acall(
@@ -82,20 +72,14 @@ class AgentTool(ToolBucket):
         name: str,
         message: str,
         *,
-        messages: Sequence[Mapping[str, Any]] | None = None,
-        vars: Mapping[str, Any] | None = None,  # noqa: A002
         scope: ExecutionScope | None = None,
+        tools: Hidden = None,
     ) -> str:
         selected = self.resolve_agent(name)
-        return await selected.acall(
-            message,
-            **self._build_agent_kwargs(
-                name,
-                selected,
-                messages=messages,
-                runtime_vars=vars,
-                scope=scope,
-            ),
+        return await tools.acall(
+            name,
+            message=message,
+            scope=scope or self._build_scope(selected),
         )
 
     def resolve_agent(self, name: str) -> Agent:
@@ -104,38 +88,6 @@ class AgentTool(ToolBucket):
             return metadata.impl
         available = ", ".join(sorted(self.tools))
         raise ValueError(f"Agent `{name}` not found. Available agents: {available}.")
-
-    def _build_agent_kwargs(
-        self,
-        agent_name: str,
-        agent: Agent,
-        *,
-        messages: Sequence[Mapping[str, Any]] | None,
-        runtime_vars: Mapping[str, Any] | None,
-        scope: ExecutionScope | None,
-    ) -> Dict[str, Any]:
-        metadata = self.tools.get(agent_name)
-        config = metadata.tool_config if metadata is not None else {}
-        kwargs: Dict[str, Any] = {"scope": scope or self._build_scope(agent)}
-
-        if config.get("inject_messages", False):
-            kwargs["messages"] = deepcopy(messages) if messages is not None else None
-
-        inject_vars = config.get("inject_vars", False)
-        if inject_vars is True:
-            kwargs["vars"] = runtime_vars or {}
-        elif isinstance(inject_vars, list) and inject_vars:
-            available_vars = runtime_vars or {}
-            missing = [key for key in inject_vars if key not in available_vars]
-            if missing:
-                missing_names = ", ".join(f"`{key}`" for key in missing)
-                raise ValueError(
-                    f"The agent `{agent_name}` requires the injected parameter "
-                    f"{missing_names}, but it was not found."
-                )
-            kwargs["vars"] = {key: available_vars[key] for key in inject_vars}
-
-        return kwargs
 
     def _build_scope(self, agent: Agent) -> ExecutionScope:
         context = get_execution_context()

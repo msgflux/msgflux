@@ -156,23 +156,12 @@ class TaskTool(ToolBucket):
     _base_description = "Inspect or control background work by mode."
     description = _base_description
     usage_guidance = None
-    tool_config = {
-        "handle": {
-            "tasks": [
-                "read",
-                "list",
-                "output",
-                "wait",
-                "interrupt",
-                "activity",
-            ],
-        }
-    }
+    tool_config = {}
     annotations = {
         "mode": str,
         "task_id": Optional[str],
         "timeout": Optional[float],
-        "handle": Hidden,
+        "tools": Hidden,
         "return": Any,
     }
 
@@ -199,7 +188,7 @@ class TaskTool(ToolBucket):
         mode: str,
         task_id: str | None = None,
         timeout: float | None = None,
-        handle: Hidden = None,
+        tools: Hidden = None,
     ) -> Any:
         metadata = self._resolve_mode(mode)
         accepted = set(metadata.annotations) - {"return"}
@@ -228,15 +217,7 @@ class TaskTool(ToolBucket):
             for name in accepted
             if supplied.get(name) is not None
         }
-        access = metadata.tool_config.get("handle")
-        if access is not None:
-            from msgflux.tools.handles import ToolHandle
-
-            params["handle"] = ToolHandle(
-                handle.tasks._handle.for_tool(tool_name=metadata.name),
-                access,
-            )
-        return metadata.impl(**params)
+        return tools(metadata.name, **params)
 
     def _resolve_mode(self, mode: str):
         if not isinstance(mode, str) or not mode.strip():

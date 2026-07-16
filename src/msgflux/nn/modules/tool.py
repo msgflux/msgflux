@@ -1,6 +1,5 @@
 import asyncio
 import inspect
-from contextlib import suppress
 from copy import deepcopy
 from functools import partial
 from typing import (
@@ -45,8 +44,14 @@ from msgflux.tools.builtin.task_tool import (
 )
 from msgflux.tools.builtin.tool_search import ToolSearchTool
 from msgflux.tools.bucket_graph import ToolBucketGraph
-from msgflux.tools.dataclasses import ToolMetadata
-from msgflux.tools.handles import ToolLibraryHandle, normalize_handle_access
+from msgflux.tools.bucket_manager import ToolBucketManager
+from msgflux.tools.dataclasses import PreparedToolExecution, ToolMetadata
+from msgflux.tools.exceptions import ToolNotAvailableError
+from msgflux.tools.handles import (
+    ToolBucketHandle,
+    ToolLibraryHandle,
+    normalize_handle_access,
+)
 from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM,
     build_call_parameters_for_response,
@@ -59,12 +64,13 @@ from msgflux.tools.helpers import (
     should_dispatch_background,
 )
 from msgflux.tools.responses import ToolCall, ToolResponses
+from msgflux.tools.registration import ToolRegistrationTransaction
 from msgflux.tools.types import (
     ToolBackground,
     ToolBucket,
     ToolLibraryOperator,
     is_hidden_annotation,
-    unwrap_hidden_annotation,
+    split_hidden_annotations,
 )
 from msgflux.utils.chat import generate_tool_json_schema
 from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
@@ -277,6 +283,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
     """Extract normalized metadata from a callable tool."""
     tool_config = dotdict(deepcopy(getattr(impl, "tool_config", dotdict())))
     tool_config.setdefault("on_demand", False)
+    tool_config.setdefault("exposed", True)
 
     name_overridden = tool_config.pop("name_overridden", None)
     configured_display_name = tool_config.get("display_name")
@@ -398,7 +405,7 @@ def _inspect_tool_metadata(impl: Callable) -> ToolMetadata:  # noqa: C901
             declared_capabilities
         )
 
-    annotations, hidden_params = _split_hidden_annotations(annotations)
+    annotations, hidden_params = split_hidden_annotations(annotations)
     if hidden_params:
         tool_config["_hidden_params"] = hidden_params
     if tool_config.get("handle") is not None:
@@ -474,22 +481,6 @@ def _resolve_tool_annotations(
     return resolved
 
 
-def _split_hidden_annotations(
-    annotations: Mapping[str, Any],
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    public_annotations: Dict[str, Any] = {}
-    hidden_params: Dict[str, Any] = {}
-    for name, annotation in annotations.items():
-        hidden_type = unwrap_hidden_annotation(annotation)
-        if hidden_type is not None:
-            if name == "return":
-                raise ValueError("`Hidden[...]` cannot be used as a return type.")
-            hidden_params[name] = hidden_type
-            continue
-        public_annotations[name] = annotation
-    return public_annotations, hidden_params
-
-
 def _convert_module_to_nn_tool(impl: Callable) -> Tool:
     """Convert a callable in nn.Tool."""
     return _convert_metadata_to_local_tool(_inspect_tool_metadata(impl))
@@ -537,6 +528,13 @@ class ToolLibrary(Module, metaclass=AutoParams):
         self.set_name(f"{name}_tool_library")
         self.library = ModuleDict()
         self.register_buffer("tool_configs", {})
+        self.register_buffer("tool_owners", {})
+        self._buckets = ToolBucketManager(
+            self.library,
+            self.tool_configs,
+            self.tool_owners,
+            _metadata_from_tool,
+        )
         self.register_buffer("mcp_clients", {})
         self._task_store = task_store
         self._agent_inbox: Optional[AgentInbox] = None
@@ -574,10 +572,28 @@ class ToolLibrary(Module, metaclass=AutoParams):
     @property
     def _bucket_graph(self) -> ToolBucketGraph:
         """Return a read-only view over the current bucket ownership tree."""
-        return ToolBucketGraph(self.library, self.tool_configs)
+        return self._buckets.graph
 
     def add(self, tool: Callable) -> str:
         """Add a local tool in library."""
+        transaction = ToolRegistrationTransaction()
+        try:
+            tool_name = self._add(tool, transaction=transaction)
+            if transaction.reconcile_background:
+                self._reconcile_runtime_tools(transaction=transaction)
+        except Exception:
+            transaction.rollback()
+            self._buckets.refresh_presentations()
+            raise
+        return tool_name
+
+    def _add(
+        self,
+        tool: Callable,
+        *,
+        transaction: ToolRegistrationTransaction,
+    ) -> str:
+        """Register one tool as part of an existing registration transaction."""
         if isinstance(tool, ToolMetadata):
             metadata = tool
         elif isinstance(tool, Tool):
@@ -587,6 +603,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
         metadata.tool_config = dotdict(metadata.tool_config)
         metadata.tool_config.setdefault("on_demand", False)
+        metadata.tool_config.setdefault("exposed", True)
+        if not isinstance(metadata.tool_config["exposed"], bool):
+            raise TypeError("`exposed` must be a bool.")
         metadata.tool_config["capabilities"] = normalize_tool_capabilities(
             metadata.tool_config.get("capabilities")
         )
@@ -607,13 +626,7 @@ class ToolLibrary(Module, metaclass=AutoParams):
                     "`handle: mf.Hidden`."
                 )
 
-        if metadata.name in self.library.keys() or (
-            isinstance(metadata.impl, ToolBucket)
-            and self._bucket_graph.find_node(metadata.name) is not None
-        ):
-            raise ValueError(
-                f"The tool name `{metadata.name}` is already in tool library"
-            )
+        self._bucket_graph.validate_unique_names(metadata)
         if is_background_capable(metadata.tool_config):
             ToolBackground.validate_background_capabilities(
                 metadata.impl,
@@ -625,30 +638,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
             metadata.tool_config.get("on_demand", False)
             and ToolSearchTool.name not in self.library
         ):
-            self.add(ToolSearchTool())
+            self._add(ToolSearchTool(), transaction=transaction)
 
-        # Buckets first assemble their own children, then may become a child.
-        if isinstance(metadata.impl, ToolBucket):
-            self._register_tool(metadata)
-            return metadata.name
-
-        # A matching bucket owns the tool instead of direct registration.
-        bucket_names = self._bucket_graph.matching_buckets(metadata)
-        if bucket_names:
-            bucket_name = bucket_names[0]
-            self._add_to_bucket(bucket_name, metadata)
-            if is_reserved_tool_kind(metadata.tool_config):
-                self._disabled_background_task_tool_names.discard(metadata.name)
-            return metadata.name
-
-        capturing_bucket = self._bucket_graph.find_owner(metadata.name)
-        if capturing_bucket is not None:
-            raise ValueError(
-                f"The tool name `{metadata.name}` is already in tool library"
-            )
-
-        # Normal tools become directly callable and visible according to their config.
-        self._register_tool(metadata)
+        self._register_tool(metadata, transaction=transaction)
         return metadata.name
 
     def remove(self, tool_name: str):
@@ -661,45 +653,100 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 f"The bucket tool `{tool_name}` still captures tools and cannot "
                 "be removed."
             )
-        if tool_name in self.library.keys():
-            config = self.tool_configs.get(tool_name, {})
-            is_task_tool = ToolBackground.is_active_task_tool(
-                library=self,
-                tool_name=tool_name,
-                config=config,
-                base_tools=BASE_TASK_TOOLS,
-                capability_tools=BACKGROUND_CAPABILITY_TOOLS,
-                metadata_factory=_inspect_tool_metadata,
+        config = self.tool_configs.get(tool_name, {})
+        is_task_tool = ToolBackground.is_active_task_tool(
+            library=self,
+            tool_name=tool_name,
+            config=config,
+            base_tools=BASE_TASK_TOOLS,
+            capability_tools=BACKGROUND_CAPABILITY_TOOLS,
+            metadata_factory=_inspect_tool_metadata,
+        )
+        was_background = not is_reserved_tool_kind(config) and is_background_capable(
+            config
+        )
+        owner = node.parent
+        remove_empty_owner = False
+        if owner is not None:
+            self._buckets.release(owner, tool_name)
+            owner_bucket = self._bucket_graph.require_bucket(owner)
+            remove_empty_owner = bool(
+                owner_bucket.expose_captured_names and not owner_bucket.tools
             )
-            was_background = not is_reserved_tool_kind(
-                config
-            ) and is_background_capable(config)
+        self._remove_registered_tool(tool_name)
 
-            self._remove_registered_tool(tool_name)
+        if remove_empty_owner:
+            self.remove(owner)
 
-            if is_task_tool:
-                self._disabled_background_task_tool_names.add(tool_name)
-                return
-
-            if was_background:
-                self._sync_background_task_tools()
-            return
-
-        bucket_name = self._bucket_graph.find_owner(tool_name)
-        if bucket_name is None:
-            raise ValueError(f"The tool name `{tool_name}` is not in tool library")
-        metadata = self._remove_from_bucket(bucket_name, tool_name)
-        if is_reserved_tool_kind(metadata.tool_config):
+        if is_task_tool:
             self._disabled_background_task_tool_names.add(tool_name)
+        elif was_background:
+            self._reconcile_runtime_tools()
 
     def _remove_registered_tool(self, tool_name: str) -> None:
+        tool = self.library.get(tool_name)
+        self._buckets.unbind(tool)
+        self.tool_owners.pop(tool_name, None)
         if tool_name in self.library:
             self.library.pop(tool_name)
         self.tool_configs.pop(tool_name, None)
 
+    def _remove_reconciled_tool(
+        self,
+        tool_name: str,
+        *,
+        transaction: ToolRegistrationTransaction | None = None,
+    ) -> None:
+        """Remove a runtime tool and preserve it for registration rollback."""
+        tool = self.library.get(tool_name)
+        config = self.tool_configs.get(tool_name)
+        if tool is None or config is None:
+            return
+        position = list(self.library).index(tool_name)
+        owner = self.tool_owners.get(tool_name)
+        exposed = bool(config.get("exposed", True))
+        if owner is not None:
+            self._buckets.release(owner, tool_name, exposed=exposed)
+        self._remove_registered_tool(tool_name)
+        if transaction is not None:
+            transaction.record(
+                partial(
+                    self._restore_reconciled_tool,
+                    tool_name,
+                    tool=tool,
+                    config=config,
+                    owner=owner,
+                    exposed=exposed,
+                    position=position,
+                )
+            )
+
+    def _restore_reconciled_tool(
+        self,
+        tool_name: str,
+        *,
+        tool: Tool,
+        config: Dict[str, Any],
+        owner: str | None,
+        exposed: bool,
+        position: int,
+    ) -> None:
+        config["exposed"] = exposed
+        trailing = [
+            (name, self.library.pop(name))
+            for name in list(self.library)[position:]
+        ]
+        self.library.update({tool_name: tool})
+        self.library.update(dict(trailing))
+        self.tool_configs[tool_name] = config
+        if owner is not None:
+            self.tool_owners[tool_name] = owner
+
     def clear(self):
+        self._buckets.unbind_all()
         self.library.clear()
         self.tool_configs.clear()
+        self.tool_owners.clear()
         for mcp_data in self.mcp_clients.values():
             F.wait_for(mcp_data["client"].disconnect)
         self.mcp_clients.clear()
@@ -707,26 +754,29 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if self._background_dispatcher is not None:
             self._background_dispatcher.clear()
 
-    def _register_tool(self, metadata: ToolMetadata) -> Tool:
-        # A bucket must be valid before it becomes visible in the library.
+    def _register_tool(
+        self,
+        metadata: ToolMetadata,
+        *,
+        transaction: ToolRegistrationTransaction,
+    ) -> Tool:
+        bucket = metadata.impl if isinstance(metadata.impl, ToolBucket) else None
         captures = []
-        parent_names: list[str] = []
-        if metadata.tool_config.get("tool_kind") == ToolBucket.tool_kind:
-            bucket = metadata.impl
+        pending: list[ToolMetadata] = []
+        if bucket is not None:
             captures = self._bucket_graph.validate_registration(
                 metadata,
                 _metadata_from_tool,
             )
-
-            # Check every pending capture before changing the current library state.
             for captured in captures:
                 bucket.validate_capture(_metadata_from_tool(captured.tool))
+            pending = list(bucket.tools.values())
 
-            parent_names = self._bucket_graph.matching_buckets(metadata)
-            if parent_names:
-                self._bucket_graph.require_bucket(parent_names[0]).validate_capture(
-                    metadata
-                )
+        parent_names = self._bucket_graph.matching_buckets(metadata)
+        if parent_names:
+            self._bucket_graph.require_bucket(parent_names[0]).validate_capture(
+                metadata
+            )
 
         # Convert callable metadata to the local executable representation when needed.
         tool = (
@@ -735,128 +785,72 @@ class ToolLibrary(Module, metaclass=AutoParams):
             else _convert_metadata_to_local_tool(metadata)
         )
 
-        # Register the public tool and its normalized configuration together.
         tool_config = dotdict(metadata.tool_config)
-        if isinstance(metadata.source_tool, Tool):
-            tool.register_buffer("tool_config", tool_config)
+        tool.register_buffer("tool_config", tool_config)
         self.tool_configs[tool.name] = tool_config
         self.library.update({tool.name: tool})
-        if isinstance(metadata.impl, ToolBucket):
-            metadata.impl.refresh()
-            self._sync_bucket_presentation(tool.name, metadata.impl)
+        if bucket is not None:
+            self._buckets.bind(tool.name, bucket)
+        transaction.record(
+            partial(
+                self._undo_registered_tool,
+                tool.name,
+                bucket=bucket,
+                pending=pending,
+            )
+        )
 
-        # An explicit re-add re-enables a builtin task control tool.
-        config = tool_config
-        if is_reserved_tool_kind(config):
+        for captured in captures:
+            self._buckets.capture(
+                tool.name,
+                _metadata_from_tool(captured.tool),
+                transaction=transaction,
+            )
+        for candidate in pending:
+            self._add(candidate, transaction=transaction)
+        if parent_names:
+            self._buckets.capture(
+                parent_names[0],
+                _metadata_from_tool(tool),
+                transaction=transaction,
+            )
+
+        if bucket is not None:
+            bucket.refresh()
+            self._buckets.sync_presentation(tool.name, bucket)
+
+        if is_reserved_tool_kind(tool_config):
+            was_disabled = tool.name in self._disabled_background_task_tool_names
             self._disabled_background_task_tool_names.discard(tool.name)
-
-        # Background-capable sources determine the shared task control surface.
-        self._sync_background_task_tools_for_source(config)
-
-        # Capture every candidate before removing its direct registration so a
-        # rejected candidate can roll back the bucket without losing tools.
-        captured_names = []
-        try:
-            for captured in captures:
-                captured_metadata = _metadata_from_tool(captured.tool)
-                self._add_to_bucket(tool.name, captured_metadata)
-                captured_names.append(captured.name)
-        except Exception:
-            for captured_name in reversed(captured_names):
-                self._remove_from_bucket(tool.name, captured_name)
-            self._remove_registered_tool(tool.name)
-            raise
-        for captured_name in captured_names:
-            self._remove_registered_tool(captured_name)
-
-        if isinstance(metadata.impl, ToolBucket) and parent_names:
-            try:
-                self._add_to_bucket(parent_names[0], _metadata_from_tool(tool))
-            except Exception:
-                # Restore the former roots if the parent's refresh rejects the
-                # fully assembled child after pre-validation.
-                restored = [metadata.impl.remove(name) for name in captured_names]
-                self._remove_registered_tool(tool.name)
-                for captured_metadata in restored:
-                    self._register_tool(captured_metadata)
-                raise
-            self._remove_registered_tool(tool.name)
+            if was_disabled:
+                transaction.record(
+                    partial(
+                        self._disabled_background_task_tool_names.add,
+                        tool.name,
+                    )
+                )
+        elif is_background_capable(tool_config):
+            transaction.reconcile_background = True
         return tool
 
-    def _add_to_bucket(self, bucket_name: str, metadata: ToolMetadata) -> None:
-        # Resolve the bucket implementation before changing its captured tools.
-        bucket = self._bucket_graph.require_bucket(bucket_name)
+    def _undo_registered_tool(
+        self,
+        tool_name: str,
+        *,
+        bucket: ToolBucket | None,
+        pending: list[ToolMetadata],
+    ) -> None:
+        self._remove_registered_tool(tool_name)
+        if bucket is not None:
+            self._buckets.unbind(bucket, pending)
+            bucket.refresh()
 
-        # Let the bucket validate, retain, and refresh its captured state.
-        bucket.add(metadata)
-        try:
-            self._sync_bucket_presentation(bucket_name, bucket)
-        except Exception:
-            # An ancestor may reject presentation derived from the new child.
-            # Restore the inner bucket before returning that failure to add().
-            if metadata.name in bucket.tools:
-                bucket.remove(metadata.name)
-                with suppress(Exception):
-                    self._sync_bucket_presentation(bucket_name, bucket)
-            raise
-
-    def _remove_from_bucket(self, bucket_name: str, tool_name: str) -> ToolMetadata:
-        bucket = self._bucket_graph.require_bucket(bucket_name)
-        metadata = bucket.remove(tool_name)
-        try:
-            self._sync_bucket_presentation(bucket_name, bucket)
-        except Exception:
-            bucket.add(metadata)
-            with suppress(Exception):
-                self._sync_bucket_presentation(bucket_name, bucket)
-            raise
-
-        if not bucket.expose_captured_names or bucket.tools:
-            return metadata
-
-        owner_name = self._bucket_graph.find_owner(bucket_name)
-        if owner_name is None:
-            self._remove_registered_tool(bucket_name)
-            return metadata
-
-        owner = self._bucket_graph.require_bucket(owner_name)
-        bucket_metadata = owner.tools[bucket_name]
-        try:
-            owner.remove(bucket_name)
-            self._sync_bucket_presentation(owner_name, owner)
-        except Exception:
-            if bucket_name not in owner.tools:
-                owner.add(bucket_metadata)
-            bucket.add(metadata)
-            with suppress(Exception):
-                self._sync_bucket_presentation(bucket_name, bucket)
-            raise
-        return metadata
-
-    def _sync_bucket_presentation(self, bucket_name: str, bucket: ToolBucket) -> None:
-        node = self._bucket_graph.find_node(bucket_name)
-        if node is None:
-            raise ValueError(f"The bucket tool `{bucket_name}` is not registered.")
-        bucket_tool = node.tool
-        parent_name = node.parent
-        if isinstance(getattr(bucket, "description", None), str):
-            bucket_tool.set_description(bucket.description)
-        annotations = getattr(bucket, "annotations", None)
-        if isinstance(annotations, Mapping):
-            public_annotations, _ = _split_hidden_annotations(dict(annotations))
-            if getattr(bucket, "tool_config", {}).get("handle") is not None:
-                public_annotations.pop("handle", None)
-            bucket_tool.set_annotations(public_annotations)
-        if hasattr(bucket, "usage_guidance"):
-            bucket_tool.register_buffer(
-                "usage_guidance",
-                bucket.usage_guidance,
-            )
-        if parent_name is not None:
-            parent = self._bucket_graph.require_bucket(parent_name)
-            parent.tools[bucket_name] = _metadata_from_tool(bucket_tool)
-            parent.refresh()
-            self._sync_bucket_presentation(parent_name, parent)
+    def _activate_on_demand(self, owner_name: str, tool_name: str) -> str:
+        return self._buckets.activate_on_demand(
+            owner_name,
+            tool_name,
+            remove_owner=self.remove,
+        )
 
     def _initialize_mcp_clients(self, mcp_servers: List[Dict[str, Any]]):
         """Initialize MCP clients from server configurations."""
@@ -945,9 +939,29 @@ class ToolLibrary(Module, metaclass=AutoParams):
     def get_tools(self) -> Iterator[Dict[str, Tool]]:
         return self.library.items()
 
-    def get_tool_names(self) -> List[str]:
-        """Get names of all tools."""
-        names = list(self.library.keys())
+    def get_tool(self, tool_name: str) -> Tool:
+        """Return the executable wrapper for any canonical graph node."""
+        tool = self.library.get(tool_name)
+        if tool is None:
+            raise ValueError(f"The tool `{tool_name}` is no longer available.")
+        if not isinstance(tool, Tool):
+            raise ValueError(f"Tool `{tool_name}` has no executable wrapper.")
+        return tool
+
+    def get_tool_names(self, owner: str | None = None) -> List[str]:
+        """Get public names or the captured descendants of one bucket."""
+        if owner is not None:
+            node = self._bucket_graph.find_node(owner)
+            if node is not None and node.bucket is not None:
+                return [
+                    child.name
+                    for child in self._bucket_graph.bucket_descendants(owner)
+                ]
+        names = [
+            name
+            for name in self.library
+            if self.tool_configs.get(name, {}).get("exposed", True)
+        ]
         for node in self._bucket_graph.iter_nodes():
             bucket = node.bucket
             if isinstance(bucket, ToolBucket) and bucket.expose_captured_names:
@@ -958,6 +972,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
         """Return human-readable display names keyed by registered tool name."""
         display_names = {}
         for tool_name, tool in self.library.items():
+            if not self.tool_configs.get(tool_name, {}).get("exposed", True):
+                continue
             display_names[tool_name] = getattr(tool, "display_name", None) or tool_name
 
         return display_names
@@ -970,6 +986,8 @@ class ToolLibrary(Module, metaclass=AutoParams):
         display_names = self.get_tool_display_names()
 
         for tool_name, tool in self.library.items():
+            if not self.tool_configs.get(tool_name, {}).get("exposed", True):
+                continue
             if tool_names is not None and tool_name not in tool_names:
                 continue
             usage_guidance = getattr(tool, "usage_guidance", None)
@@ -994,12 +1012,18 @@ class ToolLibrary(Module, metaclass=AutoParams):
 
     def get_tool_json_schemas(self) -> List[Dict[str, Any]]:
         """Returns a list of JSON schemas from local and MCP tools."""
-        return [tool.get_json_schema() for tool in self.library.values()]
+        return [
+            tool.get_json_schema()
+            for name, tool in self.library.items()
+            if self.tool_configs.get(name, {}).get("exposed", True)
+        ]
 
     def get_tool_annotations(self) -> Dict[str, Dict[str, Any]]:
         """Return local tool annotations keyed by tool name."""
         annotations = {}
         for tool_name, tool in self.library.items():
+            if not self.tool_configs.get(tool_name, {}).get("exposed", True):
+                continue
             annotations[tool_name] = {
                 name: hint
                 for name, hint in tool.get_module_annotations().items()
@@ -1022,21 +1046,26 @@ class ToolLibrary(Module, metaclass=AutoParams):
             return context_task_store
         return self._get_default_task_store()
 
-    def _sync_background_task_tools_for_source(
+    def _reconcile_runtime_tools(
         self,
-        config: Mapping[str, Any],
+        *,
+        transaction: ToolRegistrationTransaction | None = None,
     ) -> None:
-        if is_reserved_tool_kind(config) or not is_background_capable(config):
-            return
-        self._sync_background_task_tools()
+        """Rebuild runtime-provided tools from the current ownership graph."""
+        self._sync_background_task_tools(transaction=transaction)
 
-    def _sync_background_task_tools(self) -> None:
+    def _sync_background_task_tools(
+        self,
+        *,
+        transaction: ToolRegistrationTransaction | None = None,
+    ) -> None:
         ToolBackground.sync_task_tools(
             library=self,
             disabled_tool_names=self._disabled_background_task_tool_names,
             base_tools=BASE_TASK_TOOLS,
             capability_tools=BACKGROUND_CAPABILITY_TOOLS,
             metadata_factory=_inspect_tool_metadata,
+            transaction=transaction,
         )
 
     # --- Tool Call Preparation ---
@@ -1063,13 +1092,20 @@ class ToolLibrary(Module, metaclass=AutoParams):
         inject_vars = config.get("inject_vars", False)
         if inject_vars:
             if isinstance(inject_vars, list):
-                for key in inject_vars:
-                    if key not in vars:
-                        raise ValueError(
-                            f"The tool `{tool_name}` requires the injected "
-                            f"parameter `{key}`, but it was not found."
-                        )
-                    call_params[key] = vars[key]
+                missing = [key for key in inject_vars if key not in vars]
+                if missing:
+                    subject = (
+                        "agent" if config.get("tool_kind") == "agent" else "tool"
+                    )
+                    raise ValueError(
+                        f"The {subject} `{tool_name}` requires the injected "
+                        f"parameter `{missing[0]}`, but it was not found."
+                    )
+                if config.get("tool_kind") == "agent":
+                    call_params["vars"] = {key: vars[key] for key in inject_vars}
+                else:
+                    for key in inject_vars:
+                        call_params[key] = vars[key]
             elif inject_vars is True:
                 call_params["vars"] = vars
 
@@ -1082,6 +1118,20 @@ class ToolLibrary(Module, metaclass=AutoParams):
         if config.get("inject_message", False):
             call_params["message"] = message
 
+        impl = getattr(tool, "impl", tool)
+        hidden_params = config.get("_hidden_params") or {}
+        if isinstance(impl, ToolBucket) and "tools" in hidden_params:
+            context = get_execution_context()
+            scoped = self.get_handle().for_tool(
+                tool_name=tool_name,
+                agent_inbox=context.get("agent_inbox"),
+                task_store=context.get("task_store"),
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
+            call_params["tools"] = ToolBucketHandle(scoped)
+
         if config.get("handle") is not None:
             context = get_execution_context()
             call_params["handle"] = self.get_handle().tool_view(
@@ -1089,6 +1139,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
                 tool_name=tool_name,
                 agent_inbox=context.get("agent_inbox"),
                 task_store=context.get("task_store"),
+                message=message,
+                messages=messages,
+                vars=vars,
             )
 
         return call_params
@@ -1131,6 +1184,9 @@ class ToolLibrary(Module, metaclass=AutoParams):
             vars=vars,
         )
         response_params = build_call_parameters_for_response(call_params)
+        if response_params is not None:
+            for param_name in config.get("_hidden_params") or {}:
+                response_params.pop(param_name, None)
         self._record_tool_activity(
             activity_recorder=activity_recorder,
             tool_name=tool_name,
@@ -1138,282 +1194,399 @@ class ToolLibrary(Module, metaclass=AutoParams):
         )
         return call_params, response_params
 
-    def forward(  # noqa: C901
+    def _prepare_execution(
+        self,
+        *,
+        tool_id: str,
+        tool_name: str,
+        arguments: Any,
+        message: Any = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+        owner: str | None = None,
+        exposed_only: bool = False,
+        inline: bool = False,
+    ) -> PreparedToolExecution:
+        """Resolve one tool call and inject its runtime arguments."""
+        node = self._bucket_graph.find_node(tool_name)
+        if node is None or (
+            exposed_only and not node.config.get("exposed", True)
+        ):
+            raise ToolNotAvailableError(f"Tool `{tool_name}` not found.")
+        if owner is not None:
+            owner_node = self._bucket_graph.find_node(owner)
+            if owner_node is None or owner_node.bucket is None:
+                raise ValueError(f"Tool `{owner}` is not an executable bucket.")
+            if not self._bucket_graph.is_descendant(owner, tool_name):
+                raise ValueError(
+                    f"Tool `{tool_name}` is outside bucket `{owner}` capture scope."
+                )
+
+        tool = self.get_tool(tool_name)
+        config = node.config
+        call_params, response_params = self._prepare_tool_kwargs(
+            tool=tool,
+            tool_name=tool_name,
+            tool_params=arguments,
+            config=config,
+            message=message,
+            messages=messages if messages is not None else [],
+            vars=vars if vars is not None else {},
+            activity_recorder=get_execution_context().get("task_activity_recorder"),
+        )
+        if inline:
+            mode = "call"
+        elif config.get("spawn", False):
+            mode = "spawn"
+        elif should_dispatch_background(config=config, call_params=call_params):
+            mode = "background"
+        elif config.get("call_as_response", False):
+            mode = "response"
+        else:
+            mode = "call"
+        return PreparedToolExecution(
+            id=tool_id,
+            name=tool_name,
+            tool=tool,
+            config=config,
+            call_params=call_params,
+            response_params=response_params,
+            mode=mode,
+        )
+
+    @staticmethod
+    def _is_immediate_execution(execution: PreparedToolExecution) -> bool:
+        return execution.mode != "call"
+
+    @staticmethod
+    def _requires_serial_execution(execution: PreparedToolExecution) -> bool:
+        impl = getattr(execution.tool, "impl", execution.tool)
+        return bool(getattr(impl, "_serial_execution", False))
+
+    @staticmethod
+    def _execution_returns_directly(execution: PreparedToolExecution) -> bool:
+        if execution.mode in {"spawn", "background"}:
+            return False
+        if execution.mode == "response":
+            return True
+        return bool(execution.config.get("return_direct", False))
+
+    def _execute_prepared(self, execution: PreparedToolExecution) -> ToolCall:
+        config = execution.config
+        if execution.mode == "spawn":
+            F.spawn(execution.tool, **execution.call_params)
+            return ToolCall(
+                id=execution.id,
+                name=execution.name,
+                parameters=execution.response_params,
+                result=f"The `{execution.name}` tool was dispatched. "
+                "This tool will not generate a return.",
+            )
+        if execution.mode == "background":
+            return self.get_background_dispatcher().dispatch(
+                tool=execution.tool,
+                tool_id=execution.id,
+                tool_name=execution.name,
+                call_params=execution.call_params,
+                config=config,
+                response_params=execution.response_params,
+            )
+        if execution.mode == "response":
+            return ToolCall(
+                id=execution.id,
+                name=execution.name,
+                parameters=execution.response_params,
+            )
+
+        call_params = dict(execution.call_params)
+        call_params["tool_call_id"] = execution.id
+        result = execution.tool(**call_params)
+        return ToolCall(
+            id=execution.id,
+            name=execution.name,
+            parameters=execution.response_params,
+            result=result,
+        )
+
+    async def _aexecute_prepared(
+        self,
+        execution: PreparedToolExecution,
+    ) -> ToolCall:
+        config = execution.config
+        if execution.mode == "spawn":
+            await F.aspawn(execution.tool, **execution.call_params)
+            return ToolCall(
+                id=execution.id,
+                name=execution.name,
+                parameters=execution.response_params,
+                result=f"The `{execution.name}` tool was dispatched. "
+                "This tool will not generate a return.",
+            )
+        if execution.mode == "background":
+            return self.get_background_dispatcher().dispatch(
+                tool=execution.tool,
+                tool_id=execution.id,
+                tool_name=execution.name,
+                call_params=execution.call_params,
+                config=config,
+                response_params=execution.response_params,
+            )
+        if execution.mode == "response":
+            return ToolCall(
+                id=execution.id,
+                name=execution.name,
+                parameters=execution.response_params,
+            )
+
+        call_params = dict(execution.call_params)
+        call_params["tool_call_id"] = execution.id
+        result = await execution.tool.acall(**call_params)
+        return ToolCall(
+            id=execution.id,
+            name=execution.name,
+            parameters=execution.response_params,
+            result=result,
+        )
+
+    @staticmethod
+    def _coerce_execution_result(
+        execution: PreparedToolExecution,
+        result: ToolCall | TaskError,
+    ) -> ToolCall:
+        if not isinstance(result, TaskError):
+            return result
+        if isinstance(result.exception, TaskInterruptRequestedError):
+            raise result.exception
+        return ToolCall(
+            id=execution.id,
+            name=execution.name,
+            parameters=execution.response_params,
+            error=str(result),
+        )
+
+    def execute(
+        self,
+        tool_name: str,
+        arguments: Any,
+        *,
+        message: Any = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_call_id: str = "",
+    ) -> Any:
+        """Execute one tool through the same runtime pipeline as ``forward``."""
+        execution = self._prepare_execution(
+            tool_id=tool_call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            message=message,
+            messages=messages,
+            vars=vars,
+        )
+        return self._execute_prepared(execution).result
+
+    def _execute_scoped(
+        self,
+        owner: str,
+        tool_name: str,
+        arguments: Any,
+        *,
+        message: Any = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        execution = self._prepare_execution(
+            tool_id="",
+            tool_name=tool_name,
+            arguments=arguments,
+            message=message,
+            messages=messages,
+            vars=vars,
+            owner=owner,
+        )
+        return self._execute_prepared(execution).result
+
+    def _execute_inline(
+        self,
+        tool_name: str,
+        arguments: Any,
+        *,
+        message: Any = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        execution = self._prepare_execution(
+            tool_id="",
+            tool_name=tool_name,
+            arguments=arguments,
+            message=message,
+            messages=messages,
+            vars=vars,
+            inline=True,
+        )
+        return self._execute_prepared(execution).result
+
+    async def aexecute(
+        self,
+        tool_name: str,
+        arguments: Any,
+        *,
+        message: Any = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+        tool_call_id: str = "",
+    ) -> Any:
+        """Asynchronously execute one tool through the ``aforward`` pipeline."""
+        execution = self._prepare_execution(
+            tool_id=tool_call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            message=message,
+            messages=messages,
+            vars=vars,
+        )
+        return (await self._aexecute_prepared(execution)).result
+
+    async def _aexecute_scoped(
+        self,
+        owner: str,
+        tool_name: str,
+        arguments: Any,
+        *,
+        message: Any = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        vars: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        execution = self._prepare_execution(
+            tool_id="",
+            tool_name=tool_name,
+            arguments=arguments,
+            message=message,
+            messages=messages,
+            vars=vars,
+            owner=owner,
+        )
+        return (await self._aexecute_prepared(execution)).result
+
+    def forward(
         self,
         tool_callings: List[Tuple[str, str, Any]],
         message: Optional[Any] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
-        """Executes tool calls with tool config logic.
-
-        Args:
-            tool_callings:
-                A list of tuples containing the tool id, name and parameters.
-                !!! example
-                    [('123121', 'tool_name1', {'parameter1': 'value1'}),
-                    ('322', 'tool_name2', '')]
-            messages:
-                The current messages (chat history) for the `handoff` functionality.
-            message:
-                The original message/envelope passed to the parent Agent.
-            vars:
-                Extra kwargs to be used in tools.
-
-        Returns:
-            ToolResponses:
-                Structured object containing all tool call results.
-        """
-        if messages is None:
-            messages = []
-
-        if vars is None:
-            vars = {}
-
-        activity_recorder = get_execution_context().get("task_activity_recorder")
-        prepared_calls = []
-        call_metadata = []
+        """Execute model-originated tool calls with library config semantics."""
+        prepared_calls: list[PreparedToolExecution] = []
         tool_calls: List[ToolCall] = []
-        return_directly = True if tool_callings else False
+        return_directly = bool(tool_callings)
 
-        for tool_id, tool_name, tool_params in tool_callings:
-            if tool_name not in self.library:
+        for tool_id, tool_name, arguments in tool_callings:
+            try:
+                execution = self._prepare_execution(
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    message=message,
+                    messages=messages,
+                    vars=vars,
+                    exposed_only=True,
+                )
+            except ToolNotAvailableError as exc:
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
                         name=tool_name,
-                        parameters=tool_params,
-                        error=f"Error: Tool `{tool_name}` not found.",
+                        parameters=arguments,
+                        error=f"Error: {exc}",
                     )
                 )
                 return_directly = False
                 continue
 
-            # Get tool
-            tool = self.library[tool_name]
-            config = self.tool_configs.get(tool_name, {})
-            call_params, response_params = self._prepare_tool_kwargs(
-                tool=tool,
-                tool_name=tool_name,
-                tool_params=tool_params,
-                config=config,
-                message=message,
-                messages=messages,
-                vars=vars,
-                activity_recorder=activity_recorder,
-            )
-
-            if config.get("spawn", False):
+            if self._is_immediate_execution(execution):
+                tool_calls.append(self._execute_prepared(execution))
+            else:
+                prepared_calls.append(execution)
+            if self._execution_returns_directly(execution):
+                if execution.mode == "response":
+                    return_directly = True
+            else:
                 return_directly = False
-                F.spawn(tool, **call_params)
-                tool_calls.append(
-                    ToolCall(
-                        id=tool_id,
-                        name=tool_name,
-                        parameters=response_params,
-                        result=f"The `{tool_name}` tool was dispatched. "
-                        "This tool will not generate a return.",
-                    )
-                )
-                continue
-
-            if should_dispatch_background(
-                config=config,
-                call_params=call_params,
-            ):
-                return_directly = False
-                tool_calls.append(
-                    self.get_background_dispatcher().dispatch(
-                        tool=tool,
-                        tool_id=tool_id,
-                        tool_name=tool_name,
-                        call_params=call_params,
-                        config=config,
-                    )
-                )
-                continue
-
-            if config.get(
-                "call_as_response", False
-            ):  # return function call as response
-                tool_calls.append(
-                    ToolCall(id=tool_id, name=tool_name, parameters=response_params)
-                )
-                return_directly = True
-                continue
-
-            if not config.get("return_direct", False):
-                return_directly = False
-
-            # Add tool_call_id for telemetry
-            call_params["tool_call_id"] = tool_id
-            prepared_calls.append(partial(tool, **call_params))
-
-            call_metadata.append(
-                dotdict(
-                    id=tool_id,
-                    name=tool_name,
-                    config=config,
-                    params=call_params,
-                )
-            )
 
         if prepared_calls:
-            results = F.scatter_gather(prepared_calls)
-            for meta, result in zip(call_metadata, results):
-                if isinstance(result, TaskError) and isinstance(
-                    result.exception, TaskInterruptRequestedError
-                ):
-                    raise result.exception
-                parameters = build_call_parameters_for_response(meta.params)
-                tool_calls.append(
-                    ToolCall(
-                        id=meta.id,
-                        name=meta.name,
-                        parameters=parameters,
-                        result=None if isinstance(result, TaskError) else result,
-                        error=str(result) if isinstance(result, TaskError) else None,
-                    )
+            if any(self._requires_serial_execution(call) for call in prepared_calls):
+                results = tuple(
+                    F.scatter_gather([partial(self._execute_prepared, call)])[0]
+                    for call in prepared_calls
                 )
+            else:
+                results = F.scatter_gather(
+                    [partial(self._execute_prepared, call) for call in prepared_calls]
+                )
+            for execution, result in zip(prepared_calls, results):
+                tool_calls.append(self._coerce_execution_result(execution, result))
 
         return ToolResponses(return_directly=return_directly, tool_calls=tool_calls)
 
-    async def aforward(  # noqa: C901
+    async def aforward(
         self,
         tool_callings: List[Tuple[str, str, Any]],
         message: Optional[Any] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
         vars: Optional[Mapping[str, Any]] = None,
     ) -> ToolResponses:
-        """Async version of forward. Executes tool calls with logic for
-        `handoff`, `return_direct`.
-
-        Args:
-            tool_callings:
-                A list of tuples containing the tool id, name and parameters.
-                !!! example
-                    [('123121', 'tool_name1', {'parameter1': 'value1'}),
-                    ('322', 'tool_name2', '')]
-            messages:
-                The current messages (chat history) for the `handoff` functionality.
-            message:
-                The original message/envelope passed to the parent Agent.
-            vars:
-                Extra kwargs to be used in tools.
-
-        Returns:
-            ToolResponses:
-                Structured object containing all tool call results.
-        """
-        if messages is None:
-            messages = []
-
-        if vars is None:
-            vars = {}
-
-        activity_recorder = get_execution_context().get("task_activity_recorder")
-        prepared_calls = []
-        call_metadata = []
+        """Asynchronously execute model-originated tool calls."""
+        prepared_calls: list[PreparedToolExecution] = []
         tool_calls: List[ToolCall] = []
-        return_directly = True if tool_callings else False
+        return_directly = bool(tool_callings)
 
-        for tool_id, tool_name, tool_params in tool_callings:
-            if tool_name not in self.library:
+        for tool_id, tool_name, arguments in tool_callings:
+            try:
+                execution = self._prepare_execution(
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    message=message,
+                    messages=messages,
+                    vars=vars,
+                    exposed_only=True,
+                )
+            except ToolNotAvailableError as exc:
                 tool_calls.append(
                     ToolCall(
                         id=tool_id,
                         name=tool_name,
-                        parameters=tool_params,
-                        error=f"Error: Tool `{tool_name}` not found.",
+                        parameters=arguments,
+                        error=f"Error: {exc}",
                     )
                 )
                 return_directly = False
                 continue
 
-            # Get tool
-            tool = self.library[tool_name]
-            config = self.tool_configs.get(tool_name, {})
-            call_params, response_params = self._prepare_tool_kwargs(
-                tool=tool,
-                tool_name=tool_name,
-                tool_params=tool_params,
-                config=config,
-                message=message,
-                messages=messages,
-                vars=vars,
-                activity_recorder=activity_recorder,
-            )
-
-            if config.get("spawn", False):
+            if self._is_immediate_execution(execution):
+                tool_calls.append(await self._aexecute_prepared(execution))
+            else:
+                prepared_calls.append(execution)
+            if self._execution_returns_directly(execution):
+                if execution.mode == "response":
+                    return_directly = True
+            else:
                 return_directly = False
-                await F.aspawn(tool, **call_params)
-                tool_calls.append(
-                    ToolCall(
-                        id=tool_id,
-                        name=tool_name,
-                        parameters=response_params,
-                        result=f"The `{tool_name}` tool was dispatched. "
-                        "This tool will not generate a return.",
-                    )
-                )
-                continue
-
-            if should_dispatch_background(
-                config=config,
-                call_params=call_params,
-            ):
-                return_directly = False
-                tool_calls.append(
-                    self.get_background_dispatcher().dispatch(
-                        tool=tool,
-                        tool_id=tool_id,
-                        tool_name=tool_name,
-                        call_params=call_params,
-                        config=config,
-                    )
-                )
-                continue
-
-            if config.get(
-                "call_as_response", False
-            ):  # return function call as response
-                tool_calls.append(
-                    ToolCall(id=tool_id, name=tool_name, parameters=response_params)
-                )
-                return_directly = True
-                continue
-
-            if not config.get("return_direct", False):
-                return_directly = False
-
-            # Add tool_call_id for telemetry
-            call_params["tool_call_id"] = tool_id
-            prepared_calls.append(partial(tool.acall, **call_params))
-
-            call_metadata.append(
-                dotdict(
-                    id=tool_id,
-                    name=tool_name,
-                    config=config,
-                    params=call_params,
-                )
-            )
 
         if prepared_calls:
-            results = await F.ascatter_gather(prepared_calls)
-            for meta, result in zip(call_metadata, results):
-                if isinstance(result, TaskError) and isinstance(
-                    result.exception, TaskInterruptRequestedError
-                ):
-                    raise result.exception
-                parameters = build_call_parameters_for_response(meta.params)
-                tool_calls.append(
-                    ToolCall(
-                        id=meta.id,
-                        name=meta.name,
-                        parameters=parameters,
-                        result=None if isinstance(result, TaskError) else result,
-                        error=str(result) if isinstance(result, TaskError) else None,
+            if any(self._requires_serial_execution(call) for call in prepared_calls):
+                serial_results = []
+                for call in prepared_calls:
+                    result = await F.ascatter_gather(
+                        [partial(self._aexecute_prepared, call)]
                     )
+                    serial_results.append(result[0])
+                results = tuple(serial_results)
+            else:
+                results = await F.ascatter_gather(
+                    [partial(self._aexecute_prepared, call) for call in prepared_calls]
                 )
+            for execution, result in zip(prepared_calls, results):
+                tool_calls.append(self._coerce_execution_result(execution, result))
+
         return ToolResponses(return_directly=return_directly, tool_calls=tool_calls)
