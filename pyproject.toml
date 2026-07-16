@@ -78,6 +78,9 @@ Homepage = "https://github.com/msgflux/msgflux"
 Documentation = "https://github.com/msgflux/msgflux"
 Repository = "https://github.com/msgflux/msgflux"
 
+[project.scripts]
+vulcano = "msgflux.vulcano.cli:main"
+
 [project.optional-dependencies]
 openai = [
     "openai>=1.97.1",
@@ -89,6 +92,10 @@ httpx = [
 plot = [
     "code2mermaid>=0.3.0",
     "mermaid-py>=0.8.0",
+]
+vulcano = [
+    "rich>=15.0.0,<16.0.0",
+    "textual>=8.2.8,<9.0.0",
 ]
 
 [tool.ruff]

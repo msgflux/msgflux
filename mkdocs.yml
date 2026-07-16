@@ -144,6 +144,7 @@ nav:
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
+    - Vulcano: learn/vulcano.md
     - ✓ Verifiers: learn/verifiers.md
     - ⟢ Modules:
       - Module:
