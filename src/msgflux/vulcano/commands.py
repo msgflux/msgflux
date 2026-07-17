@@ -14,7 +14,13 @@ from msgflux.runtime.context import (
     new_run_id,
     new_thread_id,
 )
-from msgflux.vulcano.events import EventDraft, custom_message_type
+from msgflux.vulcano.blocks import (
+    BlockStatus,
+    ContentBlock,
+    new_block_id,
+    new_tool_call_id,
+)
+from msgflux.vulcano.events import EventDraft, EventType, custom_message_type
 
 if TYPE_CHECKING:
     from msgflux.vulcano.extensions.agent import AgentApi
@@ -106,6 +112,154 @@ class CommandContext:
                 {
                     "custom_type": custom_type,
                     "content": content,
+                    "details": dict(details or {}),
+                },
+            )
+        )
+
+    async def start_block(
+        self,
+        kind: str,
+        *,
+        block_id: str | None = None,
+        content: str = "",
+        title: str | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> str:
+        """Start a typed streamed block and return its stable identifier."""
+        resolved_id = block_id or new_block_id()
+        block = ContentBlock(
+            block_id=resolved_id,
+            kind=kind,
+            content=content,
+            status=BlockStatus.STREAMING,
+            title=title,
+            details=dict(details or {}),
+        )
+        await self.emit(EventDraft(EventType.BLOCK_STARTED, block.to_payload()))
+        return resolved_id
+
+    async def update_block(
+        self,
+        block_id: str,
+        delta: str,
+        *,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        """Append content to a typed block while preserving its identity."""
+        payload: dict[str, object] = {"block_id": block_id, "delta": delta}
+        if details is not None:
+            payload["details"] = dict(details)
+        await self.emit(EventDraft(EventType.BLOCK_DELTA, payload))
+
+    async def complete_block(
+        self,
+        block_id: str,
+        *,
+        content: str | None = None,
+        status: str = BlockStatus.COMPLETED,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        """Complete a typed block and optionally reconcile its final content."""
+        payload: dict[str, object] = {"block_id": block_id, "status": status}
+        if content is not None:
+            payload["content"] = content
+        if details is not None:
+            payload["details"] = dict(details)
+        await self.emit(EventDraft(EventType.BLOCK_COMPLETED, payload))
+
+    async def send_block(
+        self,
+        kind: str,
+        content: str,
+        *,
+        block_id: str | None = None,
+        title: str | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> str:
+        """Publish a complete typed block through its normal lifecycle."""
+        resolved_id = await self.start_block(
+            kind,
+            block_id=block_id,
+            title=title,
+            details=details,
+        )
+        if content:
+            await self.update_block(resolved_id, content)
+        await self.complete_block(
+            resolved_id,
+            content=content,
+            details=details,
+        )
+        return resolved_id
+
+    async def start_tool(
+        self,
+        name: str,
+        arguments: Mapping[str, object],
+        *,
+        tool_call_id: str | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> str:
+        """Start a tool execution block and return its call identifier."""
+        resolved_id = tool_call_id or new_tool_call_id()
+        await self.emit(
+            EventDraft(
+                EventType.TOOL_STARTED,
+                {
+                    "tool_call_id": resolved_id,
+                    "name": name,
+                    "arguments": dict(arguments),
+                    "status": BlockStatus.PENDING,
+                    "details": dict(details or {}),
+                },
+            )
+        )
+        return resolved_id
+
+    async def update_tool(
+        self,
+        tool_call_id: str,
+        name: str,
+        update: object,
+        *,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        """Publish a partial update for an active tool execution."""
+        await self.emit(
+            EventDraft(
+                EventType.TOOL_UPDATED,
+                {
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "update": update,
+                    "status": BlockStatus.STREAMING,
+                    "details": dict(details or {}),
+                },
+            )
+        )
+
+    async def complete_tool(
+        self,
+        tool_call_id: str,
+        name: str,
+        result: object,
+        *,
+        is_error: bool = False,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        """Complete a tool execution with a result or error payload."""
+        await self.emit(
+            EventDraft(
+                EventType.TOOL_COMPLETED,
+                {
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "result": result,
+                    "is_error": is_error,
+                    "status": (
+                        BlockStatus.FAILED if is_error else BlockStatus.COMPLETED
+                    ),
                     "details": dict(details or {}),
                 },
             )

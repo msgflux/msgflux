@@ -30,6 +30,8 @@ from msgflux.vulcano.extensions.types import (
 )
 from msgflux.vulcano.ui import (
     ExtensionUiApi,
+    ToolRenderer,
+    ToolRendererOptions,
     UiManager,
     UiRegistration,
     UiRenderer,
@@ -119,14 +121,55 @@ class ExtensionApi:
         self._assert_active()
         return self.agent.tools
 
-    def register_tool(self, tool: Callable[..., object]) -> ToolRegistration:
+    def register_tool(
+        self,
+        tool: Callable[..., object],
+        *,
+        render_call: ToolRenderer | None = None,
+        render_update: ToolRenderer | None = None,
+        render_result: ToolRenderer | None = None,
+    ) -> ToolRegistration:
         """Register a tool in the main Agent with extension ownership."""
-        return self.tools.register(tool)
+        registration = self.tools.register(tool)
+        options = ToolRendererOptions(
+            render_call=render_call,
+            render_update=render_update,
+            render_result=render_result,
+        )
+        if any((render_call, render_update, render_result)):
+            try:
+                ui_registration = self.ui.register_tool_renderer(
+                    registration.name,
+                    options,
+                )
+                registration._add_cleanup(ui_registration.remove)
+            except Exception:
+                registration.remove()
+                raise
+        return registration
 
-    def tool(self, tool: Callable[..., object]) -> Callable[..., object]:
-        """Decorator form of register_tool()."""
-        self.register_tool(tool)
-        return tool
+    def tool(
+        self,
+        tool: Callable[..., object] | None = None,
+        *,
+        render_call: ToolRenderer | None = None,
+        render_update: ToolRenderer | None = None,
+        render_result: ToolRenderer | None = None,
+    ) -> Callable[..., object]:
+        """Decorator form of register_tool(), with optional UI renderers."""
+
+        def decorator(callable_tool: Callable[..., object]) -> Callable[..., object]:
+            self.register_tool(
+                callable_tool,
+                render_call=render_call,
+                render_update=render_update,
+                render_result=render_result,
+            )
+            return callable_tool
+
+        if tool is None:
+            return decorator
+        return decorator(tool)
 
     def register_command(
         self,

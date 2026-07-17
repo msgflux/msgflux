@@ -25,6 +25,9 @@ __all__ = [
     "UiShortcutHandler",
     "UiThemeResult",
     "UiWidget",
+    "ToolRenderContext",
+    "ToolRenderer",
+    "ToolRendererOptions",
     "WorkingIndicatorOptions",
 ]
 
@@ -107,6 +110,35 @@ UiRenderer = Callable[
     [DomainEvent, UiRenderContext],
     object | None | Awaitable[object | None],
 ]
+
+
+@dataclass(frozen=True)
+class ToolRenderContext:
+    """Mutable per-call rendering state exposed to a tool UI renderer."""
+
+    host: object
+    theme: object
+    invalidate: Callable[[], None]
+    tool_call_id: str
+    tool_name: str
+    phase: str
+    expanded: bool
+    state: dict[str, object]
+
+
+ToolRenderer = Callable[
+    [DomainEvent, ToolRenderContext],
+    object | None | Awaitable[object | None],
+]
+
+
+@dataclass(frozen=True)
+class ToolRendererOptions:
+    """Optional renderers for one registered Agent tool."""
+
+    render_call: ToolRenderer | None = None
+    render_update: ToolRenderer | None = None
+    render_result: ToolRenderer | None = None
 
 
 class UiDriver(Protocol):
@@ -207,6 +239,14 @@ class _RendererContribution:
     renderer: UiRenderer
 
 
+@dataclass(frozen=True)
+class _ToolRendererContribution:
+    identifier: int
+    owner: str
+    tool_name: str
+    options: ToolRendererOptions
+
+
 class _RegistrationTracker(Protocol):
     def __call__(self, registration: UiRegistration) -> None: ...
 
@@ -230,6 +270,8 @@ class UiManager:
             "working_indicator": {},
         }
         self._renderers: dict[str, _RendererContribution] = {}
+        self._tool_renderers: dict[str, _ToolRendererContribution] = {}
+        self._tool_render_states: dict[str, dict[str, object]] = {}
         self._completion_providers: dict[int, _Contribution] = {}
         self._shortcuts: dict[str, _Contribution] = {}
 
@@ -529,6 +571,35 @@ class UiManager:
             )
         )
 
+    def register_tool_renderer(
+        self,
+        owner: str,
+        tool_name: str,
+        options: ToolRendererOptions,
+    ) -> UiRegistration:
+        if not tool_name:
+            raise ValueError("Tool renderer name cannot be empty")
+        if tool_name in self._tool_renderers:
+            existing = self._tool_renderers[tool_name]
+            raise ValueError(
+                f"Tool renderer for {tool_name!r} is already registered by "
+                f"{existing.owner!r}"
+            )
+        contribution = _ToolRendererContribution(
+            next(self._identifiers),
+            owner,
+            tool_name,
+            options,
+        )
+        self._tool_renderers[tool_name] = contribution
+        return UiRegistration(
+            lambda: self._remove_if_current(
+                self._tool_renderers,
+                tool_name,
+                contribution,
+            )
+        )
+
     def register_shortcut(
         self,
         owner: str,
@@ -562,6 +633,53 @@ class UiManager:
         if inspect.isawaitable(result):
             result = await result
         return result
+
+    async def render_tool_event(
+        self,
+        event: DomainEvent,
+        *,
+        expanded: bool,
+    ) -> object | None:
+        tool_name = str(event.payload.get("name", ""))
+        tool_call_id = str(event.payload.get("tool_call_id", ""))
+        contribution = self._tool_renderers.get(tool_name)
+        if contribution is None or self._driver is None or not tool_call_id:
+            return None
+
+        if event.type.endswith(".started"):
+            phase = "call"
+            renderer = contribution.options.render_call
+        elif event.type.endswith(".updated"):
+            phase = "update"
+            renderer = contribution.options.render_update
+        else:
+            phase = "result"
+            renderer = contribution.options.render_result
+        if renderer is None:
+            return None
+
+        state = self._tool_render_states.setdefault(tool_call_id, {})
+        base_context = self._driver.render_context()
+        context = ToolRenderContext(
+            host=base_context.host,
+            theme=base_context.theme,
+            invalidate=base_context.invalidate,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            phase=phase,
+            expanded=expanded,
+            state=state,
+        )
+        result = renderer(event, context)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def clear_tool_render_state(self, tool_call_id: str | None = None) -> None:
+        if tool_call_id is None:
+            self._tool_render_states.clear()
+        else:
+            self._tool_render_states.pop(tool_call_id, None)
 
     def _active_slot(self, slot: str, *, default: object = None) -> object:
         contributions = self._slots[slot].values()
@@ -795,6 +913,22 @@ class ExtensionUiApi:
         registration = self._manager.register_completion_provider(
             self._owner,
             provider,
+        )
+        self._track(registration)
+        return registration
+
+    def register_tool_renderer(
+        self,
+        tool_name: str,
+        options: ToolRendererOptions,
+    ) -> UiRegistration:
+        self._assert_active()
+        if not isinstance(options, ToolRendererOptions):
+            raise TypeError("options must be ToolRendererOptions")
+        registration = self._manager.register_tool_renderer(
+            self._owner,
+            tool_name,
+            options,
         )
         self._track(registration)
         return registration

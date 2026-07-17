@@ -21,6 +21,8 @@ and every contribution is owned by its extension generation.
 |---------|------------------------|
 | `/ui-help` | Render the gallery command reference. |
 | `/ui-card [text]` | Publish a typed custom message and render a Rich card. |
+| `/ui-markdown` | Stream headings, a Markdown table, and a fenced code block. |
+| `/ui-lifecycle [query]` | Stream reasoning, diff and artifact blocks plus a custom-rendered tool call. |
 | `/ui-status [text\|clear]` | Set or clear an extension-owned status. |
 | `/ui-widget [above\|below\|clear]` | Mount or remove a widget around the editor. |
 | `/ui-notify [info\|warning\|error]` | Show each Textual notification severity. |
@@ -36,6 +38,35 @@ and every contribution is owned by its extension generation.
 autocomplete. After `/ui-working show`, send a normal prompt to exercise the
 custom indicator while the mock responder streams.
 
+## Streaming Markdown
+
+Assistant messages and slash-command output are rendered as Rich Markdown.
+Headings, lists, emphasis, links, fenced code blocks, and tables therefore use
+the same event projection. Run `/ui-markdown` to inspect a deterministic stream
+without configuring an Agent or provider.
+
+Vulcano keeps the accumulated source text and rebuilds its Markdown projection
+after every `assistant.delta`. This is important for block structures: a table
+header initially appears as incomplete text, then becomes a table as soon as
+the separator row arrives. `assistant.completed` reconciles the final content
+without creating another transcript message.
+
+A real msgflux Agent currently opts into streamed model responses through its
+configuration:
+
+```python
+from msgflux import nn
+from msgflux.vulcano import VulcanoRuntime
+
+agent = nn.Agent("vulcano", model, config={"stream": True})
+runtime = VulcanoRuntime(agent=agent)
+```
+
+`MsgfluxAgentAdapter` consumes the resulting `ModelStreamResponse` and emits
+the stable `assistant.started`, `assistant.delta`, and `assistant.completed`
+lifecycle. A non-streaming Agent remains compatible, but its whole response is
+projected as a single delta.
+
 `/reload` removes the current generation and recreates the initial gallery
 status and hint widget. This is useful for checking that widgets, shortcuts,
 renderers, and slots do not leak across generations.
@@ -49,9 +80,11 @@ terminal rows. It scrolls vertically after reaching the maximum.
 |-----|----------|
 | `Enter` | Submit the prompt. |
 | `Shift+Enter` or `Ctrl+J` | Insert a line break. |
+| `Alt+Enter` | Queue a follow-up behind all steering inputs. |
+| `Ctrl+P` | Open the searchable command palette. |
 | `Up` and `Down` | Navigate the slash selector while it is open. |
 | `Tab` | Complete the selected slash command. |
-| `Escape` | Close the slash selector or active modal. |
+| `Escape` | Close a selector/modal, or cancel the active execution and pending queue. |
 
 Extensions may replace the default editor with a Textual `Input` for
 single-line behavior or a `VulcanoTextArea` subclass for multiline behavior.
@@ -77,7 +110,7 @@ mode. Persistent contributions can be registered before a frontend binds.
 
 ## Settings convention
 
-Vulcano will use a flat home directory and TOML configuration. The layout is
+Vulcano uses a flat home directory and TOML configuration. The layout is
 closer to Codex than Pi because Vulcano does not need Pi's extra `agent`
 namespace:
 
@@ -87,17 +120,23 @@ namespace:
 | Project | `.vulcano/config.toml` |
 | Global directory override | `VULCANO_HOME` |
 
-Project configuration will override global configuration, with nested tables
-merged. Project-local configuration and resources must remain subject to
-project trust. Relative global paths will resolve from `~/.vulcano`; relative
-project paths will resolve from `.vulcano`.
+Project configuration overrides global configuration, with nested tables
+merged. TOML is treated as data; executable project extensions remain gated by
+`--trust-project-extensions`. Relative global paths resolve from
+`~/.vulcano`; relative project paths resolve from `.vulcano`.
 
-The intended editor settings are grouped in a TOML table:
+Editor settings and app keybindings are grouped under `ui`:
 
 ```toml
 [ui.editor]
 min_height = 3
 max_height = 15
+
+[ui.keybindings]
+command_palette = "ctrl+p"
+cancel = "escape"
+follow_up = ["alt+enter"]
+newline = ["shift+enter", "ctrl+j"]
 ```
 
 A project can override only the maximum:
@@ -107,10 +146,10 @@ A project can override only the maximum:
 max_height = 20
 ```
 
-!!! note "Planned settings loader"
-    The current preview uses the built-in values `3` and `15`. It does not read
-    these TOML properties yet. The settings manager, validation, merge, trust,
-    and reload behavior will be implemented as a separate runtime layer.
+The loader reads global configuration first and recursively merges the project
+file over it. Key values accept either one string or a list. Empty lists disable
+an action; duplicate keys across built-in actions are rejected so dispatch stays
+deterministic. `VULCANO_HOME` relocates configuration, extensions, and sessions.
 
 The target user directory will also provide the natural homes for resources:
 
@@ -123,5 +162,5 @@ The target user directory will also provide the natural homes for resources:
 └── sessions/
 ```
 
-Until that migration lands, use `-e` for the gallery and the existing preview
-extension discovery paths described in the main Vulcano documentation.
+Session transcripts are append-only JSONL files. Use `/sessions`, `/resume`,
+`/fork`, and `/export` to exercise persistence without a real Agent.

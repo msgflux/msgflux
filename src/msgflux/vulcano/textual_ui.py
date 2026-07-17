@@ -6,6 +6,7 @@ from collections.abc import Sequence as SequenceCollection
 from time import monotonic
 from typing import Callable, Mapping, Sequence, TypeVar
 
+from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -14,9 +15,11 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Input, Label, OptionList, Static, TextArea
+from textual.widgets import Button, Input, Label, OptionList, Static, TextArea
 
+from msgflux.vulcano.actions import InputMode
 from msgflux.vulcano.commands import CommandRegistry
+from msgflux.vulcano.config import EditorSettings, KeyBindings, VulcanoSettings
 from msgflux.vulcano.ui import (
     UiCustomFactory,
     UiDialogOptions,
@@ -28,7 +31,12 @@ from msgflux.vulcano.ui import (
     UiWidget,
 )
 
-__all__ = ["TextualUiDriver", "VulcanoTextArea", "WorkingStatus"]
+__all__ = [
+    "TextualUiDriver",
+    "VulcanoFooter",
+    "VulcanoTextArea",
+    "WorkingStatus",
+]
 
 
 T = TypeVar("T")
@@ -155,10 +163,16 @@ class VulcanoTextArea(TextArea):
     class Submitted(Message):
         """Posted when the user requests prompt submission."""
 
-        def __init__(self, editor: VulcanoTextArea, value: str) -> None:
+        def __init__(
+            self,
+            editor: VulcanoTextArea,
+            value: str,
+            mode: InputMode = "auto",
+        ) -> None:
             super().__init__()
             self.editor = editor
             self.value = value
+            self.mode = mode
 
         @property
         def control(self) -> VulcanoTextArea:
@@ -171,8 +185,12 @@ class VulcanoTextArea(TextArea):
         placeholder: str = "Message Vulcano or enter /help",
         editor_id: str | None = None,
         classes: str | None = None,
+        editor_settings: EditorSettings | None = None,
+        keybindings: KeyBindings | None = None,
     ) -> None:
         self.suggester = suggester
+        self.editor_settings = editor_settings or EditorSettings()
+        self.keybindings = keybindings or KeyBindings()
         self._suggestion_group = "vulcano-editor-suggestion"
         super().__init__(
             placeholder=placeholder,
@@ -182,6 +200,7 @@ class VulcanoTextArea(TextArea):
             show_line_numbers=False,
             highlight_cursor_line=False,
         )
+        self.styles.max_height = self.editor_settings.max_height
 
     def _on_mount(self, event: events.Mount) -> None:
         super()._on_mount(event)
@@ -192,15 +211,22 @@ class VulcanoTextArea(TextArea):
         self.call_after_refresh(self._resize_to_content)
 
     async def _on_key(self, event: events.Key) -> None:
-        if event.key in {"shift+enter", "ctrl+j"}:
+        if self.keybindings.matches("newline", event.key):
             event.stop()
             event.prevent_default()
             self.insert("\n")
             return
-        if event.key == "enter":
+        if self.keybindings.matches("submit", event.key) or self.keybindings.matches(
+            "follow_up", event.key
+        ):
             event.stop()
             event.prevent_default()
-            self.post_message(self.Submitted(self, self.text))
+            mode: InputMode = (
+                "follow_up"
+                if self.keybindings.matches("follow_up", event.key)
+                else "auto"
+            )
+            self.post_message(self.Submitted(self, self.text, mode))
             return
         await super()._on_key(event)
 
@@ -233,8 +259,8 @@ class VulcanoTextArea(TextArea):
 
     def _resize_to_content(self) -> None:
         desired_height = min(
-            max(self.wrapped_document.height + 2, self.MIN_HEIGHT),
-            self.MAX_HEIGHT,
+            max(self.wrapped_document.height + 2, self.editor_settings.min_height),
+            self.editor_settings.max_height,
         )
         if self.size.height != desired_height:
             self.styles.height = desired_height
@@ -331,6 +357,84 @@ class _SelectScreen(_TimedModalScreen[str | None]):
     @on(OptionList.OptionSelected)
     def _select_option(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(self._options[event.option_index])
+
+
+class _CommandPaletteScreen(_TimedModalScreen[str | None]):
+    def __init__(self, commands: CommandRegistry) -> None:
+        super().__init__(timeout=None, cancel_result=None)
+        self._commands = commands
+        self._visible_commands: tuple[str, ...] = ()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Label("Commands", classes="dialog-title")
+            yield Input(placeholder="Search slash commands", id="palette-query")
+            yield OptionList(id="palette-options", markup=False)
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._refresh_options("")
+        self.query_one("#palette-query", Input).focus()
+
+    def on_key(self, event: events.Key) -> None:
+        options = self.query_one("#palette-options", OptionList)
+        if event.key == "down":
+            options.action_cursor_down()
+        elif event.key == "up":
+            options.action_cursor_up()
+        else:
+            return
+        event.prevent_default()
+        event.stop()
+
+    @on(Input.Changed, "#palette-query")
+    def _query_changed(self, event: Input.Changed) -> None:
+        self._refresh_options(event.value)
+
+    @on(Input.Submitted, "#palette-query")
+    def _query_submitted(self, event: Input.Submitted) -> None:
+        del event
+        self._select_highlighted()
+
+    @on(OptionList.OptionSelected, "#palette-options")
+    def _option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self._visible_commands[event.option_index])
+
+    def _select_highlighted(self) -> None:
+        highlighted = self.query_one("#palette-options", OptionList).highlighted
+        if highlighted is not None and 0 <= highlighted < len(self._visible_commands):
+            self.dismiss(self._visible_commands[highlighted])
+
+    def _refresh_options(self, query: str) -> None:
+        terms = tuple(query.casefold().split())
+        commands = tuple(
+            sorted(
+                (
+                    command
+                    for command in self._commands
+                    if all(
+                        term
+                        in " ".join(
+                            (
+                                command.name,
+                                *command.aliases,
+                                command.description,
+                                command.category,
+                            )
+                        ).casefold()
+                        for term in terms
+                    )
+                ),
+                key=lambda command: (command.category, command.name),
+            )
+        )
+        self._visible_commands = tuple(command.name for command in commands)
+        options = self.query_one("#palette-options", OptionList)
+        options.clear_options()
+        options.add_options(
+            f"/{command.name}  {command.description}" for command in commands
+        )
+        options.highlighted = 0 if commands else None
 
 
 class _ConfirmScreen(_TimedModalScreen[bool]):
@@ -473,6 +577,85 @@ class _CustomScreen(ModalScreen[T | None]):
         self.dismiss(None)
 
 
+class VulcanoFooter(Static):
+    """Default footer built from runtime and execution metadata."""
+
+    def __init__(self, keybindings: KeyBindings) -> None:
+        super().__init__("", id="runtime-footer")
+        self._keybindings = keybindings
+        self._runtime_kind = "starting"
+        self._agent: str | None = None
+        self._thread_id: str | None = None
+        self._run_id: str | None = None
+        self._queue_count = 0
+        self._streaming = False
+        self._refresh_content()
+
+    def set_runtime(
+        self,
+        kind: str,
+        *,
+        agent: str | None,
+        thread_id: str | None,
+    ) -> None:
+        self._runtime_kind = kind
+        self._agent = agent
+        self._thread_id = thread_id
+        self._refresh_content()
+
+    def set_scope(self, scope: Mapping[str, object]) -> None:
+        thread_id = scope.get("thread_id")
+        run_id = scope.get("run_id")
+        self._thread_id = str(thread_id) if thread_id else self._thread_id
+        self._run_id = str(run_id) if run_id else None
+        self._refresh_content()
+
+    def set_queue_count(self, count: int) -> None:
+        self._queue_count = max(count, 0)
+        self._refresh_content()
+
+    def set_streaming(self, streaming: bool) -> None:  # noqa: FBT001
+        self._streaming = streaming
+        self._refresh_content()
+
+    def _refresh_content(self) -> None:
+        content = Text()
+        content.append("VULCANO", style="bold #ff6a1a")
+        runtime = self._agent or self._runtime_kind
+        content.append(f"  {runtime}", style="#c8cad1")
+        if self._thread_id:
+            content.append(f"  thd:{_short_id(self._thread_id)}", style="#778091")
+        if self._run_id:
+            content.append(f"  run:{_short_id(self._run_id)}", style="#778091")
+        if self._streaming:
+            content.append("  streaming", style="#ff6a1a")
+        if self._queue_count:
+            content.append(f"  queued:{self._queue_count}", style="#d0a15c")
+        hints = []
+        for action, label in (
+            ("command_palette", "commands"),
+            ("cancel", "cancel"),
+        ):
+            key = self._keybindings.primary(action)
+            if key:
+                hints.append(f"{_display_key(key)} {label}")
+        if hints:
+            content.append(f"  ·  {'  '.join(hints)}", style="#626b7a")
+        self.update(content)
+
+
+def _short_id(value: str) -> str:
+    prefix, separator, suffix = value.partition("_")
+    if separator:
+        return f"{prefix[:3]}_{suffix[:6]}"
+    return value[:8]
+
+
+def _display_key(value: str) -> str:
+    names = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "escape": "Esc"}
+    return "+".join(names.get(part, part.title()) for part in value.split("+"))
+
+
 class WorkingStatus(Static):
     DEFAULT_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
@@ -532,9 +715,11 @@ class TextualUiDriver:
         app: App[object],
         ui: UiManager,
         commands: CommandRegistry,
+        settings: VulcanoSettings,
     ) -> None:
         self.app = app
         self._commands = commands
+        self._settings = settings
         self._suggester = _VulcanoSuggester(ui, commands)
         self._command_menu: _SlashCommandMenu | None = None
         self._state = UiState()
@@ -542,12 +727,26 @@ class TextualUiDriver:
         self._apply_scheduled = False
         self._base_status = "starting runtime..."
         self._streaming = False
+        self._runtime_kind = "starting"
+        self._agent_name: str | None = None
+        self._thread_id: str | None = None
+        self._scope: Mapping[str, object] = {}
+        self._queue_count = 0
 
     def create_default_header(self) -> Widget:
         return Static("VULCANO  /  MSGFLUX", id="topbar")
 
     def create_default_footer(self) -> Widget:
-        return Footer()
+        footer = VulcanoFooter(self._settings.keybindings)
+        footer.set_runtime(
+            self._runtime_kind,
+            agent=self._agent_name,
+            thread_id=self._thread_id,
+        )
+        footer.set_scope(self._scope)
+        footer.set_queue_count(self._queue_count)
+        footer.set_streaming(self._streaming)
+        return footer
 
     def create_working_status(self) -> WorkingStatus:
         return WorkingStatus()
@@ -560,6 +759,8 @@ class TextualUiDriver:
         return VulcanoTextArea(
             editor_id="prompt",
             suggester=self._suggester,
+            editor_settings=self._settings.editor,
+            keybindings=self._settings.keybindings,
         )
 
     @property
@@ -655,12 +856,44 @@ class TextualUiDriver:
         if self.app.is_running:
             self._refresh_status()
 
+    def set_runtime_metadata(
+        self,
+        kind: str,
+        *,
+        agent: str | None,
+        thread_id: str | None,
+    ) -> None:
+        self._runtime_kind = kind
+        self._agent_name = agent
+        self._thread_id = thread_id
+        footer = self._default_footer()
+        if footer is not None:
+            footer.set_runtime(kind, agent=agent, thread_id=thread_id)
+
+    def set_execution_scope(self, scope: Mapping[str, object]) -> None:
+        self._scope = dict(scope)
+        footer = self._default_footer()
+        if footer is not None:
+            footer.set_scope(scope)
+
+    def set_queue_count(self, count: int) -> None:
+        self._queue_count = max(count, 0)
+        footer = self._default_footer()
+        if footer is not None:
+            footer.set_queue_count(self._queue_count)
+
     def set_streaming(self, *, streaming: bool) -> None:
         self._streaming = streaming
         if self.app.is_running:
             self.app.query_one("#working", WorkingStatus).set_streaming(
                 streaming=streaming
             )
+            footer = self._default_footer()
+            if footer is not None:
+                footer.set_streaming(streaming)
+
+    def _default_footer(self) -> VulcanoFooter | None:
+        return next(iter(self.app.query(VulcanoFooter)), None)
 
     def _refresh_status(self) -> None:
         statuses = [status.text for status in self._state.statuses]
@@ -790,6 +1023,14 @@ class TextualUiDriver:
         return await self.app.push_screen_wait(
             _EditorScreen(title, prefill, timeout=dialog.timeout)
         )
+
+    async def open_command_palette(self) -> str | None:
+        command = await self.app.push_screen_wait(_CommandPaletteScreen(self._commands))
+        if command is None:
+            return None
+        self.set_editor_text(f"/{command} ")
+        self.focus_editor()
+        return command
 
     def notify(
         self,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Mapping
 
 __all__ = [
@@ -24,6 +24,17 @@ class EventType:
     ASSISTANT_STARTED = "assistant.started"
     ASSISTANT_DELTA = "assistant.delta"
     ASSISTANT_COMPLETED = "assistant.completed"
+    BLOCK_STARTED = "assistant.block.started"
+    BLOCK_DELTA = "assistant.block.delta"
+    BLOCK_COMPLETED = "assistant.block.completed"
+    TOOL_STARTED = "tool.started"
+    TOOL_UPDATED = "tool.updated"
+    TOOL_COMPLETED = "tool.completed"
+    INPUT_QUEUED = "input.queued"
+    INPUT_DEQUEUED = "input.dequeued"
+    INPUT_QUEUE_CLEARED = "input.queue.cleared"
+    EXECUTION_CANCELLED = "execution.cancelled"
+    SESSION_SWITCHED = "session.switched"
     COMMAND_STARTED = "command.started"
     COMMAND_OUTPUT = "command.output"
     COMMAND_COMPLETED = "command.completed"
@@ -58,9 +69,7 @@ class DomainEvent:
     sequence: int
     payload: Mapping[str, object] = field(default_factory=dict)
     correlation_id: str | None = None
-    occurred_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    occurred_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -70,6 +79,23 @@ class DomainEvent:
             "correlation_id": self.correlation_id,
             "occurred_at": self.occurred_at,
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> DomainEvent:
+        payload = value.get("payload", {})
+        if not isinstance(payload, Mapping):
+            raise TypeError("Domain event payload must be a mapping")
+        return cls(
+            type=str(value["type"]),
+            sequence=int(value["sequence"]),
+            payload=dict(payload),
+            correlation_id=(
+                str(value["correlation_id"])
+                if value.get("correlation_id") is not None
+                else None
+            ),
+            occurred_at=str(value["occurred_at"]),
+        )
 
 
 _STREAM_END = object()

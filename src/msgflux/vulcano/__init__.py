@@ -1,9 +1,28 @@
-from msgflux.vulcano.actions import RuntimeAction, StopRuntime, SubmitInput
+from msgflux.vulcano.actions import (
+    CancelExecution,
+    InputMode,
+    RuntimeAction,
+    StopRuntime,
+    SubmitInput,
+)
+from msgflux.vulcano.blocks import (
+    BlockKind,
+    BlockStatus,
+    ContentBlock,
+    new_block_id,
+    new_tool_call_id,
+)
 from msgflux.vulcano.commands import (
     CommandContext,
     CommandEventEmitter,
     CommandOptions,
     CommandResult,
+)
+from msgflux.vulcano.config import (
+    DEFAULT_KEY_BINDINGS,
+    EditorSettings,
+    KeyBindings,
+    VulcanoSettings,
 )
 from msgflux.vulcano.events import (
     DomainEvent,
@@ -33,8 +52,17 @@ from msgflux.vulcano.runtime import (
     RuntimeProtocol,
     VulcanoRuntime,
 )
+from msgflux.vulcano.sessions import (
+    SessionController,
+    SessionInfo,
+    SessionStore,
+    SessionTransition,
+)
 from msgflux.vulcano.ui import (
     ExtensionUiApi,
+    ToolRenderContext,
+    ToolRenderer,
+    ToolRendererOptions,
     UiCompletionProvider,
     UiComponentFactory,
     UiCustomFactory,
@@ -58,15 +86,21 @@ __all__ = [
     "AgentAdapter",
     "AgentApi",
     "AgentRunResult",
+    "BlockKind",
+    "BlockStatus",
+    "CancelExecution",
     "CommandContext",
     "CommandEventEmitter",
     "CommandOptions",
     "CommandResult",
+    "ContentBlock",
+    "DEFAULT_KEY_BINDINGS",
     "DomainEvent",
     "EXTENSION_API_VERSION",
     "EXTENSION_ENTRY_POINT_GROUP",
     "EventDraft",
     "EventType",
+    "EditorSettings",
     "ExtensionApi",
     "ExtensionContext",
     "ExtensionDiagnostic",
@@ -74,14 +108,23 @@ __all__ = [
     "ExtensionSettings",
     "ExtensionSource",
     "ExtensionUiApi",
+    "InputMode",
+    "KeyBindings",
     "MockResponder",
     "MsgfluxAgentAdapter",
     "Responder",
     "RuntimeAction",
     "RuntimeProtocol",
+    "SessionController",
+    "SessionInfo",
+    "SessionStore",
+    "SessionTransition",
     "StopRuntime",
     "SubmitInput",
     "ToolLibraryApi",
+    "ToolRenderContext",
+    "ToolRenderer",
+    "ToolRendererOptions",
     "ToolRegistration",
     "UiComponentFactory",
     "UiCompletionProvider",
@@ -100,6 +143,9 @@ __all__ = [
     "UiThemeResult",
     "UiWidget",
     "VulcanoRuntime",
+    "VulcanoSettings",
     "WorkingIndicatorOptions",
     "custom_message_type",
+    "new_block_id",
+    "new_tool_call_id",
 ]

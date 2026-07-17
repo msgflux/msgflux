@@ -1,0 +1,158 @@
+import asyncio
+
+import pytest
+
+from msgflux.runtime import ExecutionScope
+from msgflux.vulcano import (
+    DomainEvent,
+    EventType,
+    SessionStore,
+    SubmitInput,
+    VulcanoRuntime,
+)
+
+
+def test_session_store_round_trips_forks_and_exports(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_source")
+    store.append(
+        "thd_source",
+        DomainEvent(
+            type=EventType.MESSAGE_USER,
+            sequence=1,
+            payload={"content": "inspect this"},
+            correlation_id="one",
+        ),
+    )
+    store.append(
+        "thd_source",
+        DomainEvent(
+            type=EventType.ASSISTANT_COMPLETED,
+            sequence=2,
+            payload={"content": "done", "status": "completed"},
+            correlation_id="one",
+        ),
+    )
+
+    loaded = store.load("thd_source")
+    assert [event.type for event in loaded] == [
+        EventType.MESSAGE_USER,
+        EventType.ASSISTANT_COMPLETED,
+    ]
+
+    fork = store.fork("thd_source", target_thread_id="thd_fork")
+    assert fork.parent_thread_id == "thd_source"
+    assert fork.forked_from_sequence == 2
+    assert fork.event_count == 2
+
+    export = store.export_markdown("thd_fork", tmp_path / "exports" / "run.md")
+    markdown = export.read_text(encoding="utf-8")
+    assert "## User" in markdown
+    assert "inspect this" in markdown
+    assert "## Assistant" in markdown
+    assert "done" in markdown
+
+
+def test_session_replay_closes_interrupted_streams_as_aborted(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_interrupted")
+    store.append(
+        "thd_interrupted",
+        DomainEvent(
+            type=EventType.ASSISTANT_STARTED,
+            sequence=1,
+            correlation_id="run",
+        ),
+    )
+    store.append(
+        "thd_interrupted",
+        DomainEvent(
+            type=EventType.ASSISTANT_DELTA,
+            sequence=2,
+            payload={"delta": "partial"},
+            correlation_id="run",
+        ),
+    )
+
+    replay = store.replay("thd_interrupted")
+
+    assert replay[-1].type == EventType.ASSISTANT_COMPLETED
+    assert replay[-1].payload == {"content": "partial", "status": "aborted"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_replays_persisted_session_before_start_event(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    scope = ExecutionScope(thread_id="thd_resume", namespace="vulcano")
+    first = VulcanoRuntime(
+        scope=scope,
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    await first.dispatch(SubmitInput("persist me", correlation_id="persisted"))
+    await first.stop()
+
+    resumed = VulcanoRuntime(
+        scope=scope,
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    subscription = resumed.subscribe()
+    await resumed.start()
+    received = []
+    while True:
+        event = await asyncio.wait_for(subscription.__anext__(), timeout=1)
+        received.append(event)
+        if event.type == EventType.RUNTIME_STARTED:
+            break
+    await subscription.aclose()
+
+    replay = [event for event in received if event.correlation_id == "persisted"]
+    assert replay[0].type == EventType.MESSAGE_USER
+    assert replay[-1].type == EventType.ASSISTANT_COMPLETED
+    assert received[-1].type == EventType.RUNTIME_STARTED
+    assert resumed.history[-1].sequence > first.history[-1].sequence
+
+
+@pytest.mark.asyncio
+async def test_runtime_slash_commands_fork_resume_and_export_sessions(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_original", namespace="vulcano"),
+        session_store=store,
+        export_directory=tmp_path,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    await runtime.dispatch(SubmitInput("before fork", correlation_id="before"))
+    await runtime.dispatch(SubmitInput("/fork", correlation_id="fork"))
+
+    fork_event = next(
+        event for event in runtime.history if event.type == EventType.SESSION_SWITCHED
+    )
+    fork_thread = str(fork_event.payload["thread_id"])
+    assert runtime.sessions.current_thread_id == fork_thread
+    assert store.info(fork_thread).parent_thread_id == "thd_original"
+
+    await runtime.dispatch(SubmitInput("after fork", correlation_id="after"))
+    message = next(
+        event
+        for event in runtime.history
+        if event.type == EventType.MESSAGE_USER and event.correlation_id == "after"
+    )
+    assert message.payload["scope"]["thread_id"] == fork_thread
+
+    destination = tmp_path / "fork.md"
+    await runtime.dispatch(SubmitInput(f"/export {destination}"))
+    assert destination.is_file()
+    assert "after fork" in destination.read_text(encoding="utf-8")
+
+    await runtime.dispatch(SubmitInput("/resume thd_original"))
+    assert runtime.sessions.current_thread_id == "thd_original"
+    assert [
+        event.payload["kind"]
+        for event in runtime.history
+        if event.type == EventType.SESSION_SWITCHED
+    ] == ["fork", "resume"]

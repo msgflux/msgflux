@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.runtime import ExecutionScope, get_execution_scope
 from msgflux.vulcano import (
+    CancelExecution,
     CommandOptions,
     CommandResult,
     EventDraft,
@@ -12,6 +14,23 @@ from msgflux.vulcano import (
     SubmitInput,
     VulcanoRuntime,
 )
+
+
+class _ControlledResponder:
+    def __init__(self):
+        self.prompts = []
+        self.started = asyncio.Queue()
+        self._releases = {}
+
+    async def stream(self, prompt):
+        self.prompts.append(prompt)
+        release = self._releases.setdefault(prompt, asyncio.Event())
+        await self.started.put(prompt)
+        await release.wait()
+        yield f"completed: {prompt}"
+
+    def release(self, prompt):
+        self._releases[prompt].set()
 
 
 class _FakeAgent:
@@ -26,6 +45,29 @@ class _FakeAgent:
         self.calls.append((message, kwargs))
         self.scopes.append(get_execution_scope())
         return f"Agent response: {message}"
+
+
+class _FakeStreamResponse:
+    def __init__(self, chunks):
+        self._chunks = chunks
+        self.data = "".join(chunks)
+
+    async def consume(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeStreamingAgent(_FakeAgent):
+    async def acall(self, message, **kwargs):
+        self.calls.append((message, kwargs))
+        self.scopes.append(get_execution_scope())
+        return _FakeStreamResponse(
+            (
+                "| Component | State |\n",
+                "|---|---|\n",
+                "| Agent | streaming |\n",
+            )
+        )
 
 
 def test_unbound_agent_facade_reports_how_to_bind_main_agent():
@@ -85,6 +127,110 @@ async def test_mock_runtime_streams_ordered_assistant_events():
         for event in events
         if event.type != EventType.RUNTIME_STARTED
     )
+
+
+@pytest.mark.asyncio
+async def test_busy_runtime_prioritizes_steering_before_follow_ups():
+    responder = _ControlledResponder()
+    runtime = VulcanoRuntime(responder=responder, extensions_enabled=False)
+
+    active = asyncio.create_task(
+        runtime.dispatch(SubmitInput("first", correlation_id="first"))
+    )
+    assert await responder.started.get() == "first"
+
+    await runtime.dispatch(SubmitInput("auto steer", correlation_id="auto"))
+    await runtime.dispatch(
+        SubmitInput(
+            "later follow-up",
+            mode="follow_up",
+            correlation_id="follow-up",
+        )
+    )
+    await runtime.dispatch(
+        SubmitInput("explicit steer", mode="steer", correlation_id="steer")
+    )
+
+    assert [item.mode for item in runtime.queued_inputs] == [
+        "steer",
+        "steer",
+        "follow_up",
+    ]
+    queued = [
+        event for event in runtime.history if event.type == EventType.INPUT_QUEUED
+    ]
+    assert [event.payload["mode"] for event in queued] == [
+        "steer",
+        "follow_up",
+        "steer",
+    ]
+
+    responder.release("first")
+    assert await responder.started.get() == "auto steer"
+    responder.release("auto steer")
+    assert await responder.started.get() == "explicit steer"
+    responder.release("explicit steer")
+    assert await responder.started.get() == "later follow-up"
+    responder.release("later follow-up")
+    await active
+
+    assert responder.prompts == [
+        "first",
+        "auto steer",
+        "explicit steer",
+        "later follow-up",
+    ]
+    assert not runtime.is_busy
+    assert runtime.queued_inputs == ()
+
+
+@pytest.mark.asyncio
+async def test_cancel_aborts_active_execution_and_clears_pending_inputs():
+    responder = _ControlledResponder()
+    runtime = VulcanoRuntime(responder=responder, extensions_enabled=False)
+
+    active = asyncio.create_task(
+        runtime.dispatch(SubmitInput("first", correlation_id="first"))
+    )
+    assert await responder.started.get() == "first"
+    await runtime.dispatch(SubmitInput("queued", correlation_id="queued"))
+
+    await runtime.dispatch(CancelExecution(reason="escape", correlation_id="cancel"))
+    await active
+
+    assert responder.prompts == ["first"]
+    assert not runtime.is_busy
+    assert runtime.queued_inputs == ()
+    assert any(
+        event.type == EventType.ASSISTANT_COMPLETED
+        and event.correlation_id == "first"
+        and event.payload["status"] == "aborted"
+        for event in runtime.history
+    )
+    cleared = next(
+        event
+        for event in runtime.history
+        if event.type == EventType.INPUT_QUEUE_CLEARED
+    )
+    assert cleared.payload["items"] == [
+        {
+            "content": "queued",
+            "mode": "steer",
+            "correlation_id": "queued",
+        }
+    ]
+    cancelled = next(
+        event
+        for event in runtime.history
+        if event.type == EventType.EXECUTION_CANCELLED
+    )
+    assert cancelled.payload["target_correlation_id"] == "first"
+    assert cancelled.payload["queued_cleared"] == 1
+
+
+def test_submit_input_rejects_unknown_queue_mode():
+    with pytest.raises(ValueError, match="Unsupported input mode"):
+        SubmitInput("test", mode="unknown")
 
 
 @pytest.mark.asyncio
@@ -233,10 +379,37 @@ async def test_bound_main_agent_drives_the_runtime_event_stream():
 
 
 @pytest.mark.asyncio
+async def test_bound_streaming_agent_preserves_model_response_chunks():
+    runtime = VulcanoRuntime(
+        agent=_FakeStreamingAgent(),
+        extensions_enabled=False,
+    )
+
+    await runtime.dispatch(SubmitInput("render status", correlation_id="agent-1"))
+
+    events = [event for event in runtime.history if event.correlation_id == "agent-1"]
+    deltas = [
+        event.payload["delta"]
+        for event in events
+        if event.type == EventType.ASSISTANT_DELTA
+    ]
+    assert deltas == [
+        "| Component | State |\n",
+        "|---|---|\n",
+        "| Agent | streaming |\n",
+    ]
+    assert events[-1].type == EventType.ASSISTANT_COMPLETED
+    assert events[-1].payload == {
+        "content": "".join(deltas),
+        "status": "completed",
+    }
+
+
+@pytest.mark.asyncio
 async def test_main_agent_cannot_be_rebound_after_extensions_load():
     runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
 
     await runtime.start()
 
-    with pytest.raises(RuntimeError, match="before runtime.start"):
+    with pytest.raises(RuntimeError, match=r"before runtime\.start"):
         runtime.bind_agent(_FakeAgent())

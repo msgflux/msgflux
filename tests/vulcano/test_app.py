@@ -1,3 +1,5 @@
+import asyncio
+from io import StringIO
 from textwrap import dedent
 
 import pytest
@@ -5,12 +7,41 @@ import pytest
 pytest.importorskip("textual")
 pytest.importorskip("rich")
 
+from rich.console import Console
+from rich.markdown import Markdown
 from textual.color import Color
 from textual.widgets import Button, Input, OptionList, Static
 
-from msgflux.vulcano.app import TranscriptMessage, VulcanoApp
+from msgflux.runtime import ExecutionScope
+from msgflux.vulcano import (
+    BlockKind,
+    BlockStatus,
+    CommandOptions,
+    CommandResult,
+    EditorSettings,
+    KeyBindings,
+    SessionStore,
+    ToolRendererOptions,
+    VulcanoSettings,
+)
+from msgflux.vulcano.app import (
+    CollapsibleTranscriptBlock,
+    PendingInputList,
+    ToolExecutionBlock,
+    TranscriptMessage,
+    VulcanoApp,
+)
 from msgflux.vulcano.runtime import VulcanoRuntime
-from msgflux.vulcano.textual_ui import VulcanoTextArea
+from msgflux.vulcano.textual_ui import VulcanoFooter, VulcanoTextArea
+
+
+class _ControlledMarkdownResponder:
+    def __init__(self):
+        self.chunks: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def stream(self, _prompt):
+        while (chunk := await self.chunks.get()) is not None:
+            yield chunk
 
 
 def _write_extension(path, source):
@@ -28,6 +59,18 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         assert app.query_one("#topbar", Static).outer_size.height == 4
         status = app.query_one("#status", Static)
         assert "mock runtime" in str(status.render())
+        footer = app.query_one("#runtime-footer", VulcanoFooter)
+        assert "VULCANO" in str(footer.render())
+        assert "mock" in str(footer.render())
+        welcome = next(
+            message
+            for message in app.query(TranscriptMessage)
+            if message.kind == "welcome"
+        )
+        rendered_welcome = "\n".join(
+            welcome.render_line(y).text for y in range(welcome.size.height)
+        )
+        assert "Vulcano runtime preview" in rendered_welcome
 
         prompt = app.query_one("#prompt", VulcanoTextArea)
         prompt.text = "hello"
@@ -40,6 +83,303 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         assistant = next(message for message in messages if message.kind == "assistant")
         assert user.source_text == "hello"
         assert assistant.source_text == "Mock runtime received: hello"
+        rendered_assistant = "\n".join(
+            assistant.render_line(y).text for y in range(assistant.size.height)
+        )
+        assert "Mock runtime received: hello" in rendered_assistant
+        assert "run:" in str(footer.render())
+
+
+@pytest.mark.asyncio
+async def test_command_palette_filters_and_inserts_runtime_command():
+    app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+
+        query = app.screen.query_one("#palette-query", Input)
+        query.value = "echo"
+        query.cursor_position = len(query.value)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        assert prompt.text == "/echo "
+
+
+@pytest.mark.asyncio
+async def test_app_uses_configured_editor_and_command_palette_key(tmp_path):
+    settings = VulcanoSettings(
+        home=tmp_path / "home",
+        cwd=tmp_path,
+        editor=EditorSettings(min_height=4, max_height=9),
+        keybindings=KeyBindings.from_mapping({"command_palette": "ctrl+k"}),
+    )
+    app = VulcanoApp(
+        VulcanoRuntime(stream_delay=0, extensions_enabled=False),
+        settings=settings,
+    )
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        assert prompt.editor_settings == settings.editor
+        assert prompt.outer_size.height == 4
+
+        await pilot.press("ctrl+k")
+        await pilot.pause()
+        assert app.screen.query_one("#palette-query", Input)
+
+
+@pytest.mark.asyncio
+async def test_app_rebuilds_transcript_after_session_fork(tmp_path):
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_original", namespace="vulcano"),
+        session_store=SessionStore(tmp_path / "sessions"),
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "before fork"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.05)
+
+        prompt.text = "/fork"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.15)
+
+        assert runtime.sessions.current_thread_id != "thd_original"
+        user_messages = [
+            message
+            for message in app.query(TranscriptMessage)
+            if message.kind == "user"
+        ]
+        assert [message.source_text for message in user_messages] == ["before fork"]
+        footer = app.query_one("#runtime-footer", VulcanoFooter)
+        assert "thd:" in str(footer.render())
+
+
+@pytest.mark.asyncio
+async def test_streaming_markdown_rebuilds_and_renders_a_table():
+    responder = _ControlledMarkdownResponder()
+    runtime = VulcanoRuntime(responder=responder, extensions_enabled=False)
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "render a table"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assistant = next(
+            message
+            for message in app.query(TranscriptMessage)
+            if message.kind == "assistant"
+        )
+        responder.chunks.put_nowait("| Component | State |\n")
+        await pilot.pause(delay=0.05)
+        assert assistant.source_text == "| Component | State |\n"
+
+        responder.chunks.put_nowait("|---|---|\n| Agent | streaming |\n")
+        responder.chunks.put_nowait(None)
+        await pilot.pause(delay=0.05)
+
+        assert assistant.source_text == (
+            "| Component | State |\n|---|---|\n| Agent | streaming |\n"
+        )
+        assert isinstance(assistant.content, Markdown)
+
+        output = StringIO()
+        Console(
+            file=output,
+            width=80,
+            color_system=None,
+            force_terminal=False,
+        ).print(assistant.content)
+        rendered = output.getvalue()
+        assert "|" not in rendered
+        assert any(
+            "Component" in line and "State" in line for line in rendered.splitlines()
+        )
+        assert any(
+            "Agent" in line and "streaming" in line for line in rendered.splitlines()
+        )
+
+
+@pytest.mark.asyncio
+async def test_app_projects_pending_inputs_and_escape_cancels_execution():
+    responder = _ControlledMarkdownResponder()
+    runtime = VulcanoRuntime(responder=responder, extensions_enabled=False)
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "active"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt.text = "steer next"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt.text = "follow later"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("alt+enter")
+        await pilot.pause()
+
+        pending = app.query_one("#pending-inputs", PendingInputList)
+        assert list(pending.items.values()) == [
+            ("steer", "steer next"),
+            ("follow_up", "follow later"),
+        ]
+        assert not pending.has_class("pending-inputs-hidden")
+
+        await pilot.press("escape")
+        await pilot.pause(delay=0.05)
+
+        assert pending.items == {}
+        assert pending.has_class("pending-inputs-hidden")
+        assert not runtime.is_busy
+
+
+@pytest.mark.asyncio
+async def test_app_projects_typed_streaming_diff_block():
+    runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
+
+    async def render_diff(_arguments, context):
+        block_id = await context.start_block(BlockKind.DIFF, title="Parser patch")
+        await context.update_block(block_id, "--- a/parser.py\n")
+        await context.update_block(block_id, "+++ b/parser.py\n+fixed = True\n")
+        await context.complete_block(block_id)
+        return CommandResult()
+
+    runtime.extensions.api.register_command(
+        "render-diff",
+        CommandOptions(description="Render a streamed diff.", handler=render_diff),
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/render-diff"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        block = next(
+            message
+            for message in app.query(TranscriptMessage)
+            if message.kind == f"block:{BlockKind.DIFF}"
+        )
+        assert block.source_text == (
+            "--- a/parser.py\n+++ b/parser.py\n+fixed = True\n"
+        )
+        assert block.render_mode == "diff"
+        assert isinstance(block.content, Markdown)
+
+
+@pytest.mark.asyncio
+async def test_app_projects_reasoning_and_custom_tool_lifecycle():
+    runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
+    runtime.extensions.api.ui.register_tool_renderer(
+        "search",
+        ToolRendererOptions(
+            render_result=lambda event, _context: Static(
+                f"custom result: {event.payload['result']}",
+                id="custom-tool-result",
+            )
+        ),
+    )
+
+    async def inspect(_arguments, context):
+        reasoning_id = await context.start_block(
+            BlockKind.REASONING,
+            title="Inspecting",
+        )
+        await context.update_block(reasoning_id, "Reading the parser.")
+        await context.complete_block(reasoning_id)
+        tool_call_id = await context.start_tool("search", {"query": "parser"})
+        await context.update_tool(tool_call_id, "search", {"matches": 1})
+        await context.complete_tool(tool_call_id, "search", "src/parser.py")
+        return CommandResult()
+
+    runtime.extensions.api.register_command(
+        "inspect",
+        CommandOptions(
+            description="Inspect with reasoning and a tool.", handler=inspect
+        ),
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/inspect"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.15)
+
+        reasoning = app.query_one(CollapsibleTranscriptBlock)
+        assert reasoning.collapsed
+        assert reasoning.source_text == "Reading the parser."
+
+        tool = app.query_one(ToolExecutionBlock)
+        assert tool.status == BlockStatus.COMPLETED
+        assert "search" in tool.title
+        assert app.query_one("#custom-tool-result", Static).render() == (
+            "custom result: src/parser.py"
+        )
+
+
+@pytest.mark.asyncio
+async def test_failing_tool_renderer_falls_back_without_stopping_projection():
+    runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
+
+    def broken_renderer(_event, _context):
+        raise RuntimeError("broken tool renderer")
+
+    runtime.extensions.api.ui.register_tool_renderer(
+        "broken",
+        ToolRendererOptions(render_result=broken_renderer),
+    )
+
+    async def inspect(_arguments, context):
+        tool_call_id = await context.start_tool("broken", {"path": "src"})
+        await context.complete_tool(tool_call_id, "broken", "fallback result")
+        return CommandResult()
+
+    runtime.extensions.api.register_command(
+        "broken-tool",
+        CommandOptions(description="Render a broken tool.", handler=inspect),
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/broken-tool"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        tool = app.query_one(ToolExecutionBlock)
+        assert tool.status == BlockStatus.COMPLETED
+        assert app.query_one(".tool-execution-body Static", Static)
 
 
 @pytest.mark.asyncio
@@ -87,7 +427,7 @@ async def test_slash_command_menu_filters_and_completes_runtime_commands():
         menu = app.query_one("#command-menu", OptionList)
 
         assert prompt.styles.background == Color.parse("#292c33")
-        assert app.query_one("#topbar", Static).styles.color == Color.parse("#ff3344")
+        assert app.query_one("#topbar", Static).styles.color == Color.parse("#ff6a1a")
         assert not menu.display
 
         prompt.text = "/"

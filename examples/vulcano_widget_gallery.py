@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping
 
 from rich.panel import Panel
@@ -7,10 +8,12 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from msgflux.vulcano import (
+    BlockKind,
     CommandOptions,
     CommandResult,
     EventDraft,
     EventType,
+    ToolRendererOptions,
     WorkingIndicatorOptions,
 )
 
@@ -31,7 +34,7 @@ def _render_card(event, _context):
         title = "Widget gallery"
         body = str(content)
     return Static(
-        Panel(body, title=title, border_style="bright_red"),
+        Panel(body, title=title, border_style="#ff6a1a"),
         classes="gallery-card",
     )
 
@@ -42,7 +45,7 @@ class GalleryOverlay(Static):
         width: 64;
         height: auto;
         padding: 1 2;
-        border: round #ff3344;
+        border: round #ff6a1a;
         background: #1b1d23;
     }
 
@@ -80,6 +83,8 @@ def _ui_help(_args, _ctx):
                 "## Widget gallery",
                 "",
                 "- `/ui-card [text]` — custom Rich renderer",
+                "- `/ui-markdown` — streamed Markdown and table",
+                "- `/ui-lifecycle` — reasoning, diff, artifact and tool blocks",
                 "- `/ui-status [text|clear]` — status contribution",
                 "- `/ui-widget [above|below|clear]` — layout widget",
                 "- `/ui-notify [info|warning|error]` — notification",
@@ -106,6 +111,97 @@ async def _ui_card(args, ctx):
     return CommandResult()
 
 
+async def _ui_markdown(_args, ctx):
+    chunks = (
+        "## Streaming Markdown\n\n",
+        "The transcript rebuilds the accumulated document after each delta.\n\n",
+        "| Component | State |\n",
+        "|---|---|\n",
+        "| Agent output | streaming |\n",
+        "| Markdown tables | rendered |\n\n",
+        "```python\n",
+        "async for event in agent.stream_events():\n    render(event)\n",
+        "```\n",
+    )
+    await ctx.emit(EventDraft(EventType.ASSISTANT_STARTED))
+    content = ""
+    for chunk in chunks:
+        await asyncio.sleep(0.06)
+        content += chunk
+        await ctx.emit(EventDraft(EventType.ASSISTANT_DELTA, {"delta": chunk}))
+    await ctx.emit(
+        EventDraft(
+            EventType.ASSISTANT_COMPLETED,
+            {"content": content, "status": "completed"},
+        )
+    )
+    return CommandResult()
+
+
+async def _ui_lifecycle(args, ctx):
+    reasoning_id = await ctx.start_block(
+        BlockKind.REASONING,
+        title="Inspecting mock repository",
+    )
+    await ctx.update_block(reasoning_id, "Reading the parser and its tests.\n")
+    await asyncio.sleep(0.08)
+    await ctx.update_block(reasoning_id, "Comparing the public contracts.")
+    await ctx.complete_block(reasoning_id)
+
+    await ctx.send_block(
+        BlockKind.DIFF,
+        "- old_color = '#ff3344'\n+ new_color = '#ff6a1a'",
+        title="Mock patch",
+    )
+    await ctx.send_block(
+        BlockKind.ARTIFACT,
+        "## Mock artifact\n\n| File | State |\n|---|---|\n| parser.py | reviewed |",
+        title="Review report",
+    )
+
+    tool_call_id = await ctx.start_tool(
+        "gallery-search",
+        {"query": args or "ExtensionApi"},
+    )
+    await asyncio.sleep(0.08)
+    await ctx.update_tool(
+        tool_call_id,
+        "gallery-search",
+        {"matches": 3, "scanned": 18},
+    )
+    await asyncio.sleep(0.08)
+    await ctx.complete_tool(
+        tool_call_id,
+        "gallery-search",
+        ["runtime.py", "ui.py", "extensions/api.py"],
+    )
+    return CommandResult()
+
+
+def _render_tool_call(event, _context):
+    return Static(
+        Panel(
+            str(event.payload.get("arguments", {})),
+            title="Mock search arguments",
+            border_style="#ff6a1a",
+        )
+    )
+
+
+def _render_tool_update(event, _context):
+    return Static(f"Progress: {event.payload.get('update', {})}")
+
+
+def _render_tool_result(event, _context):
+    return Static(
+        Panel(
+            str(event.payload.get("result", "")),
+            title="Mock search result",
+            border_style="#ff6a1a",
+        )
+    )
+
+
 def _ui_status(args, ctx):
     value = args.strip()
     ctx.ui.set_status(
@@ -128,7 +224,7 @@ def _ui_widget(args, ctx):
         lambda _app, _theme: Static(
             Panel(
                 f"Mock widget placed {position} the editor.",
-                border_style="bright_red",
+                border_style="#ff6a1a",
             )
         ),
         placement=placement,
@@ -253,6 +349,16 @@ def _ui_reset(_args, ctx):
 _COMMANDS = (
     ("ui-help", "List widget gallery commands.", _ui_help),
     ("ui-card", "Render a mock card in the transcript.", _ui_card),
+    (
+        "ui-lifecycle",
+        "Render reasoning, diff, artifact and tool lifecycles.",
+        _ui_lifecycle,
+    ),
+    (
+        "ui-markdown",
+        "Stream Markdown with a table and code block.",
+        _ui_markdown,
+    ),
     ("ui-status", "Set or clear a mock extension status.", _ui_status),
     ("ui-widget", "Show a mock widget above or below the editor.", _ui_widget),
     ("ui-notify", "Show a mock Textual notification.", _ui_notify),
@@ -274,6 +380,14 @@ def setup(api):
         placement="above_editor",
     )
     api.register_message_renderer("gallery-card", _render_card)
+    api.ui.register_tool_renderer(
+        "gallery-search",
+        ToolRendererOptions(
+            render_call=_render_tool_call,
+            render_update=_render_tool_update,
+            render_result=_render_tool_result,
+        ),
+    )
     api.ui.add_autocomplete_provider(
         lambda value: "/ui-notify warning" if value == "/ui-notify w" else None
     )

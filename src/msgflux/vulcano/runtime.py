@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections import deque
 from pathlib import Path
 from typing import AsyncIterator, Mapping, Protocol, Sequence, cast
 
@@ -12,7 +13,13 @@ from msgflux.runtime.context import (
     new_run_id,
     new_thread_id,
 )
-from msgflux.vulcano.actions import RuntimeAction, StopRuntime, SubmitInput
+from msgflux.vulcano.actions import (
+    CancelExecution,
+    InputMode,
+    RuntimeAction,
+    StopRuntime,
+    SubmitInput,
+)
 from msgflux.vulcano.commands import (
     CommandContext,
     CommandOptions,
@@ -32,6 +39,7 @@ from msgflux.vulcano.extensions import (
     ExtensionManager,
     ExtensionSettings,
 )
+from msgflux.vulcano.sessions import SessionController, SessionStore, SessionTransition
 from msgflux.vulcano.ui import UiManager
 
 __all__ = ["MockResponder", "Responder", "RuntimeProtocol", "VulcanoRuntime"]
@@ -48,6 +56,12 @@ class RuntimeProtocol(Protocol):
 
     commands: CommandRegistry
     ui: UiManager
+
+    @property
+    def is_busy(self) -> bool: ...
+
+    @property
+    def queued_inputs(self) -> tuple[SubmitInput, ...]: ...
 
     def subscribe(self) -> EventSubscription: ...
 
@@ -85,6 +99,9 @@ class VulcanoRuntime:
         stream_delay: float = 0.01,
         services: Mapping[str, object] | None = None,
         cwd: str | Path | None = None,
+        session_store: SessionStore | None = None,
+        session_directory: str | Path | None = None,
+        export_directory: str | Path | None = None,
         extension_paths: Sequence[str | Path] = (),
         extensions_enabled: bool = True,
         discover_extensions: bool = True,
@@ -93,6 +110,8 @@ class VulcanoRuntime:
     ) -> None:
         if responder is not None and agent is not None:
             raise ValueError("Configure either responder or agent, not both")
+        if session_store is not None and session_directory is not None:
+            raise ValueError("Configure either session_store or session_directory")
         if scope is not None and not isinstance(scope, ExecutionScope):
             raise TypeError("scope must be an ExecutionScope or None")
         requested_scope = scope or ExecutionScope()
@@ -116,15 +135,38 @@ class VulcanoRuntime:
         )
         self.commands = CommandRegistry()
         self._events = EventStream()
-        self._history: list[DomainEvent] = []
-        self._sequence = 0
+        resolved_cwd = Path(cwd or Path.cwd()).expanduser().resolve()
+        resolved_store = session_store or (
+            SessionStore(session_directory) if session_directory is not None else None
+        )
+        if resolved_store is not None:
+            resolved_store.ensure(thread_id)
+            stored_events = resolved_store.load(thread_id)
+        else:
+            stored_events = ()
+        self.sessions = SessionController(
+            resolved_store,
+            thread_id,
+            export_directory=export_directory or resolved_cwd,
+        )
+        self._session_replay = (
+            resolved_store.replay(thread_id) if resolved_store is not None else ()
+        )
+        self._history: list[DomainEvent] = list(stored_events)
+        self._sequence = max(
+            (event.sequence for event in stored_events),
+            default=0,
+        )
         self._started = False
         self._stopped = False
         self._lifecycle_lock = asyncio.Lock()
-        self._dispatch_lock = asyncio.Lock()
+        self._submission_lock = asyncio.Lock()
+        self._active_submission: asyncio.Task[None] | None = None
+        self._active_input: SubmitInput | None = None
+        self._steering_queue: deque[SubmitInput] = deque()
+        self._follow_up_queue: deque[SubmitInput] = deque()
         self._custom_responder = responder is not None
         self._responder = responder or MockResponder(stream_delay)
-        resolved_cwd = Path(cwd or Path.cwd()).expanduser().resolve()
         resolved_extension_paths = tuple(
             (
                 path_value if path_value.is_absolute() else resolved_cwd / path_value
@@ -145,10 +187,14 @@ class VulcanoRuntime:
             trust_project=trust_project_extensions,
             user_directory=user_directory,
         )
+        service_values = dict(services or {})
+        if "sessions" in service_values:
+            raise ValueError("The 'sessions' runtime service name is reserved")
+        service_values["sessions"] = self.sessions
         self.extensions = ExtensionManager(
             self.commands,
             extension_settings,
-            services=services,
+            services=service_values,
             agent=agent,
             agent_adapter=agent_adapter,
         )
@@ -162,6 +208,14 @@ class VulcanoRuntime:
     @property
     def is_running(self) -> bool:
         return self._started and not self._stopped
+
+    @property
+    def is_busy(self) -> bool:
+        return self._active_submission is not None
+
+    @property
+    def queued_inputs(self) -> tuple[SubmitInput, ...]:
+        return (*self._steering_queue, *self._follow_up_queue)
 
     def subscribe(self) -> EventSubscription:
         return self._events.subscribe()
@@ -193,6 +247,9 @@ class VulcanoRuntime:
             for info in extension_report.failed:
                 await self._emit(EventType.EXTENSION_FAILED, info.to_dict())
             self._started = True
+            for event in self._session_replay:
+                await self._events.publish(event)
+            self._session_replay = ()
             await self._emit(
                 EventType.RUNTIME_STARTED,
                 {
@@ -202,6 +259,7 @@ class VulcanoRuntime:
                     "agent": self.extensions.api.agent.name,
                     "commands": len(self.commands),
                     "extensions": len(extension_report.loaded),
+                    "thread_id": self._thread_scope.thread_id,
                 },
             )
 
@@ -228,21 +286,164 @@ class VulcanoRuntime:
             raise RuntimeError("Vulcano runtime is stopped")
         if not self._started:
             await self.start()
-        async with self._dispatch_lock:
-            if self._stopped:
-                raise RuntimeError("Vulcano runtime is stopped")
-            if isinstance(action, SubmitInput):
-                scope = self._next_submission_scope()
-                with execution_context(scope=scope):
-                    await self._handle_input(action)
-                return
-            if isinstance(action, StopRuntime):
-                await self.stop(
+        if self._stopped:
+            raise RuntimeError("Vulcano runtime is stopped")
+        if isinstance(action, SubmitInput):
+            await self._submit_input(action)
+            return
+        if isinstance(action, CancelExecution):
+            await self._cancel_execution(action)
+            return
+        if isinstance(action, StopRuntime):
+            await self._cancel_execution(
+                CancelExecution(
                     reason=action.reason,
                     correlation_id=action.correlation_id,
+                ),
+                emit_if_idle=False,
+            )
+            await self.stop(
+                reason=action.reason,
+                correlation_id=action.correlation_id,
+            )
+            return
+        raise TypeError(f"Unsupported Vulcano action: {type(action)!r}")
+
+    async def _submit_input(self, action: SubmitInput) -> None:
+        queued: SubmitInput | None = None
+        queue_position = 0
+        task: asyncio.Task[None] | None = None
+        async with self._submission_lock:
+            if self._active_submission is not None:
+                mode: InputMode = "steer" if action.mode == "auto" else action.mode
+                queued = SubmitInput(
+                    action.text,
+                    mode=mode,
+                    correlation_id=action.correlation_id,
                 )
+                if mode == "follow_up":
+                    self._follow_up_queue.append(queued)
+                else:
+                    self._steering_queue.append(queued)
+                queue_position = len(self._steering_queue) + len(self._follow_up_queue)
+            else:
+                task = asyncio.create_task(
+                    self._run_submission_chain(action),
+                    name=f"vulcano-input-{action.correlation_id}",
+                )
+                self._active_submission = task
+                self._active_input = action
+
+        if queued is not None:
+            await self._emit(
+                EventType.INPUT_QUEUED,
+                {
+                    "content": queued.text.strip(),
+                    "mode": queued.mode,
+                    "position": queue_position,
+                },
+                correlation_id=queued.correlation_id,
+            )
+            return
+        if task is not None:
+            await task
+
+    async def _run_submission_chain(self, first: SubmitInput) -> None:
+        chain_task = asyncio.current_task()
+        current = first
+        while True:
+            scope = self._next_submission_scope()
+            try:
+                with execution_context(scope=scope):
+                    await self._handle_input(current)
+            except asyncio.CancelledError:
+                async with self._submission_lock:
+                    if self._active_submission is chain_task:
+                        self._active_submission = None
+                        self._active_input = None
                 return
-            raise TypeError(f"Unsupported Vulcano action: {type(action)!r}")
+
+            async with self._submission_lock:
+                if self._stopped:
+                    self._steering_queue.clear()
+                    self._follow_up_queue.clear()
+                    next_input = None
+                elif self._steering_queue:
+                    next_input = self._steering_queue.popleft()
+                elif self._follow_up_queue:
+                    next_input = self._follow_up_queue.popleft()
+                else:
+                    next_input = None
+
+                if next_input is None:
+                    if self._active_submission is chain_task:
+                        self._active_submission = None
+                        self._active_input = None
+                    return
+                self._active_input = next_input
+                remaining = len(self._steering_queue) + len(self._follow_up_queue)
+
+            await self._emit(
+                EventType.INPUT_DEQUEUED,
+                {
+                    "content": next_input.text.strip(),
+                    "mode": next_input.mode,
+                    "remaining": remaining,
+                },
+                correlation_id=next_input.correlation_id,
+            )
+            current = next_input
+
+    async def _cancel_execution(
+        self,
+        action: CancelExecution,
+        *,
+        emit_if_idle: bool = True,
+    ) -> None:
+        async with self._submission_lock:
+            task = self._active_submission
+            active_input = self._active_input
+            queued = (*self._steering_queue, *self._follow_up_queue)
+            self._steering_queue.clear()
+            self._follow_up_queue.clear()
+            if task is not None:
+                self._active_submission = None
+                self._active_input = None
+                task.cancel()
+
+        if queued:
+            await self._emit(
+                EventType.INPUT_QUEUE_CLEARED,
+                {
+                    "reason": action.reason,
+                    "items": [
+                        {
+                            "content": item.text.strip(),
+                            "mode": item.mode,
+                            "correlation_id": item.correlation_id,
+                        }
+                        for item in queued
+                    ],
+                },
+                correlation_id=action.correlation_id,
+            )
+        if task is not None or emit_if_idle:
+            await self._emit(
+                EventType.EXECUTION_CANCELLED,
+                {
+                    "reason": action.reason,
+                    "active": task is not None,
+                    "target_correlation_id": (
+                        active_input.correlation_id
+                        if active_input is not None
+                        else None
+                    ),
+                    "queued_cleared": len(queued),
+                },
+                correlation_id=action.correlation_id,
+            )
+        if task is not None and task is not asyncio.current_task():
+            await task
 
     async def _handle_input(self, action: SubmitInput) -> None:
         text = action.text.strip()
@@ -254,7 +455,10 @@ class VulcanoRuntime:
 
         await self._emit(
             EventType.MESSAGE_USER,
-            {"content": text},
+            {
+                "content": text,
+                "scope": get_execution_scope().to_dict(),
+            },
             correlation_id=action.correlation_id,
         )
         if self.extensions.api.agent.is_bound:
@@ -263,6 +467,13 @@ class VulcanoRuntime:
                     text,
                     emit=self._draft_emitter(action.correlation_id),
                 )
+            except asyncio.CancelledError:
+                await self._emit(
+                    EventType.ASSISTANT_COMPLETED,
+                    {"status": "aborted"},
+                    correlation_id=action.correlation_id,
+                )
+                raise
             except Exception as error:
                 await self._emit(
                     EventType.RUNTIME_ERROR,
@@ -286,6 +497,13 @@ class VulcanoRuntime:
                     {"delta": delta},
                     correlation_id=action.correlation_id,
                 )
+        except asyncio.CancelledError:
+            await self._emit(
+                EventType.ASSISTANT_COMPLETED,
+                {"content": "".join(chunks), "status": "aborted"},
+                correlation_id=action.correlation_id,
+            )
+            raise
         except Exception as error:
             await self._emit(
                 EventType.RUNTIME_ERROR,
@@ -323,6 +541,7 @@ class VulcanoRuntime:
                 "name": command.name,
                 "arguments": list(invocation.arguments),
                 "raw": invocation.raw,
+                "scope": get_execution_scope().to_dict(),
             },
             correlation_id=correlation_id,
         )
@@ -335,7 +554,15 @@ class VulcanoRuntime:
         )
         try:
             result = await self.commands.invoke(invocation, context)
+        except asyncio.CancelledError:
+            await self._emit(
+                EventType.COMMAND_COMPLETED,
+                {"name": command.name, "status": "aborted"},
+                correlation_id=correlation_id,
+            )
+            raise
         except Exception as error:
+            self.sessions.consume_transition()
             await self._emit(
                 EventType.COMMAND_ERROR,
                 {"message": str(error), "name": command.name},
@@ -359,11 +586,35 @@ class VulcanoRuntime:
             {"name": command.name, "status": "completed"},
             correlation_id=correlation_id,
         )
+        transition = self.sessions.consume_transition()
+        if transition is not None:
+            await self._apply_session_transition(transition)
         if result.stop_runtime:
             await self.stop(
                 reason=f"command:/{command.name}",
                 correlation_id=correlation_id,
             )
+
+    async def _apply_session_transition(self, transition: SessionTransition) -> None:
+        store = self.sessions.store
+        if store is None:
+            raise RuntimeError("Vulcano session persistence is disabled")
+        replay = store.replay(transition.thread_id)
+        self.sessions.activate(transition.thread_id)
+        self._thread_scope = ExecutionScope(
+            thread_id=transition.thread_id,
+            namespace=self._thread_scope.namespace,
+            abort_signal=self._thread_scope.abort_signal,
+        )
+        self._pending_scope = None
+        await self._emit(
+            EventType.SESSION_SWITCHED,
+            {
+                "kind": transition.kind,
+                "thread_id": transition.thread_id,
+                "events": [event.to_dict() for event in replay],
+            },
+        )
 
     def _next_submission_scope(self) -> ExecutionScope:
         if self._pending_scope is not None:
@@ -403,6 +654,8 @@ class VulcanoRuntime:
             correlation_id=correlation_id,
         )
         self._history.append(event)
+        if self.sessions.store is not None:
+            self.sessions.store.append(self.sessions.current_thread_id, event)
         await self._events.publish(event)
         diagnostics = await self.extensions.notify(event)
         for diagnostic in diagnostics:
@@ -426,6 +679,8 @@ class VulcanoRuntime:
             correlation_id=correlation_id,
         )
         self._history.append(event)
+        if self.sessions.store is not None:
+            self.sessions.store.append(self.sessions.current_thread_id, event)
         await self._events.publish(event)
 
     def _install_builtin_commands(self) -> None:
@@ -483,6 +738,56 @@ class VulcanoRuntime:
                     usage="/reload",
                     handler=_reload_command,
                     category="runtime",
+                ),
+            ),
+            (
+                "session",
+                CommandOptions(
+                    description="Show the active durable session.",
+                    usage="/session",
+                    handler=_session_command,
+                    category="session",
+                ),
+            ),
+            (
+                "sessions",
+                CommandOptions(
+                    description="List durable sessions.",
+                    usage="/sessions",
+                    handler=_sessions_command,
+                    category="session",
+                ),
+            ),
+            (
+                "resume",
+                CommandOptions(
+                    description="Resume another durable session.",
+                    usage="/resume <thread-id>",
+                    handler=_resume_command,
+                    get_argument_completions=lambda _value: (
+                        tuple(info.thread_id for info in self.sessions.list())
+                        if self.sessions.enabled
+                        else ()
+                    ),
+                    category="session",
+                ),
+            ),
+            (
+                "fork",
+                CommandOptions(
+                    description="Fork this session and continue on the new thread.",
+                    usage="/fork [event-sequence]",
+                    handler=_fork_command,
+                    category="session",
+                ),
+            ),
+            (
+                "export",
+                CommandOptions(
+                    description="Export this session as Markdown.",
+                    usage="/export [path]",
+                    handler=_export_command,
+                    category="session",
                 ),
             ),
             (
@@ -581,6 +886,109 @@ def _quit_command(
 ) -> CommandResult:
     del arguments, context
     return CommandResult(stop_runtime=True)
+
+
+def _session_control(context: CommandContext) -> SessionController:
+    return cast(SessionController, context.services["sessions"])
+
+
+def _session_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    del arguments
+    sessions = _session_control(context)
+    state = "enabled" if sessions.enabled else "disabled"
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {
+                    "text": (
+                        "## Session\n\n"
+                        f"- Thread: `{sessions.current_thread_id}`\n"
+                        f"- Persistence: **{state}**"
+                    )
+                },
+            ),
+        )
+    )
+
+
+def _sessions_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    del arguments
+    sessions = _session_control(context)
+    records = sessions.list()
+    lines = ["## Sessions", "", "| Thread | Events | Parent |", "|---|---:|---|"]
+    lines.extend(
+        (
+            f"| `{record.thread_id}` | {record.event_count} | "
+            f"`{record.parent_thread_id or '-'}` |"
+        )
+        for record in records
+    )
+    return CommandResult(
+        events=(EventDraft(EventType.COMMAND_OUTPUT, {"text": "\n".join(lines)}),)
+    )
+
+
+def _resume_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    thread_id = arguments.strip()
+    if not thread_id:
+        raise ValueError("Usage: /resume <thread-id>")
+    info = _session_control(context).request_resume(thread_id)
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"Resuming session `{info.thread_id}`."},
+            ),
+        )
+    )
+
+
+def _fork_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    value = arguments.strip()
+    try:
+        sequence = int(value) if value else None
+    except ValueError as error:
+        raise ValueError("Usage: /fork [event-sequence]") from error
+    if sequence is not None and sequence < 1:
+        raise ValueError("Fork event sequence must be greater than zero")
+    info = _session_control(context).request_fork(sequence)
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"Forked session as `{info.thread_id}`."},
+            ),
+        )
+    )
+
+
+def _export_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    destination = arguments.strip() or None
+    path = _session_control(context).export(destination)
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"Exported session to `{path}`."},
+            ),
+        )
+    )
 
 
 def _extension_control(context: CommandContext) -> ExtensionControl:

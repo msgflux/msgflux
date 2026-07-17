@@ -36,6 +36,8 @@ logic.
 Vulcano is included in the msgflux distribution. Its terminal dependencies are
 an optional extra so importing msgflux does not load Textual or Rich:
 
+Vulcano requires Python 3.11 or newer and uses the standard-library TOML parser.
+
 ```bash
 pip install "msgflux[vulcano]"
 ```
@@ -47,6 +49,8 @@ vulcano
 ```
 
 Use `--mock-delay 0` to disable the delay between mock stream chunks.
+Use `--resume THREAD_ID` or `--fork THREAD_ID` to start from a durable session;
+`--no-sessions` disables transcript persistence.
 
 ## Runtime-owned commands
 
@@ -64,6 +68,11 @@ The preview registers these commands:
 | `/about` | Describe the active runtime. |
 | `/extensions` | List loaded extensions and failures. |
 | `/reload` | Unload and reload extensions. |
+| `/session` | Show the active thread and persistence state. |
+| `/sessions` | List durable transcript sessions. |
+| `/resume <thread-id>` | Switch to and replay another session. |
+| `/fork [event-sequence]` | Fork the current transcript and continue on a new thread. |
+| `/export [path]` | Export the active session as Markdown. |
 | `/quit` | Stop the runtime and connected clients. |
 
 Typing `/` as the first editor character opens the runtime-backed command
@@ -73,7 +82,14 @@ by extensions appear without additional TUI registration.
 
 The default editor soft-wraps long input and grows from three to fifteen terminal
 rows before enabling vertical scrolling. `Enter` submits the prompt;
-`Shift+Enter` or `Ctrl+J` inserts a line break.
+`Shift+Enter` or `Ctrl+J` inserts a line break. While an execution is active,
+normal submissions become steering inputs. `Alt+Enter` queues a follow-up after
+all steering inputs. `Escape` cancels the active execution and clears its queue.
+The pending-input widget is only a projection of runtime queue events.
+
+`Ctrl+P` opens a searchable palette over the same runtime command registry. The
+default footer shows runtime/Agent identity, abbreviated thread and run ids,
+streaming state, queue depth, and configured key hints.
 
 Commands that affect presentation emit a `client.action` event. The decision
 still belongs to the runtime; the Textual client only applies the requested
@@ -213,6 +229,12 @@ runtime = VulcanoRuntime(agent=agent)
 # Equivalent before start: runtime.bind_agent(agent)
 ```
 
+Configure the Agent with `config={"stream": True}` so
+`MsgfluxAgentAdapter` can project each `ModelStreamResponse` chunk immediately.
+Without it, the adapter preserves the same event lifecycle but emits the whole
+response as one delta. The Textual transcript rebuilds the accumulated Rich
+Markdown after each delta, including tables and fenced code blocks.
+
 The facade intentionally exposes high-level operations instead of the raw Agent
 object:
 
@@ -309,10 +331,12 @@ Using `ctx.use_scope()` additionally propagates the identity to tools,
 background work, subagents, hooks, and any other msgflux component that reads
 the execution context.
 
-To resume a durable execution, construct the runtime with its persisted scope:
+To resume a durable execution programmatically, construct the runtime with its
+persisted scope and a `SessionStore`:
 
 ```python
 from msgflux import ExecutionScope
+from msgflux.vulcano import SessionStore
 
 runtime = VulcanoRuntime(
     agent=agent,
@@ -320,12 +344,21 @@ runtime = VulcanoRuntime(
         thread_id="thd_persisted",
         run_id="run_interrupted",
     ),
+    session_store=SessionStore("~/.vulcano/sessions"),
 )
 ```
 
 The first submission uses that run id. Later submissions create new root runs
-under the same thread. The runtime or its persistence layer supplies this
-scope; the terminal client continues to send only actions and render events.
+under the same thread. The store writes append-only JSONL events. On restart,
+replayable transcript events are published before `runtime.started`; incomplete
+assistant, block, and tool streams are closed as aborted projections.
+
+The CLI enables this store at `~/.vulcano/sessions` by default. `/resume` and
+`/fork` defer their session transition until their command has completed, then
+emit one `session.switched` event containing the replay. The TUI clears its
+projection and rebuilds it; it never reads session files. `/export` produces a
+Markdown transcript. Extensions can access the same high-level facade at
+`ctx.services["sessions"]` without receiving the private runtime object.
 
 ### Textual UI extensions
 
@@ -486,6 +519,39 @@ override presentation for any non-lifecycle runtime event. A renderer receives
 the `DomainEvent` and `UiRenderContext`, whose `host` is the Textual app and
 whose `theme` is the current Textual theme.
 
+Commands publish first-class text, reasoning, diff, artifact, error, and tool
+lifecycles through `CommandContext`:
+
+```python
+from msgflux.vulcano import BlockKind
+
+
+@api.command("inspect", "Inspect a path.")
+async def inspect(args, ctx):
+    reasoning = await ctx.start_block(
+        BlockKind.REASONING,
+        title="Inspecting",
+    )
+    await ctx.update_block(reasoning, f"Reading {args}")
+    await ctx.complete_block(reasoning)
+
+    call = await ctx.start_tool("search", {"query": args})
+    await ctx.update_tool(call, "search", {"matches": 2})
+    await ctx.complete_tool(call, "search", ["a.py", "b.py"])
+```
+
+Reasoning is collapsed by default. Diff blocks use Rich's diff highlighting;
+artifacts and normal text remain Markdown. Streaming views retain canonical
+source text and coalesce rendering to at most 30 frames per second, while final
+events reconcile the complete content.
+
+`api.register_tool()` accepts optional `render_call`, `render_update`, and
+`render_result` callbacks. The tool and its renderers share one ownership
+handle, so reload removes both. For a UI-only adapter, use
+`api.ui.register_tool_renderer(name, ToolRendererOptions(...))`. A
+`ToolRenderContext` supplies the call id, phase, expanded state, theme,
+invalidation callback, and mutable state isolated to that call.
+
 #### Editor, autocomplete, shortcuts, and themes
 
 The editor can be replaced with an `Input` subclass for single-line behavior or
@@ -589,9 +655,8 @@ unsupported `EXTENSION_API_VERSION` values become extension diagnostics rather
 than silently overriding another extension.
 
 The current API exposes commands, main-Agent execution, ToolLibrary
-registration, Textual UI customization, shortcuts, custom renderers, observers,
-cleanup, source, generation, and capability services. Flags and persistent
-session entries remain later parity layers with Pi.
+registration, typed blocks, tool renderers, Textual UI customization, shortcuts,
+observers, cleanup, source, generation, sessions, and capability services.
 
 ## Event contract
 
@@ -612,6 +677,13 @@ The mock response follows the same lifecycle expected from the Agent adapter:
 2. `assistant.started`
 3. zero or more `assistant.delta`
 4. `assistant.completed`
+
+Typed content uses `assistant.block.started`, `.delta`, and `.completed`;
+tools use `tool.started`, `.updated`, and `.completed`. Busy submissions emit
+`input.queued` and `input.dequeued`; cancellation emits
+`input.queue.cleared` and `execution.cancelled`. These contracts are transport
+data, so a browser client can reproduce the Textual behavior without importing
+Textual widgets.
 
 `MsgfluxAgentAdapter` currently synthesizes this lifecycle from `Agent.acall()`
 and `ModelStreamResponse`. `ExtensionApi.agent.stream_events()` is already the

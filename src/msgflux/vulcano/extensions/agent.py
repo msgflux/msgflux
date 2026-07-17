@@ -197,6 +197,7 @@ class ToolRegistration:
         self._library = library
         self.name = name
         self._active = True
+        self._cleanups: list[Callable[[], None]] = []
 
     @property
     def active(self) -> bool:
@@ -205,10 +206,25 @@ class ToolRegistration:
     def remove(self) -> None:
         if not self._active:
             return
+        cleanup_error: Exception | None = None
+        for cleanup in reversed(self._cleanups):
+            try:
+                cleanup()
+            except Exception as error:
+                cleanup_error = cleanup_error or error
+        self._cleanups.clear()
         names = _all_tool_names(self._library)
         if self.name in names:
             self._library.remove(self.name)
         self._active = False
+        if cleanup_error is not None:
+            raise cleanup_error
+
+    def _add_cleanup(self, cleanup: Callable[[], None]) -> None:
+        if not self._active:
+            cleanup()
+            return
+        self._cleanups.append(cleanup)
 
     def __enter__(self) -> ToolRegistration:
         return self

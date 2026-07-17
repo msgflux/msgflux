@@ -5,10 +5,16 @@ import pytest
 pytest.importorskip("textual")
 pytest.importorskip("rich")
 
+from rich.panel import Panel
 from textual.containers import Container
 from textual.widgets import Static
 
-from msgflux.vulcano import SubmitInput, VulcanoRuntime, custom_message_type
+from msgflux.vulcano import (
+    EventType,
+    SubmitInput,
+    VulcanoRuntime,
+    custom_message_type,
+)
 from msgflux.vulcano.app import VulcanoApp
 from msgflux.vulcano.textual_ui import VulcanoTextArea
 
@@ -30,6 +36,8 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
         "ui-card",
         "ui-dialogs",
         "ui-help",
+        "ui-lifecycle",
+        "ui-markdown",
         "ui-notify",
         "ui-overlay",
         "ui-reset",
@@ -50,6 +58,8 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
     await runtime.dispatch(SubmitInput("/ui-working show"))
     await runtime.dispatch(SubmitInput("/ui-title Gallery preview"))
     await runtime.dispatch(SubmitInput("/ui-card structured result"))
+    await runtime.dispatch(SubmitInput("/ui-markdown"))
+    await runtime.dispatch(SubmitInput("/ui-lifecycle ExtensionApi"))
     await runtime.dispatch(SubmitInput("/ui-dialogs"))
     await runtime.dispatch(SubmitInput("/ui-overlay"))
 
@@ -69,6 +79,28 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
         )
         == 3
     )
+    markdown_events = [
+        event
+        for event in runtime.history
+        if event.type
+        in {
+            EventType.ASSISTANT_STARTED,
+            EventType.ASSISTANT_DELTA,
+            EventType.ASSISTANT_COMPLETED,
+        }
+    ]
+    assert [event.type for event in markdown_events] == [
+        EventType.ASSISTANT_STARTED,
+        *(EventType.ASSISTANT_DELTA for _ in range(9)),
+        EventType.ASSISTANT_COMPLETED,
+    ]
+    assert "| Markdown tables | rendered |" in str(
+        markdown_events[-1].payload["content"]
+    )
+    assert any(event.type == EventType.BLOCK_STARTED for event in runtime.history)
+    assert any(event.type == EventType.BLOCK_COMPLETED for event in runtime.history)
+    assert any(event.type == EventType.TOOL_STARTED for event in runtime.history)
+    assert any(event.type == EventType.TOOL_COMPLETED for event in runtime.history)
 
     await runtime.dispatch(SubmitInput("/ui-reset"))
 
@@ -127,3 +159,14 @@ async def test_widget_gallery_materializes_cards_widgets_and_slots():
         await pilot.pause(delay=0.1)
         assert app.query_one("#gallery-header", Static)
         assert app.query_one("#gallery-footer", Static)
+
+        prompt.text = "/ui-lifecycle ExtensionApi"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.5)
+        assert app.query_one(".reasoning-message")
+        assert app.query_one(".diff-message")
+        assert app.query_one(".artifact-message")
+        tool_result = app.query_one(".tool-execution-body Static", Static)
+        assert isinstance(tool_result.content, Panel)
+        assert "runtime.py" in str(tool_result.content.renderable)

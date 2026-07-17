@@ -396,3 +396,26 @@ async def test_failed_extension_setup_removes_registered_agent_tool(tmp_path):
     assert agent.tool_library.get_tool_names() == []
     assert runtime.extensions.records[0].state == "failed"
     assert "tool setup exploded" in runtime.extensions.records[0].error
+
+
+def test_tool_registration_owns_optional_ui_renderers():
+    agent = _FakeAgent()
+    runtime = VulcanoRuntime(agent=agent, extensions_enabled=False)
+
+    def search(query: str) -> str:
+        """Search for a query."""
+        return query
+
+    registration = runtime.extensions.api.register_tool(
+        search,
+        render_call=lambda event, context: (event, context),
+        render_result=lambda event, context: (event, context),
+    )
+
+    assert agent.tool_library.get_tool_names() == ["search"]
+    assert "search" in runtime.ui._tool_renderers
+
+    registration.remove()
+
+    assert agent.tool_library.get_tool_names() == []
+    assert "search" not in runtime.ui._tool_renderers
