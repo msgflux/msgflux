@@ -71,6 +71,10 @@ selector. Continue typing to filter it, use the arrow keys to move, `Tab` or
 `Enter` to complete a selection, and `Escape` to close it. Commands registered
 by extensions appear without additional TUI registration.
 
+The default editor soft-wraps long input and grows from three to ten terminal
+rows before enabling vertical scrolling. `Enter` submits the prompt;
+`Shift+Enter` or `Ctrl+J` inserts a line break.
+
 Commands that affect presentation emit a `client.action` event. The decision
 still belongs to the runtime; the Textual client only applies the requested
 effect.
@@ -477,8 +481,9 @@ whose `theme` is the current Textual theme.
 
 #### Editor, autocomplete, shortcuts, and themes
 
-The editor can be replaced with an `Input` subclass. Vulcano preserves its text,
-id, submission behavior, and suggester across replacement and cleanup:
+The editor can be replaced with an `Input` subclass for single-line behavior or
+a `VulcanoTextArea` subclass for wrapping multiline behavior. Vulcano preserves
+its text, id, submission behavior, and suggester across replacement and cleanup:
 
 ```python
 from textual.widgets import Input

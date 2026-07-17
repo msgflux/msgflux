@@ -12,7 +12,7 @@ from textual.widgets import Input, OptionList, Static
 from msgflux.vulcano.actions import SubmitInput
 from msgflux.vulcano.events import DomainEvent, EventType
 from msgflux.vulcano.runtime import RuntimeProtocol
-from msgflux.vulcano.textual_ui import TextualUiDriver
+from msgflux.vulcano.textual_ui import TextualUiDriver, VulcanoTextArea
 
 __all__ = ["TranscriptMessage", "VulcanoApp"]
 
@@ -160,6 +160,7 @@ class VulcanoApp(App[None]):
 
     #prompt {
         height: 3;
+        max-height: 10;
         margin: 0 2;
         padding: 0 1;
         color: #e4e5e9;
@@ -215,7 +216,7 @@ class VulcanoApp(App[None]):
 
     def on_mount(self) -> None:
         self.runtime.ui.bind(self._ui_driver, mode="tui")
-        self.query_one("#prompt", Input).focus()
+        self._ui_driver.focus_editor()
         self._consume_events()
 
     def on_unmount(self) -> None:
@@ -245,8 +246,7 @@ class VulcanoApp(App[None]):
         elif event.key == "escape":
             self._ui_driver.dismiss_command_menu()
         elif event.key == "enter":
-            editor = self.query_one("#prompt", Input)
-            if self._ui_driver.is_exact_command(editor.value):
+            if self._ui_driver.is_exact_command(self._ui_driver.get_editor_text()):
                 self._ui_driver.dismiss_command_menu()
                 return False
             self._ui_driver.accept_command_selection()
@@ -261,14 +261,31 @@ class VulcanoApp(App[None]):
     def _on_prompt_changed(self, event: Input.Changed) -> None:
         self._ui_driver.update_command_menu(event.value)
 
+    @on(VulcanoTextArea.Changed, "#prompt")
+    def _on_prompt_area_changed(self, event: VulcanoTextArea.Changed) -> None:
+        self._ui_driver.update_command_menu(event.text_area.text)
+
     @on(OptionList.OptionSelected, "#command-menu")
     def _on_command_selected(self, event: OptionList.OptionSelected) -> None:
         self._ui_driver.accept_command_selection(event.option_index)
 
     @on(Input.Submitted, "#prompt")
     def _on_prompt_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        event.input.value = ""
+        self._submit_prompt(event.value)
+
+    @on(VulcanoTextArea.Submitted, "#prompt")
+    def _on_prompt_area_submitted(self, event: VulcanoTextArea.Submitted) -> None:
+        self._submit_prompt(event.value)
+
+    def _submit_prompt(self, value: str) -> None:
+        text = value.strip()
+        if (
+            self._ui_driver.command_menu_visible
+            and not self._ui_driver.is_exact_command(value)
+        ):
+            self._ui_driver.accept_command_selection()
+            return
+        self._ui_driver.set_editor_text("")
         self._ui_driver.dismiss_command_menu()
         if text:
             self._dispatch_text(text)

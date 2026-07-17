@@ -6,10 +6,11 @@ from collections.abc import Sequence as SequenceCollection
 from time import monotonic
 from typing import Callable, Mapping, Sequence, TypeVar
 
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widget import Widget
@@ -27,7 +28,7 @@ from msgflux.vulcano.ui import (
     UiWidget,
 )
 
-__all__ = ["TextualUiDriver", "WorkingStatus"]
+__all__ = ["TextualUiDriver", "VulcanoTextArea", "WorkingStatus"]
 
 
 T = TypeVar("T")
@@ -143,6 +144,100 @@ class _SlashCommandMenu(OptionList):
         self.display = False
         self._visible_commands = ()
         self.clear_options()
+
+
+class VulcanoTextArea(TextArea):
+    """Wrapping prompt editor that grows with its visible content."""
+
+    MIN_HEIGHT = 3
+    MAX_HEIGHT = 10
+
+    class Submitted(Message):
+        """Posted when the user requests prompt submission."""
+
+        def __init__(self, editor: VulcanoTextArea, value: str) -> None:
+            super().__init__()
+            self.editor = editor
+            self.value = value
+
+        @property
+        def control(self) -> VulcanoTextArea:
+            return self.editor
+
+    def __init__(
+        self,
+        *,
+        suggester: _VulcanoSuggester | None = None,
+        placeholder: str = "Message Vulcano or enter /help",
+        editor_id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        self.suggester = suggester
+        self._suggestion_group = "vulcano-editor-suggestion"
+        super().__init__(
+            placeholder=placeholder,
+            id=editor_id,
+            classes=classes,
+            soft_wrap=True,
+            show_line_numbers=False,
+            highlight_cursor_line=False,
+        )
+
+    def _on_mount(self, event: events.Mount) -> None:
+        super()._on_mount(event)
+        self.update_suggestion()
+
+    def _on_resize(self) -> None:
+        super()._on_resize()
+        self.call_after_refresh(self._resize_to_content)
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key in {"shift+enter", "ctrl+j"}:
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self, self.text))
+            return
+        await super()._on_key(event)
+
+    def update_suggestion(self) -> None:
+        if not self.is_mounted:
+            self.suggestion = ""
+            return
+        self.call_after_refresh(self._resize_to_content)
+        if self.suggester is None:
+            self.suggestion = ""
+            return
+        value = self.text
+        self.run_worker(
+            self._resolve_suggestion(value),
+            group=self._suggestion_group,
+            exclusive=True,
+        )
+
+    async def _resolve_suggestion(self, value: str) -> None:
+        if self.suggester is None:
+            return
+        suggestion = await self.suggester.get_suggestion(value)
+        if self.text != value or self.cursor_location != self.document.end:
+            return
+        self.suggestion = (
+            suggestion[len(value) :]
+            if suggestion is not None and suggestion.startswith(value)
+            else ""
+        )
+
+    def _resize_to_content(self) -> None:
+        desired_height = min(
+            max(self.wrapped_document.height + 2, self.MIN_HEIGHT),
+            self.MAX_HEIGHT,
+        )
+        if self.size.height != desired_height:
+            self.styles.height = desired_height
 
 
 class _TimedModalScreen(ModalScreen[T]):
@@ -461,10 +556,9 @@ class TextualUiDriver:
         self._command_menu = _SlashCommandMenu(self._commands)
         return self._command_menu
 
-    def create_default_editor(self) -> Input:
-        return Input(
-            placeholder="Message Vulcano or enter /help",
-            id="prompt",
+    def create_default_editor(self) -> VulcanoTextArea:
+        return VulcanoTextArea(
+            editor_id="prompt",
             suggester=self._suggester,
         )
 
@@ -495,9 +589,12 @@ class TextualUiDriver:
         command = self._command_menu.command_at(selected_index)
         if command is None:
             return False
-        editor = self.app.query_one("#prompt", Input)
-        editor.value = f"/{command} "
-        editor.cursor_position = len(editor.value)
+        editor = self._get_editor()
+        self._set_editor_value(editor, f"/{command} ")
+        if isinstance(editor, Input):
+            editor.cursor_position = len(editor.value)
+        else:
+            editor.cursor_location = editor.document.end
         self._command_menu.dismiss_menu()
         editor.focus()
         return True
@@ -611,26 +708,31 @@ class TextualUiDriver:
 
     async def _sync_editor(self, content: object | None) -> None:
         container = self.app.query_one("#editor-slot", Container)
-        current = self.app.query_one("#prompt", Input)
-        value = current.value
+        current = self._get_editor()
+        value = self._get_editor_value(current)
         await container.remove_children()
         if content is None:
             editor = self.create_default_editor()
         else:
             try:
                 component = await self.materialize(content)
-                if not isinstance(component, Input):
-                    raise TypeError("Custom editor factories must return textual Input")
+                if not isinstance(component, (Input, VulcanoTextArea)):
+                    raise TypeError(
+                        "Custom editor factories must return textual Input or "
+                        "VulcanoTextArea"
+                    )
                 editor = component
             except Exception as error:
                 self.notify(str(error), "error")
                 editor = self.create_default_editor()
         editor.id = "prompt"
-        editor.value = value
-        if editor.suggester is None:
+        self._set_editor_value(editor, value)
+        if isinstance(editor, Input) and editor.suggester is None:
+            editor.suggester = self._suggester
+        elif isinstance(editor, VulcanoTextArea) and editor.suggester is None:
             editor.suggester = self._suggester
         await container.mount(editor)
-        self.update_command_menu(editor.value)
+        self.update_command_menu(value)
         editor.focus()
 
     async def materialize(self, content: object) -> Widget:
@@ -698,13 +800,37 @@ class TextualUiDriver:
         self.app.notify(message, severity=resolved)
 
     def set_editor_text(self, text: str) -> None:
-        self.app.query_one("#prompt", Input).value = text
+        self._set_editor_value(self._get_editor(), text)
 
     def get_editor_text(self) -> str:
-        return self.app.query_one("#prompt", Input).value
+        return self._get_editor_value(self._get_editor())
 
     def paste_to_editor(self, text: str) -> None:
-        self.app.query_one("#prompt", Input).insert_text_at_cursor(text)
+        editor = self._get_editor()
+        if isinstance(editor, Input):
+            editor.insert_text_at_cursor(text)
+        else:
+            editor.insert(text)
+
+    def focus_editor(self) -> None:
+        self._get_editor().focus()
+
+    def _get_editor(self) -> Input | VulcanoTextArea:
+        editor = self.app.query_one("#prompt")
+        if not isinstance(editor, (Input, VulcanoTextArea)):
+            raise TypeError("Vulcano editor must be Input or VulcanoTextArea")
+        return editor
+
+    @staticmethod
+    def _get_editor_value(editor: Input | VulcanoTextArea) -> str:
+        return editor.value if isinstance(editor, Input) else editor.text
+
+    @staticmethod
+    def _set_editor_value(editor: Input | VulcanoTextArea, value: str) -> None:
+        if isinstance(editor, Input):
+            editor.value = value
+        else:
+            editor.text = value
 
     async def custom(
         self,

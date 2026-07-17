@@ -10,6 +10,7 @@ from textual.widgets import Button, Input, OptionList, Static
 
 from msgflux.vulcano.app import TranscriptMessage, VulcanoApp
 from msgflux.vulcano.runtime import VulcanoRuntime
+from msgflux.vulcano.textual_ui import VulcanoTextArea
 
 
 def _write_extension(path, source):
@@ -28,8 +29,9 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         status = app.query_one("#status", Static)
         assert "mock runtime" in str(status.render())
 
-        prompt = app.query_one("#prompt", Input)
-        prompt.value = "hello"
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "hello"
+        prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
         await pilot.pause(delay=0.05)
 
@@ -41,20 +43,55 @@ async def test_app_projects_streaming_runtime_events_headlessly():
 
 
 @pytest.mark.asyncio
+async def test_default_editor_wraps_grows_and_supports_multiline_submission():
+    app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        assert prompt.outer_size.height == VulcanoTextArea.MIN_HEIGHT
+
+        prompt.text = "long input " * 30
+        prompt.cursor_location = prompt.document.end
+        await pilot.pause(delay=0.05)
+
+        assert VulcanoTextArea.MIN_HEIGHT < prompt.outer_size.height
+        assert prompt.outer_size.height <= VulcanoTextArea.MAX_HEIGHT
+
+        prompt.text = "first line"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("shift+enter")
+        prompt.insert("second line")
+
+        assert prompt.text == "first line\nsecond line"
+
+        await pilot.press("enter")
+        await pilot.pause(delay=0.05)
+
+        assert prompt.text == ""
+        assert prompt.outer_size.height == VulcanoTextArea.MIN_HEIGHT
+        assert any(
+            message.source_text == "first line\nsecond line"
+            for message in app.query(TranscriptMessage)
+        )
+
+
+@pytest.mark.asyncio
 async def test_slash_command_menu_filters_and_completes_runtime_commands():
     runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
     app = VulcanoApp(runtime)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause()
-        prompt = app.query_one("#prompt", Input)
+        prompt = app.query_one("#prompt", VulcanoTextArea)
         menu = app.query_one("#command-menu", OptionList)
 
         assert prompt.styles.background == Color.parse("#292c33")
         assert app.query_one("#topbar", Static).styles.color == Color.parse("#ff3344")
         assert not menu.display
 
-        prompt.value = "/"
+        prompt.text = "/"
+        prompt.cursor_location = prompt.document.end
         await pilot.pause()
 
         assert menu.display
@@ -65,22 +102,23 @@ async def test_slash_command_menu_filters_and_completes_runtime_commands():
         await pilot.press("down", "tab")
         await pilot.pause()
 
-        assert prompt.value.startswith("/")
-        assert prompt.value.endswith(" ")
+        assert prompt.text.startswith("/")
+        assert prompt.text.endswith(" ")
         assert not menu.display
 
-        prompt.value = "message /"
+        prompt.text = "message /"
         await pilot.pause()
         assert not menu.display
 
-        prompt.value = "/help"
+        prompt.text = "/help"
+        prompt.cursor_location = prompt.document.end
         await pilot.pause()
         assert menu.display
 
         await pilot.press("enter")
         await pilot.pause(delay=0.05)
 
-        assert prompt.value == ""
+        assert prompt.text == ""
         assert any(
             "## Commands" in message.source_text
             for message in app.query(TranscriptMessage)
@@ -262,9 +300,10 @@ async def test_extension_dialog_and_custom_overlay_round_trip(tmp_path):
 
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(delay=0.1)
-        prompt = app.query_one("#prompt", Input)
+        prompt = app.query_one("#prompt", VulcanoTextArea)
 
-        prompt.value = "/ask"
+        prompt.text = "/ask"
+        prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
         await pilot.pause(delay=0.2)
         await pilot.click(app.screen.query_one("#dialog-yes", Button))
@@ -275,8 +314,9 @@ async def test_extension_dialog_and_custom_overlay_round_trip(tmp_path):
             for message in app.query(TranscriptMessage)
         )
 
-        prompt = app.query_one("#prompt", Input)
-        prompt.value = "/panel"
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/panel"
+        prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
         await pilot.pause(delay=0.2)
         assert app.screen.query_one("#custom-panel", Static).render() == "Custom panel"
@@ -326,8 +366,9 @@ async def test_broken_renderer_is_isolated_from_event_projection(tmp_path):
 
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(delay=0.1)
-        prompt = app.query_one("#prompt", Input)
-        prompt.value = "/broken card"
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/broken card"
+        prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
         await pilot.pause(delay=0.1)
 
@@ -336,8 +377,9 @@ async def test_broken_renderer_is_isolated_from_event_projection(tmp_path):
             for message in app.query(TranscriptMessage)
         )
 
-        prompt = app.query_one("#prompt", Input)
-        prompt.value = "/echo projection survived"
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/echo projection survived"
+        prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
         await pilot.pause(delay=0.1)
 
