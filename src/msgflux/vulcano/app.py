@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Input, Static
+from textual.widgets import Input, OptionList, Static
 
 from msgflux.vulcano.actions import SubmitInput
 from msgflux.vulcano.events import DomainEvent, EventType
@@ -64,10 +64,10 @@ class VulcanoApp(App[None]):
     #topbar {
         height: 4;
         padding: 1 2;
-        background: #12151c;
-        color: #f0a45d;
+        background: #171014;
+        color: #ff3344;
         text-style: bold;
-        border-bottom: solid #272c36;
+        border-bottom: solid #5e202a;
     }
 
     #transcript {
@@ -93,22 +93,21 @@ class VulcanoApp(App[None]):
 
     .user-message {
         margin-left: 8;
-        color: #f4f5f7;
-        background: #202631;
-        border-left: thick #f0a45d;
+        color: #e4e5e9;
+        background: #292c33;
     }
 
     .assistant-message {
         margin-right: 8;
         background: #12151c;
-        border-left: thick #6fa8dc;
     }
 
     .command-input {
-        color: #9da5b4;
+        color: #c8cad1;
+        background: #22252b;
         padding-top: 0;
         padding-bottom: 0;
-        border-left: thick #555f72;
+        border-left: thick #ff3344;
     }
 
     .command-output {
@@ -132,7 +131,7 @@ class VulcanoApp(App[None]):
     #working {
         height: 1;
         padding: 0 2;
-        color: #f0a45d;
+        color: #ff3344;
         background: #10131a;
     }
 
@@ -142,16 +141,37 @@ class VulcanoApp(App[None]):
         padding: 0 2;
     }
 
+    #command-menu {
+        display: none;
+        width: auto;
+        height: auto;
+        max-height: 12;
+        margin: 0 2;
+        padding: 0 1;
+        color: #d5d7dc;
+        background: #1b1d23;
+        border: round #ff3344;
+        scrollbar-color: #ff3344;
+        scrollbar-size: 1 1;
+    }
+
+    #command-menu > .option-list--option-highlighted {
+        color: #ffffff;
+        background: #54202a;
+        text-style: bold;
+    }
+
     #prompt {
         height: 3;
         margin: 0 2;
         padding: 0 1;
-        border: round #3c4352;
-        background: #151922;
+        color: #e4e5e9;
+        border: round #60646e;
+        background: #292c33;
     }
 
     #prompt:focus {
-        border: round #f0a45d;
+        border: round #ff3344;
     }
 
     Footer {
@@ -189,6 +209,7 @@ class VulcanoApp(App[None]):
         yield Static("starting runtime...", id="status")
         yield self._ui_driver.create_working_status()
         yield Container(id="widgets-above")
+        yield self._ui_driver.create_command_menu()
         with Container(id="editor-slot"):
             yield self._ui_driver.create_default_editor()
         yield Container(id="widgets-below")
@@ -204,6 +225,8 @@ class VulcanoApp(App[None]):
         self.runtime.ui.unbind(self._ui_driver)
 
     async def on_key(self, event: events.Key) -> None:
+        if self._handle_command_menu_key(event):
+            return
         try:
             handled = await self.runtime.ui.invoke_shortcut(event.key)
         except Exception as error:
@@ -213,10 +236,43 @@ class VulcanoApp(App[None]):
             event.prevent_default()
             event.stop()
 
+    def _handle_command_menu_key(self, event: events.Key) -> bool:
+        if not self._ui_driver.command_menu_visible:
+            return False
+
+        if event.key in {"down", "up"}:
+            direction = 1 if event.key == "down" else -1
+            self._ui_driver.move_command_selection(direction)
+        elif event.key == "tab":
+            self._ui_driver.accept_command_selection()
+        elif event.key == "escape":
+            self._ui_driver.dismiss_command_menu()
+        elif event.key == "enter":
+            editor = self.query_one("#prompt", Input)
+            if self._ui_driver.is_exact_command(editor.value):
+                self._ui_driver.dismiss_command_menu()
+                return False
+            self._ui_driver.accept_command_selection()
+        else:
+            return False
+
+        event.prevent_default()
+        event.stop()
+        return True
+
+    @on(Input.Changed, "#prompt")
+    def _on_prompt_changed(self, event: Input.Changed) -> None:
+        self._ui_driver.update_command_menu(event.value)
+
+    @on(OptionList.OptionSelected, "#command-menu")
+    def _on_command_selected(self, event: OptionList.OptionSelected) -> None:
+        self._ui_driver.accept_command_selection(event.option_index)
+
     @on(Input.Submitted, "#prompt")
     def _on_prompt_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         event.input.value = ""
+        self._ui_driver.dismiss_command_menu()
         if text:
             self._dispatch_text(text)
 

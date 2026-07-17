@@ -5,7 +5,8 @@ import pytest
 pytest.importorskip("textual")
 pytest.importorskip("rich")
 
-from textual.widgets import Button, Input, Static
+from textual.color import Color
+from textual.widgets import Button, Input, OptionList, Static
 
 from msgflux.vulcano.app import TranscriptMessage, VulcanoApp
 from msgflux.vulcano.runtime import VulcanoRuntime
@@ -37,6 +38,53 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         assistant = next(message for message in messages if message.kind == "assistant")
         assert user.source_text == "hello"
         assert assistant.source_text == "Mock runtime received: hello"
+
+
+@pytest.mark.asyncio
+async def test_slash_command_menu_filters_and_completes_runtime_commands():
+    runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", Input)
+        menu = app.query_one("#command-menu", OptionList)
+
+        assert prompt.styles.background == Color.parse("#292c33")
+        assert app.query_one("#topbar", Static).styles.color == Color.parse("#ff3344")
+        assert not menu.display
+
+        prompt.value = "/"
+        await pilot.pause()
+
+        assert menu.display
+        assert menu.option_count == len(runtime.commands)
+        assert menu.highlighted == 0
+        assert await prompt.suggester.get_suggestion("/") is None
+
+        await pilot.press("down", "tab")
+        await pilot.pause()
+
+        assert prompt.value.startswith("/")
+        assert prompt.value.endswith(" ")
+        assert not menu.display
+
+        prompt.value = "message /"
+        await pilot.pause()
+        assert not menu.display
+
+        prompt.value = "/help"
+        await pilot.pause()
+        assert menu.display
+
+        await pilot.press("enter")
+        await pilot.pause(delay=0.05)
+
+        assert prompt.value == ""
+        assert any(
+            "## Commands" in message.source_text
+            for message in app.query(TranscriptMessage)
+        )
 
 
 @pytest.mark.asyncio
@@ -129,6 +177,13 @@ async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
 
         prompt = app.query_one("#prompt", Input)
         assert prompt.has_class("custom-editor")
+        prompt.value = "/ca"
+        await pilot.pause()
+        menu = app.query_one("#command-menu", OptionList)
+        assert menu.display
+        assert menu.option_count == 1
+        await pilot.press("tab")
+        assert prompt.value == "/card "
         assert await prompt.suggester.get_suggestion("/card r") == "/card release"
         await pilot.press("ctrl+g")
         await pilot.pause(delay=0.05)

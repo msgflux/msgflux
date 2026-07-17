@@ -40,6 +40,8 @@ class _VulcanoSuggester(Suggester):
         self._commands = commands
 
     async def get_suggestion(self, value: str) -> str | None:
+        if value.startswith("/") and " " not in value[1:]:
+            return None
         custom = await self._ui.complete(value)
         if custom is not None:
             return custom if custom.startswith(value) else None
@@ -51,7 +53,7 @@ class _VulcanoSuggester(Suggester):
 
         command_text = value[1:]
         if " " not in command_text:
-            return self._get_command_name_suggestion(command_text)
+            return None
 
         name, arguments = command_text.split(" ", 1)
         try:
@@ -71,13 +73,6 @@ class _VulcanoSuggester(Suggester):
                 return f"/{name} {prefix}{completion}"
         return None
 
-    def _get_command_name_suggestion(self, value: str) -> str | None:
-        for command in self._commands:
-            for name in (command.name, *command.aliases):
-                if name.startswith(value):
-                    return f"/{name}"
-        return None
-
 
 def _completion_values(result: object) -> tuple[str, ...]:
     if isinstance(result, str):
@@ -93,6 +88,61 @@ def _completion_values(result: object) -> tuple[str, ...]:
             if isinstance(value, str):
                 values.append(value)
     return tuple(values)
+
+
+class _SlashCommandMenu(OptionList):
+    """Runtime-backed slash-command selector displayed above the editor."""
+
+    def __init__(self, commands: CommandRegistry) -> None:
+        super().__init__(id="command-menu", markup=False)
+        self._commands = commands
+        self._visible_commands: tuple[str, ...] = ()
+        self.display = False
+
+    def update_for(self, value: str) -> None:
+        if not value.startswith("/") or any(character.isspace() for character in value):
+            self.dismiss_menu()
+            return
+
+        prefix = value[1:].casefold()
+        commands = tuple(
+            sorted(
+                (
+                    command
+                    for command in self._commands
+                    if command.name.casefold().startswith(prefix)
+                    or any(
+                        alias.casefold().startswith(prefix) for alias in command.aliases
+                    )
+                ),
+                key=lambda command: command.name,
+            )
+        )
+        if not commands:
+            self.dismiss_menu()
+            return
+
+        self._visible_commands = tuple(command.name for command in commands)
+        self.clear_options()
+        self.add_options(
+            f"/{command.name}  {command.description}" for command in commands
+        )
+        self.highlighted = 0
+        self.display = True
+
+    @property
+    def is_open(self) -> bool:
+        return bool(self.display and self._visible_commands)
+
+    def command_at(self, index: int | None) -> str | None:
+        if index is None or not 0 <= index < len(self._visible_commands):
+            return None
+        return self._visible_commands[index]
+
+    def dismiss_menu(self) -> None:
+        self.display = False
+        self._visible_commands = ()
+        self.clear_options()
 
 
 class _TimedModalScreen(ModalScreen[T]):
@@ -389,7 +439,9 @@ class TextualUiDriver:
         commands: CommandRegistry,
     ) -> None:
         self.app = app
+        self._commands = commands
         self._suggester = _VulcanoSuggester(ui, commands)
+        self._command_menu: _SlashCommandMenu | None = None
         self._state = UiState()
         self._applied_state = UiState()
         self._apply_scheduled = False
@@ -405,11 +457,56 @@ class TextualUiDriver:
     def create_working_status(self) -> WorkingStatus:
         return WorkingStatus()
 
+    def create_command_menu(self) -> OptionList:
+        self._command_menu = _SlashCommandMenu(self._commands)
+        return self._command_menu
+
     def create_default_editor(self) -> Input:
         return Input(
             placeholder="Message Vulcano or enter /help",
             id="prompt",
             suggester=self._suggester,
+        )
+
+    @property
+    def command_menu_visible(self) -> bool:
+        return self._command_menu is not None and self._command_menu.is_open
+
+    def update_command_menu(self, value: str) -> None:
+        if self._command_menu is not None:
+            self._command_menu.update_for(value)
+
+    def dismiss_command_menu(self) -> None:
+        if self._command_menu is not None:
+            self._command_menu.dismiss_menu()
+
+    def move_command_selection(self, direction: int) -> None:
+        if self._command_menu is None:
+            return
+        if direction > 0:
+            self._command_menu.action_cursor_down()
+        else:
+            self._command_menu.action_cursor_up()
+
+    def accept_command_selection(self, index: int | None = None) -> bool:
+        if self._command_menu is None:
+            return False
+        selected_index = self._command_menu.highlighted if index is None else index
+        command = self._command_menu.command_at(selected_index)
+        if command is None:
+            return False
+        editor = self.app.query_one("#prompt", Input)
+        editor.value = f"/{command} "
+        editor.cursor_position = len(editor.value)
+        self._command_menu.dismiss_menu()
+        editor.focus()
+        return True
+
+    def is_exact_command(self, value: str) -> bool:
+        return (
+            value.startswith("/")
+            and not any(character.isspace() for character in value)
+            and value[1:] in self._commands
         )
 
     def apply_state(self, state: UiState) -> None:
@@ -533,6 +630,7 @@ class TextualUiDriver:
         if editor.suggester is None:
             editor.suggester = self._suggester
         await container.mount(editor)
+        self.update_command_menu(editor.value)
         editor.focus()
 
     async def materialize(self, content: object) -> Widget:

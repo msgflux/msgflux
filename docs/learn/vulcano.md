@@ -66,6 +66,11 @@ The preview registers these commands:
 | `/reload` | Unload and reload extensions. |
 | `/quit` | Stop the runtime and connected clients. |
 
+Typing `/` as the first editor character opens the runtime-backed command
+selector. Continue typing to filter it, use the arrow keys to move, `Tab` or
+`Enter` to complete a selection, and `Escape` to close it. Commands registered
+by extensions appear without additional TUI registration.
+
 Commands that affect presentation emit a `client.action` event. The decision
 still belongs to the runtime; the Textual client only applies the requested
 effect.
