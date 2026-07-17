@@ -5,7 +5,12 @@ from msgflux.vulcano.commands import (
     CommandOptions,
     CommandResult,
 )
-from msgflux.vulcano.events import DomainEvent, EventDraft, EventType
+from msgflux.vulcano.events import (
+    DomainEvent,
+    EventDraft,
+    EventType,
+    custom_message_type,
+)
 from msgflux.vulcano.extensions import (
     EXTENSION_API_VERSION,
     EXTENSION_ENTRY_POINT_GROUP,
@@ -28,6 +33,26 @@ from msgflux.vulcano.runtime import (
     RuntimeProtocol,
     VulcanoRuntime,
 )
+from msgflux.vulcano.ui import (
+    ExtensionUiApi,
+    UiCompletionProvider,
+    UiComponentFactory,
+    UiCustomFactory,
+    UiDialogOptions,
+    UiDriver,
+    UiManager,
+    UiPlacement,
+    UiRegistration,
+    UiRenderContext,
+    UiRenderer,
+    UiSeverity,
+    UiShortcutHandler,
+    UiState,
+    UiStatus,
+    UiThemeResult,
+    UiWidget,
+    WorkingIndicatorOptions,
+)
 
 __all__ = [
     "AgentAdapter",
@@ -48,6 +73,7 @@ __all__ = [
     "ExtensionInfo",
     "ExtensionSettings",
     "ExtensionSource",
+    "ExtensionUiApi",
     "MockResponder",
     "MsgfluxAgentAdapter",
     "Responder",
@@ -57,5 +83,23 @@ __all__ = [
     "SubmitInput",
     "ToolLibraryApi",
     "ToolRegistration",
+    "UiComponentFactory",
+    "UiCompletionProvider",
+    "UiCustomFactory",
+    "UiDialogOptions",
+    "UiDriver",
+    "UiManager",
+    "UiPlacement",
+    "UiRegistration",
+    "UiRenderContext",
+    "UiRenderer",
+    "UiSeverity",
+    "UiState",
+    "UiStatus",
+    "UiShortcutHandler",
+    "UiThemeResult",
+    "UiWidget",
     "VulcanoRuntime",
+    "WorkingIndicatorOptions",
+    "custom_message_type",
 ]

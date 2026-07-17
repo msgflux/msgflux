@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Callable, Mapping, Protocol
+from pathlib import Path
+from typing import Awaitable, Callable, Mapping, Protocol
 
 from msgflux.vulcano.commands import (
     CommandContext,
@@ -14,6 +15,7 @@ from msgflux.vulcano.commands import (
     CommandSpec,
     RuntimeCommandHandler,
 )
+from msgflux.vulcano.events import custom_message_type
 from msgflux.vulcano.extensions.agent import (
     AgentApi,
     ToolLibraryApi,
@@ -25,6 +27,12 @@ from msgflux.vulcano.extensions.types import (
     ExtensionContext,
     ExtensionObserver,
     ExtensionSource,
+)
+from msgflux.vulcano.ui import (
+    ExtensionUiApi,
+    UiManager,
+    UiRegistration,
+    UiRenderer,
 )
 
 __all__ = ["ExtensionApi"]
@@ -54,12 +62,15 @@ class ExtensionApi:
         host: _ExtensionHost,
         *,
         owner: str,
-        context: ExtensionContext,
+        cwd: Path,
+        generation: int,
+        source: ExtensionSource,
+        services: Mapping[str, object],
         agent_binding: _AgentBinding,
+        ui_manager: UiManager,
     ) -> None:
         self._host = host
         self._owner = owner
-        self._context = context
         self._active = True
         self._registrations: list[_Registration] = []
         self._cleanups: list[ExtensionCleanup] = []
@@ -67,6 +78,19 @@ class ExtensionApi:
             agent_binding,
             assert_active=self._assert_active,
             track=self._track_registration,
+        )
+        self.ui = ExtensionUiApi(
+            ui_manager,
+            owner=owner,
+            assert_active=self._assert_active,
+            track=self._track_registration,
+        )
+        self._context = ExtensionContext(
+            cwd=cwd,
+            generation=generation,
+            source=source,
+            ui=self.ui,
+            services=services,
         )
 
     @property
@@ -154,6 +178,25 @@ class ExtensionApi:
 
         return decorator
 
+    def register_shortcut(
+        self,
+        key: str,
+        handler: Callable[
+            [ExtensionContext],
+            None | Awaitable[None],
+        ],
+    ) -> UiRegistration:
+        """Register a Textual key shortcut with extension ownership."""
+        self._assert_active()
+
+        async def guarded() -> None:
+            self._assert_active()
+            result = handler(self._context)
+            if inspect.isawaitable(result):
+                await result
+
+        return self.ui._register_shortcut(key, guarded)
+
     def register_observer(
         self,
         event_type: str,
@@ -168,6 +211,22 @@ class ExtensionApi:
         )
         self._registrations.append(registration)
         return registration
+
+    def register_renderer(
+        self,
+        event_type: str,
+        renderer: UiRenderer,
+    ) -> UiRegistration:
+        """Register a Textual/Rich renderer for one runtime event type."""
+        return self.ui.register_renderer(event_type, renderer)
+
+    def register_message_renderer(
+        self,
+        custom_type: str,
+        renderer: UiRenderer,
+    ) -> UiRegistration:
+        """Register a Pi-shaped renderer for CommandContext.send_message()."""
+        return self.register_renderer(custom_message_type(custom_type), renderer)
 
     def on(
         self,

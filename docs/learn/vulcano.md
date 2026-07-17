@@ -15,8 +15,10 @@ flowchart LR
     Runtime -->|DomainEvent stream| TUI
     Runtime --> Commands[Slash-command registry]
     Runtime --> AgentApi[AgentApi]
+    Runtime --> UiManager[UiManager]
     AgentApi --> Agent[Main Agent]
     AgentApi --> Tools[ToolLibrary]
+    UiManager -->|Textual driver| TUI
 ```
 
 The runtime owns slash commands, execution state, and events. Textual only sends
@@ -117,6 +119,9 @@ The repository also contains a runnable example:
 vulcano -e examples/vulcano_extension.py
 # Then enter: /hello Ada
 ```
+
+The example registers a status, an editor-adjacent widget, a slash command,
+and a Rich message renderer through the same extension generation.
 
 `-e` is the short form and may be repeated. The path can point to a `.py` file,
 a Python package containing `__init__.py`, or a directory containing multiple
@@ -306,6 +311,206 @@ The first submission uses that run id. Later submissions create new root runs
 under the same thread. The runtime or its persistence layer supplies this
 scope; the terminal client continues to send only actions and render events.
 
+### Textual UI extensions
+
+Vulcano exposes a Pi-shaped UI facade as `api.ui`, `ctx.ui`, and
+`ExtensionContext.ui`. The runtime owns registrations and their extension
+generation; `VulcanoApp` binds a Textual driver that materializes them. This
+keeps Agent logic in the runtime while allowing extensions to use native
+Textual widgets and Rich renderables.
+
+Check the active mode before starting terminal-only interaction:
+
+```python
+def setup(api):
+    if api.ui.available:
+        api.ui.notify(f"UI mode: {api.ui.mode}")
+```
+
+`ui.mode` is `"tui"` while Textual is bound and `"headless"` otherwise.
+Headless dialogs return safe cancellation values: `select()`, `input()`,
+`editor()`, and `custom()` return `None`, while `confirm()` returns `False`.
+Persistent contributions can still be registered before a frontend binds.
+
+#### Dialogs and notifications
+
+Commands use asynchronous dialogs without accessing `VulcanoApp` internals:
+
+```python
+@api.command("deploy", "Confirm and deploy a release.")
+async def deploy(args, ctx):
+    environment = await ctx.ui.select(
+        "Environment",
+        ["staging", "production"],
+    )
+    if environment is None:
+        return CommandResult()
+
+    confirmed = await ctx.ui.confirm(
+        "Deploy?",
+        f"Deploy `{args}` to `{environment}`?",
+        timeout=30,
+    )
+    if not confirmed:
+        ctx.ui.notify("Deployment cancelled", "warning")
+        return CommandResult()
+
+    notes = await ctx.ui.editor("Release notes", "## Changes\n")
+    ctx.ui.notify("Deployment accepted", "info")
+```
+
+`input()` provides a single-line prompt. `editor()` provides a multiline
+Textual editor; save it with `Ctrl+S` or cancel with `Escape`. Dialog timeouts
+are expressed in seconds.
+
+#### Status, working state, and slots
+
+Status and layout contributions are keyed and owner-aware:
+
+```python
+from textual.widgets import Static
+
+from msgflux.vulcano import WorkingIndicatorOptions
+
+
+def setup(api):
+    api.ui.set_status("index", "indexing repository")
+    api.ui.set_working_message("Agent is editing files")
+    api.ui.set_working_indicator(
+        WorkingIndicatorOptions(frames=("·", "•", "●", "•"), interval=0.12)
+    )
+
+    api.ui.set_widget(
+        "branch",
+        lambda app, theme: Static("branch: feat/vulcano-tui"),
+        placement="above_editor",
+    )
+    api.ui.set_header(
+        lambda app, theme: Static("CUSTOM VULCANO", id="custom-header")
+    )
+    api.ui.set_footer(
+        lambda app, theme: Static("custom footer", id="custom-footer")
+    )
+    api.ui.set_title("Vulcano — current project")
+```
+
+Widget content may be a string, a sequence of strings, a Rich renderable, a
+Textual `Widget`, or a factory receiving `(app, theme)`. Widgets support
+`above_editor` and `below_editor`. Passing `None` clears the owner's current
+contribution. When multiple extensions customize a single slot, the latest
+active contribution wins; unloading it restores the previous one.
+
+#### Custom components and overlays
+
+`custom()` accepts a native component factory. The callback receives the
+Textual app, current Textual theme, and `done(result)`:
+
+```python
+from textual import on
+from textual.app import ComposeResult
+from textual.widgets import Button, Static
+
+
+class GoalPanel(Static):
+    def __init__(self, done):
+        super().__init__()
+        self.done = done
+
+    def compose(self) -> ComposeResult:
+        yield Static("Goal is ready")
+        yield Button("Continue", id="continue")
+
+    @on(Button.Pressed, "#continue")
+    def continue_goal(self) -> None:
+        self.done("continue")
+
+
+@api.command("panel", "Open a custom goal panel.")
+async def panel(args, ctx):
+    result = await ctx.ui.custom(
+        lambda app, theme, done: GoalPanel(done),
+        overlay=True,
+        overlay_options={"width": 72},
+    )
+```
+
+`Escape` closes a custom component with `None`. Supported overlay sizing keys
+are `width`, `height`, `max_width`, and `max_height`. Factories may be
+synchronous or asynchronous.
+
+#### Renderers and custom messages
+
+Extensions register renderers in the runtime and publish typed messages from a
+command. The Textual driver invokes the renderer only for presentation:
+
+```python
+from textual.widgets import Static
+
+
+def setup(api):
+    api.register_message_renderer(
+        "goal-card",
+        lambda event, render_ctx: Static(
+            f"Goal: {event.payload['content']}",
+            classes="goal-card",
+        ),
+    )
+
+    @api.command("goal-card", "Render a custom goal card.")
+    async def goal_card(args, ctx):
+        await ctx.send_message(
+            "goal-card",
+            args,
+            details={"thread_id": ctx.scope.thread_id},
+        )
+```
+
+`api.register_renderer(event_type, renderer)` is the lower-level form and can
+override presentation for any non-lifecycle runtime event. A renderer receives
+the `DomainEvent` and `UiRenderContext`, whose `host` is the Textual app and
+whose `theme` is the current Textual theme.
+
+#### Editor, autocomplete, shortcuts, and themes
+
+The editor can be replaced with an `Input` subclass. Vulcano preserves its text,
+id, submission behavior, and suggester across replacement and cleanup:
+
+```python
+from textual.widgets import Input
+
+
+class ModalInput(Input):
+    pass
+
+
+def setup(api):
+    api.ui.set_editor_component(
+        lambda app, theme: ModalInput(classes="modal-editor")
+    )
+
+    api.ui.add_autocomplete_provider(
+        lambda value: "/review src/" if value == "/review s" else None
+    )
+
+    api.register_shortcut(
+        "ctrl+g",
+        lambda ctx: ctx.ui.set_status("goal", "goal shortcut pressed"),
+    )
+
+    available_themes = api.ui.get_themes()
+    if "textual-dark" in available_themes:
+        api.ui.set_theme("textual-dark")
+```
+
+Autocomplete providers run newest-first and return the complete suggested input
+or `None`. They are layered over command-name and `CommandOptions` argument
+completion. Shortcuts receive the extension's `ExtensionContext`; core
+high-priority bindings remain authoritative.
+
+Every status, widget, slot, editor, provider, shortcut, and renderer is removed
+on setup rollback, `/reload`, or shutdown. Stale contexts cannot mutate the new
+generation.
+
 ### Observing runtime events
 
 Observers are passive and fail open. An observer error produces an
@@ -367,9 +572,9 @@ unsupported `EXTENSION_API_VERSION` values become extension diagnostics rather
 than silently overriding another extension.
 
 The current API exposes commands, main-Agent execution, ToolLibrary
-registration, observers, cleanup, source, generation, and capability services.
-Shortcuts, flags, custom renderers, and session state remain later parity layers
-with Pi.
+registration, Textual UI customization, shortcuts, custom renderers, observers,
+cleanup, source, generation, and capability services. Flags and persistent
+session entries remain later parity layers with Pi.
 
 ## Event contract
 
@@ -401,7 +606,8 @@ instead of calling UI widgets.
 ## Terminal stack
 
 Textual owns terminal input, layout, workers, and the event loop. Rich renders
-Markdown and styled transcript content. Prompt Toolkit is deliberately not used
-inside the Textual application because both frameworks manage raw terminal
-input. A future classic CLI may use Prompt Toolkit as a separate client over the
-same runtime contract.
+Markdown and styled transcript content. Extensions may provide native Textual
+widgets through the runtime-owned UI registry. Prompt Toolkit is deliberately
+not used inside the Textual application because both frameworks manage raw
+terminal input. A future classic CLI may implement the high-level UI facade and
+leave native Textual factories unavailable.

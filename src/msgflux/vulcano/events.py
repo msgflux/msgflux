@@ -11,6 +11,7 @@ __all__ = [
     "EventStream",
     "EventSubscription",
     "EventType",
+    "custom_message_type",
 ]
 
 
@@ -32,6 +33,13 @@ class EventType:
     EXTENSION_UNLOADED = "extension.unloaded"
     EXTENSION_FAILED = "extension.failed"
     RUNTIME_ERROR = "runtime.error"
+
+
+def custom_message_type(custom_type: str) -> str:
+    normalized = custom_type.strip()
+    if not normalized:
+        raise ValueError("Custom message type cannot be empty")
+    return f"message.custom.{normalized}"
 
 
 @dataclass(frozen=True)

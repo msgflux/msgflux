@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from rich.markdown import Markdown
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
-from textual.widgets import Footer, Input, Static
+from textual.containers import Container, VerticalScroll
+from textual.widget import Widget
+from textual.widgets import Input, Static
 
 from msgflux.vulcano.actions import SubmitInput
 from msgflux.vulcano.events import DomainEvent, EventType
 from msgflux.vulcano.runtime import RuntimeProtocol
+from msgflux.vulcano.textual_ui import TextualUiDriver
 
 __all__ = ["TranscriptMessage", "VulcanoApp"]
 
@@ -52,6 +54,11 @@ class VulcanoApp(App[None]):
         background: #0c0e12;
         color: #d7dae0;
         layout: vertical;
+    }
+
+    #header-slot, #footer-slot, #widgets-above, #widgets-below, #editor-slot {
+        width: 100%;
+        height: auto;
     }
 
     #topbar {
@@ -122,6 +129,19 @@ class VulcanoApp(App[None]):
         background: #10131a;
     }
 
+    #working {
+        height: 1;
+        padding: 0 2;
+        color: #f0a45d;
+        background: #10131a;
+    }
+
+    .extension-widget {
+        width: 100%;
+        height: auto;
+        padding: 0 2;
+    }
+
     #prompt {
         height: 3;
         margin: 0 2;
@@ -148,11 +168,13 @@ class VulcanoApp(App[None]):
     def __init__(self, runtime: RuntimeProtocol) -> None:
         super().__init__()
         self.runtime = runtime
+        self._ui_driver = TextualUiDriver(self, runtime.ui, runtime.commands)
         self._assistant_views: dict[str, TranscriptMessage] = {}
         self._assistant_content: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("VULCANO  /  MSGFLUX", id="topbar")
+        with Container(id="header-slot"):
+            yield self._ui_driver.create_default_header()
         with VerticalScroll(id="transcript"):
             yield TranscriptMessage(
                 (
@@ -165,15 +187,31 @@ class VulcanoApp(App[None]):
                 classes="welcome-message",
             )
         yield Static("starting runtime...", id="status")
-        yield Input(
-            placeholder="Message Vulcano or enter /help",
-            id="prompt",
-        )
-        yield Footer()
+        yield self._ui_driver.create_working_status()
+        yield Container(id="widgets-above")
+        with Container(id="editor-slot"):
+            yield self._ui_driver.create_default_editor()
+        yield Container(id="widgets-below")
+        with Container(id="footer-slot"):
+            yield self._ui_driver.create_default_footer()
 
     def on_mount(self) -> None:
+        self.runtime.ui.bind(self._ui_driver, mode="tui")
         self.query_one("#prompt", Input).focus()
         self._consume_events()
+
+    def on_unmount(self) -> None:
+        self.runtime.ui.unbind(self._ui_driver)
+
+    async def on_key(self, event: events.Key) -> None:
+        try:
+            handled = await self.runtime.ui.invoke_shortcut(event.key)
+        except Exception as error:
+            self.notify(f"Shortcut failed: {error}", severity="error")
+            return
+        if handled:
+            event.prevent_default()
+            event.stop()
 
     @on(Input.Submitted, "#prompt")
     def _on_prompt_submitted(self, event: Input.Submitted) -> None:
@@ -197,20 +235,58 @@ class VulcanoApp(App[None]):
             await subscription.aclose()
 
     async def _project_event(self, event: DomainEvent) -> None:
-        if event.type == EventType.RUNTIME_STARTED:
-            command_count = event.payload.get("commands", 0)
-            self.query_one("#status", Static).update(
-                f"mock runtime  •  {command_count} commands  •  /help"
-            )
+        if self._project_lifecycle_event(event):
             return
 
+        if event.type == EventType.ASSISTANT_STARTED:
+            self._ui_driver.set_streaming(streaming=True)
+        elif event.type == EventType.ASSISTANT_COMPLETED:
+            self._ui_driver.set_streaming(streaming=False)
+
+        if await self._project_registered_renderer(event):
+            return
+        if await self._project_message_event(event):
+            return
+        await self._project_command_event(event)
+
+    def _project_lifecycle_event(self, event: DomainEvent) -> bool:
+        if event.type == EventType.RUNTIME_STARTED:
+            command_count = event.payload.get("commands", 0)
+            runtime_kind = event.payload.get("runtime", "runtime")
+            self._ui_driver.set_base_status(
+                f"{runtime_kind} runtime  •  {command_count} commands  •  /help"
+            )
+            return True
+        if event.type == EventType.RUNTIME_STOPPED:
+            self._ui_driver.set_streaming(streaming=False)
+            self._ui_driver.set_base_status("runtime stopped")
+            self.exit()
+            return True
+        return False
+
+    async def _project_registered_renderer(self, event: DomainEvent) -> bool:
+        try:
+            rendered = await self.runtime.ui.render_event(event)
+            if rendered is None:
+                return False
+            await self._append_rendered(rendered)
+        except Exception as error:
+            await self._append_message(
+                f"UI renderer failed: {error}",
+                kind="error",
+                classes="error-message",
+            )
+            return True
+        return True
+
+    async def _project_message_event(self, event: DomainEvent) -> bool:
         if event.type == EventType.MESSAGE_USER:
             await self._append_message(
                 str(event.payload.get("content", "")),
                 kind="user",
                 classes="user-message",
             )
-            return
+            return True
 
         if event.type in {
             EventType.ASSISTANT_STARTED,
@@ -218,8 +294,10 @@ class VulcanoApp(App[None]):
             EventType.ASSISTANT_COMPLETED,
         }:
             await self._project_assistant_event(event)
-            return
+            return True
+        return False
 
+    async def _project_command_event(self, event: DomainEvent) -> None:
         if event.type == EventType.COMMAND_STARTED:
             await self._append_message(
                 str(event.payload.get("raw", "")),
@@ -259,10 +337,6 @@ class VulcanoApp(App[None]):
                 self._assistant_views.clear()
                 self._assistant_content.clear()
             return
-
-        if event.type == EventType.RUNTIME_STOPPED:
-            self.query_one("#status", Static).update("runtime stopped")
-            self.exit()
 
     async def _project_assistant_event(self, event: DomainEvent) -> None:
         key, view = await self._ensure_assistant(event)
@@ -314,6 +388,12 @@ class VulcanoApp(App[None]):
             markdown=markdown,
             classes=classes,
         )
+        await self.query_one("#transcript", VerticalScroll).mount(view)
+        self._scroll_to_end()
+        return view
+
+    async def _append_rendered(self, content: object) -> Widget:
+        view = await self._ui_driver.materialize(content)
         await self.query_one("#transcript", VerticalScroll).mount(view)
         self._scroll_to_end()
         return view

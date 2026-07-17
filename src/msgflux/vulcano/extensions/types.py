@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Awaitable, Callable, Mapping, Protocol
 
 from msgflux.vulcano.events import DomainEvent
+
+if TYPE_CHECKING:
+    from msgflux.vulcano.ui import ExtensionUiApi
 
 __all__ = [
     "EXTENSION_API_VERSION",
@@ -63,7 +66,16 @@ class ExtensionContext:
     cwd: Path
     generation: int
     source: ExtensionSource
+    ui: ExtensionUiApi
     services: Mapping[str, object] = field(default_factory=dict)
+
+    @property
+    def mode(self) -> str:
+        return self.ui.mode
+
+    @property
+    def has_ui(self) -> bool:
+        return self.ui.available
 
 
 @dataclass(frozen=True)

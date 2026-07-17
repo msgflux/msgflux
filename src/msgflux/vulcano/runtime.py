@@ -32,6 +32,7 @@ from msgflux.vulcano.extensions import (
     ExtensionManager,
     ExtensionSettings,
 )
+from msgflux.vulcano.ui import UiManager
 
 __all__ = ["MockResponder", "Responder", "RuntimeProtocol", "VulcanoRuntime"]
 
@@ -46,6 +47,7 @@ class RuntimeProtocol(Protocol):
     """Client-facing runtime contract implemented independently of Textual."""
 
     commands: CommandRegistry
+    ui: UiManager
 
     def subscribe(self) -> EventSubscription: ...
 
@@ -150,6 +152,7 @@ class VulcanoRuntime:
             agent=agent,
             agent_adapter=agent_adapter,
         )
+        self.ui = self.extensions.ui
         self._install_builtin_commands()
 
     @property

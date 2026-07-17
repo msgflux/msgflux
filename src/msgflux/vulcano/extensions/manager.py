@@ -28,6 +28,7 @@ from msgflux.vulcano.extensions.types import (
     ExtensionSettings,
     ExtensionSource,
 )
+from msgflux.vulcano.ui import UiManager
 
 __all__ = ["ExtensionManager"]
 
@@ -106,6 +107,7 @@ class ExtensionManager:
         self._observers: dict[int, _Observer] = {}
         self._observer_ids = itertools.count()
         self._agent_binding = _AgentBinding(agent, agent_adapter)
+        self.ui = UiManager()
         control = _ExtensionControlFacade(self)
         service_values = dict(services or {})
         if "extensions" in service_values:
@@ -118,17 +120,15 @@ class ExtensionManager:
             priority=0,
             trusted=True,
         )
-        core_context = ExtensionContext(
+        self._api = ExtensionApi(
+            self,
+            owner="vulcano",
             cwd=settings.cwd,
             generation=0,
             source=core_source,
             services=self._services,
-        )
-        self._api = ExtensionApi(
-            self,
-            owner="vulcano",
-            context=core_context,
             agent_binding=self._agent_binding,
+            ui_manager=self.ui,
         )
 
     @property
@@ -298,17 +298,15 @@ class ExtensionManager:
             if name in self._loaded:
                 raise RuntimeError(f"Extension name is already loaded: {name}")
 
-            context = ExtensionContext(
+            api = ExtensionApi(
+                self,
+                owner=name,
                 cwd=self.settings.cwd,
                 generation=self._generation,
                 source=candidate.source,
                 services=self._services,
-            )
-            api = ExtensionApi(
-                self,
-                owner=name,
-                context=context,
                 agent_binding=self._agent_binding,
+                ui_manager=self.ui,
             )
             result = definition.register(api)
             if inspect.isawaitable(result):

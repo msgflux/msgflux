@@ -14,10 +14,11 @@ from msgflux.runtime.context import (
     new_run_id,
     new_thread_id,
 )
-from msgflux.vulcano.events import EventDraft
+from msgflux.vulcano.events import EventDraft, custom_message_type
 
 if TYPE_CHECKING:
     from msgflux.vulcano.extensions.agent import AgentApi
+    from msgflux.vulcano.ui import ExtensionUiApi
 
 __all__ = [
     "CommandContext",
@@ -60,6 +61,9 @@ class CommandApi(Protocol):
     def agent(self) -> AgentApi: ...
 
     @property
+    def ui(self) -> ExtensionUiApi: ...
+
+    @property
     def services(self) -> Mapping[str, object]: ...
 
 
@@ -78,11 +82,34 @@ class CommandContext:
     def services(self) -> Mapping[str, object]:
         return self.api.services
 
+    @property
+    def ui(self) -> ExtensionUiApi:
+        return self.api.ui
+
     async def emit(self, event: EventDraft) -> None:
         """Publish an event immediately during a slash-command flow."""
         if self._event_emitter is None:
             raise RuntimeError("This command context is not bound to a runtime emitter")
         await self._event_emitter(event)
+
+    async def send_message(
+        self,
+        custom_type: str,
+        content: object,
+        *,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        """Publish an extension-owned message for a registered UI renderer."""
+        await self.emit(
+            EventDraft(
+                custom_message_type(custom_type),
+                {
+                    "custom_type": custom_type,
+                    "content": content,
+                    "details": dict(details or {}),
+                },
+            )
+        )
 
     def child_scope(
         self,

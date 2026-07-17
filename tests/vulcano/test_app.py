@@ -1,12 +1,20 @@
+from textwrap import dedent
+
 import pytest
 
 pytest.importorskip("textual")
 pytest.importorskip("rich")
 
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 from msgflux.vulcano.app import TranscriptMessage, VulcanoApp
 from msgflux.vulcano.runtime import VulcanoRuntime
+
+
+def _write_extension(path, source):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dedent(source), encoding="utf-8")
+    return path
 
 
 @pytest.mark.asyncio
@@ -45,4 +53,240 @@ async def test_clear_binding_requests_runtime_command():
         assert any(
             event.payload.get("action") == "transcript.clear"
             for event in runtime.history
+        )
+
+
+@pytest.mark.asyncio
+async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
+    extension = _write_extension(
+        tmp_path / "custom_ui.py",
+        """
+        from textual.widgets import Input, Static
+
+        from msgflux.vulcano import CommandOptions, CommandResult
+
+        EXTENSION_NAME = "custom-ui"
+
+        def setup(api):
+            api.ui.set_status("mode", "extension UI")
+            api.ui.set_widget(
+                "goal",
+                lambda app, theme: Static(
+                    "Goal widget",
+                    id="goal-widget",
+                ),
+                placement="below_editor",
+            )
+            api.ui.set_header(
+                lambda app, theme: Static("CUSTOM HEADER", id="custom-header")
+            )
+            api.ui.set_footer(
+                lambda app, theme: Static("CUSTOM FOOTER", id="custom-footer")
+            )
+            api.ui.set_editor_component(
+                lambda app, theme: Input(classes="custom-editor")
+            )
+            api.ui.add_autocomplete_provider(
+                lambda value: "/card release" if value == "/card r" else None
+            )
+            api.register_shortcut(
+                "ctrl+g",
+                lambda context: context.ui.set_status("shortcut", "pressed"),
+            )
+            api.register_message_renderer(
+                "card",
+                lambda event, context: Static(
+                    "Card: " + str(event.payload["content"]),
+                    id="rendered-card",
+                ),
+            )
+
+            async def card(arguments, context):
+                context.ui.set_title("Vulcano customized")
+                await context.send_message("card", arguments)
+                return CommandResult()
+
+            api.register_command(
+                "card",
+                CommandOptions(description="Render a custom card.", handler=card),
+            )
+        """,
+    )
+    runtime = VulcanoRuntime(
+        stream_delay=0,
+        extension_paths=[extension],
+        discover_extensions=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause(delay=0.1)
+
+        assert app.query_one("#custom-header", Static).render() == "CUSTOM HEADER"
+        assert app.query_one("#custom-footer", Static).render() == "CUSTOM FOOTER"
+        assert app.query_one("#goal-widget", Static).render() == "Goal widget"
+        assert "extension UI" in str(app.query_one("#status", Static).render())
+
+        prompt = app.query_one("#prompt", Input)
+        assert prompt.has_class("custom-editor")
+        assert await prompt.suggester.get_suggestion("/card r") == "/card release"
+        await pilot.press("ctrl+g")
+        await pilot.pause(delay=0.05)
+        assert "pressed" in str(app.query_one("#status", Static).render())
+
+        prompt.value = "/card release"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        assert app.title == "Vulcano customized"
+        assert app.query_one("#rendered-card", Static).render() == "Card: release"
+
+
+@pytest.mark.asyncio
+async def test_extension_dialog_and_custom_overlay_round_trip(tmp_path):
+    extension = _write_extension(
+        tmp_path / "dialogs.py",
+        """
+        from textual.widgets import Static
+
+        from msgflux.vulcano import (
+            CommandOptions,
+            CommandResult,
+            EventDraft,
+            EventType,
+        )
+
+        EXTENSION_NAME = "dialogs"
+
+        def setup(api):
+            async def ask(arguments, context):
+                del arguments
+                confirmed = await context.ui.confirm(
+                    "Execute?",
+                    "Run the custom flow?",
+                )
+                return CommandResult(events=(
+                    EventDraft(
+                        EventType.COMMAND_OUTPUT,
+                        {"text": f"confirmed={confirmed}"},
+                    ),
+                ))
+
+            async def panel(arguments, context):
+                del arguments
+                result = await context.ui.custom(
+                    lambda app, theme, done: Static(
+                        "Custom panel",
+                        id="custom-panel",
+                    ),
+                    overlay=True,
+                )
+                return CommandResult(events=(
+                    EventDraft(
+                        EventType.COMMAND_OUTPUT,
+                        {"text": f"panel={result}"},
+                    ),
+                ))
+
+            api.register_command(
+                "ask",
+                CommandOptions(description="Ask for confirmation.", handler=ask),
+            )
+            api.register_command(
+                "panel",
+                CommandOptions(description="Show a custom panel.", handler=panel),
+            )
+        """,
+    )
+    runtime = VulcanoRuntime(
+        stream_delay=0,
+        extension_paths=[extension],
+        discover_extensions=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause(delay=0.1)
+        prompt = app.query_one("#prompt", Input)
+
+        prompt.value = "/ask"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+        await pilot.click(app.screen.query_one("#dialog-yes", Button))
+        await pilot.pause(delay=0.1)
+
+        assert any(
+            message.source_text == "confirmed=True"
+            for message in app.query(TranscriptMessage)
+        )
+
+        prompt = app.query_one("#prompt", Input)
+        prompt.value = "/panel"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+        assert app.screen.query_one("#custom-panel", Static).render() == "Custom panel"
+        await pilot.press("escape")
+        await pilot.pause(delay=0.1)
+
+        assert any(
+            message.source_text == "panel=None"
+            for message in app.query(TranscriptMessage)
+        )
+
+
+@pytest.mark.asyncio
+async def test_broken_renderer_is_isolated_from_event_projection(tmp_path):
+    extension = _write_extension(
+        tmp_path / "broken_renderer.py",
+        """
+        from msgflux.vulcano import CommandOptions, CommandResult
+
+        EXTENSION_NAME = "broken-renderer"
+
+        def setup(api):
+            api.register_message_renderer(
+                "broken",
+                lambda event, context: lambda app, theme: 1 / 0,
+            )
+
+            async def broken(arguments, context):
+                await context.send_message("broken", arguments)
+                return CommandResult()
+
+            api.register_command(
+                "broken",
+                CommandOptions(
+                    description="Render a broken component.",
+                    handler=broken,
+                ),
+            )
+        """,
+    )
+    runtime = VulcanoRuntime(
+        stream_delay=0,
+        extension_paths=[extension],
+        discover_extensions=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause(delay=0.1)
+        prompt = app.query_one("#prompt", Input)
+        prompt.value = "/broken card"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        assert any(
+            "UI renderer failed: division by zero" in message.source_text
+            for message in app.query(TranscriptMessage)
+        )
+
+        prompt = app.query_one("#prompt", Input)
+        prompt.value = "/echo projection survived"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        assert any(
+            message.source_text == "projection survived"
+            for message in app.query(TranscriptMessage)
         )
