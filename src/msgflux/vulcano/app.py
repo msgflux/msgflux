@@ -92,7 +92,6 @@ class VulcanoApp(App[None]):
     }
 
     .user-message {
-        margin-left: 8;
         color: #e4e5e9;
         background: #292c33;
     }
@@ -107,12 +106,10 @@ class VulcanoApp(App[None]):
         background: #22252b;
         padding-top: 0;
         padding-bottom: 0;
-        border-left: thick #ff3344;
     }
 
     .command-output {
         background: #10131a;
-        border-left: thick #68b684;
     }
 
     .error-message {
