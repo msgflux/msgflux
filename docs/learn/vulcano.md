@@ -71,7 +71,7 @@ selector. Continue typing to filter it, use the arrow keys to move, `Tab` or
 `Enter` to complete a selection, and `Escape` to close it. Commands registered
 by extensions appear without additional TUI registration.
 
-The default editor soft-wraps long input and grows from three to ten terminal
+The default editor soft-wraps long input and grows from three to fifteen terminal
 rows before enabling vertical scrolling. `Enter` submits the prompt;
 `Shift+Enter` or `Ctrl+J` inserts a line break.
 
@@ -131,6 +131,13 @@ vulcano -e examples/vulcano_extension.py
 
 The example registers a status, an editor-adjacent widget, a slash command,
 and a Rich message renderer through the same extension generation.
+
+For a complete interactive test surface, run the
+[UI and widget gallery](vulcano-ui.md):
+
+```bash
+vulcano --mock-delay 0 -e examples/vulcano_widget_gallery.py
+```
 
 `-e` is the short form and may be repeated. The path can point to a `.py` file,
 a Python package containing `__init__.py`, or a directory containing multiple

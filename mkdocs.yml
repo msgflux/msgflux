@@ -144,7 +144,6 @@ nav:
     - ⎙ Parsers: learn/parsers.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
-    - Vulcano: learn/vulcano.md
     - ✓ Verifiers: learn/verifiers.md
     - ⟢ Modules:
       - Module:
@@ -196,6 +195,9 @@ nav:
       - nn:
           - api-reference/nn/functional.md
           - api-reference/nn/modules/agent.md       
+  - Vulcano:
+    - Overview: learn/vulcano.md
+    - UI and widget gallery: learn/vulcano-ui.md
   - Tutorials:
     - tutorials/index.md
     - Payments & Commerce:

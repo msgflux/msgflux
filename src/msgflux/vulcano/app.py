@@ -160,7 +160,7 @@ class VulcanoApp(App[None]):
 
     #prompt {
         height: 3;
-        max-height: 10;
+        max-height: 15;
         margin: 0 2;
         padding: 0 1;
         color: #e4e5e9;

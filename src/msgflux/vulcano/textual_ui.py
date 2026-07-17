@@ -150,7 +150,7 @@ class VulcanoTextArea(TextArea):
     """Wrapping prompt editor that grows with its visible content."""
 
     MIN_HEIGHT = 3
-    MAX_HEIGHT = 10
+    MAX_HEIGHT = 15
 
     class Submitted(Message):
         """Posted when the user requests prompt submission."""
