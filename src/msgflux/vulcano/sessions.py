@@ -33,6 +33,7 @@ _REPLAY_EVENT_TYPES = {
     EventType.TOOL_STARTED,
     EventType.TOOL_UPDATED,
     EventType.TOOL_COMPLETED,
+    EventType.PERMISSION_RESOLVED,
     EventType.COMMAND_STARTED,
     EventType.COMMAND_OUTPUT,
     EventType.COMMAND_ERROR,
@@ -293,6 +294,8 @@ def _events_to_markdown(thread_id: str, events: tuple[DomainEvent, ...]) -> str:
             _append_block_markdown(lines, block_content, event)
         elif event.type == EventType.TOOL_COMPLETED:
             _append_tool_markdown(lines, event)
+        elif event.type == EventType.PERMISSION_RESOLVED:
+            _append_permission_markdown(lines, event)
         elif event.type == EventType.COMMAND_STARTED:
             lines.extend(("## Command", "", f"`{event.payload.get('raw', '')}`", ""))
         elif event.type == EventType.COMMAND_OUTPUT:
@@ -485,6 +488,16 @@ def _append_tool_markdown(lines: list[str], event: DomainEvent) -> None:
     name = str(event.payload.get("name", "tool"))
     result = event.payload.get("result", "")
     lines.extend((f"### Tool: `{name}`", "", f"```text\n{result}\n```", ""))
+
+
+def _append_permission_markdown(lines: list[str], event: DomainEvent) -> None:
+    operation = str(event.payload.get("operation", "operation"))
+    decision = str(event.payload.get("decision", "deny"))
+    resource = event.payload.get("resource")
+    lines.extend((f"### Permission: `{operation}`", "", f"Decision: **{decision}**"))
+    if resource is not None:
+        lines.extend(("", f"```text\n{resource}\n```"))
+    lines.append("")
 
 
 def _now() -> str:

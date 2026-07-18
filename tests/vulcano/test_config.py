@@ -94,7 +94,7 @@ def test_invalid_transcript_mode_is_rejected(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="transcript.mode"):
+    with pytest.raises(ValueError, match=r"transcript\.mode"):
         VulcanoSettings.load(cwd=tmp_path, home=tmp_path / "home")
 
 

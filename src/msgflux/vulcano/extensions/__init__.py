@@ -20,6 +20,7 @@ from msgflux.vulcano.extensions.types import (
     ExtensionSettings,
     ExtensionSource,
 )
+from msgflux.vulcano.permissions import ExtensionPermissionApi
 
 __all__ = [
     "AgentAdapter",
@@ -34,6 +35,7 @@ __all__ = [
     "ExtensionInfo",
     "ExtensionLoadReport",
     "ExtensionManager",
+    "ExtensionPermissionApi",
     "ExtensionReloadReport",
     "ExtensionSettings",
     "ExtensionSource",

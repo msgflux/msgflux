@@ -90,6 +90,7 @@ def _ui_help(_args, _ctx):
                 "- `/ui-widget [above|below|clear]` — layout widget",
                 "- `/ui-notify [info|warning|error]` — notification",
                 "- `/ui-dialogs` — selector, confirmation, input and editor",
+                "- `/ui-permission [command]` — runtime-owned permission request",
                 "- `/ui-overlay` — focused custom component",
                 "- `/ui-slots [show|clear]` — custom header and footer",
                 "- `/ui-working [show|hide|reset]` — streaming indicator",
@@ -424,6 +425,20 @@ async def _ui_dialogs(_args, ctx):
     return CommandResult()
 
 
+async def _ui_permission(args, ctx):
+    command = args.strip() or "python -m pytest tests/vulcano"
+    result = await ctx.request_permission(
+        "shell",
+        "Allow the mock agent to execute this shell command?",
+        resource=command,
+        remember_key=f"gallery-shell:{command}",
+        metadata={"mock": True},
+    )
+    return _output(
+        f"Permission decision: **{result.decision}** (source: `{result.source}`)."
+    )
+
+
 async def _ui_overlay(_args, ctx):
     result = await ctx.ui.custom(
         lambda _app, _theme, done: GalleryOverlay(done),
@@ -531,6 +546,7 @@ _COMMANDS = (
     ("ui-widget", "Show a mock widget above or below the editor.", _ui_widget),
     ("ui-notify", "Show a mock Textual notification.", _ui_notify),
     ("ui-dialogs", "Run every built-in UI dialog.", _ui_dialogs),
+    ("ui-permission", "Request permission for a mock shell command.", _ui_permission),
     ("ui-overlay", "Open a mock extension-owned overlay.", _ui_overlay),
     ("ui-slots", "Show or clear mock header and footer slots.", _ui_slots),
     ("ui-working", "Configure the mock streaming indicator.", _ui_working),

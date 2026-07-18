@@ -1,6 +1,7 @@
 from msgflux.vulcano.actions import (
     CancelExecution,
     InputMode,
+    ResolvePermission,
     RuntimeAction,
     StopRuntime,
     SubmitInput,
@@ -47,6 +48,15 @@ from msgflux.vulcano.extensions import (
     MsgfluxAgentAdapter,
     ToolLibraryApi,
     ToolRegistration,
+)
+from msgflux.vulcano.permissions import (
+    ExtensionPermissionApi,
+    PermissionActionDecision,
+    PermissionDecision,
+    PermissionManager,
+    PermissionRequest,
+    PermissionResult,
+    PermissionSource,
 )
 from msgflux.vulcano.runtime import (
     MockResponder,
@@ -107,6 +117,7 @@ __all__ = [
     "ExtensionContext",
     "ExtensionDiagnostic",
     "ExtensionInfo",
+    "ExtensionPermissionApi",
     "ExtensionSettings",
     "ExtensionSource",
     "ExtensionUiApi",
@@ -115,6 +126,7 @@ __all__ = [
     "MockResponder",
     "MsgfluxAgentAdapter",
     "Responder",
+    "ResolvePermission",
     "RuntimeAction",
     "RuntimeProtocol",
     "SessionController",
@@ -130,6 +142,12 @@ __all__ = [
     "ToolRegistration",
     "TranscriptMode",
     "TranscriptSettings",
+    "PermissionActionDecision",
+    "PermissionDecision",
+    "PermissionManager",
+    "PermissionRequest",
+    "PermissionResult",
+    "PermissionSource",
     "UiComponentFactory",
     "UiCompletionProvider",
     "UiCustomFactory",

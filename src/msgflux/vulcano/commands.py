@@ -24,6 +24,7 @@ from msgflux.vulcano.events import EventDraft, EventType, custom_message_type
 
 if TYPE_CHECKING:
     from msgflux.vulcano.extensions.agent import AgentApi
+    from msgflux.vulcano.permissions import ExtensionPermissionApi, PermissionResult
     from msgflux.vulcano.ui import ExtensionUiApi
 
 __all__ = [
@@ -70,6 +71,9 @@ class CommandApi(Protocol):
     def ui(self) -> ExtensionUiApi: ...
 
     @property
+    def permissions(self) -> ExtensionPermissionApi: ...
+
+    @property
     def services(self) -> Mapping[str, object]: ...
 
 
@@ -91,6 +95,32 @@ class CommandContext:
     @property
     def ui(self) -> ExtensionUiApi:
         return self.api.ui
+
+    @property
+    def permissions(self) -> ExtensionPermissionApi:
+        return self.api.permissions
+
+    async def request_permission(
+        self,
+        operation: str,
+        description: str,
+        *,
+        resource: str | None = None,
+        remember_key: str | None = None,
+        allow_session: bool = True,
+        metadata: Mapping[str, object] | None = None,
+    ) -> PermissionResult:
+        """Ask the active client to authorize a privileged operation."""
+        return await self.permissions.request(
+            operation,
+            description,
+            resource=resource,
+            remember_key=remember_key,
+            allow_session=allow_session,
+            metadata=metadata,
+            scope=self.scope,
+            correlation_id=self.correlation_id,
+        )
 
     async def emit(self, event: EventDraft) -> None:
         """Publish an event immediately during a slash-command flow."""

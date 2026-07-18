@@ -28,6 +28,7 @@ from msgflux.vulcano.extensions.types import (
     ExtensionSettings,
     ExtensionSource,
 )
+from msgflux.vulcano.permissions import PermissionManager
 from msgflux.vulcano.ui import UiManager
 
 __all__ = ["ExtensionManager"]
@@ -97,6 +98,7 @@ class ExtensionManager:
         services: Mapping[str, object] | None = None,
         agent: object | None = None,
         agent_adapter: AgentAdapter | None = None,
+        permission_manager: PermissionManager,
     ) -> None:
         self.commands = commands
         self.settings = settings
@@ -129,7 +131,9 @@ class ExtensionManager:
             services=self._services,
             agent_binding=self._agent_binding,
             ui_manager=self.ui,
+            permission_manager=permission_manager,
         )
+        self._permission_manager = permission_manager
 
     @property
     def enabled(self) -> bool:
@@ -307,6 +311,7 @@ class ExtensionManager:
                 services=self._services,
                 agent_binding=self._agent_binding,
                 ui_manager=self.ui,
+                permission_manager=self._permission_manager,
             )
             result = definition.register(api)
             if inspect.isawaitable(result):

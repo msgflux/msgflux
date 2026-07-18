@@ -130,6 +130,50 @@ def test_session_replay_does_not_restore_client_view_mode(tmp_path):
     assert store.replay("thd_view") == ()
 
 
+def test_session_replay_keeps_permission_decision_without_reopening_prompt(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_permission")
+    payload = {
+        "request_id": "permission-one",
+        "owner": "extension",
+        "operation": "shell",
+        "description": "Run tests?",
+        "resource": "pytest tests/vulcano",
+        "scope": {"thread_id": "thd_permission", "run_id": "run_one"},
+    }
+    store.append(
+        "thd_permission",
+        DomainEvent(
+            type=EventType.PERMISSION_REQUESTED,
+            sequence=1,
+            payload={**payload, "requires_confirmation": True},
+        ),
+    )
+    store.append(
+        "thd_permission",
+        DomainEvent(
+            type=EventType.PERMISSION_RESOLVED,
+            sequence=2,
+            payload={
+                **payload,
+                "decision": "allow_once",
+                "source": "user",
+                "allowed": True,
+            },
+        ),
+    )
+
+    replay = store.replay("thd_permission")
+    export = store.export_markdown(
+        "thd_permission",
+        tmp_path / "permission.md",
+    ).read_text(encoding="utf-8")
+
+    assert [event.type for event in replay] == [EventType.PERMISSION_RESOLVED]
+    assert "Permission: `shell`" in export
+    assert "pytest tests/vulcano" in export
+
+
 @pytest.mark.asyncio
 async def test_runtime_replays_persisted_session_before_start_event(tmp_path):
     store = SessionStore(tmp_path / "sessions")

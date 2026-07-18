@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Mapping, Protocol
 from msgflux.vulcano.events import DomainEvent
 
 if TYPE_CHECKING:
+    from msgflux.vulcano.permissions import ExtensionPermissionApi
     from msgflux.vulcano.ui import ExtensionUiApi
 
 __all__ = [
@@ -67,6 +68,7 @@ class ExtensionContext:
     generation: int
     source: ExtensionSource
     ui: ExtensionUiApi
+    permissions: ExtensionPermissionApi
     services: Mapping[str, object] = field(default_factory=dict)
 
     @property

@@ -4,9 +4,12 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
 
+from msgflux.vulcano.permissions import PermissionActionDecision
+
 __all__ = [
     "CancelExecution",
     "InputMode",
+    "ResolvePermission",
     "RuntimeAction",
     "StopRuntime",
     "SubmitInput",
@@ -41,6 +44,21 @@ class CancelExecution:
 
 
 @dataclass(frozen=True)
+class ResolvePermission:
+    """Return a client's decision for a pending runtime permission request."""
+
+    request_id: str
+    decision: PermissionActionDecision
+    correlation_id: str = field(default_factory=_new_correlation_id)
+
+    def __post_init__(self) -> None:
+        if not self.request_id.strip():
+            raise ValueError("Permission request id cannot be empty")
+        if self.decision not in {"allow_once", "allow_session", "deny"}:
+            raise ValueError(f"Unsupported permission decision: {self.decision!r}")
+
+
+@dataclass(frozen=True)
 class StopRuntime:
     """Request an orderly runtime shutdown."""
 
@@ -48,4 +66,4 @@ class StopRuntime:
     correlation_id: str = field(default_factory=_new_correlation_id)
 
 
-RuntimeAction = CancelExecution | SubmitInput | StopRuntime
+RuntimeAction = CancelExecution | ResolvePermission | SubmitInput | StopRuntime

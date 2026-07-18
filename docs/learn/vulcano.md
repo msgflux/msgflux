@@ -362,6 +362,50 @@ projection and rebuilds it; it never reads session files. `/export` produces a
 Markdown transcript. Extensions can access the same high-level facade at
 `ctx.services["sessions"]` without receiving the private runtime object.
 
+### Runtime-owned permissions
+
+Privileged flows request authorization through `ctx.request_permission()`.
+The command does not open a Textual widget directly:
+
+```python
+@api.command("test", "Run the selected test target.")
+async def test(args, ctx):
+    result = await ctx.request_permission(
+        "shell",
+        "Allow the Agent to run this test command?",
+        resource=f"python -m pytest {args}",
+        remember_key=f"pytest:{args}",
+        metadata={"working_directory": str(ctx.api.context.cwd)},
+    )
+    if not result.allowed:
+        return CommandResult()
+
+    # Execute through the runtime/tool layer after authorization.
+    return CommandResult()
+```
+
+The same facade is available as `api.permissions`, `ctx.permissions`, and
+`ExtensionContext.permissions`, so tools, hooks, subagents, and background
+flows can share the policy boundary. A result reports `decision`, `source`,
+`allowed`, and `remembered`.
+
+The runtime publishes `permission.requested`, waits for a
+`ResolvePermission` action, then publishes `permission.resolved`. The Textual
+client only displays the choices and returns the selected decision. In headless
+mode requests deny immediately. `allow_session` is scoped by durable thread,
+extension owner, and `remember_key`; it is not a global grant.
+
+Only resolved decisions participate in durable replay and Markdown export.
+Pending requests are never reopened after restart, and cancellation records a
+`cancelled` resolution.
+
+!!! warning
+
+    The permission broker is a cooperative runtime policy boundary, not a
+    Python sandbox. An extension can still call operating-system APIs directly.
+    Agent tools must pass privileged operations through this API or through
+    permission-aware msgflux hooks for confirmation to apply.
+
 ### Textual UI extensions
 
 Vulcano exposes a Pi-shaped UI facade as `api.ui`, `ctx.ui`, and
@@ -658,7 +702,8 @@ than silently overriding another extension.
 
 The current API exposes commands, main-Agent execution, ToolLibrary
 registration, typed blocks, tool renderers, Textual UI customization, shortcuts,
-observers, cleanup, source, generation, sessions, and capability services.
+observers, cleanup, source, generation, sessions, permissions, and capability
+services.
 
 ## Event contract
 
@@ -672,6 +717,9 @@ Extensions add `extension.loaded`, `extension.unloaded`, and
 event is published and cannot transform or block it. Control hooks will use the
 existing msgflux hook system when the Agent adapter lands; they should remain a
 separate API from passive observation.
+
+Permission flows add `permission.requested` and `permission.resolved`. Clients
+answer with `ResolvePermission`; they never execute the privileged operation.
 
 The mock response follows the same lifecycle expected from the Agent adapter:
 

@@ -33,6 +33,8 @@ class EventType:
     TOOL_STARTED = "tool.started"
     TOOL_UPDATED = "tool.updated"
     TOOL_COMPLETED = "tool.completed"
+    PERMISSION_REQUESTED = "permission.requested"
+    PERMISSION_RESOLVED = "permission.resolved"
     INPUT_QUEUED = "input.queued"
     INPUT_DEQUEUED = "input.dequeued"
     INPUT_QUEUE_CLEARED = "input.queue.cleared"

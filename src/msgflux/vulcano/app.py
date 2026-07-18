@@ -12,13 +12,19 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, OptionList, Static
 
-from msgflux.vulcano.actions import CancelExecution, InputMode, SubmitInput
+from msgflux.vulcano.actions import (
+    CancelExecution,
+    InputMode,
+    ResolvePermission,
+    SubmitInput,
+)
 from msgflux.vulcano.blocks import BlockKind, BlockStatus
 from msgflux.vulcano.config import TranscriptMode, VulcanoSettings
 from msgflux.vulcano.events import DomainEvent, EventType
+from msgflux.vulcano.permissions import PermissionActionDecision
 from msgflux.vulcano.runtime import RuntimeProtocol
 from msgflux.vulcano.textual_ui import TextualUiDriver, VulcanoTextArea
-from msgflux.vulcano.ui import UiManager
+from msgflux.vulcano.ui import UiDialogOptions, UiManager
 
 __all__ = [
     "CollapsibleTranscriptBlock",
@@ -30,6 +36,41 @@ __all__ = [
     "TurnSidebar",
     "VulcanoApp",
 ]
+
+
+_PERMISSION_LABELS: dict[PermissionActionDecision, str] = {
+    "allow_once": "Allow once",
+    "allow_session": "Allow for this session",
+    "deny": "Deny",
+}
+
+
+def _permission_decision(value: object) -> PermissionActionDecision | None:
+    if value == "allow_once":
+        return "allow_once"
+    if value == "allow_session":
+        return "allow_session"
+    if value == "deny":
+        return "deny"
+    return None
+
+
+def _permission_prompt(event: DomainEvent) -> str:
+    description = str(event.payload.get("description", "Authorize this operation?"))
+    owner = str(event.payload.get("owner", "runtime"))
+    operation = str(event.payload.get("operation", "operation"))
+    lines = [
+        "Permission required",
+        "",
+        description,
+        "",
+        f"Owner: {owner}",
+        f"Operation: {operation}",
+    ]
+    resource = event.payload.get("resource")
+    if resource is not None:
+        lines.append(f"Target: {resource}")
+    return "\n".join(lines)
 
 
 class PendingInputList(Static):
@@ -737,6 +778,18 @@ class VulcanoApp(App[None]):
         border-left: thick #d96c75;
     }
 
+    .permission-message {
+        color: #d7dae0;
+        background: #181b22;
+        border-left: solid #ff6a1a;
+    }
+
+    .permission-denied, .permission-cancelled {
+        color: #ff9b9b;
+        background: #241416;
+        border-left: solid #d96c75;
+    }
+
     #status {
         height: 1;
         padding: 0 2;
@@ -851,7 +904,7 @@ class VulcanoApp(App[None]):
             yield self._ui_driver.create_default_header()
         with Horizontal(id="conversation-shell"):
             yield TurnSidebar()
-            yield Button("›", id="turn-sidebar-toggle", disabled=True)
+            yield Button("›", id="turn-sidebar-toggle", disabled=True)  # noqa: RUF001
             with VerticalScroll(id="transcript"):
                 yield TranscriptMessage(
                     (
@@ -1042,6 +1095,8 @@ class VulcanoApp(App[None]):
             self._ui_driver.set_execution_scope(scope)
         if await self._project_execution_event(event):
             return
+        if await self._project_permission_event(event):
+            return
 
         stream_key = event.correlation_id or f"event-{event.sequence}"
         if event.type == EventType.ASSISTANT_STARTED:
@@ -1056,6 +1111,59 @@ class VulcanoApp(App[None]):
         if await self._project_message_event(event):
             return
         await self._project_command_event(event)
+
+    async def _project_permission_event(self, event: DomainEvent) -> bool:
+        if event.type == EventType.PERMISSION_REQUESTED:
+            if not event.payload.get("requires_confirmation", True):
+                return True
+            request_id = str(event.payload.get("request_id", ""))
+            raw_options = event.payload.get("options", ())
+            options = (
+                tuple(
+                    decision
+                    for value in raw_options
+                    for decision in (_permission_decision(value),)
+                    if decision is not None
+                )
+                if isinstance(raw_options, Sequence)
+                and not isinstance(raw_options, (str, bytes))
+                else ()
+            )
+            if not request_id or not options:
+                return True
+            selected = await self.runtime.ui.select(
+                _permission_prompt(event),
+                tuple(_PERMISSION_LABELS[decision] for decision in options),
+                UiDialogOptions(),
+            )
+            labels = {_PERMISSION_LABELS[decision]: decision for decision in options}
+            decision = labels.get(selected, "deny")
+            await self.runtime.dispatch(
+                ResolvePermission(request_id=request_id, decision=decision)
+            )
+            return True
+
+        if event.type != EventType.PERMISSION_RESOLVED:
+            return False
+        decision = str(event.payload.get("decision", "deny"))
+        operation = str(event.payload.get("operation", "operation"))
+        resource = event.payload.get("resource")
+        label = {
+            "allow_once": "allowed once",
+            "allow_session": "allowed for this session",
+            "cancelled": "cancelled",
+            "deny": "denied",
+        }.get(decision, decision)
+        content = f"Permission {operation}: {label}"
+        if resource is not None:
+            content = f"{content}\n{resource}"
+        await self._append_message(
+            content,
+            kind="permission",
+            classes=f"permission-message permission-{decision}",
+            target=self._event_mount_target(event),
+        )
+        return True
 
     async def _project_execution_event(self, event: DomainEvent) -> bool:
         if event.type == EventType.EXECUTION_STARTED:
@@ -1575,7 +1683,7 @@ class VulcanoApp(App[None]):
         sidebar = self.query_one(TurnSidebar)
         toggle = self.query_one("#turn-sidebar-toggle", Button)
         toggle.disabled = not sidebar.entries
-        toggle.label = "‹" if sidebar.is_expanded else "›"
+        toggle.label = "‹" if sidebar.is_expanded else "›"  # noqa: RUF001
         key = self.settings.keybindings.primary("toggle_sidebar")
         action = "Collapse" if sidebar.is_expanded else "Expand"
         toggle.tooltip = f"{action} message navigation" + (

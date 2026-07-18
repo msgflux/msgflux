@@ -131,21 +131,21 @@ async def test_sidebar_toggles_with_button_and_alt_s():
         assert sidebar.is_expanded
         assert sidebar.display
         assert not toggle.disabled
-        assert str(toggle.label) == "‹"
+        assert str(toggle.label) == "‹"  # noqa: RUF001
 
         await pilot.press("alt+s")
         await pilot.pause()
 
         assert not sidebar.is_expanded
         assert not sidebar.display
-        assert str(toggle.label) == "›"
+        assert str(toggle.label) == "›"  # noqa: RUF001
 
         await pilot.click(toggle)
         await pilot.pause()
 
         assert sidebar.is_expanded
         assert sidebar.display
-        assert str(toggle.label) == "‹"
+        assert str(toggle.label) == "‹"  # noqa: RUF001
 
 
 @pytest.mark.asyncio

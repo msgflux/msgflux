@@ -16,6 +16,7 @@ from msgflux.runtime.context import (
 from msgflux.vulcano.actions import (
     CancelExecution,
     InputMode,
+    ResolvePermission,
     RuntimeAction,
     StopRuntime,
     SubmitInput,
@@ -39,6 +40,7 @@ from msgflux.vulcano.extensions import (
     ExtensionManager,
     ExtensionSettings,
 )
+from msgflux.vulcano.permissions import PermissionManager
 from msgflux.vulcano.sessions import SessionController, SessionStore, SessionTransition
 from msgflux.vulcano.ui import UiManager
 
@@ -55,6 +57,7 @@ class RuntimeProtocol(Protocol):
     """Client-facing runtime contract implemented independently of Textual."""
 
     commands: CommandRegistry
+    permissions: PermissionManager
     ui: UiManager
 
     @property
@@ -188,15 +191,23 @@ class VulcanoRuntime:
             user_directory=user_directory,
         )
         service_values = dict(services or {})
-        if "sessions" in service_values:
-            raise ValueError("The 'sessions' runtime service name is reserved")
+        reserved_services = {"permissions", "sessions"}.intersection(service_values)
+        if reserved_services:
+            names = ", ".join(sorted(reserved_services))
+            raise ValueError(f"Reserved runtime service names: {names}")
+        self.permissions = PermissionManager(
+            self._emit_permission_event,
+            interactive=lambda: self.ui.available,
+        )
         service_values["sessions"] = self.sessions
+        service_values["permissions"] = self.permissions
         self.extensions = ExtensionManager(
             self.commands,
             extension_settings,
             services=service_values,
             agent=agent,
             agent_adapter=agent_adapter,
+            permission_manager=self.permissions,
         )
         self.ui = self.extensions.ui
         self._install_builtin_commands()
@@ -273,6 +284,7 @@ class VulcanoRuntime:
             if self._stopped:
                 return
             self._stopped = True
+            self.permissions.cancel_all()
             await self._emit(
                 EventType.RUNTIME_STOPPED,
                 {"reason": reason},
@@ -290,6 +302,9 @@ class VulcanoRuntime:
             raise RuntimeError("Vulcano runtime is stopped")
         if isinstance(action, SubmitInput):
             await self._submit_input(action)
+            return
+        if isinstance(action, ResolvePermission):
+            self.permissions.resolve(action.request_id, action.decision)
             return
         if isinstance(action, CancelExecution):
             await self._cancel_execution(action)
@@ -638,6 +653,17 @@ class VulcanoRuntime:
             )
 
         return emit
+
+    async def _emit_permission_event(
+        self,
+        event: EventDraft,
+        correlation_id: str | None,
+    ) -> None:
+        await self._emit(
+            event.type,
+            event.payload,
+            correlation_id=correlation_id,
+        )
 
     async def _emit(
         self,

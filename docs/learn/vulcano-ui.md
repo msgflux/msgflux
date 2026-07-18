@@ -28,6 +28,7 @@ and every contribution is owned by its extension generation.
 | `/ui-widget [above\|below\|clear]` | Mount or remove a widget around the editor. |
 | `/ui-notify [info\|warning\|error]` | Show each Textual notification severity. |
 | `/ui-dialogs` | Run select, confirm, single-line input, and multiline editor dialogs. |
+| `/ui-permission [command]` | Request runtime permission for a mock shell command. |
 | `/ui-overlay` | Open a focused extension-owned Textual component. |
 | `/ui-slots [show\|clear]` | Replace or restore the header and footer. |
 | `/ui-working [show\|hide\|reset]` | Configure the loader used during streaming. |
@@ -90,6 +91,19 @@ The sidebar numbers user messages in event order; selecting an entry scrolls to
 its stable message anchor. This is derived client state, so it also rebuilds
 from a durable session replay.
 
+## Permission confirmation
+
+Run `/ui-permission` to preview a privileged operation. The runtime publishes a
+`permission.requested` event and pauses the command until the client returns
+`allow_once`, `allow_session`, or `deny`. Escape is a denial. Choosing the
+session option remembers the exact extension-owned permission key for the
+active durable thread; repeating the gallery command resolves without opening
+another dialog.
+
+The resulting `permission.resolved` event remains visible in the transcript and
+is persisted for audit. Replay never restores the request, so reopening a
+session cannot display an obsolete confirmation dialog.
+
 ## Default editor
 
 The default `VulcanoTextArea` soft-wraps and grows between three and fifteen
@@ -126,7 +140,8 @@ active state. Setup rollback, unload, and reload remove registrations in
 reverse order. A stale extension context cannot mutate a newer generation.
 
 Dialogs and immediate interactions return safe cancellation values in headless
-mode. Persistent contributions can be registered before a frontend binds.
+mode. Permission requests deny by default. Persistent contributions can be
+registered before a frontend binds.
 
 ## Settings convention
 

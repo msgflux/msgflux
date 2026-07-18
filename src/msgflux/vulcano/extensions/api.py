@@ -28,6 +28,7 @@ from msgflux.vulcano.extensions.types import (
     ExtensionObserver,
     ExtensionSource,
 )
+from msgflux.vulcano.permissions import ExtensionPermissionApi, PermissionManager
 from msgflux.vulcano.ui import (
     ExtensionUiApi,
     ToolRenderer,
@@ -70,6 +71,7 @@ class ExtensionApi:
         services: Mapping[str, object],
         agent_binding: _AgentBinding,
         ui_manager: UiManager,
+        permission_manager: PermissionManager,
     ) -> None:
         self._host = host
         self._owner = owner
@@ -87,11 +89,17 @@ class ExtensionApi:
             assert_active=self._assert_active,
             track=self._track_registration,
         )
+        self.permissions = ExtensionPermissionApi(
+            permission_manager,
+            owner=owner,
+            assert_active=self._assert_active,
+        )
         self._context = ExtensionContext(
             cwd=cwd,
             generation=generation,
             source=source,
             ui=self.ui,
+            permissions=self.permissions,
             services=services,
         )
 

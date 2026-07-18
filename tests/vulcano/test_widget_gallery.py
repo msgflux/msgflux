@@ -7,7 +7,7 @@ pytest.importorskip("rich")
 
 from rich.panel import Panel
 from textual.containers import Container
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 from msgflux.vulcano import (
     EventType,
@@ -47,6 +47,7 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
         "ui-markdown",
         "ui-notify",
         "ui-overlay",
+        "ui-permission",
         "ui-reset",
         "ui-slots",
         "ui-status",
@@ -220,8 +221,7 @@ async def test_widget_gallery_simulates_grouped_execution_and_sidebar_navigation
             for message in grouped_messages
         )
         assert any(
-            message.kind == "block:diff"
-            and "stream_events" in message.source_text
+            message.kind == "block:diff" and "stream_events" in message.source_text
             for message in grouped_messages
         )
 
@@ -243,8 +243,7 @@ async def test_widget_gallery_simulates_grouped_execution_and_sidebar_navigation
         assert activity.has_class("-collapsed")
         assert all(tool.collapsed for tool in activity.query(ToolExecutionBlock))
         assert all(
-            tool.has_class("-collapsed")
-            for tool in activity.query(ToolExecutionBlock)
+            tool.has_class("-collapsed") for tool in activity.query(ToolExecutionBlock)
         )
 
         prompt.text = "/view full"
@@ -260,3 +259,61 @@ async def test_widget_gallery_simulates_grouped_execution_and_sidebar_navigation
         await pilot.pause()
         assert navigation.has_class("turn-nav-selected")
         assert navigation.anchor.source_text == "Review the streaming adapter"
+
+
+@pytest.mark.asyncio
+async def test_widget_gallery_permission_round_trip_and_session_grant():
+    runtime = VulcanoRuntime(
+        stream_delay=0,
+        extension_paths=[GALLERY_EXTENSION],
+        discover_extensions=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause(delay=0.1)
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        command = "/ui-permission python -m pytest tests/vulcano"
+        prompt.text = command
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+
+        options = app.screen.query_one("#dialog-options", OptionList)
+        assert options.option_count == 3
+        options.highlighted = 1
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+
+        resolved = [
+            event
+            for event in runtime.history
+            if event.type == EventType.PERMISSION_RESOLVED
+        ]
+        assert resolved[-1].payload["decision"] == "allow_session"
+        assert resolved[-1].payload["source"] == "user"
+        assert any(
+            message.kind == "permission"
+            and "allowed for this session" in message.source_text
+            for message in app.query(TranscriptMessage)
+        )
+
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = command
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+
+        requests = [
+            event
+            for event in runtime.history
+            if event.type == EventType.PERMISSION_REQUESTED
+        ]
+        resolved = [
+            event
+            for event in runtime.history
+            if event.type == EventType.PERMISSION_RESOLVED
+        ]
+        assert requests[-1].payload["requires_confirmation"] is False
+        assert resolved[-1].payload["source"] == "session"
+        assert not app.screen.query("#dialog-options")
