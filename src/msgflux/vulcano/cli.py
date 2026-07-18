@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from typing import Sequence
 
 from msgflux.runtime import ExecutionScope
-from msgflux.vulcano.config import VulcanoSettings
+from msgflux.vulcano.config import TranscriptSettings, VulcanoSettings
 from msgflux.vulcano.runtime import VulcanoRuntime
 from msgflux.vulcano.sessions import SessionStore
 
@@ -34,6 +35,11 @@ def _parser() -> argparse.ArgumentParser:
         default=0.01,
         metavar="SECONDS",
         help="delay between mock streaming chunks (default: 0.01)",
+    )
+    parser.add_argument(
+        "--view",
+        choices=("full", "compact"),
+        help="set transcript detail mode (overrides TOML configuration)",
     )
     parser.add_argument(
         "-e",
@@ -87,6 +93,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     app_type = app_module.VulcanoApp
     settings = VulcanoSettings.load()
+    if args.view is not None:
+        settings = replace(
+            settings,
+            transcript=TranscriptSettings(mode=args.view),
+        )
     session_store = (
         None if args.no_sessions else SessionStore(settings.home / "sessions")
     )

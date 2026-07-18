@@ -126,7 +126,7 @@ class SessionStore:
 
     def replay(self, thread_id: str) -> tuple[DomainEvent, ...]:
         replayable = tuple(
-            event for event in self.load(thread_id) if event.type in _REPLAY_EVENT_TYPES
+            event for event in self.load(thread_id) if _is_replayable_event(event)
         )
         return _complete_interrupted_streams(replayable)
 
@@ -298,6 +298,15 @@ def _events_to_markdown(thread_id: str, events: tuple[DomainEvent, ...]) -> str:
         elif event.type == EventType.COMMAND_OUTPUT:
             lines.extend((str(event.payload.get("text", "")), ""))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _is_replayable_event(event: DomainEvent) -> bool:
+    if event.type not in _REPLAY_EVENT_TYPES:
+        return False
+    return not (
+        event.type == EventType.CLIENT_ACTION
+        and event.payload.get("action") == "transcript.view"
+    )
 
 
 def _complete_interrupted_streams(

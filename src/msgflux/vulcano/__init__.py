@@ -22,6 +22,8 @@ from msgflux.vulcano.config import (
     DEFAULT_KEY_BINDINGS,
     EditorSettings,
     KeyBindings,
+    TranscriptMode,
+    TranscriptSettings,
     VulcanoSettings,
 )
 from msgflux.vulcano.events import (
@@ -126,6 +128,8 @@ __all__ = [
     "ToolRenderer",
     "ToolRendererOptions",
     "ToolRegistration",
+    "TranscriptMode",
+    "TranscriptSettings",
     "UiComponentFactory",
     "UiCompletionProvider",
     "UiCustomFactory",

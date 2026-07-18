@@ -206,7 +206,7 @@ async def test_widget_gallery_simulates_grouped_execution_and_sidebar_navigation
         assert "Review the streaming" in str(navigation.label)
 
         activity = app.query_one(TurnActivity)
-        assert activity.collapsed
+        assert not activity.collapsed
         assert activity.status == "completed"
         assert "2 tools" in activity.title
         assert "1 file" in activity.title
@@ -233,6 +233,28 @@ async def test_widget_gallery_simulates_grouped_execution_and_sidebar_navigation
         assert "Review complete" in final.source_text
         assert final not in grouped_messages
         assert final.parent is app.query_one("#transcript")
+
+        prompt.text = "/view compact"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        assert activity.collapsed
+        assert activity.has_class("-collapsed")
+        assert all(tool.collapsed for tool in activity.query(ToolExecutionBlock))
+        assert all(
+            tool.has_class("-collapsed")
+            for tool in activity.query(ToolExecutionBlock)
+        )
+
+        prompt.text = "/view full"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.1)
+
+        assert not activity.collapsed
+        assert not activity.has_class("-collapsed")
+        assert all(not tool.collapsed for tool in activity.query(ToolExecutionBlock))
 
         await pilot.click(navigation)
         await pilot.pause()

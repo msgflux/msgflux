@@ -49,6 +49,7 @@ vulcano
 ```
 
 Use `--mock-delay 0` to disable the delay between mock stream chunks.
+Use `--view full` or `--view compact` to override transcript detail mode.
 Use `--resume THREAD_ID` or `--fork THREAD_ID` to start from a durable session;
 `--no-sessions` disables transcript persistence.
 
@@ -65,6 +66,7 @@ The preview registers these commands:
 | `/help` | List commands known by the runtime. |
 | `/echo <text>` | Emit text from the runtime. |
 | `/clear` | Request the client to clear its transcript. |
+| `/view <full\|compact>` | Change transcript detail mode for the active client. |
 | `/about` | Describe the active runtime. |
 | `/extensions` | List loaded extensions and failures. |
 | `/reload` | Unload and reload extensions. |

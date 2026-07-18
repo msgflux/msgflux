@@ -16,6 +16,9 @@ def test_settings_merge_global_and_project_toml(tmp_path):
 min_height = 4
 max_height = 12
 
+[ui.transcript]
+mode = "compact"
+
 [ui.keybindings]
 command_palette = "ctrl+k"
 newline = ["shift+enter"]
@@ -40,6 +43,7 @@ follow_up = ["ctrl+enter"]
     assert settings.cwd == cwd.resolve()
     assert settings.editor.min_height == 4
     assert settings.editor.max_height == 18
+    assert settings.transcript.mode == "compact"
     assert settings.keybindings.keys("command_palette") == ("ctrl+k",)
     assert settings.keybindings.keys("follow_up") == ("ctrl+enter",)
     assert settings.keybindings.keys("newline") == ("shift+enter",)
@@ -82,8 +86,21 @@ def test_invalid_editor_height_is_rejected(tmp_path):
         VulcanoSettings.load(cwd=tmp_path, home=tmp_path / "home")
 
 
+def test_invalid_transcript_mode_is_rejected(tmp_path):
+    config = tmp_path / ".vulcano" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        '[ui.transcript]\nmode = "dense"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="transcript.mode"):
+        VulcanoSettings.load(cwd=tmp_path, home=tmp_path / "home")
+
+
 def test_settings_paths_are_path_objects(tmp_path):
     settings = VulcanoSettings.defaults(cwd=tmp_path, home=tmp_path / "home")
 
     assert isinstance(settings.cwd, Path)
     assert isinstance(settings.home, Path)
+    assert settings.transcript.mode == "full"

@@ -114,6 +114,22 @@ def test_session_replay_closes_interrupted_execution_as_aborted(tmp_path):
     }
 
 
+def test_session_replay_does_not_restore_client_view_mode(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_view")
+    store.append(
+        "thd_view",
+        DomainEvent(
+            type=EventType.CLIENT_ACTION,
+            sequence=1,
+            payload={"action": "transcript.view", "mode": "compact"},
+        ),
+    )
+
+    assert len(store.load("thd_view")) == 1
+    assert store.replay("thd_view") == ()
+
+
 @pytest.mark.asyncio
 async def test_runtime_replays_persisted_session_before_start_event(tmp_path):
     store = SessionStore(tmp_path / "sessions")

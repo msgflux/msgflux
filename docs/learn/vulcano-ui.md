@@ -79,11 +79,16 @@ Agent stream. The command publishes a user message and execution boundary,
 then streams reasoning, two tool calls, a `send_user_message` update, a diff,
 and a Markdown final answer. No gallery code accesses a Textual widget.
 
-The non-final activity appears in one collapsible block. A successful execution
-collapses automatically and leaves its final answer visible below it. The
-sidebar numbers user messages in event order; selecting an entry scrolls to its
-stable message anchor. This is derived client state, so it also rebuilds from a
-durable session replay.
+The non-final activity appears in one collapsible block and leaves its final
+answer visible below it. In the default `full` view, completed activity remains
+expanded. The `compact` view collapses successful activity, reasoning, and tool
+details while keeping failures visible. Switch modes with `/view full`,
+`/view compact`, or the `--view` CLI flag. The command changes client state and
+is not restored from a durable session replay.
+
+The sidebar numbers user messages in event order; selecting an entry scrolls to
+its stable message anchor. This is derived client state, so it also rebuilds
+from a durable session replay.
 
 ## Default editor
 
@@ -146,6 +151,9 @@ Editor settings and app keybindings are grouped under `ui`:
 [ui.editor]
 min_height = 3
 max_height = 15
+
+[ui.transcript]
+mode = "full"
 
 [ui.keybindings]
 command_palette = "ctrl+p"

@@ -373,10 +373,11 @@ async def test_app_projects_reasoning_and_custom_tool_lifecycle():
         await pilot.pause(delay=0.15)
 
         reasoning = app.query_one(CollapsibleTranscriptBlock)
-        assert reasoning.collapsed
+        assert not reasoning.collapsed
         assert reasoning.source_text == "Reading the parser."
 
         tool = app.query_one(ToolExecutionBlock)
+        assert not tool.collapsed
         assert tool.status == BlockStatus.COMPLETED
         assert "search" in tool.title
         assert app.query_one("#custom-tool-result", Static).render() == (

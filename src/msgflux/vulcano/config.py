@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal, cast
 
 import tomllib
 
@@ -12,8 +13,12 @@ __all__ = [
     "DEFAULT_KEY_BINDINGS",
     "EditorSettings",
     "KeyBindings",
+    "TranscriptMode",
+    "TranscriptSettings",
     "VulcanoSettings",
 ]
+
+TranscriptMode = Literal["full", "compact"]
 
 
 DEFAULT_KEY_BINDINGS: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -42,6 +47,15 @@ class EditorSettings:
             raise ValueError(
                 "ui.editor.max_height must be greater than or equal to min_height"
             )
+
+
+@dataclass(frozen=True)
+class TranscriptSettings:
+    mode: TranscriptMode = "full"
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"full", "compact"}:
+            raise ValueError("ui.transcript.mode must be 'full' or 'compact'")
 
 
 @dataclass(frozen=True)
@@ -110,6 +124,7 @@ class VulcanoSettings:
     home: Path
     cwd: Path
     editor: EditorSettings = field(default_factory=EditorSettings)
+    transcript: TranscriptSettings = field(default_factory=TranscriptSettings)
     keybindings: KeyBindings = field(default_factory=KeyBindings)
     sources: tuple[Path, ...] = ()
 
@@ -152,6 +167,7 @@ class VulcanoSettings:
 
         ui = _table(merged, "ui")
         editor = _table(ui, "editor")
+        transcript = _table(ui, "transcript")
         keybindings = _table(ui, "keybindings")
         return cls(
             home=defaults.home,
@@ -159,6 +175,9 @@ class VulcanoSettings:
             editor=EditorSettings(
                 min_height=_integer(editor, "min_height", 3),
                 max_height=_integer(editor, "max_height", 15),
+            ),
+            transcript=TranscriptSettings(
+                mode=_transcript_mode(transcript),
             ),
             keybindings=KeyBindings.from_mapping(keybindings),
             sources=tuple(loaded),
@@ -190,3 +209,12 @@ def _integer(values: Mapping[str, object], key: str, default: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(f"ui.editor.{key} must be an integer")
     return value
+
+
+def _transcript_mode(values: Mapping[str, object]) -> TranscriptMode:
+    value = values.get("mode", "full")
+    if not isinstance(value, str):
+        raise TypeError("ui.transcript.mode must be a string")
+    if value not in {"full", "compact"}:
+        raise ValueError("ui.transcript.mode must be 'full' or 'compact'")
+    return cast(TranscriptMode, value)

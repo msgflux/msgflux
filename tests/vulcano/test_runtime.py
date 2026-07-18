@@ -324,6 +324,22 @@ async def test_clear_and_quit_are_runtime_owned_commands():
 
 
 @pytest.mark.asyncio
+async def test_view_command_requests_client_transcript_mode():
+    runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
+
+    await runtime.dispatch(SubmitInput("/view compact"))
+
+    action = next(
+        event for event in runtime.history if event.type == EventType.CLIENT_ACTION
+    )
+    assert action.payload == {"action": "transcript.view", "mode": "compact"}
+    output = next(
+        event for event in runtime.history if event.type == EventType.COMMAND_OUTPUT
+    )
+    assert output.payload["text"] == "Transcript view changed to **compact**."
+
+
+@pytest.mark.asyncio
 async def test_unknown_command_becomes_event_instead_of_client_exception():
     runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
 

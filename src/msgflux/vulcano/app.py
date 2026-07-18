@@ -14,7 +14,7 @@ from textual.widgets import Button, Collapsible, Input, OptionList, Static
 
 from msgflux.vulcano.actions import CancelExecution, InputMode, SubmitInput
 from msgflux.vulcano.blocks import BlockKind, BlockStatus
-from msgflux.vulcano.config import VulcanoSettings
+from msgflux.vulcano.config import TranscriptMode, VulcanoSettings
 from msgflux.vulcano.events import DomainEvent, EventType
 from msgflux.vulcano.runtime import RuntimeProtocol
 from msgflux.vulcano.textual_ui import TextualUiDriver, VulcanoTextArea
@@ -146,6 +146,7 @@ class CollapsibleTranscriptBlock(Collapsible):
         collapsed: bool = True,
         classes: str | None = None,
     ) -> None:
+        self.status = BlockStatus.STREAMING
         self.message = TranscriptMessage(
             content,
             kind=kind,
@@ -171,6 +172,17 @@ class CollapsibleTranscriptBlock(Collapsible):
 
     def flush_content(self) -> None:
         self.message.flush_content()
+
+    def set_status(self, status: str, mode: TranscriptMode) -> None:
+        self.status = status
+        self.collapsed = (
+            mode == "compact"
+            if status not in {BlockStatus.FAILED, BlockStatus.ABORTED}
+            else False
+        )
+
+    def set_transcript_mode(self, mode: TranscriptMode) -> None:
+        self.set_status(self.status, mode)
 
 
 class TurnNavigationItem(Button):
@@ -275,8 +287,13 @@ class TurnSidebar(VerticalScroll):
 class TurnActivity(Collapsible):
     """Collapsible projection of non-final activity for one execution."""
 
-    def __init__(self, run_id: str) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        transcript_mode: TranscriptMode = "full",
+    ) -> None:
         self.run_id = run_id
+        self.transcript_mode = transcript_mode
         self.status = "running"
         self.duration_ms: int | None = None
         self.reported_tool_count = 0
@@ -315,9 +332,24 @@ class TurnActivity(Collapsible):
             duration = event.payload.get("duration_ms")
             if isinstance(duration, int) and not isinstance(duration, bool):
                 self.duration_ms = duration
-            self.collapsed = self.status == BlockStatus.COMPLETED
+            self._apply_mode()
 
         self._update_title()
+
+    def set_transcript_mode(self, mode: TranscriptMode) -> None:
+        self.transcript_mode = mode
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        if self.status == BlockStatus.COMPLETED:
+            self.collapsed = self.transcript_mode == "compact"
+        elif self.status in {
+            "running",
+            BlockStatus.FAILED,
+            BlockStatus.ABORTED,
+            "cancelled",
+        }:
+            self.collapsed = False
 
     def _update_title(self) -> None:
         marker = {
@@ -343,7 +375,13 @@ class TurnActivity(Collapsible):
         suffix = f" · {' · '.join(details)}" if details else ""
         state = "running" if self.status == "running" else self.status
         self.title = f"{marker} Activity · {state}{suffix}"
-        self.set_classes("turn-activity")
+        self.remove_class(
+            "turn-activity-running",
+            "turn-activity-completed",
+            "turn-activity-failed",
+            "turn-activity-aborted",
+            "turn-activity-cancelled",
+        )
         self.add_class(f"turn-activity-{self.status}")
 
 
@@ -355,6 +393,7 @@ class ToolExecutionBlock(Collapsible):
         ui: UiManager,
         driver: TextualUiDriver,
         event: DomainEvent,
+        transcript_mode: TranscriptMode = "full",
     ) -> None:
         self._ui = ui
         self._driver = driver
@@ -363,6 +402,7 @@ class ToolExecutionBlock(Collapsible):
         self.tool_call_id = str(event.payload.get("tool_call_id", ""))
         self.tool_name = str(event.payload.get("name", "tool"))
         self.status = BlockStatus.PENDING
+        self.transcript_mode = transcript_mode
         super().__init__(
             self._body,
             title=f"○ {self.tool_name}",
@@ -380,13 +420,17 @@ class ToolExecutionBlock(Collapsible):
             BlockStatus.ABORTED: "!",
         }.get(status, "○")
         self.title = f"{marker} {self.tool_name}"
-        self.set_classes("tool-execution")
+        self.remove_class("tool-completed", "tool-failed", "tool-pending")
         if status == BlockStatus.COMPLETED:
             self.add_class("tool-completed")
         elif status in {BlockStatus.FAILED, BlockStatus.ABORTED}:
             self.add_class("tool-failed")
         else:
             self.add_class("tool-pending")
+        if status == BlockStatus.COMPLETED:
+            self.collapsed = self.transcript_mode == "compact"
+        elif status in {BlockStatus.FAILED, BlockStatus.ABORTED}:
+            self.collapsed = False
 
         try:
             rendered = await self._ui.render_tool_event(
@@ -404,6 +448,13 @@ class ToolExecutionBlock(Collapsible):
         )
         await self._body.remove_children()
         await self._body.mount(component)
+
+    def set_transcript_mode(self, mode: TranscriptMode) -> None:
+        self.transcript_mode = mode
+        if self.status == BlockStatus.COMPLETED:
+            self.collapsed = mode == "compact"
+        elif self.status in {BlockStatus.FAILED, BlockStatus.ABORTED}:
+            self.collapsed = False
 
     async def abort(self, *, sequence: int, correlation_id: str) -> None:
         payload = dict(self._event.payload)
@@ -773,6 +824,7 @@ class VulcanoApp(App[None]):
         super().__init__()
         self.runtime = runtime
         self.settings = settings or VulcanoSettings.defaults()
+        self.transcript_mode = self.settings.transcript.mode
         self._ui_driver = TextualUiDriver(
             self,
             runtime.ui,
@@ -1051,7 +1103,10 @@ class VulcanoApp(App[None]):
             )
         activity = self._activity_views.get(run_id)
         if activity is None:
-            activity = TurnActivity(run_id)
+            activity = TurnActivity(
+                run_id,
+                transcript_mode=self.transcript_mode,
+            )
             self._activity_views[run_id] = activity
             await self.query_one("#transcript", VerticalScroll).mount(activity)
         activity.observe(event)
@@ -1280,8 +1335,18 @@ class VulcanoApp(App[None]):
             return
 
         if event.type == EventType.CLIENT_ACTION:
-            if event.payload.get("action") == "transcript.clear":
+            action = event.payload.get("action")
+            if action == "transcript.clear":
                 await self._clear_transcript()
+            elif action == "transcript.view":
+                try:
+                    self.set_transcript_mode(str(event.payload.get("mode", "")))
+                except ValueError as error:
+                    await self._append_message(
+                        str(error),
+                        kind="error",
+                        classes="error-message",
+                    )
             return
 
     async def _clear_transcript(self) -> None:
@@ -1310,7 +1375,12 @@ class VulcanoApp(App[None]):
         key = (correlation_id, tool_call_id)
         view = self._tool_views.get(key)
         if view is None:
-            view = ToolExecutionBlock(self.runtime.ui, self._ui_driver, event)
+            view = ToolExecutionBlock(
+                self.runtime.ui,
+                self._ui_driver,
+                event,
+                transcript_mode=self.transcript_mode,
+            )
             await self._event_mount_target(event).mount(view)
             self._tool_views[key] = view
         activity = self._activity_for_event(event)
@@ -1345,6 +1415,8 @@ class VulcanoApp(App[None]):
         else:
             view.flush_content()
         status = str(event.payload.get("status", BlockStatus.COMPLETED))
+        if isinstance(view, CollapsibleTranscriptBlock):
+            view.set_status(status, self.transcript_mode)
         if status in {BlockStatus.FAILED, BlockStatus.ABORTED}:
             view.add_class("error-message")
         self._active_block_streams.discard(key)
@@ -1375,6 +1447,7 @@ class VulcanoApp(App[None]):
                 content,
                 title=str(event.payload.get("title", "Thinking")),
                 kind=f"block:{kind}",
+                collapsed=self.transcript_mode == "compact",
                 classes=classes,
             )
             await self._event_mount_target(event).mount(view)
@@ -1508,6 +1581,20 @@ class VulcanoApp(App[None]):
         toggle.tooltip = f"{action} message navigation" + (
             f" ({key})" if key is not None else ""
         )
+
+    def set_transcript_mode(self, mode: str) -> None:
+        if mode not in {"full", "compact"}:
+            raise ValueError("Transcript mode must be 'full' or 'compact'")
+        resolved_mode: TranscriptMode = "compact" if mode == "compact" else "full"
+        self.transcript_mode = resolved_mode
+        for activity in self._activity_views.values():
+            activity.set_transcript_mode(resolved_mode)
+        for tool in self._tool_views.values():
+            tool.set_transcript_mode(resolved_mode)
+        for block in self._block_views.values():
+            if isinstance(block, CollapsibleTranscriptBlock):
+                block.set_transcript_mode(resolved_mode)
+        self._scroll_to_end()
 
     def _scroll_to_end(self) -> None:
         self.query_one("#transcript", VerticalScroll).scroll_end(

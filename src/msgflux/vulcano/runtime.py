@@ -714,6 +714,16 @@ class VulcanoRuntime:
                 ),
             ),
             (
+                "view",
+                CommandOptions(
+                    description="Set transcript detail mode.",
+                    usage="/view <full|compact>",
+                    handler=_view_command,
+                    get_argument_completions=lambda _value: ("full", "compact"),
+                    category="client",
+                ),
+            ),
+            (
                 "about",
                 CommandOptions(
                     description="Describe the active runtime.",
@@ -849,6 +859,28 @@ def _clear_command(
             EventDraft(
                 EventType.CLIENT_ACTION,
                 {"action": "transcript.clear"},
+            ),
+        )
+    )
+
+
+def _view_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    del context
+    mode = arguments.strip().lower()
+    if mode not in {"full", "compact"}:
+        raise ValueError("Usage: /view <full|compact>")
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.CLIENT_ACTION,
+                {"action": "transcript.view", "mode": mode},
+            ),
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"Transcript view changed to **{mode}**."},
             ),
         )
     )
