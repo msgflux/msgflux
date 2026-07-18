@@ -29,6 +29,7 @@ from msgflux.vulcano.app import (
     PendingInputList,
     ToolExecutionBlock,
     TranscriptMessage,
+    TurnSidebar,
     VulcanoApp,
 )
 from msgflux.vulcano.runtime import VulcanoRuntime
@@ -108,6 +109,43 @@ async def test_command_palette_filters_and_inserts_runtime_command():
 
         prompt = app.query_one("#prompt", VulcanoTextArea)
         assert prompt.text == "/echo "
+
+
+@pytest.mark.asyncio
+async def test_sidebar_toggles_with_button_and_alt_s():
+    app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        sidebar = app.query_one(TurnSidebar)
+        toggle = app.query_one("#turn-sidebar-toggle", Button)
+        assert not sidebar.is_expanded
+        assert toggle.disabled
+
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "create a navigation entry"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.05)
+
+        assert sidebar.is_expanded
+        assert sidebar.display
+        assert not toggle.disabled
+        assert str(toggle.label) == "‹"
+
+        await pilot.press("alt+s")
+        await pilot.pause()
+
+        assert not sidebar.is_expanded
+        assert not sidebar.display
+        assert str(toggle.label) == "›"
+
+        await pilot.click(toggle)
+        await pilot.pause()
+
+        assert sidebar.is_expanded
+        assert sidebar.display
+        assert str(toggle.label) == "‹"
 
 
 @pytest.mark.asyncio

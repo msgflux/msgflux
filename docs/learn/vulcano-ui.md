@@ -95,6 +95,7 @@ terminal rows. It scrolls vertically after reaching the maximum.
 | `Enter` | Submit the prompt. |
 | `Shift+Enter` or `Ctrl+J` | Insert a line break. |
 | `Alt+Enter` | Queue a follow-up behind all steering inputs. |
+| `Alt+S` | Collapse or expand the message sidebar. |
 | `Ctrl+P` | Open the searchable command palette. |
 | `Up` and `Down` | Navigate the slash selector while it is open. |
 | `Tab` | Complete the selected slash command. |
@@ -148,6 +149,7 @@ max_height = 15
 
 [ui.keybindings]
 command_palette = "ctrl+p"
+toggle_sidebar = "alt+s"
 cancel = "escape"
 follow_up = ["alt+enter"]
 newline = ["shift+enter", "ctrl+j"]

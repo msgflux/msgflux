@@ -44,6 +44,7 @@ follow_up = ["ctrl+enter"]
     assert settings.keybindings.keys("follow_up") == ("ctrl+enter",)
     assert settings.keybindings.keys("newline") == ("shift+enter",)
     assert settings.keybindings.keys("cancel") == ("escape",)
+    assert settings.keybindings.keys("toggle_sidebar") == ("alt+s",)
     assert settings.sources == (
         home / "config.toml",
         project_config,

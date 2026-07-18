@@ -217,9 +217,21 @@ class TurnSidebar(VerticalScroll):
     def __init__(self) -> None:
         super().__init__(id="turn-sidebar", classes="turn-sidebar-hidden")
         self.entries: dict[str, TurnNavigationItem] = {}
+        self._user_collapsed = False
 
     def compose(self) -> ComposeResult:
         yield Static("MESSAGES", classes="turn-nav-heading")
+
+    @property
+    def is_expanded(self) -> bool:
+        return bool(self.entries) and not self._user_collapsed
+
+    def toggle(self) -> bool:
+        if not self.entries:
+            return False
+        self._user_collapsed = not self._user_collapsed
+        self._sync_visibility()
+        return self.is_expanded
 
     async def add_message(
         self,
@@ -238,7 +250,7 @@ class TurnSidebar(VerticalScroll):
             anchor=anchor,
         )
         self.entries[message_id] = item
-        self.remove_class("turn-sidebar-hidden")
+        self._sync_visibility()
         await self.mount(item)
         return item
 
@@ -254,7 +266,10 @@ class TurnSidebar(VerticalScroll):
     async def clear_entries(self) -> None:
         self.entries.clear()
         await self.query(TurnNavigationItem).remove()
-        self.add_class("turn-sidebar-hidden")
+        self._sync_visibility()
+
+    def _sync_visibility(self) -> None:
+        self.set_class(not self.is_expanded, "turn-sidebar-hidden")
 
 
 class TurnActivity(Collapsible):
@@ -481,6 +496,29 @@ class VulcanoApp(App[None]):
 
     .turn-sidebar-hidden {
         display: none;
+    }
+
+    #turn-sidebar-toggle {
+        width: 3;
+        min-width: 3;
+        height: 3;
+        min-height: 3;
+        margin-top: 1;
+        padding: 0;
+        color: #ff8a3d;
+        background: #171a21;
+        border: none;
+    }
+
+    #turn-sidebar-toggle:hover, #turn-sidebar-toggle:focus {
+        color: #ffffff;
+        background: #5a2a16;
+        text-style: bold;
+    }
+
+    #turn-sidebar-toggle:disabled {
+        color: #3c4352;
+        background: #10131a;
     }
 
     .turn-nav-heading {
@@ -761,6 +799,7 @@ class VulcanoApp(App[None]):
             yield self._ui_driver.create_default_header()
         with Horizontal(id="conversation-shell"):
             yield TurnSidebar()
+            yield Button("›", id="turn-sidebar-toggle", disabled=True)
             with VerticalScroll(id="transcript"):
                 yield TranscriptMessage(
                     (
@@ -785,6 +824,7 @@ class VulcanoApp(App[None]):
 
     def on_mount(self) -> None:
         self.runtime.ui.bind(self._ui_driver, mode="tui")
+        self._sync_sidebar_toggle()
         self._ui_driver.focus_editor()
         self._consume_events()
 
@@ -795,6 +835,11 @@ class VulcanoApp(App[None]):
         if self._handle_command_menu_key(event):
             return
         keybindings = self.settings.keybindings
+        if keybindings.matches("toggle_sidebar", event.key):
+            self.action_toggle_sidebar()
+            event.prevent_default()
+            event.stop()
+            return
         if keybindings.matches("cancel", event.key):
             self.action_cancel_execution()
             event.prevent_default()
@@ -887,6 +932,11 @@ class VulcanoApp(App[None]):
             top=True,
             force=True,
         )
+        event.stop()
+
+    @on(Button.Pressed, "#turn-sidebar-toggle")
+    def _on_turn_sidebar_toggle(self, event: Button.Pressed) -> None:
+        self.action_toggle_sidebar()
         event.stop()
 
     @on(Input.Submitted, "#prompt")
@@ -1150,6 +1200,7 @@ class VulcanoApp(App[None]):
                 content=view.source_text,
                 anchor=view,
             )
+            self._sync_sidebar_toggle()
             run_id = self._event_run_id(event)
             if run_id is not None:
                 self._run_user_messages[run_id] = message_id
@@ -1236,6 +1287,7 @@ class VulcanoApp(App[None]):
     async def _clear_transcript(self) -> None:
         await self.query_one("#transcript", VerticalScroll).remove_children()
         await self.query_one(TurnSidebar).clear_entries()
+        self._sync_sidebar_toggle()
         self._assistant_views.clear()
         self._block_views.clear()
         self._tool_views.clear()
@@ -1446,6 +1498,17 @@ class VulcanoApp(App[None]):
             return self._correlation_runs.get(event.correlation_id)
         return None
 
+    def _sync_sidebar_toggle(self) -> None:
+        sidebar = self.query_one(TurnSidebar)
+        toggle = self.query_one("#turn-sidebar-toggle", Button)
+        toggle.disabled = not sidebar.entries
+        toggle.label = "‹" if sidebar.is_expanded else "›"
+        key = self.settings.keybindings.primary("toggle_sidebar")
+        action = "Collapse" if sidebar.is_expanded else "Expand"
+        toggle.tooltip = f"{action} message navigation" + (
+            f" ({key})" if key is not None else ""
+        )
+
     def _scroll_to_end(self) -> None:
         self.query_one("#transcript", VerticalScroll).scroll_end(
             animate=False,
@@ -1470,6 +1533,10 @@ class VulcanoApp(App[None]):
 
     def action_command_palette(self) -> None:
         self._open_command_palette()
+
+    def action_toggle_sidebar(self) -> None:
+        self.query_one(TurnSidebar).toggle()
+        self._sync_sidebar_toggle()
 
     def action_request_quit(self) -> None:
         self._dispatch_text("/quit")
