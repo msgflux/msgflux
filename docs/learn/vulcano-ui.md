@@ -23,6 +23,7 @@ and every contribution is owned by its extension generation.
 | `/ui-card [text]` | Publish a typed custom message and render a Rich card. |
 | `/ui-markdown` | Stream headings, a Markdown table, and a fenced code block. |
 | `/ui-lifecycle [query]` | Stream reasoning, diff and artifact blocks plus a custom-rendered tool call. |
+| `/ui-turn [prompt]` | Simulate a complete grouped Agent execution with tools, a diff, an intermediate user message, and a final answer. |
 | `/ui-status [text\|clear]` | Set or clear an extension-owned status. |
 | `/ui-widget [above\|below\|clear]` | Mount or remove a widget around the editor. |
 | `/ui-notify [info\|warning\|error]` | Show each Textual notification severity. |
@@ -70,6 +71,19 @@ projected as a single delta.
 `/reload` removes the current generation and recreates the initial gallery
 status and hint widget. This is useful for checking that widgets, shortcuts,
 renderers, and slots do not leak across generations.
+
+## Grouped execution simulation
+
+Run `/ui-turn` to preview the event-driven transcript planned for the native
+Agent stream. The command publishes a user message and execution boundary,
+then streams reasoning, two tool calls, a `send_user_message` update, a diff,
+and a Markdown final answer. No gallery code accesses a Textual widget.
+
+The non-final activity appears in one collapsible block. A successful execution
+collapses automatically and leaves its final answer visible below it. The
+sidebar numbers user messages in event order; selecting an entry scrolls to its
+stable message anchor. This is derived client state, so it also rebuilds from a
+durable session replay.
 
 ## Default editor
 

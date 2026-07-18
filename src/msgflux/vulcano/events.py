@@ -20,7 +20,10 @@ class EventType:
 
     RUNTIME_STARTED = "runtime.started"
     RUNTIME_STOPPED = "runtime.stopped"
+    EXECUTION_STARTED = "execution.started"
+    EXECUTION_COMPLETED = "execution.completed"
     MESSAGE_USER = "message.user"
+    ASSISTANT_USER_MESSAGE = "assistant.user_message"
     ASSISTANT_STARTED = "assistant.started"
     ASSISTANT_DELTA = "assistant.delta"
     ASSISTANT_COMPLETED = "assistant.completed"

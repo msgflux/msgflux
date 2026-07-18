@@ -85,6 +85,7 @@ def _ui_help(_args, _ctx):
                 "- `/ui-card [text]` — custom Rich renderer",
                 "- `/ui-markdown` — streamed Markdown and table",
                 "- `/ui-lifecycle` — reasoning, diff, artifact and tool blocks",
+                "- `/ui-turn [prompt]` — grouped Agent execution and sidebar entry",
                 "- `/ui-status [text|clear]` — status contribution",
                 "- `/ui-widget [above|below|clear]` — layout widget",
                 "- `/ui-notify [info|warning|error]` — notification",
@@ -174,6 +175,168 @@ async def _ui_lifecycle(args, ctx):
         tool_call_id,
         "gallery-search",
         ["runtime.py", "ui.py", "extensions/api.py"],
+    )
+    return CommandResult()
+
+
+async def _ui_turn(args, ctx):
+    run_id = ctx.scope.run_id or "run_gallery"
+    scope = ctx.scope.to_dict()
+    user_message_id = f"msg_user_{run_id}"
+    update_message_id = f"msg_update_{run_id}"
+    final_message_id = f"msg_final_{run_id}"
+    prompt = args.strip() or "Review the streaming adapter and show the patch."
+
+    await ctx.emit(
+        EventDraft(
+            EventType.MESSAGE_USER,
+            {
+                "message_id": user_message_id,
+                "run_id": run_id,
+                "content": prompt,
+                "scope": scope,
+            },
+        )
+    )
+    await ctx.emit(
+        EventDraft(
+            EventType.EXECUTION_STARTED,
+            {
+                "run_id": run_id,
+                "input_message_id": user_message_id,
+                "agent": "mock-code-agent",
+                "scope": scope,
+            },
+        )
+    )
+
+    reasoning_id = await ctx.start_block(
+        BlockKind.REASONING,
+        title="Planning the review",
+    )
+    await ctx.update_block(reasoning_id, "Inspecting the event adapter.\n")
+    await asyncio.sleep(0.06)
+    await ctx.update_block(reasoning_id, "Selecting the smallest safe patch.")
+    await ctx.complete_block(reasoning_id)
+
+    search_call_id = await ctx.start_tool(
+        "gallery-search",
+        {"query": "stream_events adapter"},
+    )
+    await asyncio.sleep(0.06)
+    await ctx.update_tool(
+        search_call_id,
+        "gallery-search",
+        {"matches": 4, "scanned": 23},
+    )
+    await ctx.complete_tool(
+        search_call_id,
+        "gallery-search",
+        ["extensions/agent.py", "events.py", "app.py"],
+    )
+
+    message_call_id = await ctx.start_tool(
+        "send_user_message",
+        {"content": "I found the adapter boundary; preparing the diff."},
+    )
+    await ctx.emit(
+        EventDraft(
+            EventType.ASSISTANT_USER_MESSAGE,
+            {
+                "message_id": update_message_id,
+                "run_id": run_id,
+                "tool_call_id": message_call_id,
+                "content": (
+                    "**Agent update**\n\n"
+                    "I found the adapter boundary; preparing the diff."
+                ),
+                "severity": "info",
+                "scope": scope,
+            },
+        )
+    )
+    await ctx.complete_tool(
+        message_call_id,
+        "send_user_message",
+        {"delivered": True},
+    )
+
+    await ctx.send_block(
+        BlockKind.DIFF,
+        (
+            "--- a/src/msgflux/vulcano/extensions/agent.py\n"
+            "+++ b/src/msgflux/vulcano/extensions/agent.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            "-response = await agent.acall(message)\n"
+            "+async for event in agent.stream_events(message):\n"
+            "+    yield translate(event)\n"
+        ),
+        title="Mock adapter patch",
+        details={
+            "path": "src/msgflux/vulcano/extensions/agent.py",
+            "operation": "modify",
+            "state": "applied",
+            "additions": 2,
+            "deletions": 1,
+            "tool_call_id": search_call_id,
+        },
+    )
+
+    final_chunks = (
+        "## Review complete\n\n",
+        "The adapter boundary can consume native events without coupling the "
+        "Agent to Textual.\n\n",
+        "| Changed file | Result |\n|---|---|\n",
+        "| `extensions/agent.py` | event translation added |\n",
+    )
+    await ctx.emit(
+        EventDraft(
+            EventType.ASSISTANT_STARTED,
+            {
+                "message_id": final_message_id,
+                "run_id": run_id,
+                "scope": scope,
+            },
+        )
+    )
+    final_content = ""
+    for chunk in final_chunks:
+        await asyncio.sleep(0.06)
+        final_content += chunk
+        await ctx.emit(
+            EventDraft(
+                EventType.ASSISTANT_DELTA,
+                {
+                    "message_id": final_message_id,
+                    "run_id": run_id,
+                    "delta": chunk,
+                },
+            )
+        )
+    await ctx.emit(
+        EventDraft(
+            EventType.ASSISTANT_COMPLETED,
+            {
+                "message_id": final_message_id,
+                "run_id": run_id,
+                "content": final_content,
+                "status": "completed",
+            },
+        )
+    )
+    await ctx.emit(
+        EventDraft(
+            EventType.EXECUTION_COMPLETED,
+            {
+                "run_id": run_id,
+                "scope": scope,
+                "status": "completed",
+                "final_message_id": final_message_id,
+                "duration_ms": 840,
+                "tool_count": 2,
+                "changed_files": ["src/msgflux/vulcano/extensions/agent.py"],
+            },
+        )
     )
     return CommandResult()
 
@@ -353,6 +516,11 @@ _COMMANDS = (
         "ui-lifecycle",
         "Render reasoning, diff, artifact and tool lifecycles.",
         _ui_lifecycle,
+    ),
+    (
+        "ui-turn",
+        "Simulate one grouped Agent execution with a final answer.",
+        _ui_turn,
     ),
     (
         "ui-markdown",

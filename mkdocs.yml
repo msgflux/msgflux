@@ -198,6 +198,7 @@ nav:
   - Vulcano:
     - Overview: learn/vulcano.md
     - UI and widget gallery: learn/vulcano-ui.md
+    - Runtime event protocol: anatomy/vulcano-event-streaming.md
   - Tutorials:
     - tutorials/index.md
     - Payments & Commerce:

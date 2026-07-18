@@ -15,7 +15,14 @@ from msgflux.vulcano import (
     VulcanoRuntime,
     custom_message_type,
 )
-from msgflux.vulcano.app import VulcanoApp
+from msgflux.vulcano.app import (
+    ToolExecutionBlock,
+    TranscriptMessage,
+    TurnActivity,
+    TurnNavigationItem,
+    TurnSidebar,
+    VulcanoApp,
+)
 from msgflux.vulcano.textual_ui import VulcanoTextArea
 
 
@@ -45,6 +52,7 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
         "ui-status",
         "ui-theme",
         "ui-title",
+        "ui-turn",
         "ui-widget",
         "ui-working",
     } <= gallery_commands
@@ -170,3 +178,63 @@ async def test_widget_gallery_materializes_cards_widgets_and_slots():
         tool_result = app.query_one(".tool-execution-body Static", Static)
         assert isinstance(tool_result.content, Panel)
         assert "runtime.py" in str(tool_result.content.renderable)
+
+
+@pytest.mark.asyncio
+async def test_widget_gallery_simulates_grouped_execution_and_sidebar_navigation():
+    runtime = VulcanoRuntime(
+        stream_delay=0,
+        extension_paths=[GALLERY_EXTENSION],
+        discover_extensions=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(110, 44)) as pilot:
+        await pilot.pause(delay=0.1)
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/ui-turn Review the streaming adapter"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.8)
+
+        sidebar = app.query_one(TurnSidebar)
+        assert len(sidebar.entries) == 1
+        navigation = next(iter(sidebar.entries.values()))
+        assert isinstance(navigation, TurnNavigationItem)
+        assert navigation.ordinal == 1
+        assert navigation.execution_status == "completed"
+        assert "Review the streaming" in str(navigation.label)
+
+        activity = app.query_one(TurnActivity)
+        assert activity.collapsed
+        assert activity.status == "completed"
+        assert "2 tools" in activity.title
+        assert "1 file" in activity.title
+        assert "840 ms" in activity.title
+        assert len(activity.query(ToolExecutionBlock)) == 2
+
+        grouped_messages = list(activity.query(TranscriptMessage))
+        assert any(
+            message.kind == "assistant:user-message"
+            and "preparing the diff" in message.source_text
+            for message in grouped_messages
+        )
+        assert any(
+            message.kind == "block:diff"
+            and "stream_events" in message.source_text
+            for message in grouped_messages
+        )
+
+        final = next(
+            message
+            for message in app.query(TranscriptMessage)
+            if message.message_id and message.message_id.startswith("msg_final_")
+        )
+        assert "Review complete" in final.source_text
+        assert final not in grouped_messages
+        assert final.parent is app.query_one("#transcript")
+
+        await pilot.click(navigation)
+        await pilot.pause()
+        assert navigation.has_class("turn-nav-selected")
+        assert navigation.anchor.source_text == "Review the streaming adapter"

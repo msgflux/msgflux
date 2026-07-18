@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Collapsible, Input, OptionList, Static
+from textual.widgets import Button, Collapsible, Input, OptionList, Static
 
 from msgflux.vulcano.actions import CancelExecution, InputMode, SubmitInput
 from msgflux.vulcano.blocks import BlockKind, BlockStatus
@@ -24,6 +25,9 @@ __all__ = [
     "PendingInputList",
     "ToolExecutionBlock",
     "TranscriptMessage",
+    "TurnActivity",
+    "TurnNavigationItem",
+    "TurnSidebar",
     "VulcanoApp",
 ]
 
@@ -81,8 +85,9 @@ class TranscriptMessage(Static):
         classes: str | None = None,
         message_id: str | None = None,
     ) -> None:
-        super().__init__(classes=classes, id=message_id)
+        super().__init__(classes=classes)
         self.source_text = ""
+        self.message_id = message_id
         self.kind = kind
         self.render_mode = render_mode or ("markdown" if markdown else "text")
         self.markdown = self.render_mode in {"markdown", "diff"}
@@ -166,6 +171,165 @@ class CollapsibleTranscriptBlock(Collapsible):
 
     def flush_content(self) -> None:
         self.message.flush_content()
+
+
+class TurnNavigationItem(Button):
+    """Focusable sidebar entry linked to one user-message widget."""
+
+    def __init__(
+        self,
+        *,
+        ordinal: int,
+        message_id: str,
+        content: str,
+        anchor: TranscriptMessage,
+    ) -> None:
+        self.ordinal = ordinal
+        self.message_id = message_id
+        self.summary = " ".join(content.split()) or "Empty message"
+        if len(self.summary) > 34:
+            self.summary = f"{self.summary[:31]}..."
+        self.anchor = anchor
+        self.execution_status: str | None = None
+        super().__init__(classes="turn-nav-item")
+        self._update_label()
+
+    def set_execution_status(self, status: str) -> None:
+        self.execution_status = status
+        self.set_classes("turn-nav-item")
+        self.add_class(f"turn-nav-{status}")
+        self._update_label()
+
+    def _update_label(self) -> None:
+        marker = {
+            "running": "●",
+            BlockStatus.COMPLETED: "✓",
+            BlockStatus.FAILED: "✗",
+            BlockStatus.ABORTED: "!",
+            "cancelled": "!",
+        }.get(self.execution_status, "·")
+        self.label = f"{marker} {self.ordinal}. {self.summary}"
+
+
+class TurnSidebar(VerticalScroll):
+    """Derived user-message index used to navigate the transcript."""
+
+    def __init__(self) -> None:
+        super().__init__(id="turn-sidebar", classes="turn-sidebar-hidden")
+        self.entries: dict[str, TurnNavigationItem] = {}
+
+    def compose(self) -> ComposeResult:
+        yield Static("MESSAGES", classes="turn-nav-heading")
+
+    async def add_message(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        anchor: TranscriptMessage,
+    ) -> TurnNavigationItem:
+        existing = self.entries.get(message_id)
+        if existing is not None:
+            return existing
+        item = TurnNavigationItem(
+            ordinal=len(self.entries) + 1,
+            message_id=message_id,
+            content=content,
+            anchor=anchor,
+        )
+        self.entries[message_id] = item
+        self.remove_class("turn-sidebar-hidden")
+        await self.mount(item)
+        return item
+
+    def set_execution_status(self, message_id: str, status: str) -> None:
+        item = self.entries.get(message_id)
+        if item is not None:
+            item.set_execution_status(status)
+
+    def select(self, message_id: str) -> None:
+        for key, item in self.entries.items():
+            item.set_class(key == message_id, "turn-nav-selected")
+
+    async def clear_entries(self) -> None:
+        self.entries.clear()
+        await self.query(TurnNavigationItem).remove()
+        self.add_class("turn-sidebar-hidden")
+
+
+class TurnActivity(Collapsible):
+    """Collapsible projection of non-final activity for one execution."""
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+        self.status = "running"
+        self.duration_ms: int | None = None
+        self.reported_tool_count = 0
+        self.tool_call_ids: set[str] = set()
+        self.changed_files: set[str] = set()
+        self.body = Container(classes="turn-activity-body")
+        super().__init__(
+            self.body,
+            title="● Activity · running",
+            collapsed=False,
+            classes="turn-activity turn-activity-running",
+        )
+
+    def observe(self, event: DomainEvent) -> None:
+        if event.type == EventType.TOOL_STARTED:
+            tool_call_id = event.payload.get("tool_call_id")
+            if tool_call_id is not None:
+                self.tool_call_ids.add(str(tool_call_id))
+        elif (
+            event.type == EventType.BLOCK_STARTED
+            and event.payload.get("kind") == BlockKind.DIFF
+        ):
+            details = event.payload.get("details", {})
+            if isinstance(details, Mapping) and details.get("path") is not None:
+                self.changed_files.add(str(details["path"]))
+        elif event.type == EventType.EXECUTION_COMPLETED:
+            self.status = str(event.payload.get("status", BlockStatus.COMPLETED))
+            tool_count = event.payload.get("tool_count")
+            if isinstance(tool_count, int) and not isinstance(tool_count, bool):
+                self.reported_tool_count = tool_count
+            changed_files = event.payload.get("changed_files", ())
+            if isinstance(changed_files, Sequence) and not isinstance(
+                changed_files, (str, bytes)
+            ):
+                self.changed_files.update(str(path) for path in changed_files)
+            duration = event.payload.get("duration_ms")
+            if isinstance(duration, int) and not isinstance(duration, bool):
+                self.duration_ms = duration
+            self.collapsed = self.status == BlockStatus.COMPLETED
+
+        self._update_title()
+
+    def _update_title(self) -> None:
+        marker = {
+            "running": "●",
+            BlockStatus.COMPLETED: "✓",
+            BlockStatus.FAILED: "✗",
+            BlockStatus.ABORTED: "!",
+            "cancelled": "!",
+        }.get(self.status, "○")
+        details: list[str] = []
+        tool_count = max(len(self.tool_call_ids), self.reported_tool_count)
+        if tool_count:
+            count = tool_count
+            details.append(f"{count} tool" + ("s" if count != 1 else ""))
+        if self.changed_files:
+            count = len(self.changed_files)
+            details.append(f"{count} file" + ("s" if count != 1 else ""))
+        if self.duration_ms is not None:
+            if self.duration_ms < 1000:
+                details.append(f"{self.duration_ms} ms")
+            else:
+                details.append(f"{self.duration_ms / 1000:.1f} s")
+        suffix = f" · {' · '.join(details)}" if details else ""
+        state = "running" if self.status == "running" else self.status
+        self.title = f"{marker} Activity · {state}{suffix}"
+        self.set_classes("turn-activity")
+        self.add_class(f"turn-activity-{self.status}")
 
 
 class ToolExecutionBlock(Collapsible):
@@ -300,8 +464,67 @@ class VulcanoApp(App[None]):
         border-bottom: solid #6e3519;
     }
 
-    #transcript {
+    #conversation-shell {
+        width: 100%;
         height: 1fr;
+    }
+
+    #turn-sidebar {
+        width: 24;
+        height: 100%;
+        padding: 1;
+        background: #10131a;
+        border-right: solid #272c36;
+        scrollbar-size: 1 1;
+        scrollbar-color: #3c4352;
+    }
+
+    .turn-sidebar-hidden {
+        display: none;
+    }
+
+    .turn-nav-heading {
+        width: 100%;
+        height: 2;
+        color: #778091;
+        text-style: bold;
+        content-align: left middle;
+    }
+
+    .turn-nav-item {
+        width: 100%;
+        min-width: 0;
+        height: auto;
+        min-height: 3;
+        margin-bottom: 1;
+        padding: 0 1;
+        color: #9da5b4;
+        background: #171a21;
+        border: none;
+        text-align: left;
+    }
+
+    .turn-nav-item:hover, .turn-nav-item:focus, .turn-nav-selected {
+        color: #ffffff;
+        background: #352218;
+        text-style: bold;
+    }
+
+    .turn-nav-running {
+        color: #ff8a3d;
+    }
+
+    .turn-nav-completed {
+        color: #c8cad1;
+    }
+
+    .turn-nav-failed, .turn-nav-aborted, .turn-nav-cancelled {
+        color: #ff9b9b;
+    }
+
+    #transcript {
+        width: 1fr;
+        height: 100%;
         padding: 1 2;
         scrollbar-color: #3c4352;
         scrollbar-color-hover: #5b6578;
@@ -331,6 +554,13 @@ class VulcanoApp(App[None]):
         background: #12151c;
     }
 
+    .user-facing-message {
+        margin-right: 6;
+        color: #d7dae0;
+        background: #181b22;
+        border: round #3c4352;
+    }
+
     .reasoning-message {
         margin-right: 12;
         color: #9da5b4;
@@ -349,6 +579,35 @@ class VulcanoApp(App[None]):
         width: 100%;
         height: auto;
         margin-bottom: 1;
+    }
+
+    TurnActivity {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    .turn-activity > CollapsibleTitle {
+        color: #c8cad1;
+        background: #151820;
+        text-style: bold;
+    }
+
+    .turn-activity-running > CollapsibleTitle {
+        color: #ff8a3d;
+    }
+
+    .turn-activity-failed > CollapsibleTitle,
+    .turn-activity-aborted > CollapsibleTitle,
+    .turn-activity-cancelled > CollapsibleTitle {
+        color: #ff9b9b;
+    }
+
+    .turn-activity-body {
+        width: 100%;
+        height: auto;
+        padding: 1;
+        background: #0f1218;
     }
 
     .collapsible-transcript-block > CollapsibleTitle {
@@ -491,21 +750,28 @@ class VulcanoApp(App[None]):
         self._active_assistant_streams: set[str] = set()
         self._active_block_streams: set[tuple[str, str]] = set()
         self._active_tool_streams: set[tuple[str, str]] = set()
+        self._active_execution_streams: set[str] = set()
+        self._activity_views: dict[str, TurnActivity] = {}
+        self._correlation_runs: dict[str, str] = {}
+        self._run_user_messages: dict[str, str] = {}
+        self._user_message_views: dict[str, TranscriptMessage] = {}
 
     def compose(self) -> ComposeResult:
         with Container(id="header-slot"):
             yield self._ui_driver.create_default_header()
-        with VerticalScroll(id="transcript"):
-            yield TranscriptMessage(
-                (
-                    "**Vulcano runtime preview**\n\n"
-                    "The runtime is currently mocked. Use `/help` to inspect "
-                    "runtime-owned commands."
-                ),
-                kind="welcome",
-                markdown=True,
-                classes="welcome-message",
-            )
+        with Horizontal(id="conversation-shell"):
+            yield TurnSidebar()
+            with VerticalScroll(id="transcript"):
+                yield TranscriptMessage(
+                    (
+                        "**Vulcano runtime preview**\n\n"
+                        "The runtime is currently mocked. Use `/help` to inspect "
+                        "runtime-owned commands."
+                    ),
+                    kind="welcome",
+                    markdown=True,
+                    classes="welcome-message",
+                )
         yield Static("starting runtime...", id="status")
         yield self._ui_driver.create_working_status()
         yield Container(id="widgets-above")
@@ -609,6 +875,20 @@ class VulcanoApp(App[None]):
     def _on_command_selected(self, event: OptionList.OptionSelected) -> None:
         self._ui_driver.accept_command_selection(event.option_index)
 
+    @on(Button.Pressed, ".turn-nav-item")
+    def _on_turn_navigation(self, event: Button.Pressed) -> None:
+        item = event.button
+        if not isinstance(item, TurnNavigationItem):
+            return
+        self.query_one(TurnSidebar).select(item.message_id)
+        item.anchor.scroll_visible(
+            animate=False,
+            immediate=True,
+            top=True,
+            force=True,
+        )
+        event.stop()
+
     @on(Input.Submitted, "#prompt")
     def _on_prompt_submitted(self, event: Input.Submitted) -> None:
         self._submit_prompt(event.value)
@@ -676,6 +956,12 @@ class VulcanoApp(App[None]):
         await self._project_command_event(event)
 
     async def _project_execution_event(self, event: DomainEvent) -> bool:
+        if event.type == EventType.EXECUTION_STARTED:
+            await self._project_execution_started(event)
+            return True
+        if event.type == EventType.EXECUTION_COMPLETED:
+            await self._project_execution_completed(event)
+            return True
         if event.type == EventType.SESSION_SWITCHED:
             await self._project_session_switch(event)
             return True
@@ -699,10 +985,80 @@ class VulcanoApp(App[None]):
         await self._project_cancellation(event)
         return True
 
+    async def _project_execution_started(self, event: DomainEvent) -> None:
+        run_id = self._event_run_id(event)
+        if run_id is None:
+            return
+        if event.correlation_id is not None:
+            self._correlation_runs[event.correlation_id] = run_id
+        input_message_id = event.payload.get("input_message_id")
+        if input_message_id is not None:
+            resolved_message_id = str(input_message_id)
+            self._run_user_messages[run_id] = resolved_message_id
+            self.query_one(TurnSidebar).set_execution_status(
+                resolved_message_id,
+                "running",
+            )
+        activity = self._activity_views.get(run_id)
+        if activity is None:
+            activity = TurnActivity(run_id)
+            self._activity_views[run_id] = activity
+            await self.query_one("#transcript", VerticalScroll).mount(activity)
+        activity.observe(event)
+        self._active_execution_streams.add(run_id)
+        self._refresh_streaming_state()
+        self._scroll_to_end()
+
+    async def _project_execution_completed(self, event: DomainEvent) -> None:
+        run_id = self._event_run_id(event)
+        if run_id is None:
+            return
+        activity = self._activity_views.get(run_id)
+        final_message_id = event.payload.get("final_message_id")
+        if final_message_id is not None and activity is not None:
+            final_view = self._assistant_views.get(str(final_message_id))
+            if final_view is not None and final_view.parent is activity.body:
+                await final_view.remove()
+                await self.query_one("#transcript", VerticalScroll).mount(
+                    final_view,
+                    after=activity,
+                )
+        if activity is not None:
+            activity.observe(event)
+        status = str(event.payload.get("status", BlockStatus.COMPLETED))
+        input_message_id = self._run_user_messages.get(run_id)
+        if input_message_id is not None:
+            self.query_one(TurnSidebar).set_execution_status(
+                input_message_id,
+                status,
+            )
+        self._active_execution_streams.discard(run_id)
+        self._refresh_streaming_state()
+        self._scroll_to_end()
+
     async def _project_cancellation(self, event: DomainEvent) -> None:
         target = event.payload.get("target_correlation_id")
         if not isinstance(target, str):
             return
+        run_id = self._correlation_runs.get(target)
+        if run_id is not None:
+            activity = self._activity_views.get(run_id)
+            if activity is not None:
+                activity.observe(
+                    DomainEvent(
+                        type=EventType.EXECUTION_COMPLETED,
+                        sequence=event.sequence,
+                        payload={"run_id": run_id, "status": BlockStatus.ABORTED},
+                        correlation_id=target,
+                    )
+                )
+            input_message_id = self._run_user_messages.get(run_id)
+            if input_message_id is not None:
+                self.query_one(TurnSidebar).set_execution_status(
+                    input_message_id,
+                    BlockStatus.ABORTED,
+                )
+            self._active_execution_streams.discard(run_id)
         self._active_assistant_streams.discard(target)
         active_blocks = [key for key in self._active_block_streams if key[0] == target]
         for key in active_blocks:
@@ -767,7 +1123,7 @@ class VulcanoApp(App[None]):
             rendered = await self.runtime.ui.render_event(event)
             if rendered is None:
                 return False
-            await self._append_rendered(rendered)
+            await self._append_rendered(rendered, event=event)
         except Exception as error:
             await self._append_message(
                 f"UI renderer failed: {error}",
@@ -779,11 +1135,40 @@ class VulcanoApp(App[None]):
 
     async def _project_message_event(self, event: DomainEvent) -> bool:
         if event.type == EventType.MESSAGE_USER:
-            await self._append_message(
+            message_id = str(
+                event.payload.get("message_id", f"message-{event.sequence}")
+            )
+            view = await self._append_message(
                 str(event.payload.get("content", "")),
                 kind="user",
                 classes="user-message",
+                message_id=message_id,
             )
+            self._user_message_views[message_id] = view
+            await self.query_one(TurnSidebar).add_message(
+                message_id=message_id,
+                content=view.source_text,
+                anchor=view,
+            )
+            run_id = self._event_run_id(event)
+            if run_id is not None:
+                self._run_user_messages[run_id] = message_id
+            return True
+
+        if event.type == EventType.ASSISTANT_USER_MESSAGE:
+            await self._append_message(
+                str(event.payload.get("content", "")),
+                kind="assistant:user-message",
+                markdown=True,
+                classes="user-facing-message",
+                message_id=(
+                    str(event.payload["message_id"])
+                    if event.payload.get("message_id") is not None
+                    else None
+                ),
+                target=self._event_mount_target(event),
+            )
+            self._scroll_to_end()
             return True
 
         if event.type in {
@@ -850,13 +1235,19 @@ class VulcanoApp(App[None]):
 
     async def _clear_transcript(self) -> None:
         await self.query_one("#transcript", VerticalScroll).remove_children()
+        await self.query_one(TurnSidebar).clear_entries()
         self._assistant_views.clear()
         self._block_views.clear()
         self._tool_views.clear()
+        self._activity_views.clear()
+        self._correlation_runs.clear()
+        self._run_user_messages.clear()
+        self._user_message_views.clear()
         self.runtime.ui.clear_tool_render_state()
         self._active_assistant_streams.clear()
         self._active_block_streams.clear()
         self._active_tool_streams.clear()
+        self._active_execution_streams.clear()
         self.query_one("#pending-inputs", PendingInputList).clear()
         self._ui_driver.set_queue_count(0)
         self._refresh_streaming_state()
@@ -868,8 +1259,11 @@ class VulcanoApp(App[None]):
         view = self._tool_views.get(key)
         if view is None:
             view = ToolExecutionBlock(self.runtime.ui, self._ui_driver, event)
-            await self.query_one("#transcript", VerticalScroll).mount(view)
+            await self._event_mount_target(event).mount(view)
             self._tool_views[key] = view
+        activity = self._activity_for_event(event)
+        if activity is not None:
+            activity.observe(event)
         await view.apply_event(event)
 
         if event.type == EventType.TOOL_STARTED:
@@ -931,7 +1325,7 @@ class VulcanoApp(App[None]):
                 kind=f"block:{kind}",
                 classes=classes,
             )
-            await self.query_one("#transcript", VerticalScroll).mount(view)
+            await self._event_mount_target(event).mount(view)
             self._scroll_to_end()
         else:
             view = await self._append_message(
@@ -940,7 +1334,11 @@ class VulcanoApp(App[None]):
                 markdown=kind != BlockKind.ERROR,
                 render_mode="diff" if kind == BlockKind.DIFF else None,
                 classes=classes,
+                target=self._event_mount_target(event),
             )
+        activity = self._activity_for_event(event)
+        if activity is not None:
+            activity.observe(event)
         self._block_views[key] = view
         return view
 
@@ -965,13 +1363,24 @@ class VulcanoApp(App[None]):
         event: DomainEvent,
     ) -> TranscriptMessage:
         key = event.correlation_id or f"event-{event.sequence}"
+        if event.payload.get("message_id") is not None:
+            key = str(event.payload["message_id"])
         view = self._assistant_views.get(key)
         if view is None:
+            target = None
+            if not event.payload.get("is_final"):
+                target = self._event_mount_target(event)
             view = await self._append_message(
                 "",
                 kind="assistant",
                 markdown=True,
                 classes="assistant-message",
+                message_id=(
+                    str(event.payload["message_id"])
+                    if event.payload.get("message_id") is not None
+                    else None
+                ),
+                target=target,
             )
             self._assistant_views[key] = view
         return view
@@ -984,6 +1393,8 @@ class VulcanoApp(App[None]):
         markdown: bool = False,
         render_mode: str | None = None,
         classes: str,
+        message_id: str | None = None,
+        target: Widget | None = None,
     ) -> TranscriptMessage:
         view = TranscriptMessage(
             content,
@@ -991,16 +1402,49 @@ class VulcanoApp(App[None]):
             markdown=markdown,
             render_mode=render_mode,
             classes=classes,
+            message_id=message_id,
         )
-        await self.query_one("#transcript", VerticalScroll).mount(view)
+        mount_target = target or self.query_one("#transcript", VerticalScroll)
+        await mount_target.mount(view)
         self._scroll_to_end()
         return view
 
-    async def _append_rendered(self, content: object) -> Widget:
+    async def _append_rendered(
+        self,
+        content: object,
+        *,
+        event: DomainEvent | None = None,
+    ) -> Widget:
         view = await self._ui_driver.materialize(content)
-        await self.query_one("#transcript", VerticalScroll).mount(view)
+        target = (
+            self._event_mount_target(event)
+            if event is not None
+            else self.query_one("#transcript", VerticalScroll)
+        )
+        await target.mount(view)
         self._scroll_to_end()
         return view
+
+    def _activity_for_event(self, event: DomainEvent) -> TurnActivity | None:
+        run_id = self._event_run_id(event)
+        return self._activity_views.get(run_id) if run_id is not None else None
+
+    def _event_mount_target(self, event: DomainEvent) -> Widget:
+        activity = self._activity_for_event(event)
+        if activity is not None:
+            return activity.body
+        return self.query_one("#transcript", VerticalScroll)
+
+    def _event_run_id(self, event: DomainEvent) -> str | None:
+        run_id = event.payload.get("run_id")
+        if run_id is not None:
+            return str(run_id)
+        scope = event.payload.get("scope")
+        if isinstance(scope, Mapping) and scope.get("run_id") is not None:
+            return str(scope["run_id"])
+        if event.correlation_id is not None:
+            return self._correlation_runs.get(event.correlation_id)
+        return None
 
     def _scroll_to_end(self) -> None:
         self.query_one("#transcript", VerticalScroll).scroll_end(
@@ -1014,6 +1458,7 @@ class VulcanoApp(App[None]):
                 self._active_assistant_streams
                 or self._active_block_streams
                 or self._active_tool_streams
+                or self._active_execution_streams
             )
         )
 

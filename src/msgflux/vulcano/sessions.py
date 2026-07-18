@@ -20,7 +20,10 @@ __all__ = [
 
 _VALID_THREAD_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 _REPLAY_EVENT_TYPES = {
+    EventType.EXECUTION_STARTED,
+    EventType.EXECUTION_COMPLETED,
     EventType.MESSAGE_USER,
+    EventType.ASSISTANT_USER_MESSAGE,
     EventType.ASSISTANT_STARTED,
     EventType.ASSISTANT_DELTA,
     EventType.ASSISTANT_COMPLETED,
@@ -273,6 +276,15 @@ def _events_to_markdown(thread_id: str, events: tuple[DomainEvent, ...]) -> str:
             lines.extend(("## User", "", str(event.payload.get("content", "")), ""))
         elif event.type == EventType.ASSISTANT_COMPLETED:
             _append_assistant_markdown(lines, event)
+        elif event.type == EventType.ASSISTANT_USER_MESSAGE:
+            lines.extend(
+                (
+                    "### Agent update",
+                    "",
+                    str(event.payload.get("content", "")),
+                    "",
+                )
+            )
         elif event.type in {
             EventType.BLOCK_STARTED,
             EventType.BLOCK_DELTA,
@@ -291,7 +303,7 @@ def _events_to_markdown(thread_id: str, events: tuple[DomainEvent, ...]) -> str:
 def _complete_interrupted_streams(
     events: tuple[DomainEvent, ...],
 ) -> tuple[DomainEvent, ...]:
-    state = _ReplayState({}, {}, {})
+    state = _ReplayState({}, {}, {}, {})
     for event in events:
         _track_replay_event(state, event)
 
@@ -338,6 +350,17 @@ def _complete_interrupted_streams(
             },
             correlation_id,
         )
+    for (correlation_id, run_id), payload in state.executions.items():
+        append(
+            EventType.EXECUTION_COMPLETED,
+            {
+                "run_id": run_id,
+                "scope": payload.get("scope", {}),
+                "status": "aborted",
+                "final_message_id": None,
+            },
+            correlation_id,
+        )
     return tuple(completed)
 
 
@@ -346,10 +369,16 @@ class _ReplayState:
     assistants: dict[str | None, str]
     blocks: dict[tuple[str | None, str], dict[str, object]]
     tools: dict[tuple[str | None, str], dict[str, object]]
+    executions: dict[tuple[str | None, str], dict[str, object]]
 
 
 def _track_replay_event(state: _ReplayState, event: DomainEvent) -> None:
     if event.type in {
+        EventType.EXECUTION_STARTED,
+        EventType.EXECUTION_COMPLETED,
+    }:
+        _track_execution_event(state, event)
+    elif event.type in {
         EventType.ASSISTANT_STARTED,
         EventType.ASSISTANT_DELTA,
         EventType.ASSISTANT_COMPLETED,
@@ -367,6 +396,21 @@ def _track_replay_event(state: _ReplayState, event: DomainEvent) -> None:
         EventType.TOOL_COMPLETED,
     }:
         _track_tool_event(state, event)
+
+
+def _track_execution_event(state: _ReplayState, event: DomainEvent) -> None:
+    run_id = event.payload.get("run_id")
+    if run_id is None:
+        scope = event.payload.get("scope", {})
+        if isinstance(scope, Mapping):
+            run_id = scope.get("run_id")
+    if run_id is None:
+        return
+    key = (event.correlation_id, str(run_id))
+    if event.type == EventType.EXECUTION_STARTED:
+        state.executions[key] = dict(event.payload)
+    else:
+        state.executions.pop(key, None)
 
 
 def _track_assistant_event(state: _ReplayState, event: DomainEvent) -> None:

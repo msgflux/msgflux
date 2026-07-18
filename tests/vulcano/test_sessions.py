@@ -80,6 +80,40 @@ def test_session_replay_closes_interrupted_streams_as_aborted(tmp_path):
     assert replay[-1].payload == {"content": "partial", "status": "aborted"}
 
 
+def test_session_replay_closes_interrupted_execution_as_aborted(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_execution")
+    scope = {
+        "thread_id": "thd_execution",
+        "namespace": "vulcano",
+        "run_id": "run_interrupted",
+        "parent_run_id": None,
+        "root_run_id": "run_interrupted",
+    }
+    store.append(
+        "thd_execution",
+        DomainEvent(
+            type=EventType.EXECUTION_STARTED,
+            sequence=1,
+            payload={"run_id": "run_interrupted", "scope": scope},
+            correlation_id="request",
+        ),
+    )
+
+    replay = store.replay("thd_execution")
+
+    assert [event.type for event in replay] == [
+        EventType.EXECUTION_STARTED,
+        EventType.EXECUTION_COMPLETED,
+    ]
+    assert replay[-1].payload == {
+        "run_id": "run_interrupted",
+        "scope": scope,
+        "status": "aborted",
+        "final_message_id": None,
+    }
+
+
 @pytest.mark.asyncio
 async def test_runtime_replays_persisted_session_before_start_event(tmp_path):
     store = SessionStore(tmp_path / "sessions")
