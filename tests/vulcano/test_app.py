@@ -60,12 +60,13 @@ async def test_app_projects_streaming_runtime_events_headlessly():
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause()
-        assert app.query_one("#topbar", Static).outer_size.height == 4
+        assert app.query_one("#topbar", Static).outer_size.height == 0
         status = app.query_one("#status", Static)
         assert "mock runtime" in str(status.render())
         footer = app.query_one("#runtime-footer", VulcanoFooter)
         assert "VULCANO" in str(footer.render())
         assert "mock" in str(footer.render())
+        assert app.settings.cwd.name in str(footer.render())
         welcome = next(
             message
             for message in app.query(TranscriptMessage)
@@ -91,7 +92,9 @@ async def test_app_projects_streaming_runtime_events_headlessly():
             assistant.render_line(y).text for y in range(assistant.size.height)
         )
         assert "Mock runtime received: hello" in rendered_assistant
-        assert "run:" in str(footer.render())
+        assert "run:" not in str(footer.render())
+        assert "thd:" not in str(footer.render())
+        assert "Alt+S nav" in str(footer.render())
         assert "Ctrl+G sessions" in str(footer.render())
 
 
@@ -110,7 +113,10 @@ async def test_session_tab_bar_switches_pins_and_closes_sessions(tmp_path):
 
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.pause(delay=0.1)
+        await pilot.press("alt+s")
+        await pilot.pause()
         tabs = app.query_one(SessionTabBar)
+        assert tabs.parent is app.query_one(TurnSidebar)
         assert list(tabs.entries) == ["thd_one"]
         assert tabs.entries["thd_one"].status == "active"
 
@@ -136,7 +142,7 @@ async def test_session_tab_bar_switches_pins_and_closes_sessions(tmp_path):
         assert tabs.entries["thd_one"].status == "active"
         assert tabs.entries["thd_two"].status == "paused"
         footer = app.query_one("#runtime-footer", VulcanoFooter)
-        assert "thd_one"[:10] in str(footer.render())
+        assert "thd:" not in str(footer.render())
 
         await pilot.click(
             tabs.entries["thd_two"].query_one(".session-tab-close", Button)
@@ -170,6 +176,7 @@ async def test_session_tabs_support_tmux_style_keyboard_navigation(tmp_path):
         await pilot.press("enter")
         await pilot.pause(delay=0.2)
         tabs = app.query_one(SessionTabBar)
+        sidebar = app.query_one(TurnSidebar)
 
         app.simulate_key("ctrl+g")
         app.simulate_key("p")
@@ -180,8 +187,10 @@ async def test_session_tabs_support_tmux_style_keyboard_navigation(tmp_path):
 
         await pilot.press("ctrl+g")
         assert tabs.has_class("session-key-mode")
+        assert sidebar.is_expanded
         await pilot.press("escape")
         assert not tabs.has_class("session-key-mode")
+        assert not sidebar.is_expanded
 
         await pilot.press("ctrl+g", "2")
         await pilot.pause(delay=0.2)
@@ -223,6 +232,8 @@ async def test_session_tabs_keep_controls_visible_in_a_narrow_terminal(tmp_path)
 
     async with app.run_test(size=(60, 28)) as pilot:
         await pilot.pause(delay=0.1)
+        await pilot.press("alt+s")
+        await pilot.pause()
         for _ in range(4):
             await pilot.press("ctrl+g", "c")
             await pilot.pause(delay=0.15)
@@ -230,18 +241,21 @@ async def test_session_tabs_keep_controls_visible_in_a_narrow_terminal(tmp_path)
         tabs = app.query_one(SessionTabBar)
         assert len(tabs.entries) == 5
         assert "1-5 select" in str(tabs.query_one("#session-key-hint", Static).render())
-        assert tabs.size.height == tabs.virtual_size.height == 3
-        assert tabs.scroll_x > 0
+        assert tabs.size.height == tabs.virtual_size.height == 6
+        assert tabs.scroll_x == 0
 
         active = tabs.entries[runtime.sessions.current_thread_id]
         assert active.region.x >= tabs.region.x
         assert active.region.right <= tabs.region.right
+        assert active.region.y >= tabs.region.y
+        assert active.region.bottom <= tabs.region.bottom
         for tab in tabs.entries.values():
             select = tab.query_one(".session-tab-select", Button)
             pin = tab.query_one(".session-tab-pin", Button)
             close = tab.query_one(".session-tab-close", Button)
+            assert tab.outer_size.height == 1
             assert str(select.label).strip()
-            assert select.outer_size.width == 13
+            assert select.outer_size.width == tabs.size.width - 6
             assert select.styles.text_wrap == "nowrap"
             assert pin.outer_size.width == 3
             assert close.outer_size.width == 3
@@ -251,6 +265,8 @@ async def test_session_tabs_keep_controls_visible_in_a_narrow_terminal(tmp_path)
         first = next(iter(tabs.entries.values()))
         assert first.region.x >= tabs.region.x
         assert first.region.right <= tabs.region.right
+        assert first.region.y >= tabs.region.y
+        assert first.region.bottom <= tabs.region.bottom
 
 
 @pytest.mark.asyncio
@@ -314,18 +330,23 @@ async def test_sidebar_toggles_with_button_and_alt_s():
         sidebar = app.query_one(TurnSidebar)
         toggle = app.query_one("#turn-sidebar-toggle", Button)
         assert not sidebar.is_expanded
-        assert toggle.disabled
+        assert not toggle.disabled
 
         prompt = app.query_one("#prompt", VulcanoTextArea)
-        prompt.text = "create a navigation entry"
+        prompt.text = "draft prompt"
         prompt.cursor_location = prompt.document.end
-        await pilot.press("enter")
-        await pilot.pause(delay=0.05)
+        prompt.focus()
+        assert app.focused is prompt
+        await pilot.press("alt+s")
+        await pilot.pause()
 
         assert sidebar.is_expanded
         assert sidebar.display
-        assert not toggle.disabled
         assert str(toggle.label) == "‹"  # noqa: RUF001
+        assert prompt.text == "draft prompt"
+        assert app.query_one(SessionTabBar).parent is sidebar
+        assert sidebar.region.bottom == app.query_one("#main-pane").region.bottom
+        assert prompt.region.x >= sidebar.region.right
 
         await pilot.press("alt+s")
         await pilot.pause()
@@ -333,6 +354,13 @@ async def test_sidebar_toggles_with_button_and_alt_s():
         assert not sidebar.is_expanded
         assert not sidebar.display
         assert str(toggle.label) == "›"  # noqa: RUF001
+        assert prompt.text == "draft prompt"
+
+        prompt.text = "create a navigation entry"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.05)
+        assert not sidebar.is_expanded
 
         await pilot.click(toggle)
         await pilot.pause()
@@ -406,7 +434,8 @@ async def test_app_rebuilds_transcript_after_session_fork(tmp_path):
         ]
         assert [message.source_text for message in user_messages] == ["before fork"]
         footer = app.query_one("#runtime-footer", VulcanoFooter)
-        assert "thd:" in str(footer.render())
+        assert "thd:" not in str(footer.render())
+        assert app.settings.cwd.name in str(footer.render())
 
 
 @pytest.mark.asyncio
@@ -669,7 +698,7 @@ async def test_slash_command_menu_filters_and_completes_runtime_commands():
         menu = app.query_one("#command-menu", OptionList)
 
         assert prompt.styles.background == Color.parse("#292c33")
-        assert app.query_one("#topbar", Static).styles.color == Color.parse("#ff6a1a")
+        assert not app.query_one("#topbar", Static).display
         assert not menu.display
 
         prompt.text = "/"

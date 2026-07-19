@@ -30,7 +30,7 @@ and every contribution is owned by its extension generation.
 | `/ui-dialogs` | Run select, confirm, single-line input, and multiline editor dialogs. |
 | `/ui-permission [command]` | Request runtime permission for a mock shell command. |
 | `/ui-overlay` | Open a focused extension-owned Textual component. |
-| `/ui-slots [show\|clear]` | Replace or restore the header and footer. |
+| `/ui-slots [show\|clear]` | Replace or restore the optional header and footer. |
 | `/ui-working [show\|hide\|reset]` | Configure the loader used during streaming. |
 | `/ui-title [text\|reset]` | Change or restore the terminal title. |
 | `/ui-theme [name]` | List or activate Textual themes. |
@@ -87,16 +87,19 @@ details while keeping failures visible. Switch modes with `/view full`,
 `/view compact`, or the `--view` CLI flag. The command changes client state and
 is not restored from a durable session replay.
 
-The sidebar numbers user messages in event order; selecting an entry scrolls to
-its stable message anchor. This is derived client state, so it also rebuilds
+The workspace navbar places sessions above a user-message index. It spans the
+full application height, so the transcript, editor, and footer remain aligned
+beside it. Messages are numbered in event order; selecting one scrolls to its
+stable transcript anchor. This is derived client state, so it also rebuilds
 from a durable session replay.
 
-## Session tabs
+## Workspace navbar and session tabs
 
-The session bar above the transcript is projected from
+The compact session rows at the top of the navbar are projected from
 `session.tabs.updated`. A thread appears at most once in a Vulcano process.
-Selecting a paused tab asks the runtime to activate and replay that durable
-thread; the TUI never opens its JSONL file.
+Selecting a paused row asks the runtime to activate and replay that durable
+thread; the TUI never opens its JSONL file. Press `Alt+S` to open the navbar
+even before the first message exists.
 
 Each tab exposes two controls:
 
@@ -115,8 +118,9 @@ safe at any time.
 
 ### Keyboard navigation
 
-Press `Ctrl+G` to enter session navigation mode. The tab bar temporarily shows
-the available keys, and the next key performs one action:
+Press `Ctrl+G` to enter session navigation mode. The navbar opens temporarily
+when necessary, its session section shows the available keys, and the next key
+performs one action:
 
 | Sequence | Action |
 |----------|--------|
@@ -160,7 +164,7 @@ terminal rows. It scrolls vertically after reaching the maximum.
 | `Enter` | Submit the prompt. |
 | `Shift+Enter` or `Ctrl+J` | Insert a line break. |
 | `Alt+Enter` | Queue a follow-up behind all steering inputs. |
-| `Alt+S` | Collapse or expand the message sidebar. |
+| `Alt+S` | Collapse or expand the workspace navbar. |
 | `Ctrl+P` | Open the searchable command palette. |
 | `Up` and `Down` | Navigate the slash selector while it is open. |
 | `Tab` | Complete the selected slash command. |
@@ -169,6 +173,12 @@ terminal rows. It scrolls vertically after reaching the maximum.
 Extensions may replace the default editor with a Textual `Input` for
 single-line behavior or a `VulcanoTextArea` subclass for multiline behavior.
 The driver preserves text and reinstalls Vulcano autocomplete when necessary.
+
+The default top header is intentionally empty to preserve vertical space.
+Extensions may still populate the header slot through `api.ui.set_header()`.
+The default footer shows `VULCANO`, the active model, the working directory,
+streaming and queue state, and configured key hints. Session and run ids remain
+available through runtime commands and events instead of occupying the footer.
 
 ## UI ownership model
 

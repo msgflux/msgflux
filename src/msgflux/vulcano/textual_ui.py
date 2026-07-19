@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Mapping as MappingCollection
 from collections.abc import Sequence as SequenceCollection
+from pathlib import Path
 from time import monotonic
 from typing import Callable, Mapping, Sequence, TypeVar
 
@@ -580,13 +581,13 @@ class _CustomScreen(ModalScreen[T | None]):
 class VulcanoFooter(Static):
     """Default footer built from runtime and execution metadata."""
 
-    def __init__(self, keybindings: KeyBindings) -> None:
+    def __init__(self, keybindings: KeyBindings, cwd: Path) -> None:
         super().__init__("", id="runtime-footer")
         self._keybindings = keybindings
+        self._cwd = cwd
         self._runtime_kind = "starting"
         self._agent: str | None = None
-        self._thread_id: str | None = None
-        self._run_id: str | None = None
+        self._model: str | None = None
         self._queue_count = 0
         self._streaming = False
         self._refresh_content()
@@ -596,18 +597,14 @@ class VulcanoFooter(Static):
         kind: str,
         *,
         agent: str | None,
-        thread_id: str | None,
+        model: str | None,
+        cwd: str | Path | None = None,
     ) -> None:
         self._runtime_kind = kind
         self._agent = agent
-        self._thread_id = thread_id
-        self._refresh_content()
-
-    def set_scope(self, scope: Mapping[str, object]) -> None:
-        thread_id = scope.get("thread_id")
-        run_id = scope.get("run_id")
-        self._thread_id = str(thread_id) if thread_id else self._thread_id
-        self._run_id = str(run_id) if run_id else None
+        self._model = model
+        if cwd is not None:
+            self._cwd = Path(cwd).expanduser().resolve()
         self._refresh_content()
 
     def set_queue_count(self, count: int) -> None:
@@ -621,12 +618,9 @@ class VulcanoFooter(Static):
     def _refresh_content(self) -> None:
         content = Text()
         content.append("VULCANO", style="bold #ff6a1a")
-        runtime = self._agent or self._runtime_kind
-        content.append(f"  {runtime}", style="#c8cad1")
-        if self._thread_id:
-            content.append(f"  thd:{_short_id(self._thread_id)}", style="#778091")
-        if self._run_id:
-            content.append(f"  run:{_short_id(self._run_id)}", style="#778091")
+        model = self._model or self._agent or self._runtime_kind
+        content.append(f"  {model}", style="#c8cad1")
+        content.append(f"  {_display_path(self._cwd)}", style="#778091")
         if self._streaming:
             content.append("  streaming", style="#ff6a1a")
         if self._queue_count:
@@ -634,6 +628,7 @@ class VulcanoFooter(Static):
         hints = []
         for action, label in (
             ("command_palette", "commands"),
+            ("toggle_sidebar", "nav"),
             ("session_prefix", "sessions"),
             ("cancel", "cancel"),
         ):
@@ -645,11 +640,18 @@ class VulcanoFooter(Static):
         self.update(content)
 
 
-def _short_id(value: str) -> str:
-    prefix, separator, suffix = value.partition("_")
-    if separator:
-        return f"{prefix[:3]}_{suffix[:6]}"
-    return value[:8]
+def _display_path(path: Path) -> str:
+    try:
+        relative = path.relative_to(Path.home())
+    except ValueError:
+        display = str(path)
+    else:
+        display = "~" if relative == Path(".") else f"~/{relative}"
+    if len(display) <= 18:
+        return display
+    tail = "/".join(path.parts[-2:])
+    compact = f"…/{tail}"
+    return compact if len(compact) <= 18 else f"…/{path.name[-16:]}"
 
 
 def _display_key(value: str) -> str:
@@ -730,21 +732,22 @@ class TextualUiDriver:
         self._streaming = False
         self._runtime_kind = "starting"
         self._agent_name: str | None = None
-        self._thread_id: str | None = None
+        self._model_name: str | None = None
+        self._cwd = settings.cwd
         self._scope: Mapping[str, object] = {}
         self._queue_count = 0
 
     def create_default_header(self) -> Widget:
-        return Static("VULCANO  /  MSGFLUX", id="topbar")
+        return Static("", id="topbar")
 
     def create_default_footer(self) -> Widget:
-        footer = VulcanoFooter(self._settings.keybindings)
+        footer = VulcanoFooter(self._settings.keybindings, self._cwd)
         footer.set_runtime(
             self._runtime_kind,
             agent=self._agent_name,
-            thread_id=self._thread_id,
+            model=self._model_name,
+            cwd=self._cwd,
         )
-        footer.set_scope(self._scope)
         footer.set_queue_count(self._queue_count)
         footer.set_streaming(self._streaming)
         return footer
@@ -862,20 +865,20 @@ class TextualUiDriver:
         kind: str,
         *,
         agent: str | None,
-        thread_id: str | None,
+        model: str | None,
+        cwd: str | Path | None,
     ) -> None:
         self._runtime_kind = kind
         self._agent_name = agent
-        self._thread_id = thread_id
+        self._model_name = model
+        if cwd is not None:
+            self._cwd = Path(cwd).expanduser().resolve()
         footer = self._default_footer()
         if footer is not None:
-            footer.set_runtime(kind, agent=agent, thread_id=thread_id)
+            footer.set_runtime(kind, agent=agent, model=model, cwd=self._cwd)
 
     def set_execution_scope(self, scope: Mapping[str, object]) -> None:
         self._scope = dict(scope)
-        footer = self._default_footer()
-        if footer is not None:
-            footer.set_scope(scope)
 
     def set_queue_count(self, count: int) -> None:
         self._queue_count = max(count, 0)

@@ -91,8 +91,9 @@ all steering inputs. `Escape` cancels the active execution and clears its queue.
 The pending-input widget is only a projection of runtime queue events.
 
 `Ctrl+P` opens a searchable palette over the same runtime command registry. The
-default footer shows runtime/Agent identity, abbreviated thread and run ids,
-streaming state, queue depth, and configured key hints.
+default footer shows Vulcano, the active model, working directory, streaming
+state, queue depth, and configured key hints. The default header is empty to
+preserve vertical space; extensions may still populate its slot.
 
 Commands that affect presentation emit a `client.action` event. The decision
 still belongs to the runtime; the Textual client only applies the requested
@@ -367,7 +368,8 @@ transcript. Extensions can access the same high-level facade at
 
 Vulcano also keeps a runtime-owned tab workspace. `session.tabs.updated`
 contains the ordered tab list, active thread, pin state, and lifecycle status.
-The Textual bar sends `ActivateSessionTab`, `ToggleSessionPin`, and
+Compact session rows live above the message index in the workspace navbar. The
+Textual client sends `ActivateSessionTab`, `ToggleSessionPin`, and
 `CloseSessionTab`; it does not mutate session state directly. Activating a
 thread already present selects the existing tab instead of creating a duplicate.
 

@@ -92,6 +92,41 @@ class MockResponder:
             yield chunk
 
 
+def _safe_attribute(value: object, name: str) -> object | None:
+    try:
+        return getattr(value, name, None)
+    except Exception:
+        return None
+
+
+def _model_info(model: object) -> Mapping[str, object]:
+    get_model_info = _safe_attribute(model, "get_model_info")
+    if not callable(get_model_info):
+        return {}
+    try:
+        info = get_model_info()
+    except Exception:
+        return {}
+    return info if isinstance(info, Mapping) else {}
+
+
+def _agent_model_name(agent: object | None) -> str | None:
+    if agent is None:
+        return None
+    model = _safe_attribute(agent, "model")
+    if model is None:
+        return None
+
+    info = _model_info(model)
+    model_id = info.get("model_id") or _safe_attribute(model, "model_id")
+    provider = info.get("provider") or _safe_attribute(model, "provider")
+    if isinstance(model_id, str) and model_id:
+        if isinstance(provider, str) and provider:
+            return f"{provider}/{model_id}"
+        return model_id
+    return type(model).__name__
+
+
 class VulcanoRuntime:
     """Headless action/event runtime with a replaceable response source."""
 
@@ -143,6 +178,8 @@ class VulcanoRuntime:
         self.commands = CommandRegistry()
         self._events = EventStream()
         resolved_cwd = Path(cwd or Path.cwd()).expanduser().resolve()
+        self._cwd = resolved_cwd
+        self._agent = agent
         resolved_store = session_store or (
             SessionStore(session_directory) if session_directory is not None else None
         )
@@ -251,6 +288,7 @@ class VulcanoRuntime:
         if self._custom_responder:
             raise RuntimeError("Cannot bind an Agent when a custom responder is set")
         self.extensions.bind_agent(agent, adapter)
+        self._agent = agent
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
@@ -267,13 +305,17 @@ class VulcanoRuntime:
             for event in self._session_replay:
                 await self._events.publish(event)
             self._session_replay = ()
+            agent_bound = self.extensions.api.agent.is_bound
+            model_name = _agent_model_name(self._agent)
+            if model_name is None:
+                model_name = self.extensions.api.agent.name if agent_bound else "mock"
             await self._emit(
                 EventType.RUNTIME_STARTED,
                 {
-                    "runtime": (
-                        "agent" if self.extensions.api.agent.is_bound else "mock"
-                    ),
+                    "runtime": "agent" if agent_bound else "mock",
                     "agent": self.extensions.api.agent.name,
+                    "model": model_name,
+                    "cwd": str(self._cwd),
                     "commands": len(self.commands),
                     "extensions": len(extension_report.loaded),
                     "thread_id": self._thread_scope.thread_id,

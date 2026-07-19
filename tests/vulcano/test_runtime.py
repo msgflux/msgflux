@@ -39,12 +39,18 @@ class _FakeAgent:
     def __init__(self):
         self.calls = []
         self.scopes = []
+        self.model = _FakeModel()
         self.tool_library = ToolLibrary(self.name, [])
 
     async def acall(self, message, **kwargs):
         self.calls.append((message, kwargs))
         self.scopes.append(get_execution_scope())
         return f"Agent response: {message}"
+
+
+class _FakeModel:
+    def get_model_info(self):
+        return {"provider": "test", "model_id": "code-model"}
 
 
 class _FakeStreamResponse:
@@ -367,9 +373,9 @@ async def test_domain_event_is_transport_ready():
 
 
 @pytest.mark.asyncio
-async def test_bound_main_agent_drives_the_runtime_event_stream():
+async def test_bound_main_agent_drives_the_runtime_event_stream(tmp_path):
     agent = _FakeAgent()
-    runtime = VulcanoRuntime(agent=agent, extensions_enabled=False)
+    runtime = VulcanoRuntime(agent=agent, cwd=tmp_path, extensions_enabled=False)
 
     await runtime.dispatch(SubmitInput("use the agent", correlation_id="agent-1"))
 
@@ -378,6 +384,8 @@ async def test_bound_main_agent_drives_the_runtime_event_stream():
     )
     assert started.payload["runtime"] == "agent"
     assert started.payload["agent"] == "runtime_agent"
+    assert started.payload["model"] == "test/code-model"
+    assert started.payload["cwd"] == str(tmp_path)
     assert agent.calls == [("use the agent", {})]
     agent_scope = agent.scopes[0]
     assert agent_scope.thread_id is not None

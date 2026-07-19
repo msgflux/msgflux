@@ -8,7 +8,7 @@ from rich.panel import Panel
 from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, HorizontalScroll, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, OptionList, Static
 
@@ -162,11 +162,11 @@ class SessionTab(Horizontal):
         return f"{marker} {summary}"
 
 
-class SessionTabBar(HorizontalScroll):
+class SessionTabBar(VerticalScroll):
     """Reconciled projection of the runtime session workspace."""
 
     def __init__(self) -> None:
-        super().__init__(id="session-tabs", classes="session-tabs-hidden")
+        super().__init__(id="session-tabs")
         self.entries: dict[str, SessionTab] = {}
         self.active_thread_id: str | None = None
         self.persistence = False
@@ -175,6 +175,7 @@ class SessionTabBar(HorizontalScroll):
         self._key_mode = False
 
     def compose(self) -> ComposeResult:
+        yield Static("SESSIONS 0/5", id="session-nav-heading")
         yield Static(
             self._key_hint(),
             id="session-key-hint",
@@ -183,7 +184,6 @@ class SessionTabBar(HorizontalScroll):
     def set_key_mode(self, active: bool) -> None:  # noqa: FBT001
         self._key_mode = active
         self.set_class(active, "session-key-mode")
-        self.set_class(not self.entries and not active, "session-tabs-hidden")
 
     def adjacent_thread_id(self, offset: int) -> str | None:
         if not self._ordered_thread_ids:
@@ -266,9 +266,8 @@ class SessionTabBar(HorizontalScroll):
                     status=status,
                     persistence=self.persistence,
                 )
-        self.set_class(
-            not self.entries and not self._key_mode,
-            "session-tabs-hidden",
+        self.query_one("#session-nav-heading", Static).update(
+            f"SESSIONS {len(self.entries)}/{self.max_tabs}"
         )
         active_view = self.entries.get(self.active_thread_id or "")
         if active_view is not None:
@@ -467,26 +466,31 @@ class TurnNavigationItem(Button):
 
 
 class TurnSidebar(VerticalScroll):
-    """Derived user-message index used to navigate the transcript."""
+    """Session and message navigation for the active workspace."""
 
     def __init__(self) -> None:
         super().__init__(id="turn-sidebar", classes="turn-sidebar-hidden")
         self.entries: dict[str, TurnNavigationItem] = {}
-        self._user_collapsed = False
+        self._expanded = False
+        self._user_managed = False
 
     def compose(self) -> ComposeResult:
-        yield Static("MESSAGES", classes="turn-nav-heading")
+        yield SessionTabBar()
+        yield Static("MESSAGES 0", id="turn-nav-heading")
+        yield Static("No messages yet", id="turn-nav-empty")
 
     @property
     def is_expanded(self) -> bool:
-        return bool(self.entries) and not self._user_collapsed
+        return self._expanded
 
     def toggle(self) -> bool:
-        if not self.entries:
-            return False
-        self._user_collapsed = not self._user_collapsed
-        self._sync_visibility()
+        self._user_managed = True
+        self.set_expanded(not self._expanded)
         return self.is_expanded
+
+    def set_expanded(self, expanded: bool) -> None:  # noqa: FBT001
+        self._expanded = expanded
+        self._sync_visibility()
 
     async def add_message(
         self,
@@ -505,6 +509,9 @@ class TurnSidebar(VerticalScroll):
             anchor=anchor,
         )
         self.entries[message_id] = item
+        if not self._user_managed:
+            self.set_expanded(True)
+        self._refresh_messages()
         self._sync_visibility()
         await self.mount(item)
         return item
@@ -521,7 +528,18 @@ class TurnSidebar(VerticalScroll):
     async def clear_entries(self) -> None:
         self.entries.clear()
         await self.query(TurnNavigationItem).remove()
+        if not self._user_managed:
+            self.set_expanded(False)
+        self._refresh_messages()
         self._sync_visibility()
+
+    def _refresh_messages(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#turn-nav-heading", Static).update(
+            f"MESSAGES {len(self.entries)}"
+        )
+        self.query_one("#turn-nav-empty", Static).display = not self.entries
 
     def _sync_visibility(self) -> None:
         self.set_class(not self.is_expanded, "turn-sidebar-hidden")
@@ -765,12 +783,17 @@ class VulcanoApp(App[None]):
     }
 
     #topbar {
-        height: 4;
-        padding: 1 2;
-        background: #171014;
-        color: #ff6a1a;
-        text-style: bold;
-        border-bottom: solid #6e3519;
+        display: none;
+    }
+
+    #workspace-shell {
+        width: 100%;
+        height: 1fr;
+    }
+
+    #main-pane {
+        width: 1fr;
+        height: 100%;
     }
 
     #conversation-shell {
@@ -780,22 +803,26 @@ class VulcanoApp(App[None]):
 
     #session-tabs {
         width: 100%;
-        height: 4;
-        padding: 0 1;
+        height: auto;
+        max-height: 13;
         background: #10131a;
-        border-bottom: solid #272c36;
         scrollbar-size: 1 1;
         scrollbar-color: #3c4352;
     }
 
-    .session-tabs-hidden {
-        display: none;
+    #session-nav-heading, #turn-nav-heading {
+        width: 100%;
+        height: 1;
+        color: #778091;
+        text-style: bold;
+        content-align: left middle;
     }
 
     #session-key-hint {
         display: none;
         width: 100%;
-        height: 3;
+        height: auto;
+        min-height: 3;
         padding: 0 1;
         color: #ffb27d;
         background: #24170f;
@@ -807,22 +834,24 @@ class VulcanoApp(App[None]):
         display: none;
     }
 
+    #session-tabs.session-key-mode #session-nav-heading {
+        display: none;
+    }
+
     #session-tabs.session-key-mode #session-key-hint {
         display: block;
     }
 
     .session-tab {
-        width: 19;
-        min-width: 19;
-        max-width: 19;
-        height: 3;
+        width: 100%;
+        height: 1;
         background: #171a21;
     }
 
     .session-tab Button {
-        height: 3;
-        min-height: 3;
-        padding: 0 1;
+        height: 1;
+        min-height: 1;
+        padding: 0;
         color: #9da5b4;
         background: #171a21;
         border: none;
@@ -830,9 +859,9 @@ class VulcanoApp(App[None]):
     }
 
     .session-tab .session-tab-select {
-        width: 13;
-        min-width: 13;
-        max-width: 13;
+        width: 1fr;
+        min-width: 0;
+        padding-left: 1;
     }
 
     .session-tab .session-tab-pin, .session-tab .session-tab-close {
@@ -862,9 +891,10 @@ class VulcanoApp(App[None]):
     }
 
     #turn-sidebar {
-        width: 24;
+        width: 30;
+        max-width: 40%;
         height: 100%;
-        padding: 1;
+        padding: 0 1;
         background: #10131a;
         border-right: solid #272c36;
         scrollbar-size: 1 1;
@@ -880,7 +910,7 @@ class VulcanoApp(App[None]):
         min-width: 3;
         height: 3;
         min-height: 3;
-        margin-top: 1;
+        margin-top: 0;
         padding: 0;
         color: #ff8a3d;
         background: #171a21;
@@ -898,12 +928,12 @@ class VulcanoApp(App[None]):
         background: #10131a;
     }
 
-    .turn-nav-heading {
+    #turn-nav-empty {
         width: 100%;
-        height: 2;
+        height: auto;
+        padding: 0 1 1 1;
         color: #778091;
-        text-style: bold;
-        content-align: left middle;
+        text-style: italic;
     }
 
     .turn-nav-item {
@@ -940,7 +970,7 @@ class VulcanoApp(App[None]):
     #transcript {
         width: 1fr;
         height: 100%;
-        padding: 1 2;
+        padding: 0 2 1 2;
         scrollbar-color: #3c4352;
         scrollbar-color-hover: #5b6578;
         scrollbar-size: 1 1;
@@ -1162,13 +1192,14 @@ class VulcanoApp(App[None]):
         super().__init__()
         self.runtime = runtime
         self.settings = settings or VulcanoSettings.defaults()
-        for key in self.settings.keybindings.keys("session_prefix"):
-            self._bindings.bind(
-                key,
-                "session_prefix",
-                show=False,
-                priority=True,
-            )
+        for action in ("session_prefix", "toggle_sidebar"):
+            for key in self.settings.keybindings.keys(action):
+                self._bindings.bind(
+                    key,
+                    action,
+                    show=False,
+                    priority=True,
+                )
         self.transcript_mode = self.settings.transcript.mode
         self._ui_driver = TextualUiDriver(
             self,
@@ -1191,35 +1222,40 @@ class VulcanoApp(App[None]):
         self._run_user_messages: dict[str, str] = {}
         self._user_message_views: dict[str, TranscriptMessage] = {}
         self._session_key_mode = False
+        self._session_sidebar_was_expanded: bool | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="header-slot"):
             yield self._ui_driver.create_default_header()
-        yield SessionTabBar()
-        with Horizontal(id="conversation-shell"):
+        with Horizontal(id="workspace-shell"):
             yield TurnSidebar()
-            yield Button("›", id="turn-sidebar-toggle", disabled=True)  # noqa: RUF001
-            with VerticalScroll(id="transcript"):
-                yield TranscriptMessage(
-                    (
-                        "**Vulcano runtime preview**\n\n"
-                        "The runtime is currently mocked. Use `/help` to inspect "
-                        "runtime-owned commands."
-                    ),
-                    kind="welcome",
-                    markdown=True,
-                    classes="welcome-message",
-                )
-        yield Static("starting runtime...", id="status")
-        yield self._ui_driver.create_working_status()
-        yield Container(id="widgets-above")
-        yield PendingInputList(widget_id="pending-inputs")
-        yield self._ui_driver.create_command_menu()
-        with Container(id="editor-slot"):
-            yield self._ui_driver.create_default_editor()
-        yield Container(id="widgets-below")
-        with Container(id="footer-slot"):
-            yield self._ui_driver.create_default_footer()
+            with Vertical(id="main-pane"):
+                with Horizontal(id="conversation-shell"):
+                    yield Button(
+                        "›",  # noqa: RUF001
+                        id="turn-sidebar-toggle",
+                    )
+                    with VerticalScroll(id="transcript"):
+                        yield TranscriptMessage(
+                            (
+                                "**Vulcano runtime preview**\n\n"
+                                "The runtime is currently mocked. Use `/help` to "
+                                "inspect runtime-owned commands."
+                            ),
+                            kind="welcome",
+                            markdown=True,
+                            classes="welcome-message",
+                        )
+                yield Static("starting runtime...", id="status")
+                yield self._ui_driver.create_working_status()
+                yield Container(id="widgets-above")
+                yield PendingInputList(widget_id="pending-inputs")
+                yield self._ui_driver.create_command_menu()
+                with Container(id="editor-slot"):
+                    yield self._ui_driver.create_default_editor()
+                yield Container(id="widgets-below")
+                with Container(id="footer-slot"):
+                    yield self._ui_driver.create_default_footer()
 
     def on_mount(self) -> None:
         self.runtime.ui.bind(self._ui_driver, mode="tui")
@@ -1645,9 +1681,14 @@ class VulcanoApp(App[None]):
                     if event.payload.get("agent") is not None
                     else None
                 ),
-                thread_id=(
-                    str(event.payload["thread_id"])
-                    if event.payload.get("thread_id") is not None
+                model=(
+                    str(event.payload["model"])
+                    if event.payload.get("model") is not None
+                    else None
+                ),
+                cwd=(
+                    str(event.payload["cwd"])
+                    if event.payload.get("cwd") is not None
                     else None
                 ),
             )
@@ -2013,11 +2054,11 @@ class VulcanoApp(App[None]):
     def _sync_sidebar_toggle(self) -> None:
         sidebar = self.query_one(TurnSidebar)
         toggle = self.query_one("#turn-sidebar-toggle", Button)
-        toggle.disabled = not sidebar.entries
+        toggle.disabled = False
         toggle.label = "‹" if sidebar.is_expanded else "›"  # noqa: RUF001
         key = self.settings.keybindings.primary("toggle_sidebar")
         action = "Collapse" if sidebar.is_expanded else "Expand"
-        toggle.tooltip = f"{action} message navigation" + (
+        toggle.tooltip = f"{action} workspace navigation" + (
             f" ({key})" if key is not None else ""
         )
 
@@ -2064,6 +2105,10 @@ class VulcanoApp(App[None]):
         self._session_key_mode = True
         self._ui_driver.dismiss_command_menu()
         self.set_focus(None)
+        sidebar = self.query_one(TurnSidebar)
+        self._session_sidebar_was_expanded = sidebar.is_expanded
+        sidebar.set_expanded(True)
+        self._sync_sidebar_toggle()
         self.query_one(SessionTabBar).set_key_mode(True)
 
     def action_toggle_sidebar(self) -> None:
@@ -2109,6 +2154,10 @@ class VulcanoApp(App[None]):
     def _finish_session_key_mode(self) -> None:
         self._session_key_mode = False
         self.query_one(SessionTabBar).set_key_mode(False)
+        if self._session_sidebar_was_expanded is False:
+            self.query_one(TurnSidebar).set_expanded(False)
+        self._session_sidebar_was_expanded = None
+        self._sync_sidebar_toggle()
         self._ui_driver.focus_editor()
 
     def _activate_session_from_keyboard(
