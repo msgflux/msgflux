@@ -13,6 +13,7 @@ __all__ = [
     "DEFAULT_KEY_BINDINGS",
     "EditorSettings",
     "KeyBindings",
+    "SessionSettings",
     "TranscriptMode",
     "TranscriptSettings",
     "VulcanoSettings",
@@ -57,6 +58,19 @@ class TranscriptSettings:
     def __post_init__(self) -> None:
         if self.mode not in {"full", "compact"}:
             raise ValueError("ui.transcript.mode must be 'full' or 'compact'")
+
+
+@dataclass(frozen=True)
+class SessionSettings:
+    max_tabs: int = 5
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.max_tabs, int) or isinstance(self.max_tabs, bool):
+            raise TypeError("sessions.max_tabs must be an integer")
+        if self.max_tabs < 1:
+            raise ValueError("sessions.max_tabs must be at least one")
+        if self.max_tabs > 10:
+            raise ValueError("sessions.max_tabs cannot be greater than ten")
 
 
 @dataclass(frozen=True)
@@ -127,6 +141,7 @@ class VulcanoSettings:
     editor: EditorSettings = field(default_factory=EditorSettings)
     transcript: TranscriptSettings = field(default_factory=TranscriptSettings)
     keybindings: KeyBindings = field(default_factory=KeyBindings)
+    sessions: SessionSettings = field(default_factory=SessionSettings)
     sources: tuple[Path, ...] = ()
 
     @classmethod
@@ -170,6 +185,7 @@ class VulcanoSettings:
         editor = _table(ui, "editor")
         transcript = _table(ui, "transcript")
         keybindings = _table(ui, "keybindings")
+        sessions = _table(merged, "sessions")
         return cls(
             home=defaults.home,
             cwd=defaults.cwd,
@@ -181,6 +197,9 @@ class VulcanoSettings:
                 mode=_transcript_mode(transcript),
             ),
             keybindings=KeyBindings.from_mapping(keybindings),
+            sessions=SessionSettings(
+                max_tabs=_integer(sessions, "max_tabs", 5, table="sessions"),
+            ),
             sources=tuple(loaded),
         )
 
@@ -205,10 +224,16 @@ def _table(values: Mapping[str, object], key: str) -> Mapping[str, object]:
     return value
 
 
-def _integer(values: Mapping[str, object], key: str, default: int) -> int:
+def _integer(
+    values: Mapping[str, object],
+    key: str,
+    default: int,
+    *,
+    table: str = "ui.editor",
+) -> int:
     value = values.get(key, default)
     if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError(f"ui.editor.{key} must be an integer")
+        raise TypeError(f"{table}.{key} must be an integer")
     return value
 
 

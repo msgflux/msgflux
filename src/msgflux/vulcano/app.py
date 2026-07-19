@@ -170,13 +170,13 @@ class SessionTabBar(HorizontalScroll):
         self.entries: dict[str, SessionTab] = {}
         self.active_thread_id: str | None = None
         self.persistence = False
+        self.max_tabs = 5
         self._ordered_thread_ids: tuple[str, ...] = ()
         self._key_mode = False
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "SESSION  n next  p previous  1-9 select  f pin  x close  "
-            "c new  Esc cancel",
+            self._key_hint(),
             id="session-key-hint",
         )
 
@@ -201,9 +201,25 @@ class SessionTabBar(HorizontalScroll):
             return None
         return self._ordered_thread_ids[index]
 
+    def _key_hint(self) -> str:
+        if self.max_tabs == 1:
+            selection = "1"
+        elif self.max_tabs == 10:
+            selection = "0-9"
+        else:
+            selection = f"1-{self.max_tabs}"
+        return (
+            f"SESSION  n next  p previous  {selection} select  f pin  "
+            "x close  c new  Esc cancel"
+        )
+
     async def apply_event(self, event: DomainEvent) -> None:
         raw_tabs = event.payload.get("tabs", ())
         self.persistence = bool(event.payload.get("persistence", False))
+        raw_max_tabs = event.payload.get("max_tabs")
+        if isinstance(raw_max_tabs, int) and not isinstance(raw_max_tabs, bool):
+            self.max_tabs = raw_max_tabs
+            self.query_one("#session-key-hint", Static).update(self._key_hint())
         raw_active_thread_id = event.payload.get("active_thread_id")
         self.active_thread_id = (
             str(raw_active_thread_id) if raw_active_thread_id is not None else None
@@ -254,6 +270,9 @@ class SessionTabBar(HorizontalScroll):
             not self.entries and not self._key_mode,
             "session-tabs-hidden",
         )
+        active_view = self.entries.get(self.active_thread_id or "")
+        if active_view is not None:
+            active_view.scroll_visible(animate=False)
 
 
 class PendingInputList(Static):
@@ -761,7 +780,7 @@ class VulcanoApp(App[None]):
 
     #session-tabs {
         width: 100%;
-        height: 3;
+        height: 4;
         padding: 0 1;
         background: #10131a;
         border-bottom: solid #272c36;
@@ -793,9 +812,10 @@ class VulcanoApp(App[None]):
     }
 
     .session-tab {
-        width: auto;
+        width: 19;
+        min-width: 19;
+        max-width: 19;
         height: 3;
-        margin-right: 1;
         background: #171a21;
     }
 
@@ -806,11 +826,13 @@ class VulcanoApp(App[None]):
         color: #9da5b4;
         background: #171a21;
         border: none;
+        text-wrap: nowrap;
     }
 
     .session-tab .session-tab-select {
-        width: auto;
-        min-width: 12;
+        width: 13;
+        min-width: 13;
+        max-width: 13;
     }
 
     .session-tab .session-tab-pin, .session-tab .session-tab-close {
@@ -2058,10 +2080,11 @@ class VulcanoApp(App[None]):
         if offset is not None:
             self._activate_session_from_keyboard(bar.adjacent_thread_id(offset))
             return
-        if len(key) == 1 and key in "123456789":
+        if len(key) == 1 and key in "0123456789":
+            ordinal = 10 if key == "0" else int(key)
             self._activate_session_from_keyboard(
-                bar.thread_id_at(int(key)),
-                ordinal=int(key),
+                bar.thread_id_at(ordinal),
+                ordinal=ordinal,
             )
             return
         active_thread_id = bar.active_thread_id

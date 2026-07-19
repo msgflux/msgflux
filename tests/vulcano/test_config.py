@@ -22,6 +22,9 @@ mode = "compact"
 [ui.keybindings]
 command_palette = "ctrl+k"
 newline = ["shift+enter"]
+
+[sessions]
+max_tabs = 7
 """.strip(),
         encoding="utf-8",
     )
@@ -33,6 +36,9 @@ max_height = 18
 
 [ui.keybindings]
 follow_up = ["ctrl+enter"]
+
+[sessions]
+max_tabs = 5
 """.strip(),
         encoding="utf-8",
     )
@@ -50,6 +56,7 @@ follow_up = ["ctrl+enter"]
     assert settings.keybindings.keys("cancel") == ("escape",)
     assert settings.keybindings.keys("toggle_sidebar") == ("alt+s",)
     assert settings.keybindings.keys("session_prefix") == ("ctrl+g",)
+    assert settings.sessions.max_tabs == 5
     assert settings.sources == (
         home / "config.toml",
         project_config,
@@ -105,9 +112,37 @@ def test_invalid_transcript_mode_is_rejected(tmp_path):
         VulcanoSettings.load(cwd=tmp_path, home=tmp_path / "home")
 
 
+@pytest.mark.parametrize("value", [0, -1, 11, True])
+def test_invalid_session_tab_limit_is_rejected(tmp_path, value):
+    config = tmp_path / ".vulcano" / "config.toml"
+    config.parent.mkdir()
+    rendered = str(value).lower() if isinstance(value, bool) else str(value)
+    config.write_text(
+        f"[sessions]\nmax_tabs = {rendered}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises((TypeError, ValueError), match=r"sessions\.max_tabs"):
+        VulcanoSettings.load(cwd=tmp_path, home=tmp_path / "home")
+
+
 def test_settings_paths_are_path_objects(tmp_path):
     settings = VulcanoSettings.defaults(cwd=tmp_path, home=tmp_path / "home")
 
     assert isinstance(settings.cwd, Path)
     assert isinstance(settings.home, Path)
     assert settings.transcript.mode == "full"
+    assert settings.sessions.max_tabs == 5
+
+
+def test_session_tab_limit_accepts_ten(tmp_path):
+    config = tmp_path / ".vulcano" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        "[sessions]\nmax_tabs = 10\n",
+        encoding="utf-8",
+    )
+
+    settings = VulcanoSettings.load(cwd=tmp_path, home=tmp_path / "home")
+
+    assert settings.sessions.max_tabs == 10

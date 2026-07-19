@@ -122,7 +122,8 @@ the available keys, and the next key performs one action:
 |----------|--------|
 | `Ctrl+G`, `n` or `Right` | Activate the next tab |
 | `Ctrl+G`, `p` or `Left` | Activate the previous tab |
-| `Ctrl+G`, `1`–`9` | Activate a tab by its visible position |
+| `Ctrl+G`, `1`–`9` | Activate one of the first nine tabs by its visible position |
+| `Ctrl+G`, `0` | Activate the tenth tab when `sessions.max_tabs = 10` |
 | `Ctrl+G`, `f` | Pin or unpin the active tab |
 | `Ctrl+G`, `x` | Close the active tab |
 | `Ctrl+G`, `c` | Create and activate a new empty session |
@@ -215,6 +216,9 @@ max_height = 15
 [ui.transcript]
 mode = "full"
 
+[sessions]
+max_tabs = 5
+
 [ui.keybindings]
 command_palette = "ctrl+p"
 toggle_sidebar = "alt+s"
@@ -234,7 +238,11 @@ max_height = 20
 The loader reads global configuration first and recursively merges the project
 file over it. Key values accept either one string or a list. Empty lists disable
 an action; duplicate keys across built-in actions are rejected so dispatch stays
-deterministic. `VULCANO_HOME` relocates configuration, extensions, and sessions.
+deterministic. `sessions.max_tabs` limits the number of simultaneously open
+tabs without deleting durable sessions; opening another tab is allowed after
+one is closed. The value must be between one and ten. Position selection uses
+`1` through `9` for the first nine tabs and `0` for the tenth. `VULCANO_HOME`
+relocates configuration, extensions, and sessions.
 
 The target user directory will also provide the natural homes for resources:
 

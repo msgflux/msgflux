@@ -124,5 +124,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         extensions_enabled=not args.no_extensions,
         trust_project_extensions=args.trust_project_extensions,
         extension_user_directory=settings.home / "extensions",
+        max_session_tabs=settings.sessions.max_tabs,
     )
     app_type(runtime, settings=settings).run()

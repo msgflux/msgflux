@@ -113,6 +113,7 @@ class VulcanoRuntime:
         discover_extensions: bool = True,
         trust_project_extensions: bool = False,
         extension_user_directory: str | Path | None = None,
+        max_session_tabs: int = 5,
     ) -> None:
         if responder is not None and agent is not None:
             raise ValueError("Configure either responder or agent, not both")
@@ -154,6 +155,7 @@ class VulcanoRuntime:
             resolved_store,
             thread_id,
             export_directory=export_directory or resolved_cwd,
+            max_tabs=max_session_tabs,
         )
         self._session_replay = (
             resolved_store.replay(thread_id) if resolved_store is not None else ()
@@ -724,6 +726,7 @@ class VulcanoRuntime:
             "active_thread_id": self.sessions.active_tab_thread_id,
             "tabs": [tab.to_dict() for tab in self.sessions.tabs],
             "persistence": self.sessions.enabled,
+            "max_tabs": self.sessions.max_tabs,
         }
         if closed is not None:
             payload["closed"] = dict(closed)

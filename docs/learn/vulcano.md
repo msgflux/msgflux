@@ -378,6 +378,11 @@ the active tab selects the most recent remaining tab, and the next input reopens
 the current thread if every tab was closed. Switching and closing are rejected
 while an execution is active.
 
+The runtime accepts at most `sessions.max_tabs` open tabs, defaulting to five.
+`/new`, `/fork`, and `/resume` reject an additional tab before creating or
+changing durable state. Closing a tab frees capacity without deleting its
+session.
+
 ### Runtime-owned permissions
 
 Privileged flows request authorization through `ctx.request_permission()`.

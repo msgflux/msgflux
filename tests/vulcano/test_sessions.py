@@ -289,6 +289,7 @@ async def test_runtime_new_command_opens_an_empty_session_tab(tmp_path):
         session_store=store,
         stream_delay=0,
         extensions_enabled=False,
+        max_session_tabs=2,
     )
     await runtime.dispatch(SubmitInput("keep this in the original session"))
 
@@ -310,6 +311,27 @@ async def test_runtime_new_command_opens_an_empty_session_tab(tmp_path):
         ("thd_original", "paused"),
         (new_thread_id, "active"),
     ]
+    tabs_event = [
+        event
+        for event in runtime.history
+        if event.type == EventType.SESSION_TABS_UPDATED
+    ][-1]
+    assert tabs_event.payload["max_tabs"] == 2
+
+    session_ids = {info.thread_id for info in store.list()}
+    await runtime.dispatch(SubmitInput("/new", correlation_id="at-limit"))
+    assert {info.thread_id for info in store.list()} == session_ids
+    limit_error = next(
+        event
+        for event in runtime.history
+        if event.type == EventType.COMMAND_ERROR and event.correlation_id == "at-limit"
+    )
+    assert "At most 2 session tabs" in str(limit_error.payload["message"])
+
+    await runtime.dispatch(CloseSessionTab("thd_original"))
+    await runtime.dispatch(SubmitInput("/new", correlation_id="after-close"))
+    assert len(runtime.sessions.tabs) == 2
+    assert len(store.list()) == 3
 
 
 @pytest.mark.asyncio

@@ -389,8 +389,8 @@ Their payload contains the new public snapshot and the source of the change.
 
 `session.tabs.updated` is a runtime workspace snapshot rather than an Agent
 signal. It contains one entry per open `thread_id`, pin state, lifecycle status,
-and the active thread. Clients answer with activate, pin, and close actions;
-only `session.switched` carries replay data.
+the active thread, and the configured `max_tabs` capacity. Clients answer with
+activate, pin, and close actions; only `session.switched` carries replay data.
 
 ## Activity group and sidebar projection
 

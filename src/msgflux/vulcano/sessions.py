@@ -25,6 +25,7 @@ __all__ = [
 
 
 _VALID_THREAD_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+_DEFAULT_MAX_SESSION_TABS = 5
 SessionTabStatus = Literal["active", "idle", "paused", "terminated"]
 _REPLAY_EVENT_TYPES = {
     EventType.EXECUTION_STARTED,
@@ -92,8 +93,18 @@ class SessionTabInfo:
 class SessionWorkspace:
     """Persistent runtime state for visible and pinned session tabs."""
 
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        max_tabs: int = _DEFAULT_MAX_SESSION_TABS,
+    ) -> None:
+        if max_tabs < 1:
+            raise ValueError("Session workspace max_tabs must be at least one")
+        if max_tabs > 10:
+            raise ValueError("Session workspace max_tabs cannot exceed ten")
         self.path = Path(path).expanduser().resolve() if path is not None else None
+        self.max_tabs = max_tabs
         self._records: dict[str, SessionTabInfo] = {}
         self._open: list[str] = []
         self._active_thread_id: str | None = None
@@ -115,14 +126,21 @@ class SessionWorkspace:
                 pinned=record.pinned and record.thread_id in known,
                 status="idle",
             )
-        self._open = [
+        pinned_thread_ids = [
             record.thread_id for record in self._records.values() if record.pinned
         ]
+        if thread_id in pinned_thread_ids:
+            self._open = pinned_thread_ids[: self.max_tabs]
+            if thread_id not in self._open:
+                self._open[-1] = thread_id
+        else:
+            self._open = pinned_thread_ids[: self.max_tabs - 1]
         self._active_thread_id = None
         self.activate(thread_id)
 
     def activate(self, thread_id: str) -> bool:
         _validate_thread_id(thread_id)
+        self.require_open_slot(thread_id)
         changed = self._active_thread_id != thread_id or thread_id not in self._open
         previous = self._active_thread_id
         if previous is not None and previous in self._records and previous != thread_id:
@@ -143,6 +161,15 @@ class SessionWorkspace:
         self._active_thread_id = thread_id
         self._save()
         return changed
+
+    def require_open_slot(self, thread_id: str | None = None) -> None:
+        if thread_id is not None and thread_id in self._open:
+            return
+        if len(self._open) >= self.max_tabs:
+            raise RuntimeError(
+                f"At most {self.max_tabs} session tabs can be open; "
+                "close one before opening another"
+            )
 
     def toggle_pin(self, thread_id: str) -> SessionTabInfo:
         if thread_id not in self._open:
@@ -375,6 +402,7 @@ class SessionController:
         *,
         export_directory: str | Path,
         workspace_file: str | Path | None = None,
+        max_tabs: int = _DEFAULT_MAX_SESSION_TABS,
     ) -> None:
         self.store = store
         self.current_thread_id = thread_id
@@ -383,7 +411,7 @@ class SessionController:
         resolved_workspace = workspace_file
         if resolved_workspace is None and store is not None:
             resolved_workspace = store.directory.parent / "workspace.toml"
-        self.workspace = SessionWorkspace(resolved_workspace)
+        self.workspace = SessionWorkspace(resolved_workspace, max_tabs=max_tabs)
         available = (
             tuple(info.thread_id for info in store.list())
             if store is not None
@@ -406,18 +434,25 @@ class SessionController:
     def active_tab_thread_id(self) -> str | None:
         return self.workspace.active_thread_id
 
+    @property
+    def max_tabs(self) -> int:
+        return self.workspace.max_tabs
+
     def request_resume(self, thread_id: str) -> SessionInfo:
         info = self._require_store().info(thread_id)
+        self.workspace.require_open_slot(thread_id)
         self._pending = SessionTransition("resume", thread_id)
         return info
 
     def request_new(self) -> SessionInfo:
+        self.workspace.require_open_slot()
         store = self._require_store()
         info = store.ensure(new_thread_id())
         self._pending = SessionTransition("new", info.thread_id)
         return info
 
     def request_fork(self, through_sequence: int | None = None) -> SessionInfo:
+        self.workspace.require_open_slot()
         info = self._require_store().fork(
             self.current_thread_id,
             through_sequence=through_sequence,

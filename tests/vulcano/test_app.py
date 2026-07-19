@@ -211,6 +211,81 @@ async def test_session_tabs_support_tmux_style_keyboard_navigation(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_session_tabs_keep_controls_visible_in_a_narrow_terminal(tmp_path):
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_one", namespace="vulcano"),
+        session_store=SessionStore(tmp_path / "sessions"),
+        stream_delay=0,
+        extensions_enabled=False,
+        max_session_tabs=5,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(60, 28)) as pilot:
+        await pilot.pause(delay=0.1)
+        for _ in range(4):
+            await pilot.press("ctrl+g", "c")
+            await pilot.pause(delay=0.15)
+
+        tabs = app.query_one(SessionTabBar)
+        assert len(tabs.entries) == 5
+        assert "1-5 select" in str(tabs.query_one("#session-key-hint", Static).render())
+        assert tabs.size.height == tabs.virtual_size.height == 3
+        assert tabs.scroll_x > 0
+
+        active = tabs.entries[runtime.sessions.current_thread_id]
+        assert active.region.x >= tabs.region.x
+        assert active.region.right <= tabs.region.right
+        for tab in tabs.entries.values():
+            select = tab.query_one(".session-tab-select", Button)
+            pin = tab.query_one(".session-tab-pin", Button)
+            close = tab.query_one(".session-tab-close", Button)
+            assert str(select.label).strip()
+            assert select.outer_size.width == 13
+            assert select.styles.text_wrap == "nowrap"
+            assert pin.outer_size.width == 3
+            assert close.outer_size.width == 3
+
+        await pilot.press("ctrl+g", "1")
+        await pilot.pause(delay=0.15)
+        first = next(iter(tabs.entries.values()))
+        assert first.region.x >= tabs.region.x
+        assert first.region.right <= tabs.region.right
+
+
+@pytest.mark.asyncio
+async def test_session_zero_key_selects_tenth_tab(tmp_path):
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_one", namespace="vulcano"),
+        session_store=SessionStore(tmp_path / "sessions"),
+        stream_delay=0,
+        extensions_enabled=False,
+        max_session_tabs=10,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(60, 28)) as pilot:
+        await pilot.pause(delay=0.1)
+        for _ in range(9):
+            await pilot.press("ctrl+g", "c")
+            await pilot.pause(delay=0.1)
+
+        tabs = app.query_one(SessionTabBar)
+        tenth_thread_id = runtime.sessions.current_thread_id
+        assert len(tabs.entries) == 10
+
+        await pilot.press("ctrl+g")
+        assert "0-9 select" in str(tabs.query_one("#session-key-hint", Static).render())
+        await pilot.press("1")
+        await pilot.pause(delay=0.15)
+        assert runtime.sessions.current_thread_id != tenth_thread_id
+
+        await pilot.press("ctrl+g", "0")
+        await pilot.pause(delay=0.15)
+        assert runtime.sessions.current_thread_id == tenth_thread_id
+
+
+@pytest.mark.asyncio
 async def test_command_palette_filters_and_inserts_runtime_command():
     app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
 
