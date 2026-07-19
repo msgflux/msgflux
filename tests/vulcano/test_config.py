@@ -49,6 +49,7 @@ follow_up = ["ctrl+enter"]
     assert settings.keybindings.keys("newline") == ("shift+enter",)
     assert settings.keybindings.keys("cancel") == ("escape",)
     assert settings.keybindings.keys("toggle_sidebar") == ("alt+s",)
+    assert settings.keybindings.keys("session_prefix") == ("ctrl+g",)
     assert settings.sources == (
         home / "config.toml",
         project_config,
@@ -72,6 +73,12 @@ def test_keybindings_reject_collisions():
                 "quit": "ctrl+x",
             }
         )
+
+
+def test_session_prefix_can_be_reconfigured():
+    keybindings = KeyBindings.from_mapping({"session_prefix": "ctrl+a"})
+
+    assert keybindings.keys("session_prefix") == ("ctrl+a",)
 
 
 def test_invalid_editor_height_is_rejected(tmp_path):

@@ -918,6 +918,15 @@ class VulcanoRuntime:
                 ),
             ),
             (
+                "new",
+                CommandOptions(
+                    description="Start a new empty durable session.",
+                    usage="/new",
+                    handler=_new_session_command,
+                    category="session",
+                ),
+            ),
+            (
                 "fork",
                 CommandOptions(
                     description="Fork this session and continue on the new thread.",
@@ -1115,6 +1124,23 @@ def _resume_command(
             EventDraft(
                 EventType.COMMAND_OUTPUT,
                 {"text": f"Resuming session `{info.thread_id}`."},
+            ),
+        )
+    )
+
+
+def _new_session_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    if arguments.strip():
+        raise ValueError("Usage: /new")
+    info = _session_control(context).request_new()
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"Started new session `{info.thread_id}`."},
             ),
         )
     )

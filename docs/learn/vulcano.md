@@ -72,6 +72,7 @@ The preview registers these commands:
 | `/reload` | Unload and reload extensions. |
 | `/session` | Show the active thread and persistence state. |
 | `/sessions` | List durable transcript sessions. |
+| `/new` | Start a new empty session in another tab. |
 | `/resume <thread-id>` | Switch to and replay another session. |
 | `/fork [event-sequence]` | Fork the current transcript and continue on a new thread. |
 | `/export [path]` | Export the active session as Markdown. |
@@ -355,11 +356,13 @@ under the same thread. The store writes append-only JSONL events. On restart,
 replayable transcript events are published before `runtime.started`; incomplete
 assistant, block, and tool streams are closed as aborted projections.
 
-The CLI enables this store at `~/.vulcano/sessions` by default. `/resume` and
-`/fork` defer their session transition until their command has completed, then
-emit one `session.switched` event containing the replay. The TUI clears its
-projection and rebuilds it; it never reads session files. `/export` produces a
-Markdown transcript. Extensions can access the same high-level facade at
+The CLI enables this store at `~/.vulcano/sessions` by default. `/new`,
+`/resume`, and `/fork` defer their session transition until their command has
+completed, then emit one `session.switched` event. `/new` creates a fresh thread
+with an empty replay, while `/fork` creates a child thread containing the
+selected history of the current session. The TUI clears its projection and
+rebuilds it; it never reads session files. `/export` produces a Markdown
+transcript. Extensions can access the same high-level facade at
 `ctx.services["sessions"]` without receiving the private runtime object.
 
 Vulcano also keeps a runtime-owned tab workspace. `session.tabs.updated`
@@ -635,7 +638,7 @@ def setup(api):
     )
 
     api.register_shortcut(
-        "ctrl+g",
+        "ctrl+u",
         lambda ctx: ctx.ui.set_status("goal", "goal shortcut pressed"),
     )
 

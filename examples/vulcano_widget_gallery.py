@@ -576,8 +576,8 @@ def setup(api):
         lambda value: "/ui-notify warning" if value == "/ui-notify w" else None
     )
     api.register_shortcut(
-        "ctrl+g",
-        lambda ctx: ctx.ui.set_status("gallery-shortcut", "Ctrl+G pressed"),
+        "ctrl+u",
+        lambda ctx: ctx.ui.set_status("gallery-shortcut", "Ctrl+U pressed"),
     )
     for name, description, handler in _COMMANDS:
         api.register_command(

@@ -634,6 +634,7 @@ class VulcanoFooter(Static):
         hints = []
         for action, label in (
             ("command_palette", "commands"),
+            ("session_prefix", "sessions"),
             ("cancel", "cancel"),
         ):
             key = self._keybindings.primary(action)

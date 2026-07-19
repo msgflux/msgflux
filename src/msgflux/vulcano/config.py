@@ -31,6 +31,7 @@ DEFAULT_KEY_BINDINGS: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "quit": ("ctrl+c",),
         "command_palette": ("ctrl+p",),
         "toggle_sidebar": ("alt+s",),
+        "session_prefix": ("ctrl+g",),
     }
 )
 

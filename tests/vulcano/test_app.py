@@ -19,6 +19,7 @@ from msgflux.vulcano import (
     CommandOptions,
     CommandResult,
     EditorSettings,
+    EventType,
     KeyBindings,
     SessionStore,
     SessionWorkspace,
@@ -91,6 +92,7 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         )
         assert "Mock runtime received: hello" in rendered_assistant
         assert "run:" in str(footer.render())
+        assert "Ctrl+G sessions" in str(footer.render())
 
 
 @pytest.mark.asyncio
@@ -145,6 +147,67 @@ async def test_session_tab_bar_switches_pins_and_closes_sessions(tmp_path):
     restored = SessionWorkspace(tmp_path / "workspace.toml")
     restored.start("thd_current", ("thd_one", "thd_two", "thd_current"))
     assert [tab.thread_id for tab in restored.tabs] == ["thd_one", "thd_current"]
+
+
+@pytest.mark.asyncio
+async def test_session_tabs_support_tmux_style_keyboard_navigation(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_one")
+    store.ensure("thd_two")
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_one", namespace="vulcano"),
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause(delay=0.1)
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/resume thd_two"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+        tabs = app.query_one(SessionTabBar)
+
+        app.simulate_key("ctrl+g")
+        app.simulate_key("p")
+        await pilot.pause(delay=0.2)
+        assert runtime.sessions.current_thread_id == "thd_one"
+        assert prompt.text == ""
+        assert not tabs.has_class("session-key-mode")
+
+        await pilot.press("ctrl+g")
+        assert tabs.has_class("session-key-mode")
+        await pilot.press("escape")
+        assert not tabs.has_class("session-key-mode")
+
+        await pilot.press("ctrl+g", "2")
+        await pilot.pause(delay=0.2)
+        assert runtime.sessions.current_thread_id == "thd_two"
+
+        await pilot.press("ctrl+g", "f")
+        await pilot.pause(delay=0.1)
+        assert tabs.entries["thd_two"].pinned
+
+        await pilot.press("ctrl+g", "x")
+        await pilot.pause(delay=0.2)
+        assert runtime.sessions.current_thread_id == "thd_one"
+        assert list(tabs.entries) == ["thd_one"]
+
+        await pilot.press("ctrl+g", "c")
+        await pilot.pause(delay=0.2)
+        assert len(tabs.entries) == 2
+        assert runtime.sessions.current_thread_id != "thd_one"
+        assert store.info(runtime.sessions.current_thread_id).parent_thread_id is None
+        transition = [
+            event
+            for event in runtime.history
+            if event.type == EventType.SESSION_SWITCHED
+        ][-1]
+        assert transition.payload["kind"] == "new"
+        assert transition.payload["events"] == []
 
 
 @pytest.mark.asyncio
@@ -210,7 +273,12 @@ async def test_app_uses_configured_editor_and_command_palette_key(tmp_path):
         home=tmp_path / "home",
         cwd=tmp_path,
         editor=EditorSettings(min_height=4, max_height=9),
-        keybindings=KeyBindings.from_mapping({"command_palette": "ctrl+k"}),
+        keybindings=KeyBindings.from_mapping(
+            {
+                "command_palette": "ctrl+k",
+                "session_prefix": "ctrl+a",
+            }
+        ),
     )
     app = VulcanoApp(
         VulcanoRuntime(stream_delay=0, extensions_enabled=False),
@@ -222,6 +290,10 @@ async def test_app_uses_configured_editor_and_command_palette_key(tmp_path):
         prompt = app.query_one("#prompt", VulcanoTextArea)
         assert prompt.editor_settings == settings.editor
         assert prompt.outer_size.height == 4
+
+        await pilot.press("ctrl+a")
+        assert app.query_one(SessionTabBar).has_class("session-key-mode")
+        await pilot.press("escape")
 
         await pilot.press("ctrl+k")
         await pilot.pause()
@@ -612,6 +684,10 @@ async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
             )
             api.register_shortcut(
                 "ctrl+g",
+                lambda context: context.ui.set_status("shortcut", "conflict"),
+            )
+            api.register_shortcut(
+                "ctrl+u",
                 lambda context: context.ui.set_status("shortcut", "pressed"),
             )
             api.register_message_renderer(
@@ -659,6 +735,10 @@ async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
         assert prompt.value == "/card "
         assert await prompt.suggester.get_suggestion("/card r") == "/card release"
         await pilot.press("ctrl+g")
+        assert app.query_one(SessionTabBar).has_class("session-key-mode")
+        assert "conflict" not in str(app.query_one("#status", Static).render())
+        await pilot.press("escape")
+        await pilot.press("ctrl+u")
         await pilot.pause(delay=0.05)
         assert "pressed" in str(app.query_one("#status", Static).render())
 

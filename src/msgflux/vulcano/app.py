@@ -168,16 +168,61 @@ class SessionTabBar(HorizontalScroll):
     def __init__(self) -> None:
         super().__init__(id="session-tabs", classes="session-tabs-hidden")
         self.entries: dict[str, SessionTab] = {}
+        self.active_thread_id: str | None = None
+        self.persistence = False
+        self._ordered_thread_ids: tuple[str, ...] = ()
+        self._key_mode = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "SESSION  n next  p previous  1-9 select  f pin  x close  "
+            "c new  Esc cancel",
+            id="session-key-hint",
+        )
+
+    def set_key_mode(self, active: bool) -> None:  # noqa: FBT001
+        self._key_mode = active
+        self.set_class(active, "session-key-mode")
+        self.set_class(not self.entries and not active, "session-tabs-hidden")
+
+    def adjacent_thread_id(self, offset: int) -> str | None:
+        if not self._ordered_thread_ids:
+            return None
+        if self.active_thread_id not in self._ordered_thread_ids:
+            return self._ordered_thread_ids[0]
+        active_index = self._ordered_thread_ids.index(self.active_thread_id)
+        return self._ordered_thread_ids[
+            (active_index + offset) % len(self._ordered_thread_ids)
+        ]
+
+    def thread_id_at(self, ordinal: int) -> str | None:
+        index = ordinal - 1
+        if not 0 <= index < len(self._ordered_thread_ids):
+            return None
+        return self._ordered_thread_ids[index]
 
     async def apply_event(self, event: DomainEvent) -> None:
         raw_tabs = event.payload.get("tabs", ())
-        persistence = bool(event.payload.get("persistence", False))
+        self.persistence = bool(event.payload.get("persistence", False))
+        raw_active_thread_id = event.payload.get("active_thread_id")
+        self.active_thread_id = (
+            str(raw_active_thread_id) if raw_active_thread_id is not None else None
+        )
         tabs = (
             tuple(item for item in raw_tabs if isinstance(item, Mapping))
             if isinstance(raw_tabs, Sequence) and not isinstance(raw_tabs, (str, bytes))
             else ()
         )
-        incoming = {str(item.get("thread_id", "")) for item in tabs}
+        ordered_thread_ids = tuple(
+            dict.fromkeys(
+                thread_id
+                for item in tabs
+                for thread_id in (str(item.get("thread_id", "")),)
+                if thread_id
+            )
+        )
+        self._ordered_thread_ids = ordered_thread_ids
+        incoming = set(ordered_thread_ids)
         for thread_id in tuple(self.entries):
             if thread_id in incoming:
                 continue
@@ -195,7 +240,7 @@ class SessionTabBar(HorizontalScroll):
                     thread_id,
                     pinned=pinned,
                     status=status,
-                    persistence=persistence,
+                    persistence=self.persistence,
                 )
                 self.entries[thread_id] = view
                 await self.mount(view)
@@ -203,9 +248,12 @@ class SessionTabBar(HorizontalScroll):
                 view.update_state(
                     pinned=pinned,
                     status=status,
-                    persistence=persistence,
+                    persistence=self.persistence,
                 )
-        self.set_class(not self.entries, "session-tabs-hidden")
+        self.set_class(
+            not self.entries and not self._key_mode,
+            "session-tabs-hidden",
+        )
 
 
 class PendingInputList(Static):
@@ -725,6 +773,25 @@ class VulcanoApp(App[None]):
         display: none;
     }
 
+    #session-key-hint {
+        display: none;
+        width: 100%;
+        height: 3;
+        padding: 0 1;
+        color: #ffb27d;
+        background: #24170f;
+        text-style: bold;
+        content-align: left middle;
+    }
+
+    #session-tabs.session-key-mode .session-tab {
+        display: none;
+    }
+
+    #session-tabs.session-key-mode #session-key-hint {
+        display: block;
+    }
+
     .session-tab {
         width: auto;
         height: 3;
@@ -1073,6 +1140,13 @@ class VulcanoApp(App[None]):
         super().__init__()
         self.runtime = runtime
         self.settings = settings or VulcanoSettings.defaults()
+        for key in self.settings.keybindings.keys("session_prefix"):
+            self._bindings.bind(
+                key,
+                "session_prefix",
+                show=False,
+                priority=True,
+            )
         self.transcript_mode = self.settings.transcript.mode
         self._ui_driver = TextualUiDriver(
             self,
@@ -1094,6 +1168,7 @@ class VulcanoApp(App[None]):
         self._correlation_runs: dict[str, str] = {}
         self._run_user_messages: dict[str, str] = {}
         self._user_message_views: dict[str, TranscriptMessage] = {}
+        self._session_key_mode = False
 
     def compose(self) -> ComposeResult:
         with Container(id="header-slot"):
@@ -1136,32 +1211,9 @@ class VulcanoApp(App[None]):
     async def on_key(self, event: events.Key) -> None:
         if self._handle_command_menu_key(event):
             return
+        if self._handle_configured_app_key(event):
+            return
         keybindings = self.settings.keybindings
-        if keybindings.matches("toggle_sidebar", event.key):
-            self.action_toggle_sidebar()
-            event.prevent_default()
-            event.stop()
-            return
-        if keybindings.matches("cancel", event.key):
-            self.action_cancel_execution()
-            event.prevent_default()
-            event.stop()
-            return
-        if keybindings.matches("clear", event.key):
-            self.action_request_clear()
-            event.prevent_default()
-            event.stop()
-            return
-        if keybindings.matches("quit", event.key):
-            self.action_request_quit()
-            event.prevent_default()
-            event.stop()
-            return
-        if keybindings.matches("command_palette", event.key):
-            self.action_command_palette()
-            event.prevent_default()
-            event.stop()
-            return
         focused = self.focused
         if (
             isinstance(focused, Input)
@@ -1186,6 +1238,28 @@ class VulcanoApp(App[None]):
         if handled:
             event.prevent_default()
             event.stop()
+
+    def _handle_configured_app_key(self, event: events.Key) -> bool:
+        if self._session_key_mode:
+            self._handle_session_key(event)
+        else:
+            keybindings = self.settings.keybindings
+            for action, handler in (
+                ("toggle_sidebar", self.action_toggle_sidebar),
+                ("cancel", self.action_cancel_execution),
+                ("clear", self.action_request_clear),
+                ("quit", self.action_request_quit),
+                ("command_palette", self.action_command_palette),
+            ):
+                if not keybindings.matches(action, event.key):
+                    continue
+                handler()
+                break
+            else:
+                return False
+        event.prevent_default()
+        event.stop()
+        return True
 
     def _handle_command_menu_key(self, event: events.Key) -> bool:
         if not self._ui_driver.command_menu_visible:
@@ -1964,9 +2038,71 @@ class VulcanoApp(App[None]):
     def action_command_palette(self) -> None:
         self._open_command_palette()
 
+    def action_session_prefix(self) -> None:
+        self._session_key_mode = True
+        self._ui_driver.dismiss_command_menu()
+        self.set_focus(None)
+        self.query_one(SessionTabBar).set_key_mode(True)
+
     def action_toggle_sidebar(self) -> None:
         self.query_one(TurnSidebar).toggle()
         self._sync_sidebar_toggle()
+
+    def _handle_session_key(self, event: events.Key) -> None:
+        bar = self.query_one(SessionTabBar)
+        key = event.key.lower()
+        self._finish_session_key_mode()
+        if key == "escape":
+            return
+        offset = {"n": 1, "right": 1, "p": -1, "left": -1}.get(key)
+        if offset is not None:
+            self._activate_session_from_keyboard(bar.adjacent_thread_id(offset))
+            return
+        if len(key) == 1 and key in "123456789":
+            self._activate_session_from_keyboard(
+                bar.thread_id_at(int(key)),
+                ordinal=int(key),
+            )
+            return
+        active_thread_id = bar.active_thread_id
+        if key == "f":
+            if not bar.persistence:
+                self.notify("Session persistence is disabled", severity="warning")
+            elif active_thread_id is not None:
+                self._dispatch_session_action(ToggleSessionPin(active_thread_id))
+            return
+        if key == "x":
+            if active_thread_id is not None:
+                self._dispatch_session_action(CloseSessionTab(active_thread_id))
+            return
+        if key == "c":
+            self._dispatch_text("/new")
+            return
+        self.notify(
+            f"Unknown session key: {event.key}",
+            severity="warning",
+        )
+
+    def _finish_session_key_mode(self) -> None:
+        self._session_key_mode = False
+        self.query_one(SessionTabBar).set_key_mode(False)
+        self._ui_driver.focus_editor()
+
+    def _activate_session_from_keyboard(
+        self,
+        thread_id: str | None,
+        *,
+        ordinal: int | None = None,
+    ) -> None:
+        if thread_id is None:
+            message = (
+                f"Session tab {ordinal} is not open"
+                if ordinal is not None
+                else "No session tab is available"
+            )
+            self.notify(message, severity="warning")
+            return
+        self._dispatch_session_action(ActivateSessionTab(thread_id))
 
     def action_request_quit(self) -> None:
         self._dispatch_text("/quit")

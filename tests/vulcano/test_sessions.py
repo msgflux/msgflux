@@ -282,6 +282,37 @@ async def test_runtime_slash_commands_fork_resume_and_export_sessions(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runtime_new_command_opens_an_empty_session_tab(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_original", namespace="vulcano"),
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    await runtime.dispatch(SubmitInput("keep this in the original session"))
+
+    await runtime.dispatch(SubmitInput("/new", correlation_id="new-session"))
+
+    transition = [
+        event for event in runtime.history if event.type == EventType.SESSION_SWITCHED
+    ][-1]
+    new_thread_id = str(transition.payload["thread_id"])
+    assert transition.payload["kind"] == "new"
+    assert transition.payload["events"] == []
+    assert new_thread_id != "thd_original"
+    assert runtime.sessions.current_thread_id == new_thread_id
+    assert store.info(new_thread_id).parent_thread_id is None
+    assert not any(
+        event.type == EventType.MESSAGE_USER for event in store.load(new_thread_id)
+    )
+    assert [(tab.thread_id, tab.status) for tab in runtime.sessions.tabs] == [
+        ("thd_original", "paused"),
+        (new_thread_id, "active"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_owns_session_tab_activation_pin_and_close(tmp_path):
     store = SessionStore(tmp_path / "sessions")
     store.ensure("thd_one")

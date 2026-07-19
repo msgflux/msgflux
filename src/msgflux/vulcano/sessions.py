@@ -71,7 +71,7 @@ class SessionInfo:
 
 @dataclass(frozen=True)
 class SessionTransition:
-    kind: Literal["resume", "fork"]
+    kind: Literal["resume", "fork", "new"]
     thread_id: str
 
 
@@ -409,6 +409,12 @@ class SessionController:
     def request_resume(self, thread_id: str) -> SessionInfo:
         info = self._require_store().info(thread_id)
         self._pending = SessionTransition("resume", thread_id)
+        return info
+
+    def request_new(self) -> SessionInfo:
+        store = self._require_store()
+        info = store.ensure(new_thread_id())
+        self._pending = SessionTransition("new", info.thread_id)
         return info
 
     def request_fork(self, through_sequence: int | None = None) -> SessionInfo:

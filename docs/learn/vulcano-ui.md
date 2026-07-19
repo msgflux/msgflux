@@ -113,6 +113,29 @@ with `--no-sessions`, because there is no durable thread to restore. Session
 switch and close requests are rejected while an execution is active; pinning is
 safe at any time.
 
+### Keyboard navigation
+
+Press `Ctrl+G` to enter session navigation mode. The tab bar temporarily shows
+the available keys, and the next key performs one action:
+
+| Sequence | Action |
+|----------|--------|
+| `Ctrl+G`, `n` or `Right` | Activate the next tab |
+| `Ctrl+G`, `p` or `Left` | Activate the previous tab |
+| `Ctrl+G`, `1`–`9` | Activate a tab by its visible position |
+| `Ctrl+G`, `f` | Pin or unpin the active tab |
+| `Ctrl+G`, `x` | Close the active tab |
+| `Ctrl+G`, `c` | Create and activate a new empty session |
+| `Ctrl+G`, `Esc` | Leave session navigation mode |
+
+The editor loses focus while the prefix is active, so the command key is not
+inserted into the prompt. After the action, focus returns to the editor. This
+keeps the workflow usable over SSH and remote terminals without mouse support.
+The TUI translates each sequence into the existing runtime action or `/new`;
+session state remains runtime-owned. The configured prefix is a high-priority
+application binding; extensions should register another shortcut or the user
+can move `session_prefix` to a different key.
+
 ## Permission confirmation
 
 Run `/ui-permission` to preview a privileged operation. The runtime publishes a
@@ -195,6 +218,7 @@ mode = "full"
 [ui.keybindings]
 command_palette = "ctrl+p"
 toggle_sidebar = "alt+s"
+session_prefix = "ctrl+g"
 cancel = "escape"
 follow_up = ["alt+enter"]
 newline = ["shift+enter", "ctrl+j"]
@@ -224,5 +248,5 @@ The target user directory will also provide the natural homes for resources:
 └── sessions/
 ```
 
-Session transcripts are append-only JSONL files. Use `/sessions`, `/resume`,
-`/fork`, and `/export` to exercise persistence without a real Agent.
+Session transcripts are append-only JSONL files. Use `/sessions`, `/new`,
+`/resume`, `/fork`, and `/export` to exercise persistence without a real Agent.
