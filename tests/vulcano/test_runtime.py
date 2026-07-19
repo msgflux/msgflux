@@ -125,7 +125,7 @@ async def test_mock_runtime_streams_ordered_assistant_events():
     assert all(
         event.correlation_id == "run-1"
         for event in events
-        if event.type != EventType.RUNTIME_STARTED
+        if event.type not in {EventType.RUNTIME_STARTED, EventType.SESSION_TABS_UPDATED}
     )
 
 

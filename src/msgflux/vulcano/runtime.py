@@ -14,12 +14,15 @@ from msgflux.runtime.context import (
     new_thread_id,
 )
 from msgflux.vulcano.actions import (
+    ActivateSessionTab,
     CancelExecution,
+    CloseSessionTab,
     InputMode,
     ResolvePermission,
     RuntimeAction,
     StopRuntime,
     SubmitInput,
+    ToggleSessionPin,
 )
 from msgflux.vulcano.commands import (
     CommandContext,
@@ -163,6 +166,7 @@ class VulcanoRuntime:
         self._started = False
         self._stopped = False
         self._lifecycle_lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
         self._submission_lock = asyncio.Lock()
         self._active_submission: asyncio.Task[None] | None = None
         self._active_input: SubmitInput | None = None
@@ -273,6 +277,7 @@ class VulcanoRuntime:
                     "thread_id": self._thread_scope.thread_id,
                 },
             )
+            await self._emit_session_tabs()
 
     async def stop(
         self,
@@ -285,6 +290,8 @@ class VulcanoRuntime:
                 return
             self._stopped = True
             self.permissions.cancel_all()
+            self.sessions.terminate_tabs()
+            await self._emit_session_tabs()
             await self._emit(
                 EventType.RUNTIME_STOPPED,
                 {"reason": reason},
@@ -302,6 +309,8 @@ class VulcanoRuntime:
             raise RuntimeError("Vulcano runtime is stopped")
         if isinstance(action, SubmitInput):
             await self._submit_input(action)
+            return
+        if await self._dispatch_session_action(action):
             return
         if isinstance(action, ResolvePermission):
             self.permissions.resolve(action.request_id, action.decision)
@@ -324,7 +333,20 @@ class VulcanoRuntime:
             return
         raise TypeError(f"Unsupported Vulcano action: {type(action)!r}")
 
+    async def _dispatch_session_action(self, action: RuntimeAction) -> bool:
+        if isinstance(action, ActivateSessionTab):
+            await self._activate_session_tab(action)
+        elif isinstance(action, CloseSessionTab):
+            await self._close_session_tab(action)
+        elif isinstance(action, ToggleSessionPin):
+            await self._toggle_session_pin(action)
+        else:
+            return False
+        return True
+
     async def _submit_input(self, action: SubmitInput) -> None:
+        if self.sessions.ensure_current_tab():
+            await self._emit_session_tabs()
         queued: SubmitInput | None = None
         queue_position = 0
         task: asyncio.Task[None] | None = None
@@ -629,6 +651,93 @@ class VulcanoRuntime:
                 "thread_id": transition.thread_id,
                 "events": [event.to_dict() for event in replay],
             },
+        )
+        await self._emit_session_tabs()
+
+    async def _activate_session_tab(self, action: ActivateSessionTab) -> None:
+        async with self._session_lock:
+            if self.is_busy:
+                await self._emit_session_tab_error(
+                    "Cannot switch sessions while an execution is active",
+                    action.correlation_id,
+                )
+                return
+            if action.thread_id == self.sessions.current_thread_id:
+                self.sessions.ensure_current_tab()
+                await self._emit_session_tabs()
+                return
+            try:
+                self.sessions.request_resume(action.thread_id)
+                transition = self.sessions.consume_transition()
+                if transition is not None:
+                    await self._apply_session_transition(transition)
+            except (LookupError, RuntimeError, ValueError) as error:
+                await self._emit_session_tab_error(
+                    str(error),
+                    action.correlation_id,
+                )
+
+    async def _close_session_tab(self, action: CloseSessionTab) -> None:
+        async with self._session_lock:
+            if self.is_busy:
+                await self._emit_session_tab_error(
+                    "Cannot close sessions while an execution is active",
+                    action.correlation_id,
+                )
+                return
+            try:
+                closed, next_thread_id = self.sessions.close_tab(action.thread_id)
+            except (LookupError, ValueError) as error:
+                await self._emit_session_tab_error(
+                    str(error),
+                    action.correlation_id,
+                )
+                return
+            if (
+                action.thread_id == self.sessions.current_thread_id
+                and next_thread_id is not None
+            ):
+                await self._apply_session_transition(
+                    SessionTransition("resume", next_thread_id)
+                )
+                return
+            await self._emit_session_tabs(closed=closed.to_dict())
+
+    async def _toggle_session_pin(self, action: ToggleSessionPin) -> None:
+        async with self._session_lock:
+            try:
+                self.sessions.toggle_tab_pin(action.thread_id)
+            except (LookupError, ValueError) as error:
+                await self._emit_session_tab_error(
+                    str(error),
+                    action.correlation_id,
+                )
+                return
+            await self._emit_session_tabs()
+
+    async def _emit_session_tabs(
+        self,
+        *,
+        closed: Mapping[str, object] | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "active_thread_id": self.sessions.active_tab_thread_id,
+            "tabs": [tab.to_dict() for tab in self.sessions.tabs],
+            "persistence": self.sessions.enabled,
+        }
+        if closed is not None:
+            payload["closed"] = dict(closed)
+        await self._emit(EventType.SESSION_TABS_UPDATED, payload)
+
+    async def _emit_session_tab_error(
+        self,
+        message: str,
+        correlation_id: str,
+    ) -> None:
+        await self._emit(
+            EventType.RUNTIME_ERROR,
+            {"message": message},
+            correlation_id=correlation_id,
         )
 
     def _next_submission_scope(self) -> ExecutionScope:

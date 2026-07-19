@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Literal
+
+import tomllib
 
 from msgflux.runtime.context import new_thread_id
 from msgflux.vulcano.events import DomainEvent, EventType
@@ -14,11 +17,15 @@ __all__ = [
     "SessionController",
     "SessionInfo",
     "SessionStore",
+    "SessionTabInfo",
+    "SessionTabStatus",
     "SessionTransition",
+    "SessionWorkspace",
 ]
 
 
 _VALID_THREAD_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+SessionTabStatus = Literal["active", "idle", "paused", "terminated"]
 _REPLAY_EVENT_TYPES = {
     EventType.EXECUTION_STARTED,
     EventType.EXECUTION_COMPLETED,
@@ -66,6 +73,157 @@ class SessionInfo:
 class SessionTransition:
     kind: Literal["resume", "fork"]
     thread_id: str
+
+
+@dataclass(frozen=True)
+class SessionTabInfo:
+    thread_id: str
+    pinned: bool = False
+    status: SessionTabStatus = "idle"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "thread_id": self.thread_id,
+            "pinned": self.pinned,
+            "status": self.status,
+        }
+
+
+class SessionWorkspace:
+    """Persistent runtime state for visible and pinned session tabs."""
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = Path(path).expanduser().resolve() if path is not None else None
+        self._records: dict[str, SessionTabInfo] = {}
+        self._open: list[str] = []
+        self._active_thread_id: str | None = None
+        self._load()
+
+    @property
+    def tabs(self) -> tuple[SessionTabInfo, ...]:
+        return tuple(self._records[thread_id] for thread_id in self._open)
+
+    @property
+    def active_thread_id(self) -> str | None:
+        return self._active_thread_id
+
+    def start(self, thread_id: str, available: tuple[str, ...]) -> None:
+        known = set(available)
+        for record in tuple(self._records.values()):
+            self._records[record.thread_id] = SessionTabInfo(
+                record.thread_id,
+                pinned=record.pinned and record.thread_id in known,
+                status="idle",
+            )
+        self._open = [
+            record.thread_id for record in self._records.values() if record.pinned
+        ]
+        self._active_thread_id = None
+        self.activate(thread_id)
+
+    def activate(self, thread_id: str) -> bool:
+        _validate_thread_id(thread_id)
+        changed = self._active_thread_id != thread_id or thread_id not in self._open
+        previous = self._active_thread_id
+        if previous is not None and previous in self._records and previous != thread_id:
+            record = self._records[previous]
+            self._records[previous] = SessionTabInfo(
+                previous,
+                pinned=record.pinned,
+                status="paused",
+            )
+        record = self._records.get(thread_id, SessionTabInfo(thread_id))
+        self._records[thread_id] = SessionTabInfo(
+            thread_id,
+            pinned=record.pinned,
+            status="active",
+        )
+        if thread_id not in self._open:
+            self._open.append(thread_id)
+        self._active_thread_id = thread_id
+        self._save()
+        return changed
+
+    def toggle_pin(self, thread_id: str) -> SessionTabInfo:
+        if thread_id not in self._open:
+            raise LookupError(f"Session tab is not open: {thread_id}")
+        record = self._records[thread_id]
+        updated = SessionTabInfo(
+            thread_id,
+            pinned=not record.pinned,
+            status=record.status,
+        )
+        self._records[thread_id] = updated
+        self._save()
+        return updated
+
+    def close(self, thread_id: str) -> tuple[SessionTabInfo, str | None]:
+        if thread_id not in self._open:
+            raise LookupError(f"Session tab is not open: {thread_id}")
+        closed = SessionTabInfo(thread_id, pinned=False, status="idle")
+        self._records[thread_id] = closed
+        self._open.remove(thread_id)
+        next_thread_id = None
+        if self._active_thread_id == thread_id:
+            self._active_thread_id = None
+            if self._open:
+                next_thread_id = self._open[-1]
+                self.activate(next_thread_id)
+        self._save()
+        return closed, next_thread_id
+
+    def terminate(self) -> None:
+        for thread_id in self._open:
+            record = self._records[thread_id]
+            self._records[thread_id] = SessionTabInfo(
+                thread_id,
+                pinned=record.pinned,
+                status="terminated",
+            )
+        self._active_thread_id = None
+        self._save()
+
+    def _load(self) -> None:
+        if self.path is None or not self.path.is_file():
+            return
+        with self.path.open("rb") as stream:
+            data = tomllib.load(stream)
+        raw_tabs = data.get("tabs", ())
+        if not isinstance(raw_tabs, list):
+            raise TypeError("workspace tabs must be a TOML array of tables")
+        for raw_tab in raw_tabs:
+            if not isinstance(raw_tab, Mapping):
+                raise TypeError("workspace tabs must contain TOML tables")
+            thread_id = str(raw_tab.get("thread_id", ""))
+            _validate_thread_id(thread_id)
+            pinned = raw_tab.get("pinned", False)
+            if not isinstance(pinned, bool):
+                raise TypeError("workspace tab pinned must be a boolean")
+            status = _tab_status(raw_tab.get("status", "idle"))
+            self._records[thread_id] = SessionTabInfo(
+                thread_id,
+                pinned=pinned,
+                status=status,
+            )
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["version = 1"]
+        for record in self._records.values():
+            lines.extend(
+                (
+                    "",
+                    "[[tabs]]",
+                    f"thread_id = {json.dumps(record.thread_id)}",
+                    f"pinned = {'true' if record.pinned else 'false'}",
+                    f"status = {json.dumps(record.status)}",
+                )
+            )
+        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
+        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        temporary.replace(self.path)
 
 
 class SessionStore:
@@ -203,8 +361,7 @@ class SessionStore:
         return path
 
     def _path(self, thread_id: str) -> Path:
-        if not _VALID_THREAD_ID.fullmatch(thread_id):
-            raise ValueError(f"Invalid Vulcano thread id: {thread_id!r}")
+        _validate_thread_id(thread_id)
         return self.directory / f"{thread_id}.jsonl"
 
 
@@ -217,11 +374,22 @@ class SessionController:
         thread_id: str,
         *,
         export_directory: str | Path,
+        workspace_file: str | Path | None = None,
     ) -> None:
         self.store = store
         self.current_thread_id = thread_id
         self.export_directory = Path(export_directory).expanduser().resolve()
         self._pending: SessionTransition | None = None
+        resolved_workspace = workspace_file
+        if resolved_workspace is None and store is not None:
+            resolved_workspace = store.directory.parent / "workspace.toml"
+        self.workspace = SessionWorkspace(resolved_workspace)
+        available = (
+            tuple(info.thread_id for info in store.list())
+            if store is not None
+            else (thread_id,)
+        )
+        self.workspace.start(thread_id, available)
 
     @property
     def enabled(self) -> bool:
@@ -229,6 +397,14 @@ class SessionController:
 
     def list(self) -> tuple[SessionInfo, ...]:
         return self._require_store().list()
+
+    @property
+    def tabs(self) -> tuple[SessionTabInfo, ...]:
+        return self.workspace.tabs
+
+    @property
+    def active_tab_thread_id(self) -> str | None:
+        return self.workspace.active_thread_id
 
     def request_resume(self, thread_id: str) -> SessionInfo:
         info = self._require_store().info(thread_id)
@@ -262,6 +438,19 @@ class SessionController:
 
     def activate(self, thread_id: str) -> None:
         self.current_thread_id = thread_id
+        self.workspace.activate(thread_id)
+
+    def ensure_current_tab(self) -> bool:
+        return self.workspace.activate(self.current_thread_id)
+
+    def toggle_tab_pin(self, thread_id: str) -> SessionTabInfo:
+        return self.workspace.toggle_pin(thread_id)
+
+    def close_tab(self, thread_id: str) -> tuple[SessionTabInfo, str | None]:
+        return self.workspace.close(thread_id)
+
+    def terminate_tabs(self) -> None:
+        self.workspace.terminate()
 
     def _require_store(self) -> SessionStore:
         if self.store is None:
@@ -514,3 +703,20 @@ def _optional_integer(value: object) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError("forked_from_sequence must be an integer or null")
     return value
+
+
+def _validate_thread_id(thread_id: str) -> None:
+    if not _VALID_THREAD_ID.fullmatch(thread_id):
+        raise ValueError(f"Invalid Vulcano thread id: {thread_id!r}")
+
+
+def _tab_status(value: object) -> SessionTabStatus:
+    if value == "active":
+        return "active"
+    if value == "idle":
+        return "idle"
+    if value == "paused":
+        return "paused"
+    if value == "terminated":
+        return "terminated"
+    raise ValueError(f"Unsupported session tab status: {value!r}")

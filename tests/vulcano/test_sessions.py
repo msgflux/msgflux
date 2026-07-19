@@ -4,10 +4,14 @@ import pytest
 
 from msgflux.runtime import ExecutionScope
 from msgflux.vulcano import (
+    ActivateSessionTab,
+    CloseSessionTab,
     DomainEvent,
     EventType,
     SessionStore,
+    SessionWorkspace,
     SubmitInput,
+    ToggleSessionPin,
     VulcanoRuntime,
 )
 
@@ -51,6 +55,31 @@ def test_session_store_round_trips_forks_and_exports(tmp_path):
     assert "inspect this" in markdown
     assert "## Assistant" in markdown
     assert "done" in markdown
+
+
+def test_session_workspace_persists_pins_without_duplicate_tabs(tmp_path):
+    path = tmp_path / "workspace.toml"
+    workspace = SessionWorkspace(path)
+    workspace.start("thd_one", ("thd_one", "thd_two"))
+    workspace.toggle_pin("thd_one")
+    workspace.activate("thd_two")
+    workspace.activate("thd_two")
+
+    assert [tab.thread_id for tab in workspace.tabs] == ["thd_one", "thd_two"]
+    assert [tab.status for tab in workspace.tabs] == ["paused", "active"]
+
+    restored = SessionWorkspace(path)
+    restored.start(
+        "thd_current",
+        ("thd_one", "thd_two", "thd_current"),
+    )
+
+    assert [tab.thread_id for tab in restored.tabs] == ["thd_one", "thd_current"]
+    assert [tab.status for tab in restored.tabs] == ["idle", "active"]
+    assert restored.tabs[0].pinned
+    contents = path.read_text(encoding="utf-8")
+    assert contents.startswith("version = 1\n")
+    assert contents.count('status = "active"') == 1
 
 
 def test_session_replay_closes_interrupted_streams_as_aborted(tmp_path):
@@ -250,3 +279,54 @@ async def test_runtime_slash_commands_fork_resume_and_export_sessions(tmp_path):
         for event in runtime.history
         if event.type == EventType.SESSION_SWITCHED
     ] == ["fork", "resume"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_owns_session_tab_activation_pin_and_close(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_one")
+    store.ensure("thd_two")
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_one", namespace="vulcano"),
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    await runtime.start()
+
+    await runtime.dispatch(ToggleSessionPin("thd_one"))
+    await runtime.dispatch(ActivateSessionTab("thd_two"))
+    await runtime.dispatch(ActivateSessionTab("thd_two"))
+
+    assert [tab.thread_id for tab in runtime.sessions.tabs] == [
+        "thd_one",
+        "thd_two",
+    ]
+    assert [tab.status for tab in runtime.sessions.tabs] == ["paused", "active"]
+    assert runtime.sessions.tabs[0].pinned
+
+    await runtime.dispatch(CloseSessionTab("thd_two"))
+
+    assert runtime.sessions.current_thread_id == "thd_one"
+    assert [(tab.thread_id, tab.status) for tab in runtime.sessions.tabs] == [
+        ("thd_one", "active")
+    ]
+
+    await runtime.dispatch(CloseSessionTab("thd_one"))
+    assert runtime.sessions.tabs == ()
+    tabs_event = [
+        event
+        for event in runtime.history
+        if event.type == EventType.SESSION_TABS_UPDATED
+    ][-1]
+    assert tabs_event.payload["active_thread_id"] is None
+    assert tabs_event.payload["closed"] == {
+        "thread_id": "thd_one",
+        "pinned": False,
+        "status": "idle",
+    }
+
+    await runtime.dispatch(SubmitInput("/echo reopen"))
+    assert [(tab.thread_id, tab.status) for tab in runtime.sessions.tabs] == [
+        ("thd_one", "active")
+    ]

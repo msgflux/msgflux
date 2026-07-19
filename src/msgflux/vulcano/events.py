@@ -40,6 +40,7 @@ class EventType:
     INPUT_QUEUE_CLEARED = "input.queue.cleared"
     EXECUTION_CANCELLED = "execution.cancelled"
     SESSION_SWITCHED = "session.switched"
+    SESSION_TABS_UPDATED = "session.tabs.updated"
     COMMAND_STARTED = "command.started"
     COMMAND_OUTPUT = "command.output"
     COMMAND_COMPLETED = "command.completed"

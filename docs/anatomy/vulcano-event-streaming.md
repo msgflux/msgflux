@@ -338,6 +338,11 @@ attempt. The distinction must be explicit in `ExecutionScope`.
 
 ### Approval and user input
 
+Vulcano currently implements this family as `permission.requested` and
+`permission.resolved`, answered by `ResolvePermission`. The native Agent stream
+may use the more general approval names below; the adapter must preserve the
+request id, choices, execution scope, and related tool identity.
+
 | Signal | Payload |
 |--------|---------|
 | `approval.requested` | request id, prompt, choices/policy, related tool call, timeout |
@@ -367,7 +372,8 @@ double counting during replay and provider-specific delta behavior.
 The existing Vulcano signals remain part of the runtime protocol:
 
 - `runtime.started`, `runtime.stopped`, and `runtime.error`;
-- `session.switched`, plus future `session.forked` and replay boundaries;
+- `session.switched`, `session.tabs.updated`, plus future `session.forked` and
+  replay boundaries;
 - `command.started`, `command.output`, `command.completed`, and `command.error`;
 - `extension.loaded`, `extension.unloaded`, and `extension.failed`;
 - `client.action` for runtime-authorized presentation effects.
@@ -380,6 +386,11 @@ degrade deliberately instead of inferring support from missing events.
 Configuration changes that affect future work should publish typed facts such
 as `model.changed`, `thinking.changed`, `tools.changed`, and `skills.changed`.
 Their payload contains the new public snapshot and the source of the change.
+
+`session.tabs.updated` is a runtime workspace snapshot rather than an Agent
+signal. It contains one entry per open `thread_id`, pin state, lifecycle status,
+and the active thread. Clients answer with activate, pin, and close actions;
+only `session.switched` carries replay data.
 
 ## Activity group and sidebar projection
 

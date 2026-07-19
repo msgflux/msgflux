@@ -8,15 +8,18 @@ from rich.panel import Panel
 from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal, HorizontalScroll, VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, OptionList, Static
 
 from msgflux.vulcano.actions import (
+    ActivateSessionTab,
     CancelExecution,
+    CloseSessionTab,
     InputMode,
     ResolvePermission,
     SubmitInput,
+    ToggleSessionPin,
 )
 from msgflux.vulcano.blocks import BlockKind, BlockStatus
 from msgflux.vulcano.config import TranscriptMode, VulcanoSettings
@@ -29,6 +32,8 @@ from msgflux.vulcano.ui import UiDialogOptions, UiManager
 __all__ = [
     "CollapsibleTranscriptBlock",
     "PendingInputList",
+    "SessionTab",
+    "SessionTabBar",
     "ToolExecutionBlock",
     "TranscriptMessage",
     "TurnActivity",
@@ -71,6 +76,136 @@ def _permission_prompt(event: DomainEvent) -> str:
     if resource is not None:
         lines.append(f"Target: {resource}")
     return "\n".join(lines)
+
+
+class SessionTab(Horizontal):
+    """One runtime-owned durable session projected as an interactive tab."""
+
+    def __init__(
+        self,
+        thread_id: str,
+        *,
+        pinned: bool,
+        status: str,
+        persistence: bool,
+    ) -> None:
+        self.thread_id = thread_id
+        self.pinned = pinned
+        self.status = status
+        self.persistence = persistence
+        super().__init__(classes="session-tab")
+        self.add_class(f"session-tab-{status}")
+
+    def compose(self) -> ComposeResult:
+        yield Button(
+            self._select_label(),
+            classes="session-tab-select",
+            tooltip=f"Activate {self.thread_id} ({self.status})",
+        )
+        yield Button(
+            "◆" if self.pinned else "◇",
+            classes="session-tab-pin",
+            disabled=not self.persistence,
+            tooltip=(
+                "Session persistence disabled"
+                if not self.persistence
+                else "Unpin session"
+                if self.pinned
+                else "Pin session"
+            ),
+        )
+        yield Button(
+            "×",  # noqa: RUF001
+            classes="session-tab-close",
+            tooltip="Close session tab",
+        )
+
+    def update_state(self, *, pinned: bool, status: str, persistence: bool) -> None:
+        self.pinned = pinned
+        self.status = status
+        self.persistence = persistence
+        self.remove_class(
+            "session-tab-active",
+            "session-tab-idle",
+            "session-tab-paused",
+            "session-tab-terminated",
+        )
+        self.add_class(f"session-tab-{status}")
+        if not self.is_mounted:
+            return
+        select = self.query_one(".session-tab-select", Button)
+        select.label = self._select_label()
+        select.tooltip = f"Activate {self.thread_id} ({status})"
+        pin = self.query_one(".session-tab-pin", Button)
+        pin.label = "◆" if pinned else "◇"
+        pin.disabled = not persistence
+        pin.tooltip = (
+            "Session persistence disabled"
+            if not persistence
+            else "Unpin session"
+            if pinned
+            else "Pin session"
+        )
+
+    def _select_label(self) -> str:
+        marker = {
+            "active": "●",
+            "idle": "○",
+            "paused": "‖",
+            "terminated": "×",  # noqa: RUF001
+        }.get(self.status, "·")
+        summary = self.thread_id
+        if summary.startswith("thd_"):
+            summary = summary[4:12]
+        elif len(summary) > 12:
+            summary = summary[:12]
+        return f"{marker} {summary}"
+
+
+class SessionTabBar(HorizontalScroll):
+    """Reconciled projection of the runtime session workspace."""
+
+    def __init__(self) -> None:
+        super().__init__(id="session-tabs", classes="session-tabs-hidden")
+        self.entries: dict[str, SessionTab] = {}
+
+    async def apply_event(self, event: DomainEvent) -> None:
+        raw_tabs = event.payload.get("tabs", ())
+        persistence = bool(event.payload.get("persistence", False))
+        tabs = (
+            tuple(item for item in raw_tabs if isinstance(item, Mapping))
+            if isinstance(raw_tabs, Sequence) and not isinstance(raw_tabs, (str, bytes))
+            else ()
+        )
+        incoming = {str(item.get("thread_id", "")) for item in tabs}
+        for thread_id in tuple(self.entries):
+            if thread_id in incoming:
+                continue
+            view = self.entries.pop(thread_id)
+            await view.remove()
+        for item in tabs:
+            thread_id = str(item.get("thread_id", ""))
+            if not thread_id:
+                continue
+            pinned = bool(item.get("pinned", False))
+            status = str(item.get("status", "idle"))
+            view = self.entries.get(thread_id)
+            if view is None:
+                view = SessionTab(
+                    thread_id,
+                    pinned=pinned,
+                    status=status,
+                    persistence=persistence,
+                )
+                self.entries[thread_id] = view
+                await self.mount(view)
+            else:
+                view.update_state(
+                    pinned=pinned,
+                    status=status,
+                    persistence=persistence,
+                )
+        self.set_class(not self.entries, "session-tabs-hidden")
 
 
 class PendingInputList(Static):
@@ -576,6 +711,67 @@ class VulcanoApp(App[None]):
         height: 1fr;
     }
 
+    #session-tabs {
+        width: 100%;
+        height: 3;
+        padding: 0 1;
+        background: #10131a;
+        border-bottom: solid #272c36;
+        scrollbar-size: 1 1;
+        scrollbar-color: #3c4352;
+    }
+
+    .session-tabs-hidden {
+        display: none;
+    }
+
+    .session-tab {
+        width: auto;
+        height: 3;
+        margin-right: 1;
+        background: #171a21;
+    }
+
+    .session-tab Button {
+        height: 3;
+        min-height: 3;
+        padding: 0 1;
+        color: #9da5b4;
+        background: #171a21;
+        border: none;
+    }
+
+    .session-tab .session-tab-select {
+        width: auto;
+        min-width: 12;
+    }
+
+    .session-tab .session-tab-pin, .session-tab .session-tab-close {
+        width: 3;
+        min-width: 3;
+        padding: 0;
+    }
+
+    .session-tab-active Button,
+    .session-tab Button:hover,
+    .session-tab Button:focus {
+        color: #ffffff;
+        background: #5a2a16;
+    }
+
+    .session-tab-active .session-tab-select {
+        color: #ff8a3d;
+        text-style: bold;
+    }
+
+    .session-tab-paused .session-tab-select {
+        color: #c8cad1;
+    }
+
+    .session-tab-terminated .session-tab-select {
+        color: #ff9b9b;
+    }
+
     #turn-sidebar {
         width: 24;
         height: 100%;
@@ -902,6 +1098,7 @@ class VulcanoApp(App[None]):
     def compose(self) -> ComposeResult:
         with Container(id="header-slot"):
             yield self._ui_driver.create_default_header()
+        yield SessionTabBar()
         with Horizontal(id="conversation-shell"):
             yield TurnSidebar()
             yield Button("›", id="turn-sidebar-toggle", disabled=True)  # noqa: RUF001
@@ -1044,6 +1241,27 @@ class VulcanoApp(App[None]):
         self.action_toggle_sidebar()
         event.stop()
 
+    @on(Button.Pressed, ".session-tab-select")
+    def _on_session_tab_selected(self, event: Button.Pressed) -> None:
+        tab = event.button.parent
+        if isinstance(tab, SessionTab):
+            self._dispatch_session_action(ActivateSessionTab(tab.thread_id))
+        event.stop()
+
+    @on(Button.Pressed, ".session-tab-pin")
+    def _on_session_tab_pin(self, event: Button.Pressed) -> None:
+        tab = event.button.parent
+        if isinstance(tab, SessionTab):
+            self._dispatch_session_action(ToggleSessionPin(tab.thread_id))
+        event.stop()
+
+    @on(Button.Pressed, ".session-tab-close")
+    def _on_session_tab_close(self, event: Button.Pressed) -> None:
+        tab = event.button.parent
+        if isinstance(tab, SessionTab):
+            self._dispatch_session_action(CloseSessionTab(tab.thread_id))
+        event.stop()
+
     @on(Input.Submitted, "#prompt")
     def _on_prompt_submitted(self, event: Input.Submitted) -> None:
         self._submit_prompt(event.value)
@@ -1072,6 +1290,16 @@ class VulcanoApp(App[None]):
     @work(exclusive=True, group="runtime-cancel")
     async def _dispatch_cancel(self) -> None:
         await self.runtime.dispatch(CancelExecution(reason="escape"))
+
+    @work(group="session-tab-actions")
+    async def _dispatch_session_action(
+        self,
+        action: ActivateSessionTab | CloseSessionTab | ToggleSessionPin,
+    ) -> None:
+        try:
+            await self.runtime.dispatch(action)
+        except Exception as error:
+            self.notify(str(error), severity="error")
 
     @work(exclusive=True, group="command-palette")
     async def _open_command_palette(self) -> None:
@@ -1174,6 +1402,9 @@ class VulcanoApp(App[None]):
             return True
         if event.type == EventType.SESSION_SWITCHED:
             await self._project_session_switch(event)
+            return True
+        if event.type == EventType.SESSION_TABS_UPDATED:
+            await self.query_one(SessionTabBar).apply_event(event)
             return True
         if event.type == EventType.INPUT_QUEUED:
             pending = self.query_one("#pending-inputs", PendingInputList)
@@ -1302,6 +1533,10 @@ class VulcanoApp(App[None]):
             if not isinstance(raw_event, dict):
                 continue
             await self._project_event(DomainEvent.from_dict(raw_event))
+        if isinstance(thread_id, str):
+            self._ui_driver.set_execution_scope(
+                {"thread_id": thread_id, "run_id": None}
+            )
 
     def _project_lifecycle_event(self, event: DomainEvent) -> bool:
         if event.type == EventType.RUNTIME_STARTED:

@@ -1,10 +1,13 @@
 from msgflux.vulcano.actions import (
+    ActivateSessionTab,
     CancelExecution,
+    CloseSessionTab,
     InputMode,
     ResolvePermission,
     RuntimeAction,
     StopRuntime,
     SubmitInput,
+    ToggleSessionPin,
 )
 from msgflux.vulcano.blocks import (
     BlockKind,
@@ -68,7 +71,10 @@ from msgflux.vulcano.sessions import (
     SessionController,
     SessionInfo,
     SessionStore,
+    SessionTabInfo,
+    SessionTabStatus,
     SessionTransition,
+    SessionWorkspace,
 )
 from msgflux.vulcano.ui import (
     ExtensionUiApi,
@@ -95,12 +101,14 @@ from msgflux.vulcano.ui import (
 )
 
 __all__ = [
+    "ActivateSessionTab",
     "AgentAdapter",
     "AgentApi",
     "AgentRunResult",
     "BlockKind",
     "BlockStatus",
     "CancelExecution",
+    "CloseSessionTab",
     "CommandContext",
     "CommandEventEmitter",
     "CommandOptions",
@@ -132,9 +140,13 @@ __all__ = [
     "SessionController",
     "SessionInfo",
     "SessionStore",
+    "SessionTabInfo",
+    "SessionTabStatus",
     "SessionTransition",
+    "SessionWorkspace",
     "StopRuntime",
     "SubmitInput",
+    "ToggleSessionPin",
     "ToolLibraryApi",
     "ToolRenderContext",
     "ToolRenderer",

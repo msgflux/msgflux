@@ -362,6 +362,19 @@ projection and rebuilds it; it never reads session files. `/export` produces a
 Markdown transcript. Extensions can access the same high-level facade at
 `ctx.services["sessions"]` without receiving the private runtime object.
 
+Vulcano also keeps a runtime-owned tab workspace. `session.tabs.updated`
+contains the ordered tab list, active thread, pin state, and lifecycle status.
+The Textual bar sends `ActivateSessionTab`, `ToggleSessionPin`, and
+`CloseSessionTab`; it does not mutate session state directly. Activating a
+thread already present selects the existing tab instead of creating a duplicate.
+
+Pinned tabs are restored from `~/.vulcano/workspace.toml` at startup. Switching
+away marks the previous tab `paused`; closing marks it `idle` without deleting
+the JSONL transcript; orderly shutdown marks visible tabs `terminated`. Closing
+the active tab selects the most recent remaining tab, and the next input reopens
+the current thread if every tab was closed. Switching and closing are rejected
+while an execution is active.
+
 ### Runtime-owned permissions
 
 Privileged flows request authorization through `ctx.request_permission()`.
@@ -720,6 +733,10 @@ separate API from passive observation.
 
 Permission flows add `permission.requested` and `permission.resolved`. Clients
 answer with `ResolvePermission`; they never execute the privileged operation.
+
+Session navigation uses `session.switched` for transcript replay and
+`session.tabs.updated` for the workspace projection. Tab actions contain only a
+thread id; transcript data remains owned by `SessionStore`.
 
 The mock response follows the same lifecycle expected from the Agent adapter:
 

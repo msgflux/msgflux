@@ -7,12 +7,15 @@ from uuid import uuid4
 from msgflux.vulcano.permissions import PermissionActionDecision
 
 __all__ = [
+    "ActivateSessionTab",
     "CancelExecution",
+    "CloseSessionTab",
     "InputMode",
     "ResolvePermission",
     "RuntimeAction",
     "StopRuntime",
     "SubmitInput",
+    "ToggleSessionPin",
 ]
 
 InputMode = Literal["auto", "steer", "follow_up"]
@@ -20,6 +23,11 @@ InputMode = Literal["auto", "steer", "follow_up"]
 
 def _new_correlation_id() -> str:
     return uuid4().hex
+
+
+def _validate_thread_id(thread_id: str) -> None:
+    if not thread_id.strip():
+        raise ValueError("Session thread id cannot be empty")
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,28 @@ class CancelExecution:
 
     reason: str = "requested"
     correlation_id: str = field(default_factory=_new_correlation_id)
+
+
+@dataclass(frozen=True)
+class ActivateSessionTab:
+    """Activate an open or persisted durable session tab."""
+
+    thread_id: str
+    correlation_id: str = field(default_factory=_new_correlation_id)
+
+    def __post_init__(self) -> None:
+        _validate_thread_id(self.thread_id)
+
+
+@dataclass(frozen=True)
+class CloseSessionTab:
+    """Close a session tab without deleting its durable transcript."""
+
+    thread_id: str
+    correlation_id: str = field(default_factory=_new_correlation_id)
+
+    def __post_init__(self) -> None:
+        _validate_thread_id(self.thread_id)
 
 
 @dataclass(frozen=True)
@@ -66,4 +96,23 @@ class StopRuntime:
     correlation_id: str = field(default_factory=_new_correlation_id)
 
 
-RuntimeAction = CancelExecution | ResolvePermission | SubmitInput | StopRuntime
+@dataclass(frozen=True)
+class ToggleSessionPin:
+    """Toggle whether a session tab is restored on the next launch."""
+
+    thread_id: str
+    correlation_id: str = field(default_factory=_new_correlation_id)
+
+    def __post_init__(self) -> None:
+        _validate_thread_id(self.thread_id)
+
+
+RuntimeAction = (
+    ActivateSessionTab
+    | CancelExecution
+    | CloseSessionTab
+    | ResolvePermission
+    | StopRuntime
+    | SubmitInput
+    | ToggleSessionPin
+)

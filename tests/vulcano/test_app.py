@@ -21,12 +21,14 @@ from msgflux.vulcano import (
     EditorSettings,
     KeyBindings,
     SessionStore,
+    SessionWorkspace,
     ToolRendererOptions,
     VulcanoSettings,
 )
 from msgflux.vulcano.app import (
     CollapsibleTranscriptBlock,
     PendingInputList,
+    SessionTabBar,
     ToolExecutionBlock,
     TranscriptMessage,
     TurnSidebar,
@@ -89,6 +91,60 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         )
         assert "Mock runtime received: hello" in rendered_assistant
         assert "run:" in str(footer.render())
+
+
+@pytest.mark.asyncio
+async def test_session_tab_bar_switches_pins_and_closes_sessions(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_one")
+    store.ensure("thd_two")
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_one", namespace="vulcano"),
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    app = VulcanoApp(runtime)
+
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause(delay=0.1)
+        tabs = app.query_one(SessionTabBar)
+        assert list(tabs.entries) == ["thd_one"]
+        assert tabs.entries["thd_one"].status == "active"
+
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        prompt.text = "/resume thd_two"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.2)
+
+        assert list(tabs.entries) == ["thd_one", "thd_two"]
+        assert tabs.entries["thd_one"].status == "paused"
+        assert tabs.entries["thd_two"].status == "active"
+
+        await pilot.click(tabs.entries["thd_one"].query_one(".session-tab-pin", Button))
+        await pilot.pause(delay=0.1)
+        assert tabs.entries["thd_one"].pinned
+
+        await pilot.click(
+            tabs.entries["thd_one"].query_one(".session-tab-select", Button)
+        )
+        await pilot.pause(delay=0.2)
+        assert runtime.sessions.current_thread_id == "thd_one"
+        assert tabs.entries["thd_one"].status == "active"
+        assert tabs.entries["thd_two"].status == "paused"
+        footer = app.query_one("#runtime-footer", VulcanoFooter)
+        assert "thd_one"[:10] in str(footer.render())
+
+        await pilot.click(
+            tabs.entries["thd_two"].query_one(".session-tab-close", Button)
+        )
+        await pilot.pause(delay=0.1)
+        assert list(tabs.entries) == ["thd_one"]
+
+    restored = SessionWorkspace(tmp_path / "workspace.toml")
+    restored.start("thd_current", ("thd_one", "thd_two", "thd_current"))
+    assert [tab.thread_id for tab in restored.tabs] == ["thd_one", "thd_current"]
 
 
 @pytest.mark.asyncio

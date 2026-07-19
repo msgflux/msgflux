@@ -91,6 +91,28 @@ The sidebar numbers user messages in event order; selecting an entry scrolls to
 its stable message anchor. This is derived client state, so it also rebuilds
 from a durable session replay.
 
+## Session tabs
+
+The session bar above the transcript is projected from
+`session.tabs.updated`. A thread appears at most once in a Vulcano process.
+Selecting a paused tab asks the runtime to activate and replay that durable
+thread; the TUI never opens its JSONL file.
+
+Each tab exposes two controls:
+
+- `◇`/`◆` toggles whether the tab is restored on the next launch.
+- `×` closes the tab without deleting its transcript.
+
+Switching away marks a tab `paused`, closing marks it `idle`, and orderly
+runtime shutdown marks visible tabs `terminated`. Closing the active tab
+activates the most recent remaining tab. If no tab remains, the next submitted
+input reopens the runtime's current thread.
+
+Pinned state is stored in `~/.vulcano/workspace.toml`. The control is disabled
+with `--no-sessions`, because there is no durable thread to restore. Session
+switch and close requests are rejected while an execution is active; pinning is
+safe at any time.
+
 ## Permission confirmation
 
 Run `/ui-permission` to preview a privileged operation. The runtime publishes a
@@ -195,6 +217,7 @@ The target user directory will also provide the natural homes for resources:
 ```text
 ~/.vulcano/
 ├── config.toml
+├── workspace.toml
 ├── extensions/
 ├── skills/
 ├── themes/
