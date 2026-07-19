@@ -32,6 +32,7 @@ from msgflux.vulcano.app import (
     SessionTabBar,
     ToolExecutionBlock,
     TranscriptMessage,
+    TurnNavigationItem,
     TurnSidebar,
     VulcanoApp,
 )
@@ -61,8 +62,11 @@ async def test_app_projects_streaming_runtime_events_headlessly():
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause()
         assert app.query_one("#topbar", Static).outer_size.height == 0
-        status = app.query_one("#status", Static)
-        assert "mock runtime" in str(status.render())
+        sidebar = app.query_one(TurnSidebar)
+        assert sidebar.is_expanded
+        assert sidebar.display
+        status = app.query_one("#navbar-statuses", Static)
+        assert not status.display
         footer = app.query_one("#runtime-footer", VulcanoFooter)
         assert "VULCANO" in str(footer.render())
         assert "mock" in str(footer.render())
@@ -96,6 +100,7 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         assert "thd:" not in str(footer.render())
         assert "Alt+S nav" in str(footer.render())
         assert "Ctrl+G sessions" in str(footer.render())
+        assert "Ctrl+P" not in str(footer.render())
 
 
 @pytest.mark.asyncio
@@ -113,8 +118,6 @@ async def test_session_tab_bar_switches_pins_and_closes_sessions(tmp_path):
 
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.pause(delay=0.1)
-        await pilot.press("alt+s")
-        await pilot.pause()
         tabs = app.query_one(SessionTabBar)
         assert tabs.parent is app.query_one(TurnSidebar)
         assert list(tabs.entries) == ["thd_one"]
@@ -150,6 +153,17 @@ async def test_session_tab_bar_switches_pins_and_closes_sessions(tmp_path):
         await pilot.pause(delay=0.1)
         assert list(tabs.entries) == ["thd_one"]
 
+        await pilot.click("#session-new")
+        await pilot.pause(delay=0.2)
+        assert len(tabs.entries) == 2
+        assert runtime.sessions.current_thread_id != "thd_one"
+        transition = [
+            event
+            for event in runtime.history
+            if event.type == EventType.SESSION_SWITCHED
+        ][-1]
+        assert transition.payload["kind"] == "new"
+
     restored = SessionWorkspace(tmp_path / "workspace.toml")
     restored.start("thd_current", ("thd_one", "thd_two", "thd_current"))
     assert [tab.thread_id for tab in restored.tabs] == ["thd_one", "thd_current"]
@@ -177,6 +191,9 @@ async def test_session_tabs_support_tmux_style_keyboard_navigation(tmp_path):
         await pilot.pause(delay=0.2)
         tabs = app.query_one(SessionTabBar)
         sidebar = app.query_one(TurnSidebar)
+
+        await pilot.press("alt+s")
+        assert not sidebar.is_expanded
 
         app.simulate_key("ctrl+g")
         app.simulate_key("p")
@@ -232,8 +249,6 @@ async def test_session_tabs_keep_controls_visible_in_a_narrow_terminal(tmp_path)
 
     async with app.run_test(size=(60, 28)) as pilot:
         await pilot.pause(delay=0.1)
-        await pilot.press("alt+s")
-        await pilot.pause()
         for _ in range(4):
             await pilot.press("ctrl+g", "c")
             await pilot.pause(delay=0.15)
@@ -302,26 +317,6 @@ async def test_session_zero_key_selects_tenth_tab(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_command_palette_filters_and_inserts_runtime_command():
-    app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.pause()
-        await pilot.press("ctrl+p")
-        await pilot.pause()
-
-        query = app.screen.query_one("#palette-query", Input)
-        query.value = "echo"
-        query.cursor_position = len(query.value)
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
-
-        prompt = app.query_one("#prompt", VulcanoTextArea)
-        assert prompt.text == "/echo "
-
-
-@pytest.mark.asyncio
 async def test_sidebar_toggles_with_button_and_alt_s():
     app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
 
@@ -329,7 +324,9 @@ async def test_sidebar_toggles_with_button_and_alt_s():
         await pilot.pause()
         sidebar = app.query_one(TurnSidebar)
         toggle = app.query_one("#turn-sidebar-toggle", Button)
-        assert not sidebar.is_expanded
+        assert sidebar.is_expanded
+        assert sidebar.display
+        assert str(toggle.label) == "‹"  # noqa: RUF001
         assert not toggle.disabled
 
         prompt = app.query_one("#prompt", VulcanoTextArea)
@@ -337,6 +334,14 @@ async def test_sidebar_toggles_with_button_and_alt_s():
         prompt.cursor_location = prompt.document.end
         prompt.focus()
         assert app.focused is prompt
+        await pilot.press("alt+s")
+        await pilot.pause()
+
+        assert not sidebar.is_expanded
+        assert not sidebar.display
+        assert str(toggle.label) == "›"  # noqa: RUF001
+        assert prompt.text == "draft prompt"
+
         await pilot.press("alt+s")
         await pilot.pause()
 
@@ -348,40 +353,46 @@ async def test_sidebar_toggles_with_button_and_alt_s():
         assert sidebar.region.bottom == app.query_one("#main-pane").region.bottom
         assert prompt.region.x >= sidebar.region.right
 
-        await pilot.press("alt+s")
+        prompt.text = "create a navigation entry"
+        prompt.cursor_location = prompt.document.end
+        await pilot.press("enter")
+        await pilot.pause(delay=0.05)
+        assert sidebar.is_expanded
+
+        await pilot.click(toggle)
         await pilot.pause()
 
         assert not sidebar.is_expanded
         assert not sidebar.display
         assert str(toggle.label) == "›"  # noqa: RUF001
-        assert prompt.text == "draft prompt"
-
-        prompt.text = "create a navigation entry"
-        prompt.cursor_location = prompt.document.end
-        await pilot.press("enter")
-        await pilot.pause(delay=0.05)
-        assert not sidebar.is_expanded
-
-        await pilot.click(toggle)
-        await pilot.pause()
-
-        assert sidebar.is_expanded
-        assert sidebar.display
-        assert str(toggle.label) == "‹"  # noqa: RUF001
 
 
 @pytest.mark.asyncio
-async def test_app_uses_configured_editor_and_command_palette_key(tmp_path):
+async def test_sidebar_messages_use_a_fixed_scroll_region():
+    app = VulcanoApp(VulcanoRuntime(stream_delay=0, extensions_enabled=False))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", VulcanoTextArea)
+        for index in range(7):
+            prompt.text = f"message {index} with enough text to wrap in navigation"
+            prompt.cursor_location = prompt.document.end
+            await pilot.press("enter")
+            await pilot.pause(delay=0.05)
+
+        messages = app.query_one("#turn-nav-messages")
+        assert messages.size.height <= 10
+        assert messages.virtual_size.height > messages.size.height
+        assert len(app.query(TurnNavigationItem)) == 7
+
+
+@pytest.mark.asyncio
+async def test_app_uses_configured_editor_and_session_prefix_key(tmp_path):
     settings = VulcanoSettings(
         home=tmp_path / "home",
         cwd=tmp_path,
         editor=EditorSettings(min_height=4, max_height=9),
-        keybindings=KeyBindings.from_mapping(
-            {
-                "command_palette": "ctrl+k",
-                "session_prefix": "ctrl+a",
-            }
-        ),
+        keybindings=KeyBindings.from_mapping({"session_prefix": "ctrl+a"}),
     )
     app = VulcanoApp(
         VulcanoRuntime(stream_delay=0, extensions_enabled=False),
@@ -397,10 +408,6 @@ async def test_app_uses_configured_editor_and_command_palette_key(tmp_path):
         await pilot.press("ctrl+a")
         assert app.query_one(SessionTabBar).has_class("session-key-mode")
         await pilot.press("escape")
-
-        await pilot.press("ctrl+k")
-        await pilot.pause()
-        assert app.screen.query_one("#palette-query", Input)
 
 
 @pytest.mark.asyncio
@@ -774,6 +781,13 @@ async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
                 ),
                 placement="below_editor",
             )
+            api.ui.set_widget(
+                "navigation",
+                lambda app, theme: Static(
+                    "Navbar widget",
+                    id="navbar-widget",
+                ),
+            )
             api.ui.set_header(
                 lambda app, theme: Static("CUSTOM HEADER", id="custom-header")
             )
@@ -826,7 +840,11 @@ async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
         assert app.query_one("#custom-header", Static).render() == "CUSTOM HEADER"
         assert app.query_one("#custom-footer", Static).render() == "CUSTOM FOOTER"
         assert app.query_one("#goal-widget", Static).render() == "Goal widget"
-        assert "extension UI" in str(app.query_one("#status", Static).render())
+        navbar_widget = app.query_one("#navbar-widget", Static)
+        assert navbar_widget.render() == "Navbar widget"
+        assert navbar_widget.parent is app.query_one("#navbar-widgets")
+        navbar_statuses = app.query_one("#navbar-statuses", Static)
+        assert "extension UI" in str(navbar_statuses.render())
 
         prompt = app.query_one("#prompt", Input)
         assert prompt.has_class("custom-editor")
@@ -840,11 +858,11 @@ async def test_extension_customizes_textual_slots_and_event_rendering(tmp_path):
         assert await prompt.suggester.get_suggestion("/card r") == "/card release"
         await pilot.press("ctrl+g")
         assert app.query_one(SessionTabBar).has_class("session-key-mode")
-        assert "conflict" not in str(app.query_one("#status", Static).render())
+        assert "conflict" not in str(navbar_statuses.render())
         await pilot.press("escape")
         await pilot.press("ctrl+u")
         await pilot.pause(delay=0.05)
-        assert "pressed" in str(app.query_one("#status", Static).render())
+        assert "pressed" in str(navbar_statuses.render())
 
         prompt.value = "/card release"
         await pilot.press("enter")

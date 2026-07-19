@@ -107,14 +107,14 @@ async def test_ui_facade_binds_driver_and_tracks_owned_state():
     ui.set_working_message("Thinking deeply")
     ui.set_working_visible(False)
     ui.set_working_indicator(WorkingIndicatorOptions(frames=(".", "o"), interval=0.2))
-    ui.set_widget("goal", ["Goal", "Ship it"], placement="below_editor")
+    ui.set_widget("goal", ["Goal", "Ship it"])
     ui.set_header("Custom header")
     ui.set_footer("Custom footer")
     ui.set_title("Vulcano test")
 
     state = runtime.ui.state
     assert state.statuses[0].text == "Planning"
-    assert state.widgets[0].placement == "below_editor"
+    assert state.widgets[0].placement == "navbar"
     assert state.widgets[0].content == ("Goal", "Ship it")
     assert state.header == "Custom header"
     assert state.footer == "Custom footer"

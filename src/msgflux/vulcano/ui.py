@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 
-UiPlacement = Literal["above_editor", "below_editor"]
+UiPlacement = Literal["navbar", "above_editor", "below_editor"]
 UiSeverity = Literal["info", "information", "warning", "error"]
 UiComponentFactory = Callable[[object, object], object | Awaitable[object]]
 UiCompletionProvider = Callable[[str], str | None | Awaitable[str | None]]
@@ -478,7 +478,7 @@ class UiManager:
     ) -> UiRegistration:
         if not key:
             raise ValueError("UI widget key cannot be empty")
-        if placement not in {"above_editor", "below_editor"}:
+        if placement not in {"navbar", "above_editor", "below_editor"}:
             raise ValueError(f"Unsupported UI widget placement: {placement}")
         if isinstance(content, list):
             content = tuple(content)
@@ -833,7 +833,7 @@ class ExtensionUiApi:
         key: str,
         content: object | None,
         *,
-        placement: UiPlacement = "above_editor",
+        placement: UiPlacement = "navbar",
     ) -> None:
         self._assert_active()
         if content is None:

@@ -20,7 +20,6 @@ max_height = 12
 mode = "compact"
 
 [ui.keybindings]
-command_palette = "ctrl+k"
 newline = ["shift+enter"]
 
 [sessions]
@@ -50,7 +49,6 @@ max_tabs = 5
     assert settings.editor.min_height == 4
     assert settings.editor.max_height == 18
     assert settings.transcript.mode == "compact"
-    assert settings.keybindings.keys("command_palette") == ("ctrl+k",)
     assert settings.keybindings.keys("follow_up") == ("ctrl+enter",)
     assert settings.keybindings.keys("newline") == ("shift+enter",)
     assert settings.keybindings.keys("cancel") == ("escape",)

@@ -87,7 +87,7 @@ def _ui_help(_args, _ctx):
                 "- `/ui-lifecycle` — reasoning, diff, artifact and tool blocks",
                 "- `/ui-turn [prompt]` — grouped Agent execution and sidebar entry",
                 "- `/ui-status [text|clear]` — status contribution",
-                "- `/ui-widget [above|below|clear]` — layout widget",
+                "- `/ui-widget [navbar|above|below|clear]` — layout widget",
                 "- `/ui-notify [info|warning|error]` — notification",
                 "- `/ui-dialogs` — selector, confirmation, input and editor",
                 "- `/ui-permission [command]` — runtime-owned permission request",
@@ -376,24 +376,29 @@ def _ui_status(args, ctx):
 
 
 def _ui_widget(args, ctx):
-    position = args.strip().lower() or "above"
+    position = args.strip().lower() or "navbar"
     if position == "clear":
         ctx.ui.set_widget("gallery-dynamic", None)
         return _output("Gallery widget cleared.")
-    if position not in {"above", "below"}:
-        return _output("Usage: `/ui-widget [above|below|clear]`")
-    placement = "below_editor" if position == "below" else "above_editor"
+    if position not in {"navbar", "above", "below"}:
+        return _output("Usage: `/ui-widget [navbar|above|below|clear]`")
+    placement = {
+        "navbar": "navbar",
+        "above": "above_editor",
+        "below": "below_editor",
+    }[position]
+    description = "in the navbar" if position == "navbar" else f"{position} the editor"
     ctx.ui.set_widget(
         "gallery-dynamic",
         lambda _app, _theme: Static(
             Panel(
-                f"Mock widget placed {position} the editor.",
+                f"Mock widget placed {description}.",
                 border_style="#ff6a1a",
             )
         ),
         placement=placement,
     )
-    return _output(f"Gallery widget placed {position} the editor.")
+    return _output(f"Gallery widget placed {description}.")
 
 
 def _ui_notify(args, ctx):
@@ -510,10 +515,8 @@ def _ui_theme(args, ctx):
 
 
 def _ui_reset(_args, ctx):
-    ctx.ui.set_status("gallery", None)
     ctx.ui.set_status("gallery-dynamic", None)
     ctx.ui.set_status("gallery-shortcut", None)
-    ctx.ui.set_widget("gallery-hint", None)
     ctx.ui.set_widget("gallery-dynamic", None)
     ctx.ui.set_header(None)
     ctx.ui.set_footer(None)
@@ -543,7 +546,7 @@ _COMMANDS = (
         _ui_markdown,
     ),
     ("ui-status", "Set or clear a mock extension status.", _ui_status),
-    ("ui-widget", "Show a mock widget above or below the editor.", _ui_widget),
+    ("ui-widget", "Show a mock widget in a UI placement.", _ui_widget),
     ("ui-notify", "Show a mock Textual notification.", _ui_notify),
     ("ui-dialogs", "Run every built-in UI dialog.", _ui_dialogs),
     ("ui-permission", "Request permission for a mock shell command.", _ui_permission),
@@ -557,12 +560,6 @@ _COMMANDS = (
 
 
 def setup(api):
-    api.ui.set_status("gallery", "widget gallery loaded")
-    api.ui.set_widget(
-        "gallery-hint",
-        ["Widget gallery", "Try /ui-help"],
-        placement="above_editor",
-    )
     api.register_message_renderer("gallery-card", _render_card)
     api.ui.register_tool_renderer(
         "gallery-search",

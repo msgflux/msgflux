@@ -90,8 +90,7 @@ normal submissions become steering inputs. `Alt+Enter` queues a follow-up after
 all steering inputs. `Escape` cancels the active execution and clears its queue.
 The pending-input widget is only a projection of runtime queue events.
 
-`Ctrl+P` opens a searchable palette over the same runtime command registry. The
-default footer shows Vulcano, the active model, working directory, streaming
+The default footer shows Vulcano, the active model, working directory, streaming
 state, queue depth, and configured key hints. The default header is empty to
 preserve vertical space; extensions may still populate its slot.
 
@@ -372,6 +371,8 @@ Compact session rows live above the message index in the workspace navbar. The
 Textual client sends `ActivateSessionTab`, `ToggleSessionPin`, and
 `CloseSessionTab`; it does not mutate session state directly. Activating a
 thread already present selects the existing tab instead of creating a duplicate.
+The navbar starts expanded, its message index scrolls within a fixed-height
+region, and its `+` button delegates to the same runtime command as `/new`.
 
 Pinned tabs are restored from `~/.vulcano/workspace.toml` at startup. Switching
 away marks the previous tab `paused`; closing marks it `idle` without deleting
@@ -501,7 +502,7 @@ def setup(api):
     api.ui.set_widget(
         "branch",
         lambda app, theme: Static("branch: feat/vulcano-tui"),
-        placement="above_editor",
+        placement="navbar",
     )
     api.ui.set_header(
         lambda app, theme: Static("CUSTOM VULCANO", id="custom-header")
@@ -514,9 +515,11 @@ def setup(api):
 
 Widget content may be a string, a sequence of strings, a Rich renderable, a
 Textual `Widget`, or a factory receiving `(app, theme)`. Widgets support
-`above_editor` and `below_editor`. Passing `None` clears the owner's current
-contribution. When multiple extensions customize a single slot, the latest
-active contribution wins; unloading it restores the previous one.
+`navbar`, `above_editor`, and `below_editor`; `navbar` is the default placement.
+This gives extensions a standard owner-aware registration path for persistent
+navigation content. Passing `None` clears the owner's current contribution.
+When multiple extensions customize a single slot, the latest active
+contribution wins; unloading it restores the previous one.
 
 #### Custom components and overlays
 

@@ -26,7 +26,7 @@ from msgflux.vulcano.config import TranscriptMode, VulcanoSettings
 from msgflux.vulcano.events import DomainEvent, EventType
 from msgflux.vulcano.permissions import PermissionActionDecision
 from msgflux.vulcano.runtime import RuntimeProtocol
-from msgflux.vulcano.textual_ui import TextualUiDriver, VulcanoTextArea
+from msgflux.vulcano.textual_ui import TextualUiDriver, VulcanoTextArea, WorkingStatus
 from msgflux.vulcano.ui import UiDialogOptions, UiManager
 
 __all__ = [
@@ -175,7 +175,13 @@ class SessionTabBar(VerticalScroll):
         self._key_mode = False
 
     def compose(self) -> ComposeResult:
-        yield Static("SESSIONS 0/5", id="session-nav-heading")
+        with Horizontal(id="session-nav-header"):
+            yield Static("SESSIONS 0/5", id="session-nav-heading")
+            yield Button(
+                "+",
+                id="session-new",
+                tooltip="Create a new session",
+            )
         yield Static(
             self._key_hint(),
             id="session-key-hint",
@@ -238,6 +244,15 @@ class SessionTabBar(VerticalScroll):
             )
         )
         self._ordered_thread_ids = ordered_thread_ids
+        new_session = self.query_one("#session-new", Button)
+        at_capacity = len(ordered_thread_ids) >= self.max_tabs
+        new_session.disabled = not self.persistence or at_capacity
+        if not self.persistence:
+            new_session.tooltip = "Session persistence is disabled"
+        elif at_capacity:
+            new_session.tooltip = f"Session limit reached ({self.max_tabs})"
+        else:
+            new_session.tooltip = "Create a new session"
         incoming = set(ordered_thread_ids)
         for thread_id in tuple(self.entries):
             if thread_id in incoming:
@@ -469,22 +484,24 @@ class TurnSidebar(VerticalScroll):
     """Session and message navigation for the active workspace."""
 
     def __init__(self) -> None:
-        super().__init__(id="turn-sidebar", classes="turn-sidebar-hidden")
+        super().__init__(id="turn-sidebar")
         self.entries: dict[str, TurnNavigationItem] = {}
-        self._expanded = False
-        self._user_managed = False
+        self._expanded = True
 
     def compose(self) -> ComposeResult:
         yield SessionTabBar()
         yield Static("MESSAGES 0", id="turn-nav-heading")
-        yield Static("No messages yet", id="turn-nav-empty")
+        with VerticalScroll(id="turn-nav-messages"):
+            yield Static("No messages yet", id="turn-nav-empty")
+        yield Container(id="navbar-widgets")
+        yield Static("", id="navbar-statuses")
+        yield WorkingStatus()
 
     @property
     def is_expanded(self) -> bool:
         return self._expanded
 
     def toggle(self) -> bool:
-        self._user_managed = True
         self.set_expanded(not self._expanded)
         return self.is_expanded
 
@@ -509,11 +526,9 @@ class TurnSidebar(VerticalScroll):
             anchor=anchor,
         )
         self.entries[message_id] = item
-        if not self._user_managed:
-            self.set_expanded(True)
         self._refresh_messages()
         self._sync_visibility()
-        await self.mount(item)
+        await self.query_one("#turn-nav-messages", VerticalScroll).mount(item)
         return item
 
     def set_execution_status(self, message_id: str, status: str) -> None:
@@ -528,8 +543,6 @@ class TurnSidebar(VerticalScroll):
     async def clear_entries(self) -> None:
         self.entries.clear()
         await self.query(TurnNavigationItem).remove()
-        if not self._user_managed:
-            self.set_expanded(False)
         self._refresh_messages()
         self._sync_visibility()
 
@@ -777,7 +790,8 @@ class VulcanoApp(App[None]):
         layout: vertical;
     }
 
-    #header-slot, #footer-slot, #widgets-above, #widgets-below, #editor-slot {
+    #header-slot, #footer-slot, #widgets-above, #widgets-below, #editor-slot,
+    #navbar-widgets {
         width: 100%;
         height: auto;
     }
@@ -810,7 +824,42 @@ class VulcanoApp(App[None]):
         scrollbar-color: #3c4352;
     }
 
-    #session-nav-heading, #turn-nav-heading {
+    #session-nav-header {
+        width: 100%;
+        height: 1;
+    }
+
+    #session-nav-heading {
+        width: 1fr;
+        height: 1;
+        color: #778091;
+        text-style: bold;
+        content-align: left middle;
+    }
+
+    #session-new {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        min-height: 1;
+        padding: 0;
+        color: #ff8a3d;
+        background: #171a21;
+        border: none;
+    }
+
+    #session-new:hover, #session-new:focus {
+        color: #ffffff;
+        background: #5a2a16;
+        text-style: bold;
+    }
+
+    #session-new:disabled {
+        color: #3c4352;
+        background: #10131a;
+    }
+
+    #turn-nav-heading {
         width: 100%;
         height: 1;
         color: #778091;
@@ -834,7 +883,7 @@ class VulcanoApp(App[None]):
         display: none;
     }
 
-    #session-tabs.session-key-mode #session-nav-heading {
+    #session-tabs.session-key-mode #session-nav-header {
         display: none;
     }
 
@@ -862,6 +911,8 @@ class VulcanoApp(App[None]):
         width: 1fr;
         min-width: 0;
         padding-left: 1;
+        text-align: left;
+        content-align: left middle;
     }
 
     .session-tab .session-tab-pin, .session-tab .session-tab-close {
@@ -936,12 +987,20 @@ class VulcanoApp(App[None]):
         text-style: italic;
     }
 
+    #turn-nav-messages {
+        width: 100%;
+        height: auto;
+        min-height: 2;
+        max-height: 10;
+        scrollbar-size: 1 1;
+        scrollbar-color: #3c4352;
+    }
+
     .turn-nav-item {
         width: 100%;
         min-width: 0;
         height: auto;
-        min-height: 3;
-        margin-bottom: 1;
+        min-height: 2;
         padding: 0 1;
         color: #9da5b4;
         background: #171a21;
@@ -1105,16 +1164,18 @@ class VulcanoApp(App[None]):
         border-left: solid #d96c75;
     }
 
-    #status {
-        height: 1;
-        padding: 0 2;
+    #navbar-statuses {
+        width: 100%;
+        height: auto;
+        max-height: 4;
+        padding: 0 1;
         color: #778091;
         background: #10131a;
     }
 
     #working {
         height: 1;
-        padding: 0 2;
+        padding: 0 1;
         color: #ff6a1a;
         background: #10131a;
     }
@@ -1138,6 +1199,14 @@ class VulcanoApp(App[None]):
         width: 100%;
         height: auto;
         padding: 0 2;
+    }
+
+    #navbar-widgets {
+        max-height: 8;
+    }
+
+    .navbar-widget {
+        padding: 0 1;
     }
 
     #command-menu {
@@ -1246,8 +1315,6 @@ class VulcanoApp(App[None]):
                             markdown=True,
                             classes="welcome-message",
                         )
-                yield Static("starting runtime...", id="status")
-                yield self._ui_driver.create_working_status()
                 yield Container(id="widgets-above")
                 yield PendingInputList(widget_id="pending-inputs")
                 yield self._ui_driver.create_command_menu()
@@ -1307,7 +1374,6 @@ class VulcanoApp(App[None]):
                 ("cancel", self.action_cancel_execution),
                 ("clear", self.action_request_clear),
                 ("quit", self.action_request_quit),
-                ("command_palette", self.action_command_palette),
             ):
                 if not keybindings.matches(action, event.key):
                     continue
@@ -1394,6 +1460,11 @@ class VulcanoApp(App[None]):
             self._dispatch_session_action(CloseSessionTab(tab.thread_id))
         event.stop()
 
+    @on(Button.Pressed, "#session-new")
+    def _on_new_session(self, event: Button.Pressed) -> None:
+        self._dispatch_text("/new")
+        event.stop()
+
     @on(Input.Submitted, "#prompt")
     def _on_prompt_submitted(self, event: Input.Submitted) -> None:
         self._submit_prompt(event.value)
@@ -1432,10 +1503,6 @@ class VulcanoApp(App[None]):
             await self.runtime.dispatch(action)
         except Exception as error:
             self.notify(str(error), severity="error")
-
-    @work(exclusive=True, group="command-palette")
-    async def _open_command_palette(self) -> None:
-        await self._ui_driver.open_command_palette()
 
     @work(exclusive=True, group="runtime-events")
     async def _consume_events(self) -> None:
@@ -1672,7 +1739,6 @@ class VulcanoApp(App[None]):
 
     def _project_lifecycle_event(self, event: DomainEvent) -> bool:
         if event.type == EventType.RUNTIME_STARTED:
-            command_count = event.payload.get("commands", 0)
             runtime_kind = event.payload.get("runtime", "runtime")
             self._ui_driver.set_runtime_metadata(
                 str(runtime_kind),
@@ -1692,13 +1758,9 @@ class VulcanoApp(App[None]):
                     else None
                 ),
             )
-            self._ui_driver.set_base_status(
-                f"{runtime_kind} runtime  •  {command_count} commands  •  /help"
-            )
             return True
         if event.type == EventType.RUNTIME_STOPPED:
             self._ui_driver.set_streaming(streaming=False)
-            self._ui_driver.set_base_status("runtime stopped")
             self.exit()
             return True
         return False
@@ -2097,9 +2159,6 @@ class VulcanoApp(App[None]):
 
     def action_cancel_execution(self) -> None:
         self._dispatch_cancel()
-
-    def action_command_palette(self) -> None:
-        self._open_command_palette()
 
     def action_session_prefix(self) -> None:
         self._session_key_mode = True

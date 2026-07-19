@@ -360,84 +360,6 @@ class _SelectScreen(_TimedModalScreen[str | None]):
         self.dismiss(self._options[event.option_index])
 
 
-class _CommandPaletteScreen(_TimedModalScreen[str | None]):
-    def __init__(self, commands: CommandRegistry) -> None:
-        super().__init__(timeout=None, cancel_result=None)
-        self._commands = commands
-        self._visible_commands: tuple[str, ...] = ()
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Label("Commands", classes="dialog-title")
-            yield Input(placeholder="Search slash commands", id="palette-query")
-            yield OptionList(id="palette-options", markup=False)
-
-    def on_mount(self) -> None:
-        super().on_mount()
-        self._refresh_options("")
-        self.query_one("#palette-query", Input).focus()
-
-    def on_key(self, event: events.Key) -> None:
-        options = self.query_one("#palette-options", OptionList)
-        if event.key == "down":
-            options.action_cursor_down()
-        elif event.key == "up":
-            options.action_cursor_up()
-        else:
-            return
-        event.prevent_default()
-        event.stop()
-
-    @on(Input.Changed, "#palette-query")
-    def _query_changed(self, event: Input.Changed) -> None:
-        self._refresh_options(event.value)
-
-    @on(Input.Submitted, "#palette-query")
-    def _query_submitted(self, event: Input.Submitted) -> None:
-        del event
-        self._select_highlighted()
-
-    @on(OptionList.OptionSelected, "#palette-options")
-    def _option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(self._visible_commands[event.option_index])
-
-    def _select_highlighted(self) -> None:
-        highlighted = self.query_one("#palette-options", OptionList).highlighted
-        if highlighted is not None and 0 <= highlighted < len(self._visible_commands):
-            self.dismiss(self._visible_commands[highlighted])
-
-    def _refresh_options(self, query: str) -> None:
-        terms = tuple(query.casefold().split())
-        commands = tuple(
-            sorted(
-                (
-                    command
-                    for command in self._commands
-                    if all(
-                        term
-                        in " ".join(
-                            (
-                                command.name,
-                                *command.aliases,
-                                command.description,
-                                command.category,
-                            )
-                        ).casefold()
-                        for term in terms
-                    )
-                ),
-                key=lambda command: (command.category, command.name),
-            )
-        )
-        self._visible_commands = tuple(command.name for command in commands)
-        options = self.query_one("#palette-options", OptionList)
-        options.clear_options()
-        options.add_options(
-            f"/{command.name}  {command.description}" for command in commands
-        )
-        options.highlighted = 0 if commands else None
-
-
 class _ConfirmScreen(_TimedModalScreen[bool]):
     def __init__(
         self,
@@ -627,7 +549,6 @@ class VulcanoFooter(Static):
             content.append(f"  queued:{self._queue_count}", style="#d0a15c")
         hints = []
         for action, label in (
-            ("command_palette", "commands"),
             ("toggle_sidebar", "nav"),
             ("session_prefix", "sessions"),
             ("cancel", "cancel"),
@@ -728,7 +649,6 @@ class TextualUiDriver:
         self._state = UiState()
         self._applied_state = UiState()
         self._apply_scheduled = False
-        self._base_status = "starting runtime..."
         self._streaming = False
         self._runtime_kind = "starting"
         self._agent_name: str | None = None
@@ -751,9 +671,6 @@ class TextualUiDriver:
         footer.set_queue_count(self._queue_count)
         footer.set_streaming(self._streaming)
         return footer
-
-    def create_working_status(self) -> WorkingStatus:
-        return WorkingStatus()
 
     def create_command_menu(self) -> OptionList:
         self._command_menu = _SlashCommandMenu(self._commands)
@@ -855,11 +772,6 @@ class TextualUiDriver:
         if self._state != state:
             self.apply_state(self._state)
 
-    def set_base_status(self, text: str) -> None:
-        self._base_status = text
-        if self.app.is_running:
-            self._refresh_status()
-
     def set_runtime_metadata(
         self,
         kind: str,
@@ -900,17 +812,24 @@ class TextualUiDriver:
         return next(iter(self.app.query(VulcanoFooter)), None)
 
     def _refresh_status(self) -> None:
-        statuses = [status.text for status in self._state.statuses]
-        text = "  •  ".join((self._base_status, *statuses))
-        self.app.query_one("#status", Static).update(text)
+        statuses = self._state.statuses
+        view = self.app.query_one("#navbar-statuses", Static)
+        view.display = bool(statuses)
+        view.update("\n".join(status.text for status in statuses))
 
     async def _sync_widgets(self, widgets: tuple[UiWidget, ...]) -> None:
         above = self.app.query_one("#widgets-above", Container)
         below = self.app.query_one("#widgets-below", Container)
+        navbar = self.app.query_one("#navbar-widgets", Container)
         await above.remove_children()
         await below.remove_children()
+        await navbar.remove_children()
         for contribution in widgets:
-            target = below if contribution.placement == "below_editor" else above
+            target = {
+                "above_editor": above,
+                "below_editor": below,
+                "navbar": navbar,
+            }[contribution.placement]
             try:
                 component = await self.materialize(contribution.content)
             except Exception as error:
@@ -923,6 +842,8 @@ class TextualUiDriver:
                     classes="error-message",
                 )
             component.add_class("extension-widget")
+            if contribution.placement == "navbar":
+                component.add_class("navbar-widget")
             await target.mount(component)
 
     async def _sync_slot(
@@ -1027,14 +948,6 @@ class TextualUiDriver:
         return await self.app.push_screen_wait(
             _EditorScreen(title, prefill, timeout=dialog.timeout)
         )
-
-    async def open_command_palette(self) -> str | None:
-        command = await self.app.push_screen_wait(_CommandPaletteScreen(self._commands))
-        if command is None:
-            return None
-        self.set_editor_text(f"/{command} ")
-        self.focus_editor()
-        return command
 
     def notify(
         self,

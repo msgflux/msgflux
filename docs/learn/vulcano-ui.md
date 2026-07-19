@@ -25,7 +25,7 @@ and every contribution is owned by its extension generation.
 | `/ui-lifecycle [query]` | Stream reasoning, diff and artifact blocks plus a custom-rendered tool call. |
 | `/ui-turn [prompt]` | Simulate a complete grouped Agent execution with tools, a diff, an intermediate user message, and a final answer. |
 | `/ui-status [text\|clear]` | Set or clear an extension-owned status. |
-| `/ui-widget [above\|below\|clear]` | Mount or remove a widget around the editor. |
+| `/ui-widget [navbar\|above\|below\|clear]` | Mount or remove a widget in a public UI placement. |
 | `/ui-notify [info\|warning\|error]` | Show each Textual notification severity. |
 | `/ui-dialogs` | Run select, confirm, single-line input, and multiline editor dialogs. |
 | `/ui-permission [command]` | Request runtime permission for a mock shell command. |
@@ -91,7 +91,8 @@ The workspace navbar places sessions above a user-message index. It spans the
 full application height, so the transcript, editor, and footer remain aligned
 beside it. Messages are numbered in event order; selecting one scrolls to its
 stable transcript anchor. This is derived client state, so it also rebuilds
-from a durable session replay.
+from a durable session replay. The message index has a fixed maximum height and
+scrolls independently, so a long transcript does not consume the whole navbar.
 
 ## Workspace navbar and session tabs
 
@@ -99,9 +100,10 @@ The compact session rows at the top of the navbar are projected from
 `session.tabs.updated`. A thread appears at most once in a Vulcano process.
 Selecting a paused row asks the runtime to activate and replay that durable
 thread; the TUI never opens its JSONL file. Press `Alt+S` to open the navbar
-even before the first message exists.
+even before the first message exists. The navbar starts expanded by default.
 
-Each tab exposes two controls:
+The `+` button starts a new empty session through the same runtime path as
+`/new`. Each tab exposes two additional controls:
 
 - `◇`/`◆` toggles whether the tab is restored on the next launch.
 - `×` closes the tab without deleting its transcript.
@@ -165,7 +167,6 @@ terminal rows. It scrolls vertically after reaching the maximum.
 | `Shift+Enter` or `Ctrl+J` | Insert a line break. |
 | `Alt+Enter` | Queue a follow-up behind all steering inputs. |
 | `Alt+S` | Collapse or expand the workspace navbar. |
-| `Ctrl+P` | Open the searchable command palette. |
 | `Up` and `Down` | Navigate the slash selector while it is open. |
 | `Tab` | Complete the selected slash command. |
 | `Escape` | Close a selector/modal, or cancel the active execution and pending queue. |
@@ -230,7 +231,6 @@ mode = "full"
 max_tabs = 5
 
 [ui.keybindings]
-command_palette = "ctrl+p"
 toggle_sidebar = "alt+s"
 session_prefix = "ctrl+g"
 cancel = "escape"

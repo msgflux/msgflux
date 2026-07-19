@@ -57,13 +57,11 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
         "ui-widget",
         "ui-working",
     } <= gallery_commands
-    assert [status.text for status in runtime.ui.state.statuses] == [
-        "widget gallery loaded"
-    ]
-    assert runtime.ui.state.widgets[0].key == "gallery-hint"
+    assert runtime.ui.state.statuses == ()
+    assert runtime.ui.state.widgets == ()
 
     await runtime.dispatch(SubmitInput("/ui-status indexing repository"))
-    await runtime.dispatch(SubmitInput("/ui-widget below"))
+    await runtime.dispatch(SubmitInput("/ui-widget navbar"))
     await runtime.dispatch(SubmitInput("/ui-working show"))
     await runtime.dispatch(SubmitInput("/ui-title Gallery preview"))
     await runtime.dispatch(SubmitInput("/ui-card structured result"))
@@ -73,11 +71,8 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
     await runtime.dispatch(SubmitInput("/ui-overlay"))
 
     state = runtime.ui.state
-    assert [status.text for status in state.statuses] == [
-        "widget gallery loaded",
-        "indexing repository",
-    ]
-    assert state.widgets[-1].placement == "below_editor"
+    assert [status.text for status in state.statuses] == ["indexing repository"]
+    assert state.widgets[-1].placement == "navbar"
     assert state.working_message == "Mock agent is processing"
     assert state.working_indicator.frames == ("·", "•", "●", "•")
     assert state.title == "Gallery preview"
@@ -120,7 +115,7 @@ async def test_widget_gallery_exercises_runtime_owned_ui_headlessly():
 
 
 @pytest.mark.asyncio
-async def test_widget_gallery_reload_recreates_initial_contributions():
+async def test_widget_gallery_reload_starts_without_static_contributions():
     runtime = VulcanoRuntime(
         stream_delay=0,
         extension_paths=[GALLERY_EXTENSION],
@@ -131,10 +126,8 @@ async def test_widget_gallery_reload_recreates_initial_contributions():
 
     await runtime.extensions.reload()
 
-    assert [status.text for status in runtime.ui.state.statuses] == [
-        "widget gallery loaded"
-    ]
-    assert [widget.key for widget in runtime.ui.state.widgets] == ["gallery-hint"]
+    assert runtime.ui.state.statuses == ()
+    assert runtime.ui.state.widgets == ()
 
 
 @pytest.mark.asyncio
@@ -156,11 +149,11 @@ async def test_widget_gallery_materializes_cards_widgets_and_slots():
         await pilot.pause(delay=0.1)
         assert app.query_one(".gallery-card", Static)
 
-        prompt.text = "/ui-widget below"
+        prompt.text = "/ui-widget navbar"
         prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
         await pilot.pause(delay=0.1)
-        assert len(app.query_one("#widgets-below", Container).children) == 1
+        assert len(app.query_one("#navbar-widgets", Container).children) == 1
 
         prompt.text = "/ui-slots show"
         prompt.cursor_location = prompt.document.end

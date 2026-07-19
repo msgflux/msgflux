@@ -7,11 +7,9 @@ EXTENSION_API_VERSION = 1
 
 
 def setup(api):
-    api.ui.set_status("example", "example extension loaded")
     api.ui.set_widget(
         "hint",
         ["Example extension", "Try /hello Ada"],
-        placement="above_editor",
     )
     api.register_message_renderer(
         "greeting",
