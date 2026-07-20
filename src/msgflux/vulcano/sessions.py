@@ -18,6 +18,7 @@ __all__ = [
     "SessionInfo",
     "SessionStore",
     "SessionTabInfo",
+    "SessionTabRequest",
     "SessionTabStatus",
     "SessionTransition",
     "SessionWorkspace",
@@ -73,6 +74,12 @@ class SessionInfo:
 @dataclass(frozen=True)
 class SessionTransition:
     kind: Literal["resume", "fork", "new"]
+    thread_id: str
+
+
+@dataclass(frozen=True)
+class SessionTabRequest:
+    kind: Literal["close", "toggle_pin"]
     thread_id: str
 
 
@@ -408,6 +415,7 @@ class SessionController:
         self.current_thread_id = thread_id
         self.export_directory = Path(export_directory).expanduser().resolve()
         self._pending: SessionTransition | None = None
+        self._pending_tab_request: SessionTabRequest | None = None
         resolved_workspace = workspace_file
         if resolved_workspace is None and store is not None:
             resolved_workspace = store.directory.parent / "workspace.toml"
@@ -439,12 +447,14 @@ class SessionController:
         return self.workspace.max_tabs
 
     def request_resume(self, thread_id: str) -> SessionInfo:
+        self._require_no_pending_request()
         info = self._require_store().info(thread_id)
         self.workspace.require_open_slot(thread_id)
         self._pending = SessionTransition("resume", thread_id)
         return info
 
     def request_new(self) -> SessionInfo:
+        self._require_no_pending_request()
         self.workspace.require_open_slot()
         store = self._require_store()
         info = store.ensure(new_thread_id())
@@ -452,6 +462,7 @@ class SessionController:
         return info
 
     def request_fork(self, through_sequence: int | None = None) -> SessionInfo:
+        self._require_no_pending_request()
         self.workspace.require_open_slot()
         info = self._require_store().fork(
             self.current_thread_id,
@@ -459,6 +470,23 @@ class SessionController:
         )
         self._pending = SessionTransition("fork", info.thread_id)
         return info
+
+    def request_close_tab(self, thread_id: str | None = None) -> SessionTabInfo:
+        self._require_no_pending_request()
+        self._require_store()
+        tab = self._open_tab(thread_id or self.current_thread_id)
+        self._pending_tab_request = SessionTabRequest("close", tab.thread_id)
+        return tab
+
+    def request_toggle_tab_pin(
+        self,
+        thread_id: str | None = None,
+    ) -> SessionTabInfo:
+        self._require_no_pending_request()
+        self._require_store()
+        tab = self._open_tab(thread_id or self.current_thread_id)
+        self._pending_tab_request = SessionTabRequest("toggle_pin", tab.thread_id)
+        return tab
 
     def export(
         self,
@@ -477,6 +505,11 @@ class SessionController:
         self._pending = None
         return transition
 
+    def consume_tab_request(self) -> SessionTabRequest | None:
+        request = self._pending_tab_request
+        self._pending_tab_request = None
+        return request
+
     def activate(self, thread_id: str) -> None:
         self.current_thread_id = thread_id
         self.workspace.activate(thread_id)
@@ -492,6 +525,16 @@ class SessionController:
 
     def terminate_tabs(self) -> None:
         self.workspace.terminate()
+
+    def _open_tab(self, thread_id: str) -> SessionTabInfo:
+        for tab in self.workspace.tabs:
+            if tab.thread_id == thread_id:
+                return tab
+        raise LookupError(f"Session tab is not open: {thread_id}")
+
+    def _require_no_pending_request(self) -> None:
+        if self._pending is not None or self._pending_tab_request is not None:
+            raise RuntimeError("A session operation is already pending")
 
     def _require_store(self) -> SessionStore:
         if self.store is None:

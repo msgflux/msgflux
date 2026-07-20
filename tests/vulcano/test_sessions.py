@@ -335,6 +335,63 @@ async def test_runtime_new_command_opens_an_empty_session_tab(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runtime_pin_and_close_commands_update_open_tabs(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure("thd_one")
+    store.ensure("thd_two")
+    runtime = VulcanoRuntime(
+        scope=ExecutionScope(thread_id="thd_one", namespace="vulcano"),
+        session_store=store,
+        stream_delay=0,
+        extensions_enabled=False,
+    )
+    await runtime.dispatch(SubmitInput("/resume thd_two"))
+
+    await runtime.dispatch(SubmitInput("/pin thd_one", correlation_id="pin-one"))
+
+    assert runtime.sessions.tabs[0].thread_id == "thd_one"
+    assert runtime.sessions.tabs[0].pinned
+    completed = next(
+        event
+        for event in runtime.history
+        if event.type == EventType.COMMAND_COMPLETED
+        and event.correlation_id == "pin-one"
+    )
+    tabs_updated = next(
+        event
+        for event in runtime.history
+        if event.type == EventType.SESSION_TABS_UPDATED
+        and event.sequence > completed.sequence
+    )
+    assert tabs_updated.sequence > completed.sequence
+
+    await runtime.dispatch(SubmitInput("/pin thd_one"))
+    assert not runtime.sessions.tabs[0].pinned
+
+    await runtime.dispatch(SubmitInput("/close thd_one"))
+    assert [(tab.thread_id, tab.status) for tab in runtime.sessions.tabs] == [
+        ("thd_two", "active")
+    ]
+
+    await runtime.dispatch(SubmitInput("/pin"))
+    assert runtime.sessions.tabs[0].pinned
+
+    await runtime.dispatch(SubmitInput("/close"))
+    assert runtime.sessions.tabs == ()
+    assert runtime.sessions.current_thread_id == "thd_two"
+    closed = [
+        event
+        for event in runtime.history
+        if event.type == EventType.SESSION_TABS_UPDATED
+        and event.payload.get("closed") is not None
+    ]
+    assert [event.payload["closed"]["thread_id"] for event in closed[-2:]] == [
+        "thd_one",
+        "thd_two",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_owns_session_tab_activation_pin_and_close(tmp_path):
     store = SessionStore(tmp_path / "sessions")
     store.ensure("thd_one")

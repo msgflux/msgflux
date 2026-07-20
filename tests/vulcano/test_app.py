@@ -85,7 +85,7 @@ async def test_app_projects_streaming_runtime_events_headlessly():
         prompt.text = "hello"
         prompt.cursor_location = prompt.document.end
         await pilot.press("enter")
-        await pilot.pause(delay=0.05)
+        await pilot.pause(delay=0.1)
 
         messages = list(app.query(TranscriptMessage))
         user = next(message for message in messages if message.kind == "user")

@@ -44,7 +44,12 @@ from msgflux.vulcano.extensions import (
     ExtensionSettings,
 )
 from msgflux.vulcano.permissions import PermissionManager
-from msgflux.vulcano.sessions import SessionController, SessionStore, SessionTransition
+from msgflux.vulcano.sessions import (
+    SessionController,
+    SessionStore,
+    SessionTabRequest,
+    SessionTransition,
+)
 from msgflux.vulcano.ui import UiManager
 
 __all__ = ["MockResponder", "Responder", "RuntimeProtocol", "VulcanoRuntime"]
@@ -644,6 +649,7 @@ class VulcanoRuntime:
             raise
         except Exception as error:
             self.sessions.consume_transition()
+            self.sessions.consume_tab_request()
             await self._emit(
                 EventType.COMMAND_ERROR,
                 {"message": str(error), "name": command.name},
@@ -668,8 +674,11 @@ class VulcanoRuntime:
             correlation_id=correlation_id,
         )
         transition = self.sessions.consume_transition()
+        tab_request = self.sessions.consume_tab_request()
         if transition is not None:
             await self._apply_session_transition(transition)
+        elif tab_request is not None:
+            await self._apply_session_tab_request(tab_request, correlation_id)
         if result.stop_runtime:
             await self.stop(
                 reason=f"command:/{command.name}",
@@ -729,35 +738,63 @@ class VulcanoRuntime:
                     action.correlation_id,
                 )
                 return
-            try:
-                closed, next_thread_id = self.sessions.close_tab(action.thread_id)
-            except (LookupError, ValueError) as error:
-                await self._emit_session_tab_error(
-                    str(error),
-                    action.correlation_id,
-                )
-                return
-            if (
-                action.thread_id == self.sessions.current_thread_id
-                and next_thread_id is not None
-            ):
-                await self._apply_session_transition(
-                    SessionTransition("resume", next_thread_id)
-                )
-                return
-            await self._emit_session_tabs(closed=closed.to_dict())
+            await self._apply_session_tab_close(
+                action.thread_id,
+                action.correlation_id,
+            )
 
     async def _toggle_session_pin(self, action: ToggleSessionPin) -> None:
         async with self._session_lock:
-            try:
-                self.sessions.toggle_tab_pin(action.thread_id)
-            except (LookupError, ValueError) as error:
-                await self._emit_session_tab_error(
-                    str(error),
-                    action.correlation_id,
+            await self._apply_session_pin_toggle(
+                action.thread_id,
+                action.correlation_id,
+            )
+
+    async def _apply_session_tab_request(
+        self,
+        request: SessionTabRequest,
+        correlation_id: str,
+    ) -> None:
+        async with self._session_lock:
+            if request.kind == "close":
+                await self._apply_session_tab_close(
+                    request.thread_id,
+                    correlation_id,
                 )
-                return
-            await self._emit_session_tabs()
+            else:
+                await self._apply_session_pin_toggle(
+                    request.thread_id,
+                    correlation_id,
+                )
+
+    async def _apply_session_tab_close(
+        self,
+        thread_id: str,
+        correlation_id: str,
+    ) -> None:
+        try:
+            closed, next_thread_id = self.sessions.close_tab(thread_id)
+        except (LookupError, ValueError) as error:
+            await self._emit_session_tab_error(str(error), correlation_id)
+            return
+        if thread_id == self.sessions.current_thread_id and next_thread_id is not None:
+            await self._apply_session_transition(
+                SessionTransition("resume", next_thread_id)
+            )
+            return
+        await self._emit_session_tabs(closed=closed.to_dict())
+
+    async def _apply_session_pin_toggle(
+        self,
+        thread_id: str,
+        correlation_id: str,
+    ) -> None:
+        try:
+            self.sessions.toggle_tab_pin(thread_id)
+        except (LookupError, ValueError) as error:
+            await self._emit_session_tab_error(str(error), correlation_id)
+            return
+        await self._emit_session_tabs()
 
     async def _emit_session_tabs(
         self,
@@ -968,6 +1005,30 @@ class VulcanoRuntime:
                     description="Start a new empty durable session.",
                     usage="/new",
                     handler=_new_session_command,
+                    category="session",
+                ),
+            ),
+            (
+                "close",
+                CommandOptions(
+                    description="Close an open session tab.",
+                    usage="/close [thread-id]",
+                    handler=_close_session_command,
+                    get_argument_completions=lambda _value: tuple(
+                        tab.thread_id for tab in self.sessions.tabs
+                    ),
+                    category="session",
+                ),
+            ),
+            (
+                "pin",
+                CommandOptions(
+                    description="Pin or unpin an open session tab.",
+                    usage="/pin [thread-id]",
+                    handler=_pin_session_command,
+                    get_argument_completions=lambda _value: tuple(
+                        tab.thread_id for tab in self.sessions.tabs
+                    ),
                     category="session",
                 ),
             ),
@@ -1186,6 +1247,46 @@ def _new_session_command(
             EventDraft(
                 EventType.COMMAND_OUTPUT,
                 {"text": f"Started new session `{info.thread_id}`."},
+            ),
+        )
+    )
+
+
+def _optional_tab_argument(arguments: str, usage: str) -> str | None:
+    values = arguments.split()
+    if len(values) > 1:
+        raise ValueError(f"Usage: {usage}")
+    return values[0] if values else None
+
+
+def _close_session_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    thread_id = _optional_tab_argument(arguments, "/close [thread-id]")
+    tab = _session_control(context).request_close_tab(thread_id)
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"Closing session tab `{tab.thread_id}`."},
+            ),
+        )
+    )
+
+
+def _pin_session_command(
+    arguments: str,
+    context: CommandContext,
+) -> CommandResult:
+    thread_id = _optional_tab_argument(arguments, "/pin [thread-id]")
+    tab = _session_control(context).request_toggle_tab_pin(thread_id)
+    action = "Unpinning" if tab.pinned else "Pinning"
+    return CommandResult(
+        events=(
+            EventDraft(
+                EventType.COMMAND_OUTPUT,
+                {"text": f"{action} session tab `{tab.thread_id}`."},
             ),
         )
     )

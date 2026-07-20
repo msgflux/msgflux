@@ -138,10 +138,11 @@ performs one action:
 The editor loses focus while the prefix is active, so the command key is not
 inserted into the prompt. After the action, focus returns to the editor. This
 keeps the workflow usable over SSH and remote terminals without mouse support.
-The TUI translates each sequence into the existing runtime action or `/new`;
-session state remains runtime-owned. The configured prefix is a high-priority
-application binding; extensions should register another shortcut or the user
-can move `session_prefix` to a different key.
+The TUI translates each sequence into the same runtime paths exposed by
+`/new`, `/close`, and `/pin`; session state remains runtime-owned. The
+configured prefix is a high-priority application binding; extensions should
+register another shortcut or the user can move `session_prefix` to a different
+key.
 
 ## Permission confirmation
 
@@ -267,4 +268,5 @@ The target user directory will also provide the natural homes for resources:
 ```
 
 Session transcripts are append-only JSONL files. Use `/sessions`, `/new`,
-`/resume`, `/fork`, and `/export` to exercise persistence without a real Agent.
+`/close`, `/pin`, `/resume`, `/fork`, and `/export` to exercise persistence
+without a real Agent.
