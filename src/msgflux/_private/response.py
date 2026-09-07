@@ -385,7 +385,8 @@ class BaseStreamResponse(CoreResponse):
         for finalizer in finalizers:
             result = finalizer(final_state)
             if inspect.isawaitable(result) or isinstance(result, Future):
-                self._pending_finalizer_awaitables.append(result)
+                with self._finalizer_lock:
+                    self._pending_finalizer_awaitables.append(result)
 
     async def _await_pending_finalizers(self) -> None:
         """Finish async callbacks emitted by a synchronous stream producer."""

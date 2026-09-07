@@ -8,6 +8,32 @@ from msgflux.exceptions import AbortRequestedError
 from msgflux.models.response import LMStreamEvent, ModelResponse, ModelStreamResponse
 
 
+@pytest.mark.asyncio
+async def test_async_finalizer_runs_when_producer_finishes_without_consumer():
+    stream = ModelStreamResponse(mode="async")
+    finished = asyncio.Event()
+
+    async def finalize(_state):
+        finished.set()
+
+    stream.add_finalizer(finalize)
+    await asyncio.to_thread(stream.finish)
+    await asyncio.wait_for(finished.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_async_finalizer_registered_after_finish_is_scheduled():
+    stream = ModelStreamResponse(mode="async")
+    stream.finish()
+    finished = asyncio.Event()
+
+    async def finalize(_state):
+        finished.set()
+
+    stream.add_finalizer(finalize)
+    await asyncio.wait_for(finished.wait(), timeout=1)
+
+
 class TestModelResponse:
     """Test suite for ModelResponse."""
 
