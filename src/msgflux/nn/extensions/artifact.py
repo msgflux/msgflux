@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
+from threading import RLock
 from typing import Mapping
 
 from msgflux.nn.extensions.base import AgentExtension
@@ -35,6 +36,7 @@ class ArtifactRegistry:
     """Register immutable values under stable IDs; filesystem paths are rejected."""
 
     def __init__(self, artifacts: Mapping[str, Artifact] | None = None) -> None:
+        self._lock = RLock()
         self._artifacts: dict[str, Artifact] = {}
         for artifact_id, artifact in (artifacts or {}).items():
             if not _ID.fullmatch(artifact_id):
@@ -44,7 +46,11 @@ class ArtifactRegistry:
                 or artifact.artifact_id != artifact_id
             ):
                 raise ValueError("artifacts must match their mapping IDs")
-            self._artifacts[artifact_id] = artifact
+            self.register(
+                artifact.content,
+                artifact_id=artifact_id,
+                media_type=artifact.media_type,
+            )
 
     def register(
         self,
@@ -53,20 +59,21 @@ class ArtifactRegistry:
         artifact_id: str,
         media_type: str = "text/plain",
     ) -> Artifact:
-        if not artifact_id or not _ID.fullmatch(artifact_id):
+        if not isinstance(artifact_id, str) or not _ID.fullmatch(artifact_id):
             raise ValueError(
                 "artifact_id must be a stable logical ID, not a filesystem path"
             )
         if not isinstance(content, str):
             raise TypeError("artifact content must be text")
-        current = self._artifacts.get(artifact_id)
         artifact = Artifact(artifact_id, content, media_type)
-        if current is not None and current != artifact:
-            raise ValueError(
-                "artifact_id is already registered with different content: "
-                f"{artifact_id}"
-            )
-        self._artifacts[artifact_id] = artifact
+        with self._lock:
+            current = self._artifacts.get(artifact_id)
+            if current is not None and current != artifact:
+                raise ValueError(
+                    "artifact_id is already registered with different content: "
+                    f"{artifact_id}"
+                )
+            self._artifacts[artifact_id] = artifact
         return artifact
 
     def get(self, artifact_id: str) -> Artifact | None:
@@ -79,7 +86,11 @@ class ArtifactReferenceRenderer:
     def __init__(
         self, registry: ArtifactRegistry, *, max_marker_length: int = 256
     ) -> None:
-        if max_marker_length < len(_PREFIX) + 3:
+        if (
+            isinstance(max_marker_length, bool)
+            or not isinstance(max_marker_length, int)
+            or max_marker_length < len(_PREFIX) + 3
+        ):
             raise ValueError("max_marker_length is too small for an artifact marker")
         self.registry = registry
         self.max_marker_length = max_marker_length

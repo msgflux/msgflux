@@ -775,8 +775,8 @@ class AgentConversationMixin:
                 close_turn(settled, final_state.status, final_state.error)
                 self._checkpoint_save(settled, vars, status=final_state.status)
                 committed = True
+                run_end = self._run_after_run_end_hook(run_end)
                 model_response._settled_output = run_end.output
-                self._run_after_run_end_hook(run_end)
             finally:
                 release(settled, committed)
 
@@ -796,8 +796,8 @@ class AgentConversationMixin:
                 close_turn(settled, final_state.status, final_state.error)
                 await self._acheckpoint_save(settled, vars, status=final_state.status)
                 committed = True
+                run_end = await self._arun_after_run_end_hook(run_end)
                 model_response._settled_output = run_end.output
-                await self._arun_after_run_end_hook(run_end)
             finally:
                 release(settled, committed)
 

@@ -1451,7 +1451,7 @@ class Module:
                     )
                 raise
             if run_boundary:
-                if isinstance(result, ModelStreamResponse):
+                if self._stream_response_from_result(result) is not None:
                     self._start_detached_event_finalizer(result, scope=scope)
                 else:
                     self._emit_nested_run_completion(result, scope=scope)
@@ -1658,7 +1658,7 @@ class Module:
                     )
                 raise
             if run_boundary:
-                if isinstance(result, ModelStreamResponse):
+                if self._stream_response_from_result(result) is not None:
                     _track_event_task(
                         asyncio.create_task(
                             self._afinalize_detached_event_result(
@@ -1893,15 +1893,19 @@ class Module:
 
     async def _afinalize_event_result(self, result: Any) -> Any:
         stream_response = self._stream_response_from_result(result)
-        terminal_transform = self.has_lifecycle_hooks("before_run_end") or self.has_lifecycle_hooks("after_run_end")
+        terminal_transform = self.has_lifecycle_hooks(
+            "before_run_end"
+        ) or self.has_lifecycle_hooks("after_run_end")
         output_transformer = (
             self._incremental_output_transformer(self)
             if stream_response is not None and not terminal_transform
             else None
         )
         buffered = stream_response is not None and (
-            terminal_transform or (
-                self.has_lifecycle_hooks("transform_output") and output_transformer is None
+            terminal_transform
+            or (
+                self.has_lifecycle_hooks("transform_output")
+                and output_transformer is None
             )
         )
         emit_event(
@@ -1927,7 +1931,12 @@ class Module:
             output = result
         emit_event(EventType.MESSAGE_END, {"content": output})
         emit_event(EventType.TURN_END)
-        emit_event(EventType.RUN_END, {"outcome": "completed"})
+        outcome = (
+            stream_response._final_status
+            if stream_response is not None
+            else "completed"
+        )
+        emit_event(EventType.RUN_END, {"outcome": outcome})
         return output
 
     async def stream_events(
