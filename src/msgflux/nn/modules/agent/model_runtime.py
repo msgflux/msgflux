@@ -56,16 +56,32 @@ from msgflux.nn.modules.agent.continuation import _TerminalResponse
 class AgentModelRuntimeMixin:
     """Model request preparation, response processing, and tool-loop behavior."""
 
-    _context_scope_tool_names = frozenset({"open_context_scope", "close_context_scope"})
+    _context_scope_tool_kind = "context_scope"
 
-    @classmethod
-    def _validate_context_scope_intents(cls, intents: Any) -> None:
+    def _is_context_scope_tool(self, tool_name: Any) -> bool:
+        """Return whether a registered tool owns context-scope transitions.
+
+        The result payload is deliberately not inspected here: arbitrary tools
+        are allowed to return mappings with a ``type`` field, and those must not
+        gain the ability to mutate conversation history.
+        """
+        if not isinstance(tool_name, str):
+            return False
+        try:
+            definition = self.tool_library.get_tool_definition(tool_name)
+        except (KeyError, ValueError):
+            return False
+        return definition.kind == self._context_scope_tool_kind
+
+    def _validate_context_scope_intents(self, intents: Any) -> None:
         """Reject mixed scope transitions before any tool in the batch runs."""
         normalized_intents = tuple(intents)
         scope_intents = tuple(
             intent
             for intent in normalized_intents
-            if getattr(intent, "name", None) in cls._context_scope_tool_names
+            if self._is_context_scope_tool(
+                getattr(intent, "name", None)
+            )
         )
         if scope_intents and len(normalized_intents) != 1:
             names = ", ".join(intent.name for intent in scope_intents)
@@ -93,6 +109,10 @@ class AgentModelRuntimeMixin:
         for outcome in outcomes:
             if getattr(outcome, "status", None) != "completed":
                 continue
+            if not self._is_context_scope_tool(
+                getattr(outcome, "tool_name", None)
+            ):
+                continue
             command = self._scope_command_value(getattr(outcome, "result", None))
             if command is not None:
                 commands.append(command)
@@ -110,6 +130,8 @@ class AgentModelRuntimeMixin:
             return
         commands = []
         for call in responses.tool_calls:
+            if not self._is_context_scope_tool(getattr(call, "name", None)):
+                continue
             command = self._scope_command_value(call.result)
             if command is not None:
                 commands.append(command)

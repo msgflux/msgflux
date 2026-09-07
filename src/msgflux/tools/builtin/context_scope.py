@@ -7,7 +7,7 @@ from typing import Any
 from msgflux.tools.config import tool_config
 
 
-@tool_config()
+@tool_config(tool_kind="context_scope")
 def open_context_scope(
     name: str,
     summary: str = "",
@@ -21,7 +21,7 @@ def open_context_scope(
     }
 
 
-@tool_config()
+@tool_config(tool_kind="context_scope")
 def close_context_scope(
     name: str = "",
     summary: str = "",
