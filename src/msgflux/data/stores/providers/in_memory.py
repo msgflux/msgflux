@@ -120,6 +120,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         state: Mapping[str, Any],
     ) -> Dict[str, Any]:
         restored = deepcopy(dict(state))
+        self._validate_checkpoint_envelope(restored.get("_checkpoint"))
         normalized_messages = restored.pop("_messages", None)
         if not isinstance(normalized_messages, Mapping):
             return restored
@@ -147,7 +148,6 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             messages["items"].append(item)
         restored["messages"] = messages
-        self._validate_checkpoint_envelope(restored.get("_checkpoint"))
         return restored
 
     @staticmethod
@@ -351,6 +351,15 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             if run is None:
                 run = self._ensure_run(namespace, thread_id, run_id)
             committed = deepcopy(dict(state))
+            runtime = committed.get("runtime")
+            if isinstance(runtime, Mapping):
+                runtime = dict(runtime)
+                runtime["revision"] = next_revision
+                if branch_id is not None:
+                    runtime["branch_id"] = branch_id
+                if head_item_id is not None:
+                    runtime["head_item_id"] = head_item_id
+                committed["runtime"] = runtime
             committed["_checkpoint"] = {
                 "schema_version": 1,
                 "revision": next_revision,

@@ -219,6 +219,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         state_text: str,
     ) -> Dict[str, Any]:
         state = self._deserialize(state_text)
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
 
         normalized_messages = state.pop("_messages", None)
         if not isinstance(normalized_messages, Mapping):
@@ -253,7 +254,6 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             item = restore_item_occurrence(self._deserialize(row[0]), entry)
             messages["items"].append(item)
         state["messages"] = messages
-        self._validate_checkpoint_envelope(state.get("_checkpoint"))
         return state
 
     @staticmethod
@@ -482,6 +482,15 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 )
             next_revision = revision + 1
             committed = deepcopy(dict(state))
+            runtime = committed.get("runtime")
+            if isinstance(runtime, Mapping):
+                runtime = dict(runtime)
+                runtime["revision"] = next_revision
+                if branch_id is not None:
+                    runtime["branch_id"] = branch_id
+                if head_item_id is not None:
+                    runtime["head_item_id"] = head_item_id
+                committed["runtime"] = runtime
             committed["_checkpoint"] = {
                 "schema_version": 1,
                 "revision": next_revision,

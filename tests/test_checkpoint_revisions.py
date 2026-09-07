@@ -150,3 +150,21 @@ def test_checkpoint_envelope_rejects_future_or_invalid_metadata(store_factory, t
     finally:
         if isinstance(store, SQLiteCheckpointStore):
             store.close()
+
+
+@pytest.mark.parametrize("store_factory", [InMemoryCheckpointStore, SQLiteCheckpointStore])
+def test_commit_keeps_runtime_revision_in_step_with_checkpoint(store_factory, tmp_path):
+    kwargs = {"path": str(tmp_path / "runtime.sqlite3")} if store_factory is SQLiteCheckpointStore else {}
+    store = store_factory(**kwargs)
+    try:
+        state = {"runtime": {"revision": 0, "branch_id": "root"}}
+        original = {"runtime": dict(state["runtime"])}
+        commit = store.commit_state(
+            "agent", "thread", "run", state, expected_revision=0, branch_id="review"
+        )
+        assert commit.state["runtime"] == {"revision": 1, "branch_id": "review"}
+        assert state == original
+        assert store.load_state("agent", "thread", "run")["runtime"] == commit.state["runtime"]
+    finally:
+        if isinstance(store, SQLiteCheckpointStore):
+            store.close()
