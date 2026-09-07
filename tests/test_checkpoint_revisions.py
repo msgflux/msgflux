@@ -3,6 +3,7 @@ import pytest
 from msgflux.data.stores import (
     CheckpointConflictError,
     InMemoryCheckpointStore,
+    SQLiteCheckpointStore,
 )
 from msgflux.runtime.agent_run import AgentRun, agent_run_context, get_agent_run
 
@@ -60,3 +61,33 @@ def test_stale_commit_does_not_create_empty_in_memory_run():
 def test_future_agent_run_schema_is_rejected():
     with pytest.raises(ValueError, match="Unsupported AgentRun schema"):
         AgentRun.from_durable_state({"schema_version": 2})
+
+
+@pytest.mark.parametrize("store_factory", [InMemoryCheckpointStore, SQLiteCheckpointStore])
+def test_commit_without_extension_state_preserves_existing_extensions(
+    store_factory, tmp_path
+):
+    kwargs = {"path": str(tmp_path / "checkpoint.sqlite3")} if store_factory is SQLiteCheckpointStore else {}
+    store = store_factory(**kwargs)
+    try:
+        store.commit_state(
+            "agent",
+            "thread",
+            "run",
+            {"status": "running"},
+            expected_revision=0,
+            extension_state={"budget": {"remaining": 2}},
+        )
+        store.commit_state(
+            "agent",
+            "thread",
+            "run",
+            {"status": "running"},
+            expected_revision=1,
+        )
+        assert store.load_state("agent", "thread", "run")["_checkpoint"]["extensions"] == {
+            "budget": {"remaining": 2}
+        }
+    finally:
+        if isinstance(store, SQLiteCheckpointStore):
+            store.close()

@@ -352,7 +352,13 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 "head_item_id": head_item_id
                 if head_item_id is not None
                 else checkpoint.get("head_item_id"),
-                "extensions": deepcopy(dict(extension_state or {})),
+                "extensions": deepcopy(
+                    dict(
+                        checkpoint.get("extensions", {})
+                        if extension_state is None
+                        else extension_state
+                    )
+                ),
             }
             run["state"] = self._normalize_state(namespace, thread_id, committed)
             run["updated_at"] = time.time()
