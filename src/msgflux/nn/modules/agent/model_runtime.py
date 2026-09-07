@@ -61,12 +61,13 @@ class AgentModelRuntimeMixin:
     @classmethod
     def _validate_context_scope_intents(cls, intents: Any) -> None:
         """Reject mixed scope transitions before any tool in the batch runs."""
+        normalized_intents = tuple(intents)
         scope_intents = tuple(
             intent
-            for intent in intents
+            for intent in normalized_intents
             if getattr(intent, "name", None) in cls._context_scope_tool_names
         )
-        if scope_intents and len(tuple(intents)) != 1:
+        if scope_intents and len(normalized_intents) != 1:
             names = ", ".join(intent.name for intent in scope_intents)
             raise ValueError(
                 "Context scope transitions are exclusive tool calls; "
