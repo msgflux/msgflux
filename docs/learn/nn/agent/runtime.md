@@ -656,3 +656,42 @@ with synthetic interrupted outputs, and the checkpoint/task status becomes
 `interrupted`. The canonical timeline retains that status for audit. If the
 timeline is later converted to Responses input, the corresponding
 `function_call_output` uses the protocol's `incomplete` wire status.
+
+
+## Revisioned checkpoints
+
+Checkpoint providers that support atomic commits expose a monotonically increasing
+revision. A runtime checkpoint can carry `branch_id`, `head_item_id`, and durable
+extension state alongside the message snapshot. Writers pass the revision they
+loaded as `expected_revision`; a competing writer raises
+`CheckpointConflictError` instead of overwriting newer state. Legacy providers
+continue to support ordinary `save_state` calls, but do not provide this CAS
+guarantee.
+
+`AgentRun.durable_state()` preserves budgets, extension state, run lineage, and the
+active branch so extensions can resume without allocating a new run or resetting
+limits.
+
+## Context scopes
+
+Context scopes are nested conversation branches within the same execution. They
+keep the same thread, run, and budgets. The built-in tools return a transition
+command; the Agent applies it only after every tool call and output in the
+current batch has settled. Opening a scope records the parent prefix and starts
+a child branch. Closing returns to the parent and copies a summary into it.
+Closing an already closed or root scope is idempotent, while closing a non-active
+name raises a conflict.
+
+```python
+from msgflux.runtime import ContextScopeController
+
+controller = ContextScopeController()
+controller.open(messages, "research", summary="Research context")
+# The Agent continues on the research branch.
+controller.close(messages, "research", summary="Research completed")
+```
+
+The controller stores branch lineage and scope revisions in `ChatMessages.metadata`
+so checkpoints and compaction can restore the active branch without allocating a
+new `ExecutionScope`. Closed branch snapshots remain available to recovery and
+inspection code.

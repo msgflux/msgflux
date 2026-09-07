@@ -8,7 +8,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Mapping
 
-
 _CURRENT_AGENT_RUN: ContextVar[AgentRun | None] = ContextVar(
     "msgflux_agent_run", default=None
 )
@@ -81,6 +80,9 @@ class AgentRun:
     ) -> AgentRun:
         if not isinstance(state, Mapping):
             return cls(namespace=namespace, thread_id=thread_id, run_id=run_id)
+        schema_version = int(state.get("schema_version", 1))
+        if schema_version > 1:
+            raise ValueError(f"Unsupported AgentRun schema version `{schema_version}`")
         return cls(
             namespace=state.get("namespace", namespace),
             thread_id=state.get("thread_id", thread_id),
@@ -93,7 +95,6 @@ class AgentRun:
             budgets=state.get("budgets", {}),
             extension_state=state.get("extensions", {}),
         )
-
 
 
 def get_agent_run() -> AgentRun | None:

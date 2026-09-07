@@ -26,6 +26,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from copy import deepcopy
 from functools import wraps
 from pathlib import Path
 from threading import RLock
@@ -448,46 +449,81 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     @_locked
     def commit_state(
-        self, namespace: str, thread_id: str, run_id: str, state: Mapping[str, Any],
-        *, expected_revision: int | None = None, event: Mapping[str, Any] | None = None,
-        branch_id: str | None = None, head_item_id: str | None = None,
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        state: Mapping[str, Any],
+        *,
+        expected_revision: int | None = None,
+        event: Mapping[str, Any] | None = None,
+        branch_id: str | None = None,
+        head_item_id: str | None = None,
         extension_state: Mapping[str, Any] | None = None,
     ) -> CheckpointCommit:
         now = time.time()
         cur = self._conn.cursor()
         try:
             cur.execute("BEGIN IMMEDIATE")
-            row = cur.execute(
-                _SELECT_STATE, (namespace, thread_id, run_id)
-            ).fetchone()
-            current = self._denormalize_state(namespace, thread_id, row[0]) if row else {}
+            row = cur.execute(_SELECT_STATE, (namespace, thread_id, run_id)).fetchone()
+            current = (
+                self._denormalize_state(namespace, thread_id, row[0]) if row else {}
+            )
             checkpoint = current.get("_checkpoint", {})
             revision = checkpoint.get("revision", 0)
             if expected_revision is not None and revision != expected_revision:
                 self._conn.rollback()
                 raise CheckpointConflictError(
-                    f"Checkpoint revision conflict: expected {expected_revision}, found {revision}."
+                    f"Checkpoint revision conflict: expected {expected_revision}, "
+                    f"found {revision}."
                 )
             next_revision = revision + 1
             committed = deepcopy(dict(state))
             committed["_checkpoint"] = {
-                "schema_version": 1, "revision": next_revision,
-                "branch_id": branch_id if branch_id is not None else checkpoint.get("branch_id"),
-                "head_item_id": head_item_id if head_item_id is not None else checkpoint.get("head_item_id"),
+                "schema_version": 1,
+                "revision": next_revision,
+                "branch_id": branch_id
+                if branch_id is not None
+                else checkpoint.get("branch_id"),
+                "head_item_id": head_item_id
+                if head_item_id is not None
+                else checkpoint.get("head_item_id"),
                 "extensions": deepcopy(dict(extension_state or {})),
             }
-            normalized = self._normalize_state(namespace, thread_id, committed, now, executor=cur)
+            normalized = self._normalize_state(
+                namespace, thread_id, committed, now, executor=cur
+            )
             cur.execute(
                 _UPSERT_STATE,
-                (namespace, thread_id, run_id, committed.get("status", "running"), self._serialize(normalized), now, now),
+                (
+                    namespace,
+                    thread_id,
+                    run_id,
+                    committed.get("status", "running"),
+                    self._serialize(normalized),
+                    now,
+                    now,
+                ),
             )
             if event is not None:
                 cur.execute(
                     _INSERT_EVENT,
-                    (namespace, thread_id, run_id, event.get("event_type", "unknown"), now, self._serialize(event)),
+                    (
+                        namespace,
+                        thread_id,
+                        run_id,
+                        event.get("event_type", "unknown"),
+                        now,
+                        self._serialize(event),
+                    ),
                 )
             self._conn.commit()
-            return CheckpointCommit(next_revision, committed, committed["_checkpoint"]["branch_id"], committed["_checkpoint"]["head_item_id"])
+            return CheckpointCommit(
+                next_revision,
+                committed,
+                committed["_checkpoint"]["branch_id"],
+                committed["_checkpoint"]["head_item_id"],
+            )
         except Exception:
             if self._conn.in_transaction:
                 self._conn.rollback()

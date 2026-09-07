@@ -79,9 +79,7 @@ class CheckpointStore(ABC):
         self.save_state(namespace, thread_id, run_id, state)
         self.append_event(namespace, thread_id, run_id, event)
 
-    def commit_state(
-        self, *args: Any, **kwargs: Any
-    ) -> CheckpointCommit:
+    def commit_state(self, *args: Any, **kwargs: Any) -> CheckpointCommit:
         """Commit state atomically; providers must implement this capability."""
         raise NotImplementedError(
             "This checkpoint provider does not support atomic revision commits"
@@ -146,6 +144,20 @@ class CheckpointStore(ABC):
             messages["thread_id"] = target_thread_id
         if status is not None:
             forked["status"] = status
+        checkpoint = forked.get("_checkpoint")
+        if isinstance(checkpoint, Mapping):
+            forked["_checkpoint"] = {
+                **dict(checkpoint),
+                "revision": 0,
+                "branch_id": "root",
+                "head_item_id": None,
+                "fork_of": {
+                    "namespace": namespace,
+                    "thread_id": source_thread_id,
+                    "run_id": source_run_id,
+                    "item_id": at_item_id,
+                },
+            }
         self.save_state(namespace, target_thread_id, target_run_id, forked)
         loaded = self.load_state(namespace, target_thread_id, target_run_id)
         if loaded is None:
@@ -342,9 +354,7 @@ class AsyncCheckpointStore(ABC):
         await self.asave_state(namespace, thread_id, run_id, state)
         await self.aappend_event(namespace, thread_id, run_id, event)
 
-    async def acommit_state(
-        self, *args: Any, **kwargs: Any
-    ) -> CheckpointCommit:
+    async def acommit_state(self, *args: Any, **kwargs: Any) -> CheckpointCommit:
         raise NotImplementedError(
             "This checkpoint provider does not support atomic revision commits"
         )

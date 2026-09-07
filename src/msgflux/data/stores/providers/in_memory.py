@@ -300,33 +300,57 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             run["events"].append(deepcopy(dict(event)))
 
     def commit_state(
-        self, namespace: str, thread_id: str, run_id: str, state: Mapping[str, Any],
-        *, expected_revision: int | None = None, event: Mapping[str, Any] | None = None,
-        branch_id: str | None = None, head_item_id: str | None = None,
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        state: Mapping[str, Any],
+        *,
+        expected_revision: int | None = None,
+        event: Mapping[str, Any] | None = None,
+        branch_id: str | None = None,
+        head_item_id: str | None = None,
         extension_state: Mapping[str, Any] | None = None,
     ) -> CheckpointCommit:
         with self._lock:
-            run = self._ensure_run(namespace, thread_id, run_id)
-            current = self._denormalize_state(namespace, thread_id, run["state"])
+            run = self._get_run(namespace, thread_id, run_id)
+            current = (
+                self._denormalize_state(namespace, thread_id, run["state"])
+                if run is not None
+                else {}
+            )
             checkpoint = current.get("_checkpoint", {})
             revision = checkpoint.get("revision", 0)
             if expected_revision is not None and revision != expected_revision:
                 raise CheckpointConflictError(
-                    f"Checkpoint revision conflict: expected {expected_revision}, found {revision}."
+                    f"Checkpoint revision conflict: expected {expected_revision}, "
+                    f"found {revision}."
                 )
             next_revision = revision + 1
+            if run is None:
+                run = self._ensure_run(namespace, thread_id, run_id)
             committed = deepcopy(dict(state))
             committed["_checkpoint"] = {
-                "schema_version": 1, "revision": next_revision,
-                "branch_id": branch_id if branch_id is not None else checkpoint.get("branch_id"),
-                "head_item_id": head_item_id if head_item_id is not None else checkpoint.get("head_item_id"),
+                "schema_version": 1,
+                "revision": next_revision,
+                "branch_id": branch_id
+                if branch_id is not None
+                else checkpoint.get("branch_id"),
+                "head_item_id": head_item_id
+                if head_item_id is not None
+                else checkpoint.get("head_item_id"),
                 "extensions": deepcopy(dict(extension_state or {})),
             }
             run["state"] = self._normalize_state(namespace, thread_id, committed)
             run["updated_at"] = time.time()
             if event is not None:
                 run["events"].append(deepcopy(dict(event)))
-            return CheckpointCommit(next_revision, committed, committed["_checkpoint"]["branch_id"], committed["_checkpoint"]["head_item_id"])
+            return CheckpointCommit(
+                next_revision,
+                committed,
+                committed["_checkpoint"]["branch_id"],
+                committed["_checkpoint"]["head_item_id"],
+            )
 
     def list_runs(
         self,
