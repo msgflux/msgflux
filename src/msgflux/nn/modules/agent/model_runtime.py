@@ -37,6 +37,7 @@ from msgflux.runtime.context import (
 )
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.tools.catalog import ToolCatalogView
+from msgflux.tools.helpers import coerce_tool_params
 from msgflux.tools.runtime import ToolIntent, ToolOutcome
 from msgflux.utils.console import cprint
 from msgflux.utils.validation import is_subclass_of
@@ -811,16 +812,10 @@ class AgentModelRuntimeMixin:
                     )
                     continue
 
-                tool_results = self._process_tool_call(
-                    flow_result.tool_calls, message, messages, vars
-                )
+                intents = self._flow_tool_intents(flow_result.tool_calls)
+                outcomes = self._process_tool_intents(intents, message, messages, vars)
+                tool_results = ToolResponses.from_outcomes(intents, outcomes)
                 completed_tool_turns += 1
-
-                if tool_results.return_directly:
-                    tool_calls = tool_results.to_dict().pop("return_directly")
-                    tool_calls["reasoning"] = flow_result.reasoning
-                    tool_responses = dotdict(tool_responses=tool_calls)
-                    return tool_responses, messages
 
                 # Use interface to inject results
                 raw_response = flow_control.inject_results(raw_response, tool_results)
@@ -832,6 +827,15 @@ class AgentModelRuntimeMixin:
                     getattr(model_response, "metadata", None),
                     after_index=response_item_start,
                 )
+                feedback = self._resolve_tool_feedback(
+                    intents,
+                    outcomes,
+                    messages=messages,
+                    vars=vars,
+                    reasoning=flow_result.reasoning,
+                )
+                if feedback.action == "return":
+                    return feedback.output, messages
                 self._drain_inbox_into_messages(messages, vars=vars)
                 self._checkpoint_save(messages, vars)
 
@@ -896,16 +900,12 @@ class AgentModelRuntimeMixin:
                     )
                     continue
 
-                tool_results = await self._aprocess_tool_call(
-                    flow_result.tool_calls, message, messages, vars
+                intents = self._flow_tool_intents(flow_result.tool_calls)
+                outcomes = await self._aprocess_tool_intents(
+                    intents, message, messages, vars
                 )
+                tool_results = ToolResponses.from_outcomes(intents, outcomes)
                 completed_tool_turns += 1
-
-                if tool_results.return_directly:
-                    tool_calls = tool_results.to_dict().pop("return_directly")
-                    tool_calls["reasoning"] = flow_result.reasoning
-                    tool_responses = dotdict(tool_responses=tool_calls)
-                    return tool_responses, messages
 
                 # Use interface to inject results (async version)
                 raw_response = await flow_control.ainject_results(
@@ -919,6 +919,15 @@ class AgentModelRuntimeMixin:
                     getattr(model_response, "metadata", None),
                     after_index=response_item_start,
                 )
+                feedback = await self._aresolve_tool_feedback(
+                    intents,
+                    outcomes,
+                    messages=messages,
+                    vars=vars,
+                    reasoning=flow_result.reasoning,
+                )
+                if feedback.action == "return":
+                    return feedback.output, messages
                 await self._adrain_inbox_into_messages(messages, vars=vars)
                 await self._acheckpoint_save(messages, vars)
 
@@ -1001,6 +1010,10 @@ class AgentModelRuntimeMixin:
                     raise
                 completed_tool_turns += 1
 
+                tool_responses_message = model_response.render_tool_outcomes(
+                    tool_outcomes
+                )
+                self._extend_tool_response_history(messages, tool_responses_message)
                 feedback = self._resolve_tool_feedback(
                     tool_intents,
                     tool_outcomes,
@@ -1011,10 +1024,6 @@ class AgentModelRuntimeMixin:
                 if feedback.action == "return":
                     return feedback.output, messages
 
-                tool_responses_message = model_response.render_tool_outcomes(
-                    tool_outcomes
-                )
-                self._extend_tool_response_history(messages, tool_responses_message)
                 self._drain_inbox_into_messages(messages, vars=vars)
                 self._checkpoint_save(messages, vars)
             else:
@@ -1104,6 +1113,10 @@ class AgentModelRuntimeMixin:
                     raise
                 completed_tool_turns += 1
 
+                tool_responses_message = model_response.render_tool_outcomes(
+                    tool_outcomes
+                )
+                self._extend_tool_response_history(messages, tool_responses_message)
                 feedback = await self._aresolve_tool_feedback(
                     tool_intents,
                     tool_outcomes,
@@ -1114,10 +1127,6 @@ class AgentModelRuntimeMixin:
                 if feedback.action == "return":
                     return feedback.output, messages
 
-                tool_responses_message = model_response.render_tool_outcomes(
-                    tool_outcomes
-                )
-                self._extend_tool_response_history(messages, tool_responses_message)
                 await self._adrain_inbox_into_messages(messages, vars=vars)
                 await self._acheckpoint_save(messages, vars)
             else:
@@ -1129,6 +1138,13 @@ class AgentModelRuntimeMixin:
                 vars=vars,
                 tool_filter=tool_filter,
             )
+
+    @staticmethod
+    def _flow_tool_intents(calls) -> tuple[ToolIntent, ...]:
+        return tuple(
+            ToolIntent(id=call_id, name=name, arguments=coerce_tool_params(name, args))
+            for call_id, name, args in calls
+        )
 
     def _process_tool_intents(
         self,

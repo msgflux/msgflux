@@ -1,3 +1,4 @@
+import asyncio
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -527,22 +528,13 @@ class Agent(
             agent_inbox=effective_inbox,
         ):
             try:
-                model_response = self._execute_model(
-                    prefilling=self.prefilling,
-                    **inputs,
-                )
-            except _GuardInterrupt as e:
-                model_response = self._guard_model_response(e.response)
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                self._settle_terminal_run(inputs, "interrupted", exc)
-                self._raise_interrupted_from_abort(inputs, exc)
-            except TaskPauseRequestedError as exc:
-                self._settle_terminal_run(inputs, "paused", exc)
-                raise
-            except Exception as exc:
-                self._settle_terminal_run(inputs, "failed", exc)
-                raise
-            try:
+                try:
+                    model_response = self._execute_model(
+                        prefilling=self.prefilling,
+                        **inputs,
+                    )
+                except _GuardInterrupt as e:
+                    model_response = self._guard_model_response(e.response)
                 response = self._process_model_response(
                     message,
                     model_response,
@@ -551,6 +543,9 @@ class Agent(
             except (AbortRequestedError, TaskInterruptRequestedError) as exc:
                 self._settle_terminal_run(inputs, "interrupted", exc)
                 self._raise_interrupted_from_abort(inputs, exc)
+            except TaskPauseRequestedError as exc:
+                self._settle_terminal_run(inputs, "paused", exc)
+                raise
             except Exception as exc:
                 settled_error = self._settle_processing_error(inputs, exc)
                 if settled_error is exc:
@@ -604,22 +599,13 @@ class Agent(
             agent_inbox=effective_inbox,
         ):
             try:
-                model_response = await self._aexecute_model(
-                    prefilling=self.prefilling,
-                    **inputs,
-                )
-            except _GuardInterrupt as e:
-                model_response = self._guard_model_response(e.response)
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                await self._asettle_terminal_run(inputs, "interrupted", exc)
-                self._raise_interrupted_from_abort(inputs, exc)
-            except TaskPauseRequestedError as exc:
-                await self._asettle_terminal_run(inputs, "paused", exc)
-                raise
-            except Exception as exc:
-                await self._asettle_terminal_run(inputs, "failed", exc)
-                raise
-            try:
+                try:
+                    model_response = await self._aexecute_model(
+                        prefilling=self.prefilling,
+                        **inputs,
+                    )
+                except _GuardInterrupt as e:
+                    model_response = self._guard_model_response(e.response)
                 response = await self._aprocess_model_response(
                     message,
                     model_response,
@@ -628,6 +614,12 @@ class Agent(
             except (AbortRequestedError, TaskInterruptRequestedError) as exc:
                 await self._asettle_terminal_run(inputs, "interrupted", exc)
                 self._raise_interrupted_from_abort(inputs, exc)
+            except asyncio.CancelledError as exc:
+                await self._asettle_terminal_run(inputs, "interrupted", exc)
+                raise
+            except TaskPauseRequestedError as exc:
+                await self._asettle_terminal_run(inputs, "paused", exc)
+                raise
             except Exception as exc:
                 settled_error = await self._asettle_processing_error(inputs, exc)
                 if settled_error is exc:

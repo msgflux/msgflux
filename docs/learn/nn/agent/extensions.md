@@ -285,6 +285,18 @@ Replacing `tool_feedback` also removes the standard return behavior. If a
 custom extension should only add a new mode, give it another name and install
 it alongside `DefaultToolFeedbackExtension`.
 
+Feedback hooks run after the tool results have entered the conversation, for
+both native tool calls and `ToolFlowControl` schemas such as `ReAct`. Returning
+from a feedback hook therefore preserves the completed tool interaction for
+the next turn and for checkpoint restoration. The example above also works
+with `generation_schema=ReAct`; its hook receives the same canonical intents
+and outcomes, while ReAct records observations in its own history format.
+
+External cancellation of `agent.acall(...)` settles the run as interrupted
+before propagating `asyncio.CancelledError`. The checkpoint closes pending
+native tool calls with interrupted outcomes, and terminal observers see the
+interruption. A pause requested while processing tools is persisted as paused.
+
 Use `self.state()` when hooks in the same run need to share temporary data:
 
 ```python

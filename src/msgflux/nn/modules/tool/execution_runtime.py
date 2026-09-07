@@ -38,7 +38,7 @@ from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM,
     coerce_tool_params,
 )
-from msgflux.tools.responses import ToolCall, ToolResponses
+from msgflux.tools.responses import ToolResponses
 from msgflux.tools.runtime import ToolIntent, ToolOutcome
 from msgflux.tools.types import ToolBucket, ToolLibraryOperator
 
@@ -1595,33 +1595,7 @@ class ToolLibraryExecutionMixin:
         intents: Tuple[ToolIntent, ...],
         outcomes: Tuple[ToolOutcome, ...],
     ) -> ToolResponses:
-        if len(intents) != len(outcomes):
-            raise ValueError("Each legacy tool call must have exactly one outcome")
-        direct_modes = {"direct", "handoff", "call_as_response"}
-        return_directly = bool(outcomes) and all(
-            outcome.status == "completed" and outcome.feedback.name in direct_modes
-            for outcome in outcomes
-        )
-        tool_calls = []
-        for intent, outcome in zip(intents, outcomes):
-            if outcome.intent_id != intent.id:
-                raise ValueError("Tool outcomes must preserve intent ordering")
-            arguments = outcome.metadata.get("arguments", intent.arguments)
-            tool_calls.append(
-                ToolCall(
-                    id=outcome.intent_id,
-                    name=outcome.tool_name,
-                    parameters=dict(arguments),
-                    result=outcome.result,
-                    error=(
-                        outcome.error.message if outcome.error is not None else None
-                    ),
-                )
-            )
-        return ToolResponses(
-            return_directly=return_directly,
-            tool_calls=tool_calls,
-        )
+        return ToolResponses.from_outcomes(intents, outcomes)
 
     @staticmethod
     def _legacy_calls_to_intents(
