@@ -4,7 +4,7 @@ import functools
 import inspect
 import weakref
 from collections import OrderedDict, namedtuple
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from types import MethodType
 from typing import (
     Any,
@@ -1829,6 +1829,18 @@ class Module:
         return nullcontext()
 
     @staticmethod
+    def _stream_response_from_result(result: Any) -> ModelStreamResponse | None:
+        """Find a model stream wrapped by a presentation response envelope."""
+        if isinstance(result, ModelStreamResponse):
+            return result
+        if isinstance(result, dict):
+            candidate = result.get("response")
+            if isinstance(candidate, ModelStreamResponse):
+                return candidate
+        candidate = getattr(result, "response", None)
+        return candidate if isinstance(candidate, ModelStreamResponse) else None
+
+    @staticmethod
     async def _aconsume_event_response(
         response: ModelStreamResponse,
         *,
@@ -1850,17 +1862,23 @@ class Module:
             response._run_consumer_finalizers()
 
     async def _afinalize_event_result(self, result: Any) -> Any:
-        buffered = isinstance(result, ModelStreamResponse) and self.has_lifecycle_hooks(
+        stream_response = self._stream_response_from_result(result)
+        buffered = stream_response is not None and self.has_lifecycle_hooks(
             "transform_output"
         )
         emit_event(
             EventType.MESSAGE_START,
             {"buffered": buffered},
         )
-        if isinstance(result, ModelStreamResponse):
-            await self._aconsume_event_response(result, emit_content=not buffered)
-            output = result.data
+        if stream_response is not None:
+            await self._aconsume_event_response(
+                stream_response, emit_content=not buffered
+            )
+            output = stream_response.data
             output = await self._atransform_module_output(output)
+            if result is not stream_response and isinstance(result, dict):
+                result["response"] = output
+                output = result
         else:
             output = result
         emit_event(EventType.MESSAGE_END, {"content": output})
@@ -1920,6 +1938,8 @@ class Module:
                 if scope is not None and scope.abort_signal is not None:
                     scope.abort_signal.abort("event stream consumer closed")
                 task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
         if error is not None:
             raise error
 

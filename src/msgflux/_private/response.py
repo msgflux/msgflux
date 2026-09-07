@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -141,6 +142,7 @@ class BaseStreamResponse(CoreResponse):
         self.response_type = None
         self.error = None
         self._finalizers = []
+        self._pending_finalizer_awaitables = []
         self._consumer_finalizers = []
         self._finalized = False
         self._consumer_finalized = False
@@ -364,7 +366,17 @@ class BaseStreamResponse(CoreResponse):
             final_state = self._build_final_state(status=status)
 
         for finalizer in finalizers:
-            finalizer(final_state)
+            result = finalizer(final_state)
+            if inspect.isawaitable(result):
+                self._pending_finalizer_awaitables.append(result)
+
+    async def _await_pending_finalizers(self) -> None:
+        """Finish async callbacks emitted by a synchronous stream producer."""
+        with self._finalizer_lock:
+            pending = list(self._pending_finalizer_awaitables)
+            self._pending_finalizer_awaitables.clear()
+        if pending:
+            await asyncio.gather(*pending)
 
     def add(self, data: Any, *, accumulate_history: bool = True):
         """Add data to the content stream queue in a thread-safe way."""
@@ -502,11 +514,14 @@ class BaseStreamResponse(CoreResponse):
 
     async def consume(self) -> AsyncGenerator[Union[bytes, str], None]:
         """Async generator that yields content chunks until None is received."""
-        while True:
-            chunk = await self.next_chunk()
-            if chunk is None:
-                break
-            yield chunk
+        try:
+            while True:
+                chunk = await self.next_chunk()
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            await self._await_pending_finalizers()
 
     async def consume_reasoning(self) -> AsyncGenerator[str, None]:
         """Async generator that yields reasoning chunks until None is received."""
@@ -558,3 +573,4 @@ class BaseStreamResponse(CoreResponse):
             with self._event_queue_lock:
                 if subscriber in self._event_subscribers:
                     self._event_subscribers.remove(subscriber)
+            await self._await_pending_finalizers()
