@@ -164,13 +164,26 @@ class AgentConversationMixin:
         notifications = inbox.claim() if drain_notifications else inbox.peek()
         try:
             notifications = self._handle_control_notifications(notifications)
-        except (TaskInterruptRequestedError, TaskPauseRequestedError):
+        except (TaskInterruptRequestedError, TaskPauseRequestedError) as error:
+            command = "interrupt" if isinstance(error, TaskInterruptRequestedError) else "pause"
+            consumed = next(
+                (item.notification_id for item in notifications
+                 if item.source == "control" and item.status == command),
+                None,
+            )
+            if consumed is not None:
+                inbox.mark_delivered([consumed])
+                inbox.release(except_ids=[consumed])
+            else:
+                inbox.release()
             raise
         except BaseException:
             if drain_notifications:
                 inbox.release()
             raise
         if not notifications:
+            if drain_notifications:
+                inbox.release()
             return False
 
         try:
@@ -192,10 +205,15 @@ class AgentConversationMixin:
                     "NotificationContext.notifications must contain AgentNotification"
                 )
             if not notifications:
+                if drain_notifications:
+                    inbox.release()
                 return False
 
             notification_messages = inbox.render_messages(notifications)
             self._persist_notification_messages(messages, notification_messages)
+            inbox.mark_delivered(item.notification_id for item in notifications)
+            if self._get_effective_checkpoint_store() is None:
+                inbox.ack(inbox.delivered_ids())
             return bool(notification_messages)
         except BaseException:
             if drain_notifications:
@@ -217,13 +235,26 @@ class AgentConversationMixin:
         notifications = inbox.claim() if drain_notifications else inbox.peek()
         try:
             notifications = self._handle_control_notifications(notifications)
-        except (TaskInterruptRequestedError, TaskPauseRequestedError):
+        except (TaskInterruptRequestedError, TaskPauseRequestedError) as error:
+            command = "interrupt" if isinstance(error, TaskInterruptRequestedError) else "pause"
+            consumed = next(
+                (item.notification_id for item in notifications
+                 if item.source == "control" and item.status == command),
+                None,
+            )
+            if consumed is not None:
+                inbox.mark_delivered([consumed])
+                inbox.release(except_ids=[consumed])
+            else:
+                inbox.release()
             raise
         except BaseException:
             if drain_notifications:
                 inbox.release()
             raise
         if not notifications:
+            if drain_notifications:
+                inbox.release()
             return False
 
         try:
@@ -245,10 +276,15 @@ class AgentConversationMixin:
                     "NotificationContext.notifications must contain AgentNotification"
                 )
             if not notifications:
+                if drain_notifications:
+                    inbox.release()
                 return False
 
             notification_messages = inbox.render_messages(notifications)
             self._persist_notification_messages(messages, notification_messages)
+            inbox.mark_delivered(item.notification_id for item in notifications)
+            if self._get_effective_checkpoint_store() is None:
+                inbox.ack(inbox.delivered_ids())
             return bool(notification_messages)
         except BaseException:
             if drain_notifications:
@@ -799,7 +835,12 @@ class AgentConversationMixin:
     def _ack_inbox_notifications(self) -> None:
         inbox = self._get_effective_agent_inbox()
         if inbox is not None:
-            inbox.ack(inbox.claimed_ids())
+            inbox.ack(inbox.delivered_ids())
+
+    def _release_inbox_notifications(self) -> None:
+        inbox = self._get_effective_agent_inbox()
+        if inbox is not None:
+            inbox.release()
 
     def _checkpoint_save(
         self,
@@ -818,7 +859,13 @@ class AgentConversationMixin:
         thread_id = messages.thread_id or new_thread_id()
         run_id = turns[-1]["turn_id"]
         state = self._build_checkpoint_state(messages, status=status)
-        checkpoint_store.save_state(self.get_module_name(), thread_id, run_id, state)
+        try:
+            checkpoint_store.save_state(
+                self.get_module_name(), thread_id, run_id, state
+            )
+        except BaseException:
+            self._release_inbox_notifications()
+            raise
         self._ack_inbox_notifications()
 
     async def _acheckpoint_save(
@@ -838,17 +885,21 @@ class AgentConversationMixin:
         thread_id = messages.thread_id or new_thread_id()
         run_id = turns[-1]["turn_id"]
         state = self._build_checkpoint_state(messages, status=status)
-        if hasattr(checkpoint_store, "asave_state"):
-            await checkpoint_store.asave_state(
-                self.get_module_name(),
-                thread_id,
-                run_id,
-                state,
-            )
-        else:
-            checkpoint_store.save_state(
-                self.get_module_name(), thread_id, run_id, state
-            )
+        try:
+            if hasattr(checkpoint_store, "asave_state"):
+                await checkpoint_store.asave_state(
+                    self.get_module_name(),
+                    thread_id,
+                    run_id,
+                    state,
+                )
+            else:
+                checkpoint_store.save_state(
+                    self.get_module_name(), thread_id, run_id, state
+                )
+        except BaseException:
+            self._release_inbox_notifications()
+            raise
         self._ack_inbox_notifications()
 
     def _checkpoint_interrupted(

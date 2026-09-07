@@ -47,6 +47,7 @@ class AgentInbox:
             )
         self._lock = RLock()
         self._claims: Dict[str, str] = {}
+        self._receipts: set[str] = set()
         self._scope_bound = thread_id is not None or run_id is not None
         self.verbose = verbose
         self.owner = owner
@@ -249,29 +250,52 @@ class AgentInbox:
                 )
                 for notification_id in claimed_ids:
                     self._claims.pop(notification_id, None)
+                    self._receipts.discard(notification_id)
 
     def claimed_ids(self) -> set[str]:
         with self._lock:
             return set(self._claims)
 
-    def release(self, *, lease_id: str | None = None) -> None:
+    def mark_delivered(self, notification_ids: Iterable[str]) -> None:
         with self._lock:
-            leases = {lease_id} if lease_id is not None else set(self._claims.values())
-            for current_lease in leases:
+            self._receipts.update(
+                notification_id
+                for notification_id in notification_ids
+                if notification_id in self._claims
+            )
+
+    def delivered_ids(self) -> set[str]:
+        with self._lock:
+            return set(self._receipts)
+
+    def release(
+        self,
+        *,
+        lease_id: str | None = None,
+        except_ids: Iterable[str] = (),
+    ) -> None:
+        preserved = set(except_ids)
+        with self._lock:
+            selected = {
+                notification_id: current_lease
+                for notification_id, current_lease in self._claims.items()
+                if notification_id not in preserved
+                and (lease_id is None or current_lease == lease_id)
+            }
+            for current_lease in set(selected.values()):
                 self.store.release_notifications(
                     self.namespace,
                     self.thread_id,
                     self.run_id,
                     lease_id=current_lease,
                 )
-            if lease_id is None:
-                self._claims.clear()
-            else:
-                self._claims = {
-                    notification_id: current_lease
-                    for notification_id, current_lease in self._claims.items()
-                    if current_lease != lease_id
-                }
+            self._claims = {
+                notification_id: current_lease
+                for notification_id, current_lease in self._claims.items()
+                if notification_id in preserved
+                or (lease_id is not None and current_lease != lease_id)
+            }
+            self._receipts.intersection_update(self._claims)
 
     def drain(self) -> List[AgentNotification]:
         notifications = self.claim()

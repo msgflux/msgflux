@@ -11,7 +11,8 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn.hooks import BeforeResume, Guard, Hook
 from msgflux.nn.modules.agent import Agent
 from msgflux.runtime import AbortSignal
-from msgflux.runtime.context import ExecutionScope
+from msgflux.runtime.agent_inbox import AgentInbox, InMemoryAgentInboxStore
+from msgflux.runtime.context import ExecutionScope, execution_context
 
 
 def _mock_model():
@@ -1075,4 +1076,32 @@ def test_agent_rejects_completed_run_id_retry():
     assert [item["content"] for item in chatml] == [
         "Original",
         "Done.",
+    ]
+
+
+def test_checkpoint_failure_releases_inbox_claim():
+    class FailingStore(InMemoryCheckpointStore):
+        def save_state(self, *args, **kwargs):
+            raise RuntimeError("checkpoint unavailable")
+
+    checkpoint = FailingStore()
+    inbox = AgentInbox(store=InMemoryAgentInboxStore())
+    agent = _make_agent(checkpoint_store=checkpoint, agent_inbox=inbox)
+    scope = ExecutionScope(
+        namespace="test_agent", thread_id="user_42", run_id="run_claim"
+    )
+    scoped = agent._get_scoped_agent_inbox(scope)
+    scoped.user_message("retry after checkpoint failure")
+    messages = ChatMessages(thread_id="user_42", namespace="test_agent")
+    messages.begin_turn(turn_id="run_claim")
+    with execution_context(
+        scope=scope, checkpoint_store=checkpoint, agent_inbox=scoped
+    ):
+        agent._drain_inbox_into_messages(messages)
+        with pytest.raises(RuntimeError, match="checkpoint unavailable"):
+            agent._checkpoint_save(messages, {}, status="running")
+        retry = scoped.claim()
+
+    assert [item.metadata["content"] for item in retry] == [
+        "retry after checkpoint failure"
     ]

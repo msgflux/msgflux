@@ -527,3 +527,52 @@ def test_agent_inbox_move_is_atomic_for_store_views(tmp_path):
     inbox.bind(run_id="run_2")
     assert [item.metadata["content"] for item in inbox.claim()] == ["move once"]
     store.close()
+
+@pytest.mark.parametrize("provider", ["memory", "sqlite"])
+def test_agent_inbox_expired_lease_cannot_ack_new_owner(provider, tmp_path):
+    store = (
+        InMemoryAgentInboxStore()
+        if provider == "memory"
+        else SQLiteAgentInboxStore(path=str(tmp_path / "lease.sqlite3"))
+    )
+    first = AgentInbox(store=store, namespace="assistant", thread_id="user_1", run_id="run_1")
+    second = AgentInbox(store=store, namespace="assistant", thread_id="user_1", run_id="run_1")
+    notification = first.user_message("lease ownership")
+    old_claim = first.claim(lease_seconds=0.01)
+    import time
+    time.sleep(0.03)
+    new_claim = second.claim(lease_seconds=30)
+
+    first.ack([notification.notification_id])
+    assert [item.notification_id for item in second.peek()] == [notification.notification_id]
+    second.ack([item.notification_id for item in new_claim])
+    assert second.peek() == []
+    assert old_claim and new_claim
+    if hasattr(store, "close"):
+        store.close()
+
+
+def test_agent_inbox_ack_only_removes_requested_ids():
+    inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+    first = inbox.user_message("first")
+    second = inbox.user_message("second")
+    claimed = inbox.claim()
+
+    inbox.ack([first.notification_id])
+    assert [item.notification_id for item in inbox.peek()] == [second.notification_id]
+    inbox.release()
+    assert [item.notification_id for item in inbox.claim()] == [second.notification_id]
+    assert claimed
+
+
+def test_agent_inbox_dedupe_replay_replaces_claimed_notification():
+    inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
+    first = inbox.publish({"source": "task", "status": "started", "dedupe_key": "task:1"})
+    inbox.claim()
+    second = inbox.publish({"source": "task", "status": "completed", "dedupe_key": "task:1"})
+
+    pending = inbox.peek()
+    assert len(pending) == 1
+    assert pending[0].notification_id == second.notification_id
+    assert pending[0].status == "completed"
+    assert first.notification_id != second.notification_id
