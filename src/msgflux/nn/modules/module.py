@@ -1848,11 +1848,19 @@ class Module:
         extensions = getattr(module, "extensions", None)
         if extensions is None:
             return None
+        factories = []
         for extension in extensions.values():
+            visible = getattr(module, "_extension_is_visible", lambda _name: True)
+            if not visible(extension.name):
+                continue
             factory = getattr(extension, "create_output_transformer", None)
             if callable(factory):
-                return factory()
-        return None
+                factories.append(factory)
+        if len(factories) != 1:
+            return None
+        if len(module._lifecycle_hooks.get("transform_output", {})) != 1:
+            return None
+        return factories[0]()
 
     @staticmethod
     async def _aconsume_event_response(

@@ -344,6 +344,27 @@ See [Canonical Responses vs. Presented Output](hooks.md#canonical-responses-vs-p
 for a complete example that replaces an artifact reference in the presented
 event output while preserving the original reference in `ChatMessages`.
 
+For bounded incremental expansion, install `ArtifactExtension` with an
+`ArtifactRegistry`:
+
+```python
+from msgflux.nn import Agent, ArtifactExtension, ArtifactRegistry
+
+registry = ArtifactRegistry()
+registry.register("large report contents", artifact_id="report-42")
+agent = Agent(
+    name="reporter",
+    model=model,
+    extensions=[ArtifactExtension(registry)],
+    config={"stream": True},
+)
+```
+
+The model can emit `{{artifact:report-42}}`. Checkpoints keep that marker,
+while `message.delta` events expose the registered content after the marker is
+complete. Unknown or incomplete markers remain literal. Registry IDs are
+logical immutable IDs, and inserted content is not scanned recursively.
+
 ## Event Isolation
 
 Each direct `stream_events()` call owns an independent delivery channel.

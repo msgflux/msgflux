@@ -13,6 +13,28 @@ def test_artifact_renderer_handles_split_markers_and_missing_values():
     assert renderer.render(" {{artifact:unknown}}") == " {{artifact:unknown}}"
 
 
+def test_artifact_renderer_handles_every_boundary_and_escape_boundary():
+    registry = ArtifactRegistry()
+    registry.register("REPORT", artifact_id="report-1")
+    value = "left {{artifact:report-1}} right"
+    for split in range(1, len(value)):
+        renderer = ArtifactReferenceRenderer(registry)
+        rendered = renderer.feed(value[:split]) + renderer.feed(value[split:]) + renderer.finish()
+        assert rendered == "left REPORT right"
+
+    renderer = ArtifactReferenceRenderer(registry)
+    assert renderer.feed("\\") == ""
+    assert renderer.feed("{{artifact:report-1}}") == "{{artifact:report-1}}"
+
+
+def test_artifact_renderer_does_not_expand_nested_content_or_oversized_marker():
+    registry = ArtifactRegistry()
+    registry.register("{{artifact:inner}}", artifact_id="outer")
+    renderer = ArtifactReferenceRenderer(registry, max_marker_length=20)
+    assert renderer.render("{{artifact:outer}}") == "{{artifact:inner}}"
+    assert renderer.render("{{artifact:report-1}}") == "{{artifact:report-1}}"
+
+
 def test_artifact_renderer_escapes_markers_and_bounds_buffer():
     registry = ArtifactRegistry()
     registry.register("x", artifact_id="x")

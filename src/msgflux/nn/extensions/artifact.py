@@ -19,6 +19,7 @@ __all__ = [
 
 _MARKER = re.compile(r"\{\{artifact:([A-Za-z0-9][A-Za-z0-9._:/-]{0,239})\}\}")
 _PREFIX = "{{artifact:"
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}$")
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,16 @@ class ArtifactRegistry:
     """Register immutable values under stable IDs; filesystem paths are rejected."""
 
     def __init__(self, artifacts: Mapping[str, Artifact] | None = None) -> None:
-        self._artifacts = dict(artifacts or {})
+        self._artifacts: dict[str, Artifact] = {}
+        for artifact_id, artifact in (artifacts or {}).items():
+            if not _ID.fullmatch(artifact_id):
+                raise ValueError(f"invalid artifact_id: {artifact_id!r}")
+            if (
+                not isinstance(artifact, Artifact)
+                or artifact.artifact_id != artifact_id
+            ):
+                raise ValueError("artifacts must match their mapping IDs")
+            self._artifacts[artifact_id] = artifact
 
     def register(
         self,
@@ -45,8 +55,7 @@ class ArtifactRegistry:
     ) -> Artifact:
         if (
             not artifact_id
-            or artifact_id.startswith(("/", "./", "../"))
-            or "\\" in artifact_id
+            or not _ID.fullmatch(artifact_id)
         ):
             raise ValueError(
                 "artifact_id must be a stable logical ID, not a filesystem path"
@@ -79,7 +88,7 @@ class ArtifactReferenceRenderer:
         self.max_marker_length = max_marker_length
         self._buffer = ""
 
-    def feed(self, chunk: str) -> str:
+    def feed(self, chunk: str) -> str:  # noqa: C901
         if not isinstance(chunk, str):
             raise TypeError("artifact renderer accepts text chunks")
         self._buffer += chunk
@@ -87,6 +96,10 @@ class ArtifactReferenceRenderer:
         while self._buffer:
             match = _MARKER.search(self._buffer)
             if match is not None:
+                if len(match.group(0)) > self.max_marker_length:
+                    output.append(self._buffer[: match.end()])
+                    self._buffer = self._buffer[match.end() :]
+                    continue
                 prefix = self._buffer[: match.start()]
                 if prefix.endswith("\\"):
                     output.append(prefix[:-1] + match.group(0))
@@ -104,6 +117,8 @@ class ArtifactReferenceRenderer:
                 for size in range(1, min(len(_PREFIX) - 1, len(self._buffer)) + 1):
                     if self._buffer.endswith(_PREFIX[:size]):
                         keep = size
+                if self._buffer.endswith("\\"):
+                    keep = max(keep, 1)
                 output.append(self._buffer[:-keep] if keep else self._buffer)
                 self._buffer = self._buffer[-keep:] if keep else ""
                 break
