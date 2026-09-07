@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from msgflux.nn.extensions.tool_library import ToolLibraryExtension
 from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.module import Module
+from msgflux.runtime.agent_run import get_agent_run
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.agent import Agent
@@ -78,6 +79,18 @@ class AgentExtension(Module):
             raise RuntimeError("Extension state is only available during an Agent run")
         key = (id(self._agent_ref()), self.name)
         return states.setdefault(key, {})
+
+    def durable_state(self) -> dict[str, Any]:
+        """Return this extension's checkpointed, execution-local state.
+
+        Values must be serializable by the checkpoint store. New runs start
+        empty; resuming a run restores its state before ``before_resume`` hooks.
+        """
+        agent = self.agent
+        run = get_agent_run()
+        if run is None or run.namespace not in {None, agent.get_module_name()}:
+            raise RuntimeError("Durable extension state requires its active Agent run")
+        return run.extension_state.setdefault(self.name, {})
 
     @property
     def agent(self) -> Agent:

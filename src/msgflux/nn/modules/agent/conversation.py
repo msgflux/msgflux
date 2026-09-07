@@ -30,6 +30,7 @@ from msgflux.runtime.agent_inbox import (
     AgentInbox,
     AgentNotification,
 )
+from msgflux.runtime.agent_run import AgentRun, get_agent_run
 from msgflux.runtime.context import (
     ExecutionScope,
     get_execution_context,
@@ -44,6 +45,7 @@ from msgflux.utils.xml import apply_xml_tags
 if TYPE_CHECKING:
     pass
 from msgflux.nn.modules.agent.context import (
+    _CURRENT_AGENT_CONTEXT,
     _require_lifecycle_payload,
 )
 
@@ -895,9 +897,17 @@ class AgentConversationMixin:
         run_id = turns[-1]["turn_id"]
         state = self._build_checkpoint_state(messages, status=status)
         try:
-            checkpoint_store.save_state(
-                self.get_module_name(), thread_id, run_id, state
-            )
+            run = get_agent_run()
+            if run is not None and getattr(checkpoint_store, "supports_atomic_commit", False):
+                committed = checkpoint_store.commit_state(
+                    self.get_module_name(), thread_id, run_id, state,
+                    expected_revision=run.revision,
+                    event={"event_type": "checkpoint", "status": status},
+                    branch_id=run.branch_id, head_item_id=run.head_item_id,
+                )
+                run.revision = committed.revision
+            else:
+                checkpoint_store.save_state(self.get_module_name(), thread_id, run_id, state)
         except BaseException:
             self._release_inbox_notifications()
             raise
@@ -921,7 +931,24 @@ class AgentConversationMixin:
         run_id = turns[-1]["turn_id"]
         state = self._build_checkpoint_state(messages, status=status)
         try:
-            if hasattr(checkpoint_store, "asave_state"):
+            run = get_agent_run()
+            if run is not None and getattr(checkpoint_store, "supports_atomic_commit", False):
+                params = {
+                    "expected_revision": run.revision,
+                    "event": {"event_type": "checkpoint", "status": status},
+                    "branch_id": run.branch_id,
+                    "head_item_id": run.head_item_id,
+                }
+                if hasattr(checkpoint_store, "acommit_state"):
+                    committed = await checkpoint_store.acommit_state(
+                        self.get_module_name(), thread_id, run_id, state, **params
+                    )
+                else:
+                    committed = checkpoint_store.commit_state(
+                        self.get_module_name(), thread_id, run_id, state, **params
+                    )
+                run.revision = committed.revision
+            elif hasattr(checkpoint_store, "asave_state"):
                 await checkpoint_store.asave_state(
                     self.get_module_name(),
                     thread_id,
@@ -986,9 +1013,18 @@ class AgentConversationMixin:
         *,
         status: str,
     ) -> Mapping[str, Any]:
+        run = get_agent_run()
+        context = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self), {})
+        scope = context.get("scope") or get_execution_context()["scope"]
+        if run is not None:
+            run.head_item_id = messages[-1].get("item_id") if messages else None
         return {
+            "schema_version": 1,
             "status": status,
             "messages": messages._to_state(),
+            "runtime": run.durable_state() if run is not None else {},
+            "scope": scope.to_dict(),
+            "model_preference": context.get("model_preference"),
             "metadata": {
                 "namespace": self.get_module_name(),
                 "saved_at": utc_now_isoformat(),
@@ -1135,6 +1171,7 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
         restored._hydrate_state(state.get("messages", {}))
         if restored.get_active_turn() is None and restored.turns:
@@ -1143,6 +1180,8 @@ class AgentConversationMixin:
             thread_id=effective_thread_id,
             namespace=self.get_module_name(),
             run_id=run_id,
+            parent_run_id=state.get("scope", {}).get("parent_run_id"),
+            root_run_id=state.get("scope", {}).get("root_run_id"),
         )
         return {
             "messages": restored,
@@ -1189,6 +1228,7 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
         restored._hydrate_state(state.get("messages", {}))
         if restored.get_active_turn() is None and restored.turns:
@@ -1197,11 +1237,27 @@ class AgentConversationMixin:
             thread_id=effective_thread_id,
             namespace=self.get_module_name(),
             run_id=run_id,
+            parent_run_id=state.get("scope", {}).get("parent_run_id"),
+            root_run_id=state.get("scope", {}).get("root_run_id"),
         )
         return {
             "messages": restored,
             "model_preference": state.get("model_preference"),
             "scope": effective_scope,
         }
+
+    def _restore_agent_run(self, state, thread_id, run_id) -> None:
+        current = get_agent_run()
+        if current is None:
+            return
+        restored = AgentRun.from_durable_state(
+            state.get("runtime"), namespace=self.get_module_name(),
+            thread_id=thread_id, run_id=run_id,
+        )
+        restored.revision = state.get("_checkpoint", {}).get("revision", 0)
+        restored.namespace = self.get_module_name()
+        restored.thread_id = thread_id
+        restored.run_id = run_id
+        current.__dict__.update(restored.__dict__)
 
     # --- Configuration ---

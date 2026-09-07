@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Union
 from msgflux.chat_messages import ChatMessages
 from msgflux.nn.hooks.events import BeforeResume
 from msgflux.runtime.context import ExecutionScope
+from msgflux.runtime.agent_run import AgentRun, agent_run_context
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.agent.core import Agent
@@ -102,14 +103,17 @@ def _agent_context(agent: Agent, *, scope, vars):
     current = _CURRENT_AGENT_CONTEXT.get() or {}
     agent_id = id(agent)
     if agent_id in current:
-        yield current[agent_id]
+        with agent_run_context(current[agent_id]["run"]):
+            yield current[agent_id]
         return
-    state = {"scope": scope, "vars": vars or {}}
+    run = AgentRun(namespace=agent.get_module_name(), thread_id=scope.thread_id, run_id=scope.run_id)
+    state = {"scope": scope, "vars": vars or {}, "run": run}
     updated = dict(current)
     updated[agent_id] = state
     token = _CURRENT_AGENT_CONTEXT.set(updated)
     try:
-        yield state
+        with agent_run_context(run):
+            yield state
     finally:
         _CURRENT_AGENT_CONTEXT.reset(token)
 

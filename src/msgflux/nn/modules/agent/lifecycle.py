@@ -344,6 +344,13 @@ class AgentLifecycleMixin:
         if state is not None:
             state["scope"] = inputs.get("scope") or state["scope"]
             state["vars"] = inputs.get("vars") or {}
+            state["model_preference"] = inputs.get("model_preference")
+            run = state["run"]
+            run.namespace = state["scope"].namespace
+            run.thread_id = state["scope"].thread_id
+            run.run_id = state["scope"].run_id
+            run.parent_run_id = state["scope"].parent_run_id
+            run.root_run_id = state["scope"].root_run_id
 
     def _output_context(self, output: Any) -> OutputContext:
         state = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self), {})
