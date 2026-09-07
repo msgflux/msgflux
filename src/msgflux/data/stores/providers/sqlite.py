@@ -253,6 +253,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             item = restore_item_occurrence(self._deserialize(row[0]), entry)
             messages["items"].append(item)
         state["messages"] = messages
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
         return state
 
     @staticmethod
@@ -389,6 +390,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         state: Mapping[str, Any],
     ) -> None:
         now = time.time()
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
         normalized = self._normalize_state(namespace, thread_id, state, now)
         payload = self._serialize(normalized)
         status = state.get("status", "running")
@@ -470,6 +472,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 self._denormalize_state(namespace, thread_id, row[0]) if row else {}
             )
             checkpoint = current.get("_checkpoint", {})
+            self._validate_checkpoint_envelope(checkpoint)
             revision = checkpoint.get("revision", 0)
             if expected_revision is not None and revision != expected_revision:
                 self._conn.rollback()
@@ -571,18 +574,23 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         if status is not None:
             state["status"] = status
         checkpoint = state.get("_checkpoint")
-        if isinstance(checkpoint, Mapping):
-            state["_checkpoint"] = {
-                **dict(checkpoint),
-                "revision": 0,
-                "branch_id": "root",
-                "head_item_id": None,
-                "fork_of": {
-                    "thread_id": source_thread_id,
-                    "run_id": source_run_id,
-                    "item_id": at_item_id,
-                },
-            }
+        self._validate_checkpoint_envelope(checkpoint)
+        source_checkpoint = dict(checkpoint or {})
+        state["_checkpoint"] = {
+            "schema_version": 1,
+            "revision": 0,
+            "branch_id": "root",
+            "head_item_id": None,
+            "extensions": source_checkpoint.get("extensions", {}),
+            "fork_of": {
+                "namespace": namespace,
+                "thread_id": source_thread_id,
+                "run_id": source_run_id,
+                "item_id": at_item_id,
+                "branch_id": source_checkpoint.get("branch_id"),
+                "head_item_id": source_checkpoint.get("head_item_id"),
+            },
+        }
         messages = state.get("messages")
         if isinstance(messages, dict):
             messages["thread_id"] = target_thread_id

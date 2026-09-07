@@ -169,6 +169,14 @@ context manager propagates both the scope and resources such as
 abstraction. If both are provided, the store bound directly to the agent takes
 precedence over the store inherited from the execution context.
 
+Revisioned stores keep a `_checkpoint` envelope with a schema version,
+monotonic revision, branch identity, active head item, and extension state.
+Commits may provide `expected_revision`; stale writers are rejected atomically
+and their state and event are not persisted. Existing snapshots without this
+envelope remain readable and acquire revision `0` on their next revisioned
+commit. Forks start a new root branch and retain the source namespace, run,
+branch, and head in `_checkpoint.fork_of` for provenance.
+
 Inside the call, the agent resolves the effective scope first. It then uses the
 active checkpoint store to load or save state under the effective
 `(namespace, thread_id, run_id)` key.

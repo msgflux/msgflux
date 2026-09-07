@@ -91,3 +91,62 @@ def test_commit_without_extension_state_preserves_existing_extensions(
     finally:
         if isinstance(store, SQLiteCheckpointStore):
             store.close()
+
+
+@pytest.mark.parametrize("store_factory", [InMemoryCheckpointStore, SQLiteCheckpointStore])
+def test_fork_records_namespace_and_source_branch_for_legacy_and_revisioned_state(
+    store_factory, tmp_path
+):
+    kwargs = {"path": str(tmp_path / "fork.sqlite3")} if store_factory is SQLiteCheckpointStore else {}
+    store = store_factory(**kwargs)
+    try:
+        store.save_state(
+            "tenant",
+            "source",
+            "run",
+            {
+                "status": "completed",
+                "_checkpoint": {
+                    "schema_version": 1,
+                    "revision": 4,
+                    "branch_id": "review",
+                    "head_item_id": "head-1",
+                },
+            },
+        )
+        forked = store.fork_run(
+            "tenant",
+            "source",
+            "run",
+            target_thread_id="target",
+            target_run_id="fork",
+        )
+        origin = forked["_checkpoint"]["fork_of"]
+        assert origin == {
+            "namespace": "tenant",
+            "thread_id": "source",
+            "run_id": "run",
+            "item_id": None,
+            "branch_id": "review",
+            "head_item_id": "head-1",
+        }
+        assert forked["_checkpoint"]["branch_id"] == "root"
+    finally:
+        if isinstance(store, SQLiteCheckpointStore):
+            store.close()
+
+
+@pytest.mark.parametrize("store_factory", [InMemoryCheckpointStore, SQLiteCheckpointStore])
+def test_checkpoint_envelope_rejects_future_or_invalid_metadata(store_factory, tmp_path):
+    kwargs = {"path": str(tmp_path / "invalid.sqlite3")} if store_factory is SQLiteCheckpointStore else {}
+    store = store_factory(**kwargs)
+    try:
+        with pytest.raises(ValueError, match="schema version"):
+            store.save_state("agent", "thread", "run", {"_checkpoint": {"schema_version": 2}})
+        with pytest.raises(ValueError, match="revision"):
+            store.save_state("agent", "thread", "run", {"_checkpoint": {"revision": -1}})
+        with pytest.raises(ValueError, match="branch_id"):
+            store.save_state("agent", "thread", "run", {"_checkpoint": {"branch_id": 4}})
+    finally:
+        if isinstance(store, SQLiteCheckpointStore):
+            store.close()

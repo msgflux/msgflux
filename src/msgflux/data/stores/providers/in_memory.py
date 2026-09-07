@@ -147,6 +147,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             messages["items"].append(item)
         restored["messages"] = messages
+        self._validate_checkpoint_envelope(restored.get("_checkpoint"))
         return restored
 
     @staticmethod
@@ -200,6 +201,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         state: Mapping[str, Any],
     ) -> None:
         with self._lock:
+            self._validate_checkpoint_envelope(state.get("_checkpoint"))
             run = self._ensure_run(namespace, thread_id, run_id)
             run["state"] = self._normalize_state(namespace, thread_id, state)
             run["updated_at"] = time.time()
@@ -271,18 +273,23 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             if status is not None:
                 forked["status"] = status
             checkpoint = forked.get("_checkpoint")
-            if isinstance(checkpoint, Mapping):
-                forked["_checkpoint"] = {
-                    **dict(checkpoint),
-                    "revision": 0,
-                    "branch_id": "root",
-                    "head_item_id": None,
-                    "fork_of": {
-                        "thread_id": source_thread_id,
-                        "run_id": source_run_id,
-                        "item_id": at_item_id,
-                    },
-                }
+            self._validate_checkpoint_envelope(checkpoint)
+            source_checkpoint = dict(checkpoint or {})
+            forked["_checkpoint"] = {
+                "schema_version": 1,
+                "revision": 0,
+                "branch_id": "root",
+                "head_item_id": None,
+                "extensions": source_checkpoint.get("extensions", {}),
+                "fork_of": {
+                    "namespace": namespace,
+                    "thread_id": source_thread_id,
+                    "run_id": source_run_id,
+                    "item_id": at_item_id,
+                    "branch_id": source_checkpoint.get("branch_id"),
+                    "head_item_id": source_checkpoint.get("head_item_id"),
+                },
+            }
 
             messages = forked.get("messages")
             if isinstance(messages, dict):
@@ -333,6 +340,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 else {}
             )
             checkpoint = current.get("_checkpoint", {})
+            self._validate_checkpoint_envelope(checkpoint)
             revision = checkpoint.get("revision", 0)
             if expected_revision is not None and revision != expected_revision:
                 raise CheckpointConflictError(

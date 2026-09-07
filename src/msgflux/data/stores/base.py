@@ -24,6 +24,41 @@ class CheckpointCommit:
 
 class CheckpointStore(ABC):
     supports_atomic_commit = False
+
+    @staticmethod
+    def _validate_checkpoint_envelope(checkpoint: Any) -> None:
+        """Validate metadata while retaining compatibility with legacy states."""
+        if checkpoint is None:
+            return
+        if not isinstance(checkpoint, Mapping):
+            raise ValueError("Checkpoint envelope must be a mapping")
+        schema_version = checkpoint.get("schema_version", 1)
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+            raise ValueError("Checkpoint schema_version must be an integer")
+        if schema_version > 1:
+            raise ValueError(
+                f"Unsupported checkpoint schema version `{schema_version}`"
+            )
+        revision = checkpoint.get("revision", 0)
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise ValueError("Checkpoint revision must be a non-negative integer")
+        branch_id = checkpoint.get("branch_id")
+        if branch_id is not None and (
+            not isinstance(branch_id, str) or not branch_id
+        ):
+            raise ValueError(
+                "Checkpoint branch_id must be a non-empty string or null"
+            )
+        head_item_id = checkpoint.get("head_item_id")
+        if head_item_id is not None and (
+            not isinstance(head_item_id, str) or not head_item_id
+        ):
+            raise ValueError(
+                "Checkpoint head_item_id must be a non-empty string or null"
+            )
+        extensions = checkpoint.get("extensions", {})
+        if not isinstance(extensions, Mapping):
+            raise ValueError("Checkpoint extensions must be a mapping")
     """Unified store for agent and pipeline checkpoints.
 
     The key is always `(namespace, thread_id, run_id)`. State snapshots use
@@ -145,19 +180,23 @@ class CheckpointStore(ABC):
         if status is not None:
             forked["status"] = status
         checkpoint = forked.get("_checkpoint")
-        if isinstance(checkpoint, Mapping):
-            forked["_checkpoint"] = {
-                **dict(checkpoint),
-                "revision": 0,
-                "branch_id": "root",
-                "head_item_id": None,
-                "fork_of": {
-                    "namespace": namespace,
-                    "thread_id": source_thread_id,
-                    "run_id": source_run_id,
-                    "item_id": at_item_id,
-                },
-            }
+        self._validate_checkpoint_envelope(checkpoint)
+        source_checkpoint = dict(checkpoint or {})
+        forked["_checkpoint"] = {
+            "schema_version": 1,
+            "revision": 0,
+            "branch_id": "root",
+            "head_item_id": None,
+            "extensions": source_checkpoint.get("extensions", {}),
+            "fork_of": {
+                "namespace": namespace,
+                "thread_id": source_thread_id,
+                "run_id": source_run_id,
+                "item_id": at_item_id,
+                "branch_id": source_checkpoint.get("branch_id"),
+                "head_item_id": source_checkpoint.get("head_item_id"),
+            },
+        }
         self.save_state(namespace, target_thread_id, target_run_id, forked)
         loaded = self.load_state(namespace, target_thread_id, target_run_id)
         if loaded is None:
