@@ -736,15 +736,35 @@ This is useful when another module or router decides which tools should be avail
 
 ### Limiting Tool Loops
 
-Use `config["max_tool_turns"]` to cap how many **completed tool rounds** an Agent can execute in a single request.
+Use `ToolTurnLimitExtension` to cap how many **completed tool rounds** an Agent
+can execute in one run. A round is one batch of tool calls, including parallel
+calls. `config["max_tool_turns"]` is a constructor shorthand for this extension;
+do not configure both at once.
 
 When the limit is reached:
 
-- The next attempted tool round is not executed
-- The Agent makes one more model call with tools disabled
-- The model gets a final chance to produce a plain answer
+- The final permitted batch and its results are recorded in the history.
+- The Agent stops immediately without another model request.
+- The output contains `stop_reason="tool_turn_limit"`, `completed_tool_turns`,
+  and `tool_responses.tool_calls`. It is not necessarily a natural-language answer.
 
-This is useful to avoid runaway tool loops while still allowing a graceful final response.
+Before the last round, the extension adds a system-prompt notice. The notice
+does not modify the canonical prompt. The limit is enforced even if the model
+ignores it. Counters survive checkpoint resume; a new run receives a new budget.
+
+```python
+from msgflux import nn
+
+agent = nn.Agent(
+    name="researcher", model=model, tools=[search],
+    extensions=[nn.ToolTurnLimitExtension(limit=2, warn_remaining=1)],
+)
+result = agent("Investigate the incident")
+```
+
+This example permits two tool batches and warns before the second. Set
+`warn_remaining=0` to disable the warning. The same policy applies to native
+tool calling and `ToolFlowControl` schemas, in synchronous and asynchronous runs.
 
 ???+ example
 
@@ -777,7 +797,7 @@ This is useful to avoid runaway tool loops while still allowing a graceful final
     `max_tool_turns` is different from `tool_choice="none"`:
 
     - `tool_choice="none"` disables tools from the start
-    - `max_tool_turns` allows some tool usage first, then forces a final no-tools round if the loop keeps going
+    - `max_tool_turns` permits a bounded number of rounds and then ends the run
 
 ### Async Tools
 

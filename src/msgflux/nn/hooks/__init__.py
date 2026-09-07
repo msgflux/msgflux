@@ -43,9 +43,11 @@ __all__ = [
     "RunEndContext",
     "ToolCatalogContext",
     "ToolFeedbackContext",
+    "ContinuationContext",
 ]
 
 _LAZY_IMPORTS = {
+    "ContinuationContext": ("msgflux.nn.hooks.events", "ContinuationContext"),
     "AgentContext": ("msgflux.nn.hooks.events", "AgentContext"),
     "AfterTool": ("msgflux.nn.hooks.events", "AfterTool"),
     "BeforeResume": ("msgflux.nn.hooks.events", "BeforeResume"),

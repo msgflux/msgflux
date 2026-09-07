@@ -49,9 +49,11 @@ __all__ = [
     "ToolSearchExtension",
     "ToolUsageGuidanceExtension",
     "DefaultToolFeedbackExtension",
+    "ToolTurnLimitExtension",
 ]
 
 _LAZY_IMPORTS = {
+    "ToolTurnLimitExtension": ("msgflux.nn.extensions.limits", "ToolTurnLimitExtension"),
     "AgentExtension": ("msgflux.nn.extensions.base", "AgentExtension"),
     "AgentExtensionHandle": (
         "msgflux.nn.extensions.base",

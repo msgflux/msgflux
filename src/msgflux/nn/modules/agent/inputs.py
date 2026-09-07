@@ -762,15 +762,4 @@ class AgentInputMixin:
 
         return adjusted_tool_choice
 
-    def _block_all_tools(self, max_tool_turns: int) -> ToolFilter:
-        """Build the internal filter used for the final no-tools round."""
-        if self.config.get("verbose", False):
-            cprint(
-                f"[{self.name}][max_tool_turns] Limit of {max_tool_turns} "
-                "turns reached, blocking all tools",
-                bc="y",
-                ls="b",
-            )
-        return {"block": "*"}
-
     # --- Message State Helpers ---

@@ -29,6 +29,7 @@ __all__ = [
     "RunEndContext",
     "ToolCatalogContext",
     "ToolFeedbackContext",
+    "ContinuationContext",
 ]
 
 
@@ -202,6 +203,19 @@ class ToolFeedbackContext(AgentContext):
     reasoning: str | None = None
     action: Literal["continue", "return"] = "continue"
     output: Any = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContinuationContext(AgentContext):
+    """A safe boundary where execution policies may stop the Agent loop."""
+
+    phase: Literal["before_request", "after_tools"]
+    messages: Any
+    intents: tuple[ToolIntent, ...] = ()
+    outcomes: tuple[ToolOutcome, ...] = ()
+    action: Literal["continue", "return"] = "continue"
+    output: Any = None
+    stop_reason: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

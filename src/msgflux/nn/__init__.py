@@ -56,6 +56,7 @@ __all__ = [
     "ToolPolicy",
     "ToolSearchExtension",
     "DefaultToolFeedbackExtension",
+    "ToolTurnLimitExtension",
     "ToolUsageGuidanceExtension",
     "Tool",
     "ToolExecutionPlan",
@@ -85,6 +86,7 @@ def __getattr__(name: str):
         "ToolPolicy",
         "ToolSearchExtension",
         "DefaultToolFeedbackExtension",
+        "ToolTurnLimitExtension",
         "ToolUsageGuidanceExtension",
     }:
         value = getattr(import_module("msgflux.nn.extensions"), name)

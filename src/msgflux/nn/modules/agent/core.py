@@ -31,6 +31,7 @@ from msgflux.nn.extensions.base import (
     AgentExtension,
 )
 from msgflux.nn.extensions.feedback import DefaultToolFeedbackExtension
+from msgflux.nn.extensions.limits import ToolTurnLimitExtension
 from msgflux.nn.extensions.prompt import (
     FewShotExamplesExtension,
     ToolUsageGuidanceExtension,
@@ -63,6 +64,7 @@ from msgflux.nn.modules.agent.context import (
     _prepare_agent_guard_input,
     _prepare_agent_guard_output,
 )
+from msgflux.nn.modules.agent.continuation import AgentContinuationMixin
 from msgflux.nn.modules.agent.conversation import AgentConversationMixin
 from msgflux.nn.modules.agent.inputs import AgentInputMixin
 from msgflux.nn.modules.agent.lifecycle import AgentLifecycleMixin
@@ -71,6 +73,7 @@ from msgflux.nn.modules.agent.model_runtime import AgentModelRuntimeMixin
 
 class Agent(
     AgentLifecycleMixin,
+    AgentContinuationMixin,
     AgentModelRuntimeMixin,
     AgentCompactionMixin,
     AgentInputMixin,
@@ -416,6 +419,16 @@ class Agent(
                     "`skills` cannot be combined with a `skills` extension."
                 )
             self.register_extension("skills", SkillsExtension(skills))
+
+        max_tool_turns = self.config.get("max_tool_turns")
+        if max_tool_turns is not None:
+            if self.has_extension("tool_turn_limit"):
+                raise ValueError(
+                    "Use max_tool_turns or ToolTurnLimitExtension, not both"
+                )
+            self.register_extension(
+                "tool_turn_limit", ToolTurnLimitExtension(max_tool_turns)
+            )
 
     def forward(
         self,

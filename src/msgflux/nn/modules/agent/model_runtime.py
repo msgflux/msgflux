@@ -49,6 +49,7 @@ from msgflux.nn.modules.agent.context import (
     _BeforeRunEndHookError,
     _require_lifecycle_payload,
 )
+from msgflux.nn.modules.agent.continuation import _TerminalResponse
 
 
 class AgentModelRuntimeMixin:
@@ -64,6 +65,9 @@ class AgentModelRuntimeMixin:
         scope: Optional[ExecutionScope] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         self._raise_if_background_task_interrupted()
+        decision = self._resolve_continuation("before_request", messages, vars)
+        if decision.action == "return":
+            return _TerminalResponse(decision)
         effective_scope = scope or get_execution_context()["scope"]
         conversation = self._run_lifecycle_hooks(
             "transform_context",
@@ -144,6 +148,9 @@ class AgentModelRuntimeMixin:
         scope: Optional[ExecutionScope] = None,
     ) -> Union[ModelResponse, ModelStreamResponse]:
         self._raise_if_background_task_interrupted()
+        decision = await self._aresolve_continuation("before_request", messages, vars)
+        if decision.action == "return":
+            return _TerminalResponse(decision)
         effective_scope = scope or get_execution_context()["scope"]
         conversation = await self._arun_lifecycle_hooks(
             "transform_context",
@@ -597,7 +604,9 @@ class AgentModelRuntimeMixin:
                 model_preference,
                 tool_filter,
             )
-        elif is_subclass_of(self.generation_schema, ToolFlowControl):
+        elif not isinstance(model_response, _TerminalResponse) and is_subclass_of(
+            self.generation_schema, ToolFlowControl
+        ):
             model_response, messages = self._process_tool_flow_control_response(
                 message,
                 model_response,
@@ -696,7 +705,9 @@ class AgentModelRuntimeMixin:
                 model_preference,
                 tool_filter,
             )
-        elif is_subclass_of(self.generation_schema, ToolFlowControl):
+        elif not isinstance(model_response, _TerminalResponse) and is_subclass_of(
+            self.generation_schema, ToolFlowControl
+        ):
             (
                 model_response,
                 messages,
@@ -774,10 +785,10 @@ class AgentModelRuntimeMixin:
         Union[ChatMessages, List[Mapping[str, Any]]],
     ]:
         """Handle tool flow control responses using the ToolFlowControl interface."""
-        max_tool_turns = self.config.get("max_tool_turns")
-        completed_tool_turns = 0
         flow_control = self.generation_schema
         while True:
+            if isinstance(model_response, _TerminalResponse):
+                return model_response, messages
             response_item_start = (
                 len(messages) if isinstance(messages, ChatMessages) else 0
             )
@@ -799,24 +810,9 @@ class AgentModelRuntimeMixin:
                 )
 
             if flow_result.tool_calls:
-                if (
-                    max_tool_turns is not None
-                    and completed_tool_turns >= max_tool_turns
-                ):
-                    # Re-run once with tools disabled so the model can finalize.
-                    tool_filter = self._block_all_tools(max_tool_turns)
-                    model_response = self._execute_model(
-                        messages=messages,
-                        model_preference=model_preference,
-                        vars=vars,
-                        tool_filter=tool_filter,
-                    )
-                    continue
-
                 intents = self._flow_tool_intents(flow_result.tool_calls)
                 outcomes = self._process_tool_intents(intents, message, messages, vars)
                 tool_results = ToolResponses.from_outcomes(intents, outcomes)
-                completed_tool_turns += 1
 
                 # Use interface to inject results
                 raw_response = flow_control.inject_results(raw_response, tool_results)
@@ -828,6 +824,11 @@ class AgentModelRuntimeMixin:
                     getattr(model_response, "metadata", None),
                     after_index=response_item_start,
                 )
+                decision = self._resolve_continuation(
+                    "after_tools", messages, vars, intents, outcomes
+                )
+                if decision.action == "return":
+                    return _TerminalResponse(decision), messages
                 feedback = self._resolve_tool_feedback(
                     intents,
                     outcomes,
@@ -862,10 +863,10 @@ class AgentModelRuntimeMixin:
         """Async version of _process_tool_flow_control_response.
         Handle tool flow control responses using the ToolFlowControl interface.
         """
-        max_tool_turns = self.config.get("max_tool_turns")
-        completed_tool_turns = 0
         flow_control = self.generation_schema
         while True:
+            if isinstance(model_response, _TerminalResponse):
+                return model_response, messages
             response_item_start = (
                 len(messages) if isinstance(messages, ChatMessages) else 0
             )
@@ -887,26 +888,11 @@ class AgentModelRuntimeMixin:
                 )
 
             if flow_result.tool_calls:
-                if (
-                    max_tool_turns is not None
-                    and completed_tool_turns >= max_tool_turns
-                ):
-                    # Re-run once with tools disabled so the model can finalize.
-                    tool_filter = self._block_all_tools(max_tool_turns)
-                    model_response = await self._aexecute_model(
-                        messages=messages,
-                        model_preference=model_preference,
-                        vars=vars,
-                        tool_filter=tool_filter,
-                    )
-                    continue
-
                 intents = self._flow_tool_intents(flow_result.tool_calls)
                 outcomes = await self._aprocess_tool_intents(
                     intents, message, messages, vars
                 )
                 tool_results = ToolResponses.from_outcomes(intents, outcomes)
-                completed_tool_turns += 1
 
                 # Use interface to inject results (async version)
                 raw_response = await flow_control.ainject_results(
@@ -920,6 +906,11 @@ class AgentModelRuntimeMixin:
                     getattr(model_response, "metadata", None),
                     after_index=response_item_start,
                 )
+                decision = await self._aresolve_continuation(
+                    "after_tools", messages, vars, intents, outcomes
+                )
+                if decision.action == "return":
+                    return _TerminalResponse(decision), messages
                 feedback = await self._aresolve_tool_feedback(
                     intents,
                     outcomes,
@@ -957,28 +948,11 @@ class AgentModelRuntimeMixin:
         'name': 'get_delivery_date'}}]}, {'role': 'tool', 'tool_call_id': 'call_HA',
         'content': '2024-10-15'}].
         """
-        max_tool_turns = self.config.get("max_tool_turns")
-        completed_tool_turns = 0
-
         while True:
             if model_response.response_type == "tool_call":
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
-                if (
-                    max_tool_turns is not None
-                    and completed_tool_turns >= max_tool_turns
-                ):
-                    # Re-run once with tools disabled so the model can finalize.
-                    tool_filter = self._block_all_tools(max_tool_turns)
-                    model_response = self._execute_model(
-                        messages=messages,
-                        model_preference=model_preference,
-                        vars=vars,
-                        tool_filter=tool_filter,
-                    )
-                    continue
-
                 raw_response = model_response.data
                 reasoning = model_response.reasoning
                 appended_item_types = self._append_tool_model_history(
@@ -1009,12 +983,16 @@ class AgentModelRuntimeMixin:
                         reason=str(exc),
                     )
                     raise
-                completed_tool_turns += 1
 
                 tool_responses_message = model_response.render_tool_outcomes(
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
+                decision = self._resolve_continuation(
+                    "after_tools", messages, vars, tool_intents, tool_outcomes
+                )
+                if decision.action == "return":
+                    return _TerminalResponse(decision), messages
                 feedback = self._resolve_tool_feedback(
                     tool_intents,
                     tool_outcomes,
@@ -1055,9 +1033,6 @@ class AgentModelRuntimeMixin:
         'name': 'get_delivery_date'}}]}, {'role': 'tool', 'tool_call_id': 'call_HA',
         'content': '2024-10-15'}].
         """
-        max_tool_turns = self.config.get("max_tool_turns")
-        completed_tool_turns = 0
-
         while True:
             if model_response.response_type == "tool_call":
                 if isinstance(model_response, ModelStreamResponse):
@@ -1068,20 +1043,6 @@ class AgentModelRuntimeMixin:
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
-                if (
-                    max_tool_turns is not None
-                    and completed_tool_turns >= max_tool_turns
-                ):
-                    # Re-run once with tools disabled so the model can finalize.
-                    tool_filter = self._block_all_tools(max_tool_turns)
-                    model_response = await self._aexecute_model(
-                        messages=messages,
-                        model_preference=model_preference,
-                        vars=vars,
-                        tool_filter=tool_filter,
-                    )
-                    continue
-
                 raw_response = model_response.data
                 reasoning = model_response.reasoning
                 appended_item_types = self._append_tool_model_history(
@@ -1112,12 +1073,16 @@ class AgentModelRuntimeMixin:
                         reason=str(exc),
                     )
                     raise
-                completed_tool_turns += 1
 
                 tool_responses_message = model_response.render_tool_outcomes(
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
+                decision = await self._aresolve_continuation(
+                    "after_tools", messages, vars, tool_intents, tool_outcomes
+                )
+                if decision.action == "return":
+                    return _TerminalResponse(decision), messages
                 feedback = await self._aresolve_tool_feedback(
                     tool_intents,
                     tool_outcomes,

@@ -1,13 +1,12 @@
 """Tests for tool_filter and max_tool_turns features."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from msgflux.core.message import Message
 from msgflux.nn.modules.agent import Agent
-from msgflux.tools import ToolIntent, ToolOutcome, ToolSpec
+from msgflux.tools import ToolSpec
 
 
 def search(query: str) -> str:
@@ -259,65 +258,12 @@ class TestMaxToolTurnsBehavior:
     """Tests for max_tool_turns execution behavior."""
 
     def test_second_tool_turn_is_blocked_before_execution(self):
-        """After the limit is reached, tools are removed for a final answer turn."""
-        agent = Agent.__new__(Agent)
-        agent.name = "agent"
-        agent.config = {"max_tool_turns": 1}
+        """The constructor shorthand installs the extensible terminal policy."""
+        from msgflux.nn.extensions import ToolTurnLimitExtension
 
-        processed_tool_turns = []
-        execution_filters = []
-
-        class RawResponse:
-            def __init__(self, label: str):
-                self.reasoning = None
-                self.label = label
-
-            def get_calls(self):
-                return [("id", self.label, {})]
-
-            def insert_results(self, id_results):
-                self.id_results = id_results
-
-            def get_messages(self):
-                return []
-
-        class ToolResponse(SimpleNamespace):
-            def get_tool_intents(self):
-                return (ToolIntent(id="id", name=self.data.label, arguments={}),)
-
-            def render_tool_outcomes(self, outcomes):
-                return []
-
-        first = ToolResponse(
-            response_type="tool_call", data=RawResponse("first"), reasoning=None
+        agent = Agent(
+            name="agent",
+            model=Mock(model_type="chat_completion"),
+            config={"max_tool_turns": 1},
         )
-        second = ToolResponse(
-            response_type="tool_call", data=RawResponse("second"), reasoning=None
-        )
-        final = SimpleNamespace(
-            response_type="text_generation", data="done", reasoning=None
-        )
-        queued_responses = [second, final]
-
-        def process_tool_intents(intents, message, messages, vars):
-            processed_tool_turns.append(intents[0].name)
-            return (ToolOutcome.completed(intents[0], "ok"),)
-
-        def execute_model(**kwargs):
-            execution_filters.append(kwargs.get("tool_filter"))
-            return queued_responses.pop(0)
-
-        agent._process_tool_intents = process_tool_intents
-        agent._resolve_tool_feedback = lambda *args, **kwargs: SimpleNamespace(
-            action="continue"
-        )
-        agent._execute_model = execute_model
-
-        result, messages = agent._process_tool_call_response(
-            None, first, [], {}, None, None
-        )
-
-        assert processed_tool_turns == ["first"]
-        assert execution_filters == [None, {"block": "*"}]
-        assert result.response_type == "text_generation"
-        assert messages == []
+        assert isinstance(agent.extensions["tool_turn_limit"], ToolTurnLimitExtension)

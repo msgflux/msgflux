@@ -250,7 +250,11 @@ class AgentConfigurationMixin:
     def _validate_config_limits(self, config: Dict[str, Any]):
         if "max_tool_turns" in config:
             max_turns = config["max_tool_turns"]
-            if not isinstance(max_turns, int) or max_turns < 1:
+            if (
+                isinstance(max_turns, bool)
+                or not isinstance(max_turns, int)
+                or max_turns < 1
+            ):
                 raise ValueError(
                     f"`max_tool_turns` must be a positive integer, "
                     f"given `{config['max_tool_turns']}`"
