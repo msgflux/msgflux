@@ -25,7 +25,11 @@ def test_artifact_renderer_handles_every_boundary_and_escape_boundary():
     value = "left {{artifact:report-1}} right"
     for split in range(1, len(value)):
         renderer = ArtifactReferenceRenderer(registry)
-        rendered = renderer.feed(value[:split]) + renderer.feed(value[split:]) + renderer.finish()
+        rendered = (
+            renderer.feed(value[:split])
+            + renderer.feed(value[split:])
+            + renderer.finish()
+        )
         assert rendered == "left REPORT right"
 
     renderer = ArtifactReferenceRenderer(registry)
@@ -90,18 +94,14 @@ async def test_agent_stream_renders_events_but_checkpoints_canonical_reference()
     events = [event async for event in agent.stream_events("question", scope=scope)]
 
     deltas = [
-        event.data["delta"]
-        for event in events
-        if event.type == EventType.MESSAGE_DELTA
+        event.data["delta"] for event in events if event.type == EventType.MESSAGE_DELTA
     ]
     end = next(event for event in events if event.type == EventType.MESSAGE_END)
     assert "".join(deltas) == "prefix expanded report suffix"
     assert end.data["content"] == "prefix expanded report suffix"
     state = store.load_state("agent", "artifact-thread", "artifact-run")
     assistant = [
-        item
-        for item in state["messages"]["items"]
-        if item.get("role") == "assistant"
+        item for item in state["messages"]["items"] if item.get("role") == "assistant"
     ][-1]
     assert assistant["content"] == "prefix {{artifact:report}} suffix"
 
@@ -146,10 +146,18 @@ async def test_artifact_renderer_isolated_for_concurrent_runs_and_watch_snapshot
         collect("first", "thread-one", "run-one"),
         collect("second", "thread-two", "run-two"),
     )
-    assert next(e for e in first if e.type == EventType.MESSAGE_END).data["content"] == "ONE"
-    assert next(e for e in second if e.type == EventType.MESSAGE_END).data["content"] == "TWO"
+    assert (
+        next(e for e in first if e.type == EventType.MESSAGE_END).data["content"]
+        == "ONE"
+    )
+    assert (
+        next(e for e in second if e.type == EventType.MESSAGE_END).data["content"]
+        == "TWO"
+    )
     async with agent.watch("thread-one") as watcher:
-        assert watcher.snapshot.messages.to_chatml()[-1]["content"] == "{{artifact:one}}"
+        assert (
+            watcher.snapshot.messages.to_chatml()[-1]["content"] == "{{artifact:one}}"
+        )
 
 
 @pytest.mark.asyncio
@@ -169,8 +177,21 @@ async def test_wrapped_stream_response_keeps_envelope_and_renders_content():
         config={"stream": True, "return_messages": True},
     )
     events = [event async for event in agent.stream_events("question")]
-    content = next(event for event in events if event.type == EventType.MESSAGE_END).data[
-        "content"
-    ]
+    content = next(
+        event for event in events if event.type == EventType.MESSAGE_END
+    ).data["content"]
     assert content["response"] == "expanded"
     assert "messages" in content
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 5, 7, 11, 19, 1000])
+def test_escape_and_marker_recognition_do_not_depend_on_chunk_size(width):
+    registry = ArtifactRegistry()
+    registry.register("EXPANDED", artifact_id="report")
+    raw = "prefix \\" + "{{artifact:report}} / {{artifact:report}} suffix"
+    expected = "prefix {{artifact:report}} / EXPANDED suffix"
+    renderer = ArtifactReferenceRenderer(registry)
+    result = "".join(
+        renderer.feed(raw[i : i + width]) for i in range(0, len(raw), width)
+    )
+    assert result + renderer.finish() == expected

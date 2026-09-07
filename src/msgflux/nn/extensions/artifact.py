@@ -53,10 +53,7 @@ class ArtifactRegistry:
         artifact_id: str,
         media_type: str = "text/plain",
     ) -> Artifact:
-        if (
-            not artifact_id
-            or not _ID.fullmatch(artifact_id)
-        ):
+        if not artifact_id or not _ID.fullmatch(artifact_id):
             raise ValueError(
                 "artifact_id must be a stable logical ID, not a filesystem path"
             )
@@ -88,50 +85,39 @@ class ArtifactReferenceRenderer:
         self.max_marker_length = max_marker_length
         self._buffer = ""
 
-    def feed(self, chunk: str) -> str:  # noqa: C901
+    def feed(self, chunk: str) -> str:
         if not isinstance(chunk, str):
             raise TypeError("artifact renderer accepts text chunks")
-        self._buffer += chunk
         output = []
-        while self._buffer:
-            match = _MARKER.search(self._buffer)
-            if match is not None:
-                if len(match.group(0)) > self.max_marker_length:
-                    output.append(self._buffer[: match.end()])
-                    self._buffer = self._buffer[match.end() :]
-                    continue
-                prefix = self._buffer[: match.start()]
-                if prefix.endswith("\\"):
-                    output.append(prefix[:-1] + match.group(0))
-                else:
-                    output.append(prefix)
-                    artifact = self.registry.get(match.group(1))
-                    output.append(
-                        artifact.content if artifact is not None else match.group(0)
-                    )
-                self._buffer = self._buffer[match.end() :]
-                continue
-            start = self._buffer.find(_PREFIX)
-            if start < 0:
-                keep = 0
-                for size in range(1, min(len(_PREFIX) - 1, len(self._buffer)) + 1):
-                    if self._buffer.endswith(_PREFIX[:size]):
-                        keep = size
-                if self._buffer.endswith("\\"):
-                    keep = max(keep, 1)
-                output.append(self._buffer[:-keep] if keep else self._buffer)
-                self._buffer = self._buffer[-keep:] if keep else ""
-                break
-            if start:
-                output.append(self._buffer[:start])
-                self._buffer = self._buffer[start:]
-                continue
-            if len(self._buffer) > self.max_marker_length:
-                output.append(self._buffer[0])
-                self._buffer = self._buffer[1:]
-                continue
-            break
+        # Only a possible marker (and its optional escape) survives between
+        # characters. Chunk boundaries never affect token recognition.
+        for char in chunk:
+            self._buffer += char
+            self._flush_prefix(output)
         return "".join(output)
+
+    def _flush_prefix(self, output: list[str]) -> None:
+        while self._buffer:
+            escaped = self._buffer.startswith("\\")
+            candidate = self._buffer[1:] if escaped else self._buffer
+            if _PREFIX.startswith(candidate):
+                return
+            if (
+                candidate.startswith(_PREFIX)
+                and len(candidate) <= self.max_marker_length
+            ):
+                match = _MARKER.fullmatch(candidate)
+                if match is not None:
+                    artifact = None if escaped else self.registry.get(match.group(1))
+                    output.append(
+                        artifact.content if artifact is not None else candidate
+                    )
+                    self._buffer = ""
+                    return
+                if not candidate.endswith("}}"):
+                    return
+            output.append(self._buffer[0])
+            self._buffer = self._buffer[1:]
 
     def finish(self) -> str:
         tail = self._buffer
