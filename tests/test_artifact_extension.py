@@ -1,6 +1,12 @@
 import pytest
+from unittest.mock import AsyncMock
 
+from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.models.response import ModelStreamResponse
 from msgflux.nn import ArtifactExtension, ArtifactReferenceRenderer, ArtifactRegistry
+from msgflux.nn.modules.agent import Agent
+from msgflux.runtime.context import ExecutionScope
+from msgflux.runtime.events import EventType
 
 
 def test_artifact_renderer_handles_split_markers_and_missing_values():
@@ -59,3 +65,112 @@ def test_extension_exposes_incremental_renderer():
     extension.registry.register("value", artifact_id="v")
     renderer = extension.create_output_transformer()
     assert renderer.feed("{{artifact:v}}") == "value"
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_renders_events_but_checkpoints_canonical_reference():
+    registry = ArtifactRegistry()
+    registry.register("expanded report", artifact_id="report")
+    response = ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    response.add("prefix {{artifact:")
+    response.add("report}} suffix")
+    response.finish()
+    model = type("Model", (), {"model_type": "chat_completion"})()
+    model.acall = AsyncMock(return_value=response)
+    store = InMemoryCheckpointStore()
+    agent = Agent(
+        name="agent",
+        model=model,
+        checkpoint_store=store,
+        extensions=[ArtifactExtension(registry)],
+        config={"stream": True},
+    )
+    scope = ExecutionScope(thread_id="artifact-thread", run_id="artifact-run")
+    events = [event async for event in agent.stream_events("question", scope=scope)]
+
+    deltas = [
+        event.data["delta"]
+        for event in events
+        if event.type == EventType.MESSAGE_DELTA
+    ]
+    end = next(event for event in events if event.type == EventType.MESSAGE_END)
+    assert "".join(deltas) == "prefix expanded report suffix"
+    assert end.data["content"] == "prefix expanded report suffix"
+    state = store.load_state("agent", "artifact-thread", "artifact-run")
+    assistant = [
+        item
+        for item in state["messages"]["items"]
+        if item.get("role") == "assistant"
+    ][-1]
+    assert assistant["content"] == "prefix {{artifact:report}} suffix"
+
+
+@pytest.mark.asyncio
+async def test_artifact_renderer_isolated_for_concurrent_runs_and_watch_snapshot():
+    registry = ArtifactRegistry()
+    registry.register("ONE", artifact_id="one")
+    registry.register("TWO", artifact_id="two")
+
+    async def acall(**kwargs):
+        user = next(item for item in kwargs["messages"] if item.get("role") == "user")
+        text = "one" if user["content"] == "first" else "two"
+        response = ModelStreamResponse(mode="async")
+        response.set_response_type("text_generation")
+        response.add("{{artifact:")
+        response.add(f"{text}" + "}}")
+        response.finish()
+        return response
+
+    model = type("Model", (), {"model_type": "chat_completion"})()
+    model.acall = acall
+    store = InMemoryCheckpointStore()
+    agent = Agent(
+        name="agent",
+        model=model,
+        checkpoint_store=store,
+        extensions=[ArtifactExtension(registry)],
+        config={"stream": True},
+    )
+
+    async def collect(message, thread, run):
+        return [
+            event
+            async for event in agent.stream_events(
+                message,
+                scope=ExecutionScope(thread_id=thread, run_id=run),
+            )
+        ]
+
+    first, second = await __import__("asyncio").gather(
+        collect("first", "thread-one", "run-one"),
+        collect("second", "thread-two", "run-two"),
+    )
+    assert next(e for e in first if e.type == EventType.MESSAGE_END).data["content"] == "ONE"
+    assert next(e for e in second if e.type == EventType.MESSAGE_END).data["content"] == "TWO"
+    async with agent.watch("thread-one") as watcher:
+        assert watcher.snapshot.messages.to_chatml()[-1]["content"] == "{{artifact:one}}"
+
+
+@pytest.mark.asyncio
+async def test_wrapped_stream_response_keeps_envelope_and_renders_content():
+    registry = ArtifactRegistry()
+    registry.register("expanded", artifact_id="item")
+    response = ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    response.add("{{artifact:item}}")
+    response.finish()
+    model = type("Model", (), {"model_type": "chat_completion"})()
+    model.acall = AsyncMock(return_value=response)
+    agent = Agent(
+        name="agent",
+        model=model,
+        extensions=[ArtifactExtension(registry)],
+        config={"stream": True, "return_messages": True},
+    )
+    events = [event async for event in agent.stream_events("question")]
+    content = next(event for event in events if event.type == EventType.MESSAGE_END).data[
+        "content"
+    ]
+    assert content["response"] == "expanded"
+    assert "messages" in content
