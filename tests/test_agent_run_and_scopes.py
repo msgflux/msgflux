@@ -29,6 +29,8 @@ def test_nested_context_scopes_restore_parent_and_close_idempotently():
     controller.close(messages, "research", summary="Research summary")
     again = controller.close(messages)
     assert again.changed is False
+    with pytest.raises(ContextScopeConflictError):
+        controller.close(messages, "missing")
     assert ContextScopeController.active_scope(messages) == "root"
 
 
