@@ -6,6 +6,41 @@ owns several pieces that should be installed and removed together.
 
 ## Define An Extension
 
+### Durable run state
+
+Use `self.state()` for ephemeral per-execution values and `self.durable_state()`
+for serializable values that must survive checkpoint resume. Both are isolated
+between concurrent runs of the same Agent; neither should be stored on the
+extension instance. Durable state is restored before `before_resume` hooks.
+
+```python
+from msgflux.nn import AgentExtension
+from msgflux.nn.hooks import Hook
+
+
+class RequestCounter(AgentExtension):
+    def __init__(self):
+        super().__init__("request_counter")
+
+    def hooks(self):
+        return (Hook(event="before_model_request", handler=self.count),)
+
+    def count(self, context):
+        state = self.durable_state()
+        state["requests"] = state.get("requests", 0) + 1
+```
+
+This counter resumes from the last successful checkpoint. A new `run_id` starts
+with empty extension state. With built-in checkpoint stores, Agent commits the
+snapshot and its checkpoint event atomically using an expected revision. A
+stale writer raises `CheckpointConflictError` without replacing another writer's
+state. This does not make external tool side effects exactly-once.
+
+Custom stores retain the snapshot API. Opt into `supports_atomic_commit=True`
+only when `commit_state()` provides the same atomic compare-and-swap contract.
+
+### Hooks and tools
+
 ```python
 from dataclasses import replace
 

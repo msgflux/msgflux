@@ -784,9 +784,9 @@ def test_run_end_hooks_wrap_final_checkpoint():
     trace = []
 
     class RecordingStore(InMemoryCheckpointStore):
-        def save_state(self, namespace, thread_id, run_id, state):
+        def commit_state(self, namespace, thread_id, run_id, state, **kwargs):
             trace.append("checkpoint")
-            return super().save_state(namespace, thread_id, run_id, state)
+            return super().commit_state(namespace, thread_id, run_id, state, **kwargs)
 
     def before(ctx):
         assert isinstance(ctx, RunEndContext)
@@ -817,9 +817,9 @@ def test_after_run_end_failure_preserves_committed_run_and_output():
     trace = []
 
     class RecordingStore(InMemoryCheckpointStore):
-        def save_state(self, namespace, thread_id, run_id, state):
+        def commit_state(self, namespace, thread_id, run_id, state, **kwargs):
             trace.append(("checkpoint", state["status"]))
-            return super().save_state(namespace, thread_id, run_id, state)
+            return super().commit_state(namespace, thread_id, run_id, state, **kwargs)
 
     def fail_after(ctx):
         trace.append(("after", ctx.outcome))
@@ -887,9 +887,9 @@ def test_run_end_hooks_receive_failed_outcome_around_checkpoint():
             raise RuntimeError("model failed")
 
     class RecordingStore(InMemoryCheckpointStore):
-        def save_state(self, namespace, thread_id, run_id, state):
+        def commit_state(self, namespace, thread_id, run_id, state, **kwargs):
             trace.append(("checkpoint", state["status"]))
-            return super().save_state(namespace, thread_id, run_id, state)
+            return super().commit_state(namespace, thread_id, run_id, state, **kwargs)
 
     def record_before(ctx):
         trace.append(("before", ctx.outcome))

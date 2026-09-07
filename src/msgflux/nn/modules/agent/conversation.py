@@ -898,16 +898,25 @@ class AgentConversationMixin:
         state = self._build_checkpoint_state(messages, status=status)
         try:
             run = get_agent_run()
-            if run is not None and getattr(checkpoint_store, "supports_atomic_commit", False):
+            if run is not None and getattr(
+                checkpoint_store, "supports_atomic_commit", False
+            ):
                 committed = checkpoint_store.commit_state(
-                    self.get_module_name(), thread_id, run_id, state,
+                    self.get_module_name(),
+                    thread_id,
+                    run_id,
+                    state,
                     expected_revision=run.revision,
+                    extension_state=run.extension_state,
                     event={"event_type": "checkpoint", "status": status},
-                    branch_id=run.branch_id, head_item_id=run.head_item_id,
+                    branch_id=run.branch_id,
+                    head_item_id=run.head_item_id,
                 )
                 run.revision = committed.revision
             else:
-                checkpoint_store.save_state(self.get_module_name(), thread_id, run_id, state)
+                checkpoint_store.save_state(
+                    self.get_module_name(), thread_id, run_id, state
+                )
         except BaseException:
             self._release_inbox_notifications()
             raise
@@ -932,9 +941,12 @@ class AgentConversationMixin:
         state = self._build_checkpoint_state(messages, status=status)
         try:
             run = get_agent_run()
-            if run is not None and getattr(checkpoint_store, "supports_atomic_commit", False):
+            if run is not None and getattr(
+                checkpoint_store, "supports_atomic_commit", False
+            ):
                 params = {
                     "expected_revision": run.revision,
+                    "extension_state": run.extension_state,
                     "event": {"event_type": "checkpoint", "status": status},
                     "branch_id": run.branch_id,
                     "head_item_id": run.head_item_id,
@@ -1251,8 +1263,10 @@ class AgentConversationMixin:
         if current is None:
             return
         restored = AgentRun.from_durable_state(
-            state.get("runtime"), namespace=self.get_module_name(),
-            thread_id=thread_id, run_id=run_id,
+            state.get("runtime"),
+            namespace=self.get_module_name(),
+            thread_id=thread_id,
+            run_id=run_id,
         )
         restored.revision = state.get("_checkpoint", {}).get("revision", 0)
         restored.namespace = self.get_module_name()

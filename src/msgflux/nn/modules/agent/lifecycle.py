@@ -16,6 +16,7 @@ from typing import (
 )
 
 from msgflux.chat_messages import ChatMessages
+from msgflux.data.stores.base import CheckpointConflictError
 from msgflux.models.response import ModelStreamResponse
 from msgflux.nn.extensions.base import (
     AgentExtension,
@@ -502,6 +503,8 @@ class AgentLifecycleMixin:
         inputs: Mapping[str, Any],
         error: Exception,
     ) -> Exception:
+        if isinstance(error, CheckpointConflictError):
+            return error
         if not isinstance(error, _BeforeRunEndHookError):
             self._settle_terminal_run(inputs, "failed", error)
             return error
@@ -518,6 +521,8 @@ class AgentLifecycleMixin:
         inputs: Mapping[str, Any],
         error: Exception,
     ) -> Exception:
+        if isinstance(error, CheckpointConflictError):
+            return error
         if not isinstance(error, _BeforeRunEndHookError):
             await self._asettle_terminal_run(inputs, "failed", error)
             return error

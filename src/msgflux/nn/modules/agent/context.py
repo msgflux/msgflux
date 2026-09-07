@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Union
 
 from msgflux.chat_messages import ChatMessages
 from msgflux.nn.hooks.events import BeforeResume
-from msgflux.runtime.context import ExecutionScope
 from msgflux.runtime.agent_run import AgentRun, agent_run_context
+from msgflux.runtime.context import ExecutionScope
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.agent.core import Agent
@@ -106,7 +106,11 @@ def _agent_context(agent: Agent, *, scope, vars):
         with agent_run_context(current[agent_id]["run"]):
             yield current[agent_id]
         return
-    run = AgentRun(namespace=agent.get_module_name(), thread_id=scope.thread_id, run_id=scope.run_id)
+    run = AgentRun(
+        namespace=agent.get_module_name(),
+        thread_id=scope.thread_id,
+        run_id=scope.run_id,
+    )
     state = {"scope": scope, "vars": vars or {}, "run": run}
     updated = dict(current)
     updated[agent_id] = state
