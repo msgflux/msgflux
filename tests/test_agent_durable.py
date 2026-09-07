@@ -1105,3 +1105,33 @@ def test_checkpoint_failure_releases_inbox_claim():
     assert [item.metadata["content"] for item in retry] == [
         "retry after checkpoint failure"
     ]
+
+
+def test_checkpoint_receipts_deduplicate_redelivery_after_ack_failure():
+    checkpoint = InMemoryCheckpointStore()
+    inbox = AgentInbox(store=InMemoryAgentInboxStore())
+    agent = _make_agent(checkpoint_store=checkpoint, agent_inbox=inbox)
+    scope = ExecutionScope(
+        namespace="test_agent", thread_id="user_42", run_id="receipt"
+    )
+    scoped = agent._get_scoped_agent_inbox(scope)
+    scoped.user_message("deliver this once")
+    messages = ChatMessages(thread_id="user_42", namespace="test_agent")
+    messages.begin_turn(turn_id="receipt")
+    with execution_context(
+        scope=scope, checkpoint_store=checkpoint, agent_inbox=scoped
+    ):
+        agent._drain_inbox_into_messages(messages)
+        actual_ack = scoped.ack
+        scoped.ack = Mock(side_effect=RuntimeError("inbox offline"))
+        with pytest.warns(RuntimeWarning, match="acknowledgement failed"):
+            agent._checkpoint_save(messages, {}, status="running")
+        scoped.ack = actual_ack
+        restored = ChatMessages()
+        restored._hydrate_state(
+            checkpoint.load_state("test_agent", "user_42", "receipt")["messages"]
+        )
+        agent._drain_inbox_into_messages(restored)
+        assert str(restored.to_chatml()).count("deliver this once") == 1
+        agent._checkpoint_save(restored, {})
+        assert scoped.peek() == []

@@ -528,6 +528,7 @@ def test_agent_inbox_move_is_atomic_for_store_views(tmp_path):
     assert [item.metadata["content"] for item in inbox.claim()] == ["move once"]
     store.close()
 
+
 @pytest.mark.parametrize("provider", ["memory", "sqlite"])
 def test_agent_inbox_expired_lease_cannot_ack_new_owner(provider, tmp_path):
     store = (
@@ -535,16 +536,23 @@ def test_agent_inbox_expired_lease_cannot_ack_new_owner(provider, tmp_path):
         if provider == "memory"
         else SQLiteAgentInboxStore(path=str(tmp_path / "lease.sqlite3"))
     )
-    first = AgentInbox(store=store, namespace="assistant", thread_id="user_1", run_id="run_1")
-    second = AgentInbox(store=store, namespace="assistant", thread_id="user_1", run_id="run_1")
+    first = AgentInbox(
+        store=store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
+    second = AgentInbox(
+        store=store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
     notification = first.user_message("lease ownership")
     old_claim = first.claim(lease_seconds=0.01)
     import time
+
     time.sleep(0.03)
     new_claim = second.claim(lease_seconds=30)
 
     first.ack([notification.notification_id])
-    assert [item.notification_id for item in second.peek()] == [notification.notification_id]
+    assert [item.notification_id for item in second.peek()] == [
+        notification.notification_id
+    ]
     second.ack([item.notification_id for item in new_claim])
     assert second.peek() == []
     assert old_claim and new_claim
@@ -567,9 +575,13 @@ def test_agent_inbox_ack_only_removes_requested_ids():
 
 def test_agent_inbox_dedupe_replay_replaces_claimed_notification():
     inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
-    first = inbox.publish({"source": "task", "status": "started", "dedupe_key": "task:1"})
+    first = inbox.publish(
+        {"source": "task", "status": "started", "dedupe_key": "task:1"}
+    )
     inbox.claim()
-    second = inbox.publish({"source": "task", "status": "completed", "dedupe_key": "task:1"})
+    second = inbox.publish(
+        {"source": "task", "status": "completed", "dedupe_key": "task:1"}
+    )
 
     pending = inbox.peek()
     assert len(pending) == 1

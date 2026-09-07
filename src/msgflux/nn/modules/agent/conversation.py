@@ -1,6 +1,7 @@
 # ruff: noqa: A001, A002
 
 import contextvars
+import warnings
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
@@ -149,6 +150,73 @@ class AgentConversationMixin:
             remaining.append(notification)
         return remaining
 
+    @staticmethod
+    def _inbox_receipt_ids(messages) -> set[str]:
+        if isinstance(messages, ChatMessages):
+            return set(messages.metadata.get("inbox_receipts", ()))
+        return {
+            receipt
+            for item in messages
+            for receipt in item.get("metadata", {}).get("inbox_receipts", ())
+        }
+
+    def _record_inbox_receipts(self, messages, ids) -> None:
+        if isinstance(messages, ChatMessages):
+            messages.metadata["inbox_receipts"] = sorted(
+                self._inbox_receipt_ids(messages).union(ids)
+            )
+
+    def _prepare_inbox_delivery(self, inbox, messages, notifications, *, drain):
+        if not drain:
+            return self._handle_control_notifications(notifications)
+        known = self._inbox_receipt_ids(messages)
+        inbox.mark_delivered(
+            item.notification_id
+            for item in notifications
+            if item.notification_id in known
+        )
+        pending = [item for item in notifications if item.notification_id not in known]
+        try:
+            return self._handle_control_notifications(pending)
+        except (TaskInterruptRequestedError, TaskPauseRequestedError) as error:
+            command = (
+                "interrupt"
+                if isinstance(error, TaskInterruptRequestedError)
+                else "pause"
+            )
+            consumed = next(
+                (
+                    item.notification_id
+                    for item in pending
+                    if item.source == "control" and item.status == command
+                ),
+                None,
+            )
+            if consumed is not None:
+                self._record_inbox_receipts(messages, [consumed])
+                inbox.mark_delivered([consumed])
+            inbox.release(except_ids=inbox.delivered_ids())
+            if self._get_effective_checkpoint_store() is None:
+                inbox.ack(inbox.delivered_ids())
+            raise
+        except BaseException:
+            inbox.release()
+            raise
+
+    def _finish_inbox_delivery(self, inbox, messages, notifications, *, drain):
+        ids = [item.notification_id for item in notifications]
+        notification_messages = inbox.render_messages(notifications)
+        for item in notification_messages:
+            item["metadata"] = {**item.get("metadata", {}), "inbox_receipts": ids}
+        self._persist_notification_messages(messages, notification_messages)
+        if drain:
+            self._record_inbox_receipts(messages, ids)
+            inbox.mark_delivered(ids)
+            inbox.release(except_ids=inbox.delivered_ids())
+            if self._get_effective_checkpoint_store() is None:
+                inbox.ack(inbox.delivered_ids())
+        return bool(notification_messages)
+
     def _drain_inbox_into_messages(
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
@@ -162,28 +230,11 @@ class AgentConversationMixin:
             return False
 
         notifications = inbox.claim() if drain_notifications else inbox.peek()
-        try:
-            notifications = self._handle_control_notifications(notifications)
-        except (TaskInterruptRequestedError, TaskPauseRequestedError) as error:
-            command = "interrupt" if isinstance(error, TaskInterruptRequestedError) else "pause"
-            consumed = next(
-                (item.notification_id for item in notifications
-                 if item.source == "control" and item.status == command),
-                None,
-            )
-            if consumed is not None:
-                inbox.mark_delivered([consumed])
-                inbox.release(except_ids=[consumed])
-            else:
-                inbox.release()
-            raise
-        except BaseException:
-            if drain_notifications:
-                inbox.release()
-            raise
+        notifications = self._prepare_inbox_delivery(
+            inbox, messages, notifications, drain=drain_notifications
+        )
         if not notifications:
-            if drain_notifications:
-                inbox.release()
+            self._finish_inbox_delivery(inbox, messages, [], drain=drain_notifications)
             return False
 
         try:
@@ -204,17 +255,9 @@ class AgentConversationMixin:
                 raise TypeError(
                     "NotificationContext.notifications must contain AgentNotification"
                 )
-            if not notifications:
-                if drain_notifications:
-                    inbox.release()
-                return False
-
-            notification_messages = inbox.render_messages(notifications)
-            self._persist_notification_messages(messages, notification_messages)
-            inbox.mark_delivered(item.notification_id for item in notifications)
-            if self._get_effective_checkpoint_store() is None:
-                inbox.ack(inbox.delivered_ids())
-            return bool(notification_messages)
+            return self._finish_inbox_delivery(
+                inbox, messages, notifications, drain=drain_notifications
+            )
         except BaseException:
             if drain_notifications:
                 inbox.release()
@@ -233,28 +276,11 @@ class AgentConversationMixin:
             return False
 
         notifications = inbox.claim() if drain_notifications else inbox.peek()
-        try:
-            notifications = self._handle_control_notifications(notifications)
-        except (TaskInterruptRequestedError, TaskPauseRequestedError) as error:
-            command = "interrupt" if isinstance(error, TaskInterruptRequestedError) else "pause"
-            consumed = next(
-                (item.notification_id for item in notifications
-                 if item.source == "control" and item.status == command),
-                None,
-            )
-            if consumed is not None:
-                inbox.mark_delivered([consumed])
-                inbox.release(except_ids=[consumed])
-            else:
-                inbox.release()
-            raise
-        except BaseException:
-            if drain_notifications:
-                inbox.release()
-            raise
+        notifications = self._prepare_inbox_delivery(
+            inbox, messages, notifications, drain=drain_notifications
+        )
         if not notifications:
-            if drain_notifications:
-                inbox.release()
+            self._finish_inbox_delivery(inbox, messages, [], drain=drain_notifications)
             return False
 
         try:
@@ -275,17 +301,9 @@ class AgentConversationMixin:
                 raise TypeError(
                     "NotificationContext.notifications must contain AgentNotification"
                 )
-            if not notifications:
-                if drain_notifications:
-                    inbox.release()
-                return False
-
-            notification_messages = inbox.render_messages(notifications)
-            self._persist_notification_messages(messages, notification_messages)
-            inbox.mark_delivered(item.notification_id for item in notifications)
-            if self._get_effective_checkpoint_store() is None:
-                inbox.ack(inbox.delivered_ids())
-            return bool(notification_messages)
+            return self._finish_inbox_delivery(
+                inbox, messages, notifications, drain=drain_notifications
+            )
         except BaseException:
             if drain_notifications:
                 inbox.release()
@@ -832,10 +850,21 @@ class AgentConversationMixin:
 
     # --- Checkpoint Persistence ---
 
-    def _ack_inbox_notifications(self) -> None:
+    def _ack_inbox_notifications(self, messages) -> None:
         inbox = self._get_effective_agent_inbox()
         if inbox is not None:
-            inbox.ack(inbox.delivered_ids())
+            try:
+                inbox.ack(inbox.delivered_ids() & self._inbox_receipt_ids(messages))
+            except Exception as error:
+                # The durable receipt makes replay safe. Do not turn a committed
+                # terminal run into a failed run because inbox cleanup failed.
+                warnings.warn(
+                    f"Inbox acknowledgement failed after checkpoint: {error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            finally:
+                inbox.release()
 
     def _release_inbox_notifications(self) -> None:
         inbox = self._get_effective_agent_inbox()
@@ -866,7 +895,7 @@ class AgentConversationMixin:
         except BaseException:
             self._release_inbox_notifications()
             raise
-        self._ack_inbox_notifications()
+        self._ack_inbox_notifications(messages)
 
     async def _acheckpoint_save(
         self,
@@ -900,7 +929,7 @@ class AgentConversationMixin:
         except BaseException:
             self._release_inbox_notifications()
             raise
-        self._ack_inbox_notifications()
+        self._ack_inbox_notifications(messages)
 
     def _checkpoint_interrupted(
         self,
