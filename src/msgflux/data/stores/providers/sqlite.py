@@ -564,6 +564,19 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         )
         if status is not None:
             state["status"] = status
+        checkpoint = state.get("_checkpoint")
+        if isinstance(checkpoint, Mapping):
+            state["_checkpoint"] = {
+                **dict(checkpoint),
+                "revision": 0,
+                "branch_id": "root",
+                "head_item_id": None,
+                "fork_of": {
+                    "thread_id": source_thread_id,
+                    "run_id": source_run_id,
+                    "item_id": at_item_id,
+                },
+            }
         messages = state.get("messages")
         if isinstance(messages, dict):
             messages["thread_id"] = target_thread_id

@@ -270,6 +270,19 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if status is not None:
                 forked["status"] = status
+            checkpoint = forked.get("_checkpoint")
+            if isinstance(checkpoint, Mapping):
+                forked["_checkpoint"] = {
+                    **dict(checkpoint),
+                    "revision": 0,
+                    "branch_id": "root",
+                    "head_item_id": None,
+                    "fork_of": {
+                        "thread_id": source_thread_id,
+                        "run_id": source_run_id,
+                        "item_id": at_item_id,
+                    },
+                }
 
             messages = forked.get("messages")
             if isinstance(messages, dict):
