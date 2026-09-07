@@ -161,34 +161,46 @@ class AgentConversationMixin:
         if inbox is None:
             return False
 
-        notifications = inbox.drain() if drain_notifications else inbox.peek()
-        notifications = self._handle_control_notifications(notifications)
+        notifications = inbox.claim() if drain_notifications else inbox.peek()
+        try:
+            notifications = self._handle_control_notifications(notifications)
+        except (TaskInterruptRequestedError, TaskPauseRequestedError):
+            raise
+        except BaseException:
+            if drain_notifications:
+                inbox.release()
+            raise
         if not notifications:
             return False
 
-        notification_context = self._run_lifecycle_hooks(
-            "transform_notifications",
-            NotificationContext(
-                scope=scope or get_execution_context()["scope"],
-                vars=vars or {},
-                notifications=tuple(notifications),
-                messages=messages,
-            ),
-        )
-        notification_context = _require_lifecycle_payload(
-            "transform_notifications", notification_context, NotificationContext
-        )
-        notifications = list(notification_context.notifications)
-        if not all(isinstance(item, AgentNotification) for item in notifications):
-            raise TypeError(
-                "NotificationContext.notifications must contain AgentNotification"
+        try:
+            notification_context = self._run_lifecycle_hooks(
+                "transform_notifications",
+                NotificationContext(
+                    scope=scope or get_execution_context()["scope"],
+                    vars=vars or {},
+                    notifications=tuple(notifications),
+                    messages=messages,
+                ),
             )
-        if not notifications:
-            return False
+            notification_context = _require_lifecycle_payload(
+                "transform_notifications", notification_context, NotificationContext
+            )
+            notifications = list(notification_context.notifications)
+            if not all(isinstance(item, AgentNotification) for item in notifications):
+                raise TypeError(
+                    "NotificationContext.notifications must contain AgentNotification"
+                )
+            if not notifications:
+                return False
 
-        notification_messages = inbox.render_messages(notifications)
-        self._persist_notification_messages(messages, notification_messages)
-        return bool(notification_messages)
+            notification_messages = inbox.render_messages(notifications)
+            self._persist_notification_messages(messages, notification_messages)
+            return bool(notification_messages)
+        except BaseException:
+            if drain_notifications:
+                inbox.release()
+            raise
 
     async def _adrain_inbox_into_messages(
         self,
@@ -202,34 +214,46 @@ class AgentConversationMixin:
         if inbox is None:
             return False
 
-        notifications = inbox.drain() if drain_notifications else inbox.peek()
-        notifications = self._handle_control_notifications(notifications)
+        notifications = inbox.claim() if drain_notifications else inbox.peek()
+        try:
+            notifications = self._handle_control_notifications(notifications)
+        except (TaskInterruptRequestedError, TaskPauseRequestedError):
+            raise
+        except BaseException:
+            if drain_notifications:
+                inbox.release()
+            raise
         if not notifications:
             return False
 
-        notification_context = await self._arun_lifecycle_hooks(
-            "transform_notifications",
-            NotificationContext(
-                scope=scope or get_execution_context()["scope"],
-                vars=vars or {},
-                notifications=tuple(notifications),
-                messages=messages,
-            ),
-        )
-        notification_context = _require_lifecycle_payload(
-            "transform_notifications", notification_context, NotificationContext
-        )
-        notifications = list(notification_context.notifications)
-        if not all(isinstance(item, AgentNotification) for item in notifications):
-            raise TypeError(
-                "NotificationContext.notifications must contain AgentNotification"
+        try:
+            notification_context = await self._arun_lifecycle_hooks(
+                "transform_notifications",
+                NotificationContext(
+                    scope=scope or get_execution_context()["scope"],
+                    vars=vars or {},
+                    notifications=tuple(notifications),
+                    messages=messages,
+                ),
             )
-        if not notifications:
-            return False
+            notification_context = _require_lifecycle_payload(
+                "transform_notifications", notification_context, NotificationContext
+            )
+            notifications = list(notification_context.notifications)
+            if not all(isinstance(item, AgentNotification) for item in notifications):
+                raise TypeError(
+                    "NotificationContext.notifications must contain AgentNotification"
+                )
+            if not notifications:
+                return False
 
-        notification_messages = inbox.render_messages(notifications)
-        self._persist_notification_messages(messages, notification_messages)
-        return bool(notification_messages)
+            notification_messages = inbox.render_messages(notifications)
+            self._persist_notification_messages(messages, notification_messages)
+            return bool(notification_messages)
+        except BaseException:
+            if drain_notifications:
+                inbox.release()
+            raise
 
     # --- Inbox Delivery ---
 
@@ -772,6 +796,11 @@ class AgentConversationMixin:
 
     # --- Checkpoint Persistence ---
 
+    def _ack_inbox_notifications(self) -> None:
+        inbox = self._get_effective_agent_inbox()
+        if inbox is not None:
+            inbox.ack(inbox.claimed_ids())
+
     def _checkpoint_save(
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]], None],
@@ -790,6 +819,7 @@ class AgentConversationMixin:
         run_id = turns[-1]["turn_id"]
         state = self._build_checkpoint_state(messages, status=status)
         checkpoint_store.save_state(self.get_module_name(), thread_id, run_id, state)
+        self._ack_inbox_notifications()
 
     async def _acheckpoint_save(
         self,
@@ -819,6 +849,7 @@ class AgentConversationMixin:
             checkpoint_store.save_state(
                 self.get_module_name(), thread_id, run_id, state
             )
+        self._ack_inbox_notifications()
 
     def _checkpoint_interrupted(
         self,

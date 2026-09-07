@@ -580,6 +580,31 @@ For a persistent writer:
 external_inbox.pause(reason="Need human review before continuing.")
 ```
 
+### Recoverable Inbox Delivery
+
+Inbox delivery uses a short lease while an Agent transforms and persists a
+notification. A claimed notification is acknowledged after the Agent
+checkpoint succeeds. If a hook fails or the process stops before that point,
+the lease expires and another execution can claim the notification again.
+
+You can use the explicit operations when integrating a worker or external
+consumer:
+
+```python
+claimed = agent_inbox.claim(lease_seconds=30)
+try:
+    # Process the notifications and persist the resulting Agent state.
+    agent_inbox.ack(item.notification_id for item in claimed)
+except BaseException:
+    agent_inbox.release()
+    raise
+```
+
+Claims coordinate separate inbox views and SQLite connections. Acknowledging
+a notification is safe to repeat by its notification ID; external tools still
+eed their own idempotency keys because the framework cannot make an external
+side effect exactly once across a process crash.
+
 ### System Notifications
 
 Non-user inbox items are delivered as compact system notifications:

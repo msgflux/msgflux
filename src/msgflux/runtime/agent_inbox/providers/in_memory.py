@@ -51,11 +51,164 @@ class InMemoryAgentInboxStore(AgentInboxStore):
             thread = ns.setdefault(thread_id, {})
             existing = thread.get(run_id)
             created_at = existing["created_at"] if existing else time.time()
+            old_claims = existing.get("claims", {}) if existing else {}
+            payloads = deepcopy([dict(n) for n in notifications])
+            valid_ids = {item.get("notification_id") for item in payloads}
             thread[run_id] = {
-                "notifications": deepcopy([dict(n) for n in notifications]),
+                "notifications": payloads,
                 "created_at": created_at,
                 "updated_at": time.time(),
+                "claims": {
+                    key: value for key, value in old_claims.items() if key in valid_ids
+                },
             }
+
+    def publish_notification(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        notification: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        with self._lock:
+            ns = self._data.setdefault(namespace, {})
+            thread = ns.setdefault(thread_id, {})
+            run = thread.setdefault(
+                run_id,
+                {
+                    "notifications": [],
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                    "claims": {},
+                },
+            )
+            dedupe_key = notification.get("dedupe_key")
+            if dedupe_key:
+                for index, item in enumerate(run["notifications"]):
+                    if item.get("dedupe_key") == dedupe_key:
+                        run["notifications"][index] = deepcopy(dict(notification))
+                        run["updated_at"] = time.time()
+                        return deepcopy(dict(notification))
+            run["notifications"].append(deepcopy(dict(notification)))
+            run["updated_at"] = time.time()
+            return deepcopy(dict(notification))
+
+    def claim_notifications(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        *,
+        lease_id: str,
+        lease_seconds: float,
+        limit: int | None = None,
+    ) -> List[Mapping[str, Any]]:
+        now = time.time()
+        with self._lock:
+            run = self._get_run(namespace, thread_id, run_id)
+            if run is None:
+                return []
+            claims = run.setdefault("claims", {})
+            selected = []
+            for notification in run["notifications"]:
+                notification_id = notification.get("notification_id")
+                claim = claims.get(notification_id)
+                if claim is not None and claim["expires_at"] > now:
+                    continue
+                claims[notification_id] = {
+                    "lease_id": lease_id,
+                    "expires_at": now + max(0.001, lease_seconds),
+                }
+                selected.append(deepcopy({**notification, "_lease_id": lease_id}))
+                if limit is not None and len(selected) >= limit:
+                    break
+            return selected
+
+    def ack_notifications(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        notification_ids: Iterable[str],
+        *,
+        lease_id: str | None = None,
+    ) -> None:
+        ids = set(notification_ids)
+        if not ids:
+            return
+        with self._lock:
+            run = self._get_run(namespace, thread_id, run_id)
+            if run is None:
+                return
+            claims = run.setdefault("claims", {})
+            kept = []
+            for notification in run["notifications"]:
+                notification_id = notification.get("notification_id")
+                claim = claims.get(notification_id)
+                owned = (
+                    lease_id is None or claim is None or claim["lease_id"] == lease_id
+                )
+                if notification_id in ids and owned:
+                    claims.pop(notification_id, None)
+                    continue
+                kept.append(notification)
+            run["notifications"] = kept
+            run["updated_at"] = time.time()
+
+    def release_notifications(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        *,
+        lease_id: str,
+    ) -> None:
+        with self._lock:
+            run = self._get_run(namespace, thread_id, run_id)
+            if run is None:
+                return
+            claims = run.setdefault("claims", {})
+            for notification_id, claim in list(claims.items()):
+                if claim.get("lease_id") == lease_id:
+                    claims.pop(notification_id, None)
+
+    def move_notifications(
+        self,
+        previous: tuple[str, str, str],
+        current: tuple[str, str, str],
+    ) -> None:
+        if previous == current:
+            return
+        with self._lock:
+            source = self._get_run(*previous)
+            if source is None or not source["notifications"]:
+                return
+            ns = self._data.setdefault(current[0], {})
+            thread = ns.setdefault(current[1], {})
+            target = thread.setdefault(
+                current[2],
+                {
+                    "notifications": [],
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                    "claims": {},
+                },
+            )
+            existing_ids = {
+                item.get("notification_id") for item in target["notifications"]
+            }
+            target["notifications"].extend(
+                deepcopy(
+                    [
+                        item
+                        for item in source["notifications"]
+                        if item.get("notification_id") not in existing_ids
+                    ]
+                )
+            )
+            target["updated_at"] = time.time()
+            del source["notifications"][:]
+            source["claims"].clear()
 
     def clear(
         self,

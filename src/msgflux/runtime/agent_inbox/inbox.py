@@ -46,6 +46,7 @@ class AgentInbox:
                 "its default memory-backed inbox."
             )
         self._lock = RLock()
+        self._claims: Dict[str, str] = {}
         self._scope_bound = thread_id is not None or run_id is not None
         self.verbose = verbose
         self.owner = owner
@@ -131,29 +132,24 @@ class AgentInbox:
     ) -> AgentNotification:
         normalized = self._normalize(notification)
         with self._lock:
-            notifications = self._load_notifications_locked()
-            if normalized.dedupe_key:
-                for index, existing in enumerate(notifications):
-                    if existing.dedupe_key == normalized.dedupe_key:
-                        notifications[index] = normalized
-                        self._save_notifications_locked(notifications)
-                        if self.verbose:
-                            self._print_verbose_event(
-                                "notification_replace",
-                                self._render_notification_payload(normalized),
-                                suffix=(
-                                    f"\ndedupe_key: {normalized.dedupe_key}"
-                                    if normalized.dedupe_key
-                                    else ""
-                                ),
-                            )
-                        return deepcopy(normalized)
-            notifications.append(normalized)
-            self._save_notifications_locked(notifications)
+            stored = self.store.publish_notification(
+                self.namespace, self.thread_id, self.run_id, normalized.to_dict()
+            )
+            normalized = self._normalize(stored)
         if self.verbose:
+            label = (
+                "notification_replace"
+                if normalized.dedupe_key
+                else "notification_publish"
+            )
             self._print_verbose_event(
-                "notification_publish",
+                label,
                 self._render_notification_payload(normalized),
+                suffix=(
+                    f"\ndedupe_key: {normalized.dedupe_key}"
+                    if label == "notification_replace"
+                    else ""
+                ),
             )
         return deepcopy(normalized)
 
@@ -208,10 +204,78 @@ class AgentInbox:
         with self._lock:
             return deepcopy(self._load_notifications_locked())
 
-    def drain(self) -> List[AgentNotification]:
+    def claim(
+        self,
+        *,
+        lease_seconds: float = 60.0,
+        limit: int | None = None,
+    ) -> List[AgentNotification]:
+        lease_id = uuid4().hex
         with self._lock:
-            notifications = deepcopy(self._load_notifications_locked())
-            self._save_notifications_locked([])
+            raw = self.store.claim_notifications(
+                self.namespace,
+                self.thread_id,
+                self.run_id,
+                lease_id=lease_id,
+                lease_seconds=lease_seconds,
+                limit=limit,
+            )
+            notifications = [self._normalize(item) for item in raw]
+            for notification in notifications:
+                self._claims[notification.notification_id] = lease_id
+            return deepcopy(notifications)
+
+    def ack(
+        self,
+        notification_ids: Iterable[str],
+        *,
+        lease_id: str | None = None,
+    ) -> None:
+        ids = set(notification_ids)
+        if not ids:
+            return
+        with self._lock:
+            grouped: Dict[str | None, set[str]] = {}
+            for notification_id in ids:
+                claim = lease_id or self._claims.get(notification_id)
+                grouped.setdefault(claim, set()).add(notification_id)
+            for claim, claimed_ids in grouped.items():
+                self.store.ack_notifications(
+                    self.namespace,
+                    self.thread_id,
+                    self.run_id,
+                    claimed_ids,
+                    lease_id=claim,
+                )
+                for notification_id in claimed_ids:
+                    self._claims.pop(notification_id, None)
+
+    def claimed_ids(self) -> set[str]:
+        with self._lock:
+            return set(self._claims)
+
+    def release(self, *, lease_id: str | None = None) -> None:
+        with self._lock:
+            leases = {lease_id} if lease_id is not None else set(self._claims.values())
+            for current_lease in leases:
+                self.store.release_notifications(
+                    self.namespace,
+                    self.thread_id,
+                    self.run_id,
+                    lease_id=current_lease,
+                )
+            if lease_id is None:
+                self._claims.clear()
+            else:
+                self._claims = {
+                    notification_id: current_lease
+                    for notification_id, current_lease in self._claims.items()
+                    if current_lease != lease_id
+                }
+
+    def drain(self) -> List[AgentNotification]:
+        notifications = self.claim()
+        self.ack(notification.notification_id for notification in notifications)
         if self.verbose and notifications:
             rendered_messages = self.render_messages(notifications)
             self._print_verbose_event(
@@ -220,18 +284,6 @@ class AgentInbox:
                 prefix=f"{len(notifications)} notification(s)\n",
             )
         return notifications
-
-    def ack(self, notification_ids: Iterable[str]) -> None:
-        ids = set(notification_ids)
-        if not ids:
-            return
-        with self._lock:
-            notifications = [
-                notification
-                for notification in self._load_notifications_locked()
-                if notification.notification_id not in ids
-            ]
-            self._save_notifications_locked(notifications)
 
     def clear_user_messages(self) -> int:
         """Remove pending incoming user messages while preserving runtime signals."""
@@ -419,21 +471,7 @@ class AgentInbox:
     ) -> None:
         if previous_key == current_key:
             return
-        notifications = [
-            self._normalize(notification)
-            for notification in self.store.load_notifications(*previous_key)
-        ]
-        if not notifications:
-            return
-        current = [
-            self._normalize(notification)
-            for notification in self.store.load_notifications(*current_key)
-        ]
-        self.store.save_notifications(
-            *current_key,
-            [notification.to_dict() for notification in notifications + current],
-        )
-        self.store.clear(*previous_key)
+        self.store.move_notifications(previous_key, current_key)
 
     # --- Escaping Helpers ---
 

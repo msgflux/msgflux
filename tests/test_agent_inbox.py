@@ -471,3 +471,59 @@ def test_agent_inbox_persists_notifications_with_sqlite_store(tmp_path):
     assert reader.peek() == []
 
     reopened.close()
+
+
+def test_agent_inbox_claim_is_recoverable_after_release():
+    store = InMemoryAgentInboxStore()
+    writer = AgentInbox(
+        store=store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
+    reader = AgentInbox(
+        store=store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
+    notification = writer.user_message("retry me")
+
+    assert [item.notification_id for item in reader.claim()] == [
+        notification.notification_id
+    ]
+    assert reader.claim() == []
+    reader.release()
+    retry = reader.claim()
+    assert [item.notification_id for item in retry] == [notification.notification_id]
+    reader.ack([notification.notification_id])
+    assert reader.peek() == []
+
+
+def test_agent_inbox_sqlite_competing_connections_claim_once(tmp_path):
+    path = str(tmp_path / "agent-inboxes.sqlite3")
+    first_store = SQLiteAgentInboxStore(path=path)
+    second_store = SQLiteAgentInboxStore(path=path)
+    first = AgentInbox(
+        store=first_store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
+    second = AgentInbox(
+        store=second_store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
+    notification = first.user_message("claim once")
+
+    first_claim = first.claim()
+    second_claim = second.claim()
+    assert [item.notification_id for item in first_claim] == [
+        notification.notification_id
+    ]
+    assert second_claim == []
+    first.ack([notification.notification_id])
+    assert second.peek() == []
+    first_store.close()
+    second_store.close()
+
+
+def test_agent_inbox_move_is_atomic_for_store_views(tmp_path):
+    store = SQLiteAgentInboxStore(path=str(tmp_path / "agent-inboxes.sqlite3"))
+    inbox = AgentInbox(
+        store=store, namespace="assistant", thread_id="user_1", run_id="run_1"
+    )
+    inbox.user_message("move once")
+    inbox.bind(run_id="run_2")
+    assert [item.metadata["content"] for item in inbox.claim()] == ["move once"]
+    store.close()
