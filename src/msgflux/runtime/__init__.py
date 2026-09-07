@@ -27,6 +27,12 @@ from msgflux.runtime.context import (
     new_thread_id,
     thread_context,
 )
+from msgflux.runtime.context_scopes import (
+    ContextScopeCommand,
+    ContextScopeConflictError,
+    ContextScopeController,
+    ScopeTransition,
+)
 from msgflux.runtime.event_hub import (
     BackgroundTaskSnapshot,
     LiveRunSnapshot,
@@ -48,6 +54,9 @@ from msgflux.runtime.skills import (
 __all__ = [
     "AgentControlMessage",
     "AgentRun",
+    "ContextScopeCommand",
+    "ContextScopeConflictError",
+    "ContextScopeController",
     "AgentInbox",
     "AgentInboxStore",
     "AgentNotification",
@@ -68,6 +77,7 @@ __all__ = [
     "ToolNotificationHandle",
     "ThreadSnapshot",
     "ThreadWatcher",
+    "ScopeTransition",
     "agent_run_context",
     "get_agent_run",
     "get_current_agent_run",
