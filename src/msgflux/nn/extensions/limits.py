@@ -40,7 +40,7 @@ class ToolTurnLimitExtension(AgentExtension):
     def _decide(self, ctx: ContinuationContext) -> ContinuationContext:
         state = self.durable_state()
         completed = state.get("completed_tool_turns", 0)
-        if ctx.phase == "after_tools":
+        if ctx.phase == "after_tools" and ctx.intents:
             completed += 1
             state["completed_tool_turns"] = completed
             state["last_tool_results"] = ToolResponses.from_outcomes(

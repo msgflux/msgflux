@@ -12,6 +12,7 @@ from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import ToolTurnLimitExtension
 from msgflux.nn.modules.agent import Agent
 from msgflux.runtime.context import ExecutionScope
+from msgflux.nn.hooks.events import ContinuationContext
 
 
 def lookup() -> str:
@@ -118,3 +119,18 @@ async def test_budget_survives_failed_run_resume(asynchronous):
 def test_limit_rejects_invalid_values(limit):
     with pytest.raises(ValueError, match="positive integer"):
         ToolTurnLimitExtension(limit)
+
+
+def test_empty_tool_batch_does_not_consume_budget():
+    extension = ToolTurnLimitExtension(1)
+    state = {}
+    extension.durable_state = lambda: state
+    context = ContinuationContext(
+        phase="after_tools",
+        action="continue",
+        scope=ExecutionScope(),
+        messages=None,
+    )
+    result = extension._decide(context)
+    assert result.action == "continue"
+    assert state == {}
