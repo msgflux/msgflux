@@ -8,6 +8,12 @@ from msgflux.runtime.agent_inbox import (
     SQLiteAgentInboxStore,
     ToolNotificationHandle,
 )
+from msgflux.runtime.agent_run import (
+    AgentRun,
+    agent_run_context,
+    get_agent_run,
+    get_current_agent_run,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -41,6 +47,7 @@ from msgflux.runtime.skills import (
 
 __all__ = [
     "AgentControlMessage",
+    "AgentRun",
     "AgentInbox",
     "AgentInboxStore",
     "AgentNotification",
@@ -61,6 +68,9 @@ __all__ = [
     "ToolNotificationHandle",
     "ThreadSnapshot",
     "ThreadWatcher",
+    "agent_run_context",
+    "get_agent_run",
+    "get_current_agent_run",
     "_CURRENT_NAMESPACE",
     "_CURRENT_THREAD_ID",
     "default_skill_paths",

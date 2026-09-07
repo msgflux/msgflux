@@ -2,12 +2,28 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, List, Literal, Mapping
 
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
 
 
+class CheckpointConflictError(RuntimeError):
+    """Raised when a checkpoint writer uses a stale revision."""
+
+
+@dataclass(frozen=True)
+class CheckpointCommit:
+    """Result of one revision-checked state and event commit."""
+
+    revision: int
+    state: Mapping[str, Any]
+    branch_id: str | None = None
+    head_item_id: str | None = None
+
+
 class CheckpointStore(ABC):
+    supports_atomic_commit = False
     """Unified store for agent and pipeline checkpoints.
 
     The key is always `(namespace, thread_id, run_id)`. State snapshots use
@@ -62,6 +78,14 @@ class CheckpointStore(ABC):
     ) -> None:
         self.save_state(namespace, thread_id, run_id, state)
         self.append_event(namespace, thread_id, run_id, event)
+
+    def commit_state(
+        self, *args: Any, **kwargs: Any
+    ) -> CheckpointCommit:
+        """Commit state atomically; providers must implement this capability."""
+        raise NotImplementedError(
+            "This checkpoint provider does not support atomic revision commits"
+        )
 
     @abstractmethod
     def list_runs(
@@ -317,6 +341,13 @@ class AsyncCheckpointStore(ABC):
     ) -> None:
         await self.asave_state(namespace, thread_id, run_id, state)
         await self.aappend_event(namespace, thread_id, run_id, event)
+
+    async def acommit_state(
+        self, *args: Any, **kwargs: Any
+    ) -> CheckpointCommit:
+        raise NotImplementedError(
+            "This checkpoint provider does not support atomic revision commits"
+        )
 
     @abstractmethod
     async def alist_runs(
