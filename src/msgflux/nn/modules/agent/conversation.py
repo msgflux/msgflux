@@ -863,8 +863,14 @@ class AgentConversationMixin:
                     RuntimeWarning,
                     stacklevel=2,
                 )
-            finally:
+            try:
                 inbox.release()
+            except Exception as error:
+                warnings.warn(
+                    f"Inbox lease cleanup failed after checkpoint: {error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     def _release_inbox_notifications(self) -> None:
         inbox = self._get_effective_agent_inbox()
