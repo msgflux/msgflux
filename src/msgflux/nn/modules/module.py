@@ -41,6 +41,7 @@ from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.hooks import Hook, RemovableHandle
+from msgflux.nn.hooks.events import RunEndContext
 from msgflux.nn.parameter import Parameter
 from msgflux.runtime.abort import await_with_abort
 from msgflux.runtime.context import execution_context, get_execution_context
@@ -1319,6 +1320,8 @@ class Module:
     @staticmethod
     def _get_lifecycle_abort_signal(payload: Any):
         """Resolve cancellation from a typed payload or the ambient execution."""
+        if isinstance(payload, RunEndContext):
+            return None
         scope = getattr(payload, "scope", None)
         if scope is None and hasattr(payload, "kwargs"):
             scope = getattr(payload, "kwargs", {}).get("scope")
@@ -1859,12 +1862,16 @@ class Module:
                         {"delta": event.data},
                     )
         finally:
+            if not response._is_finalized():
+                response.finish(status="interrupted")
+            await response._await_pending_finalizers()
             response._run_consumer_finalizers()
 
     async def _afinalize_event_result(self, result: Any) -> Any:
         stream_response = self._stream_response_from_result(result)
-        buffered = stream_response is not None and self.has_lifecycle_hooks(
-            "transform_output"
+        buffered = stream_response is not None and (
+            self.has_lifecycle_hooks("transform_output")
+            or self.has_lifecycle_hooks("before_run_end")
         )
         emit_event(
             EventType.MESSAGE_START,
@@ -1874,7 +1881,7 @@ class Module:
             await self._aconsume_event_response(
                 stream_response, emit_content=not buffered
             )
-            output = stream_response.data
+            output = getattr(stream_response, "_settled_output", stream_response.data)
             output = await self._atransform_module_output(output)
             if result is not stream_response and isinstance(result, dict):
                 result["response"] = output

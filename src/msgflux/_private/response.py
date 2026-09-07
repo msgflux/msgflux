@@ -1,7 +1,9 @@
 import asyncio
+import contextvars
 import inspect
 import threading
 from collections import deque
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Literal, Optional, Union
 
@@ -274,6 +276,16 @@ class BaseStreamResponse(CoreResponse):
             self._response_type_event.set()
 
     def add_finalizer(self, finalizer) -> None:
+        if inspect.iscoroutinefunction(finalizer):
+            loop = asyncio.get_running_loop()
+            context = contextvars.copy_context()
+            callback = finalizer
+
+            def finalizer(state):
+                return context.run(
+                    asyncio.run_coroutine_threadsafe, callback(state), loop
+                )
+
         final_state = None
         with self._finalizer_lock:
             if self._finalized:
@@ -282,7 +294,7 @@ class BaseStreamResponse(CoreResponse):
                 self._finalizers.append(finalizer)
         if final_state is not None:
             result = finalizer(final_state)
-            if inspect.isawaitable(result):
+            if inspect.isawaitable(result) or isinstance(result, Future):
                 with self._finalizer_lock:
                     self._pending_finalizer_awaitables.append(result)
 
@@ -327,8 +339,10 @@ class BaseStreamResponse(CoreResponse):
             status = "failed" if self.error is not None else "completed"
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
-        self._close_stream_queues()
-        self._run_finalizers(status=status)
+        try:
+            self._run_finalizers(status=status)
+        finally:
+            self._close_stream_queues()
 
     def _build_final_state(
         self,
@@ -370,16 +384,22 @@ class BaseStreamResponse(CoreResponse):
 
         for finalizer in finalizers:
             result = finalizer(final_state)
-            if inspect.isawaitable(result):
+            if inspect.isawaitable(result) or isinstance(result, Future):
                 self._pending_finalizer_awaitables.append(result)
 
     async def _await_pending_finalizers(self) -> None:
         """Finish async callbacks emitted by a synchronous stream producer."""
         with self._finalizer_lock:
             pending = list(self._pending_finalizer_awaitables)
-            self._pending_finalizer_awaitables.clear()
         if pending:
-            await asyncio.gather(*pending)
+            await asyncio.shield(
+                asyncio.gather(
+                    *[
+                        asyncio.wrap_future(item) if isinstance(item, Future) else item
+                        for item in pending
+                    ]
+                )
+            )
 
     def add(self, data: Any, *, accumulate_history: bool = True):
         """Add data to the content stream queue in a thread-safe way."""

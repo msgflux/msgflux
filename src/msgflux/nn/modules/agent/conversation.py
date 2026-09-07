@@ -1,5 +1,6 @@
 # ruff: noqa: A001, A002
 
+import contextvars
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
@@ -619,128 +620,113 @@ class AgentConversationMixin:
         *,
         async_mode: bool = False,
     ) -> None:
-        if not isinstance(messages, ChatMessages):
-            return
+        # Producers can finish on a worker thread after Agent.forward has returned.
+        # Capture the execution identity while it is still bound.
+        context = contextvars.copy_context()
+        scope = get_execution_context().get("scope")
+        tracked = isinstance(messages, ChatMessages)
+        source_state = messages._to_state() if tracked else deepcopy(messages)
+        stream_messages = messages.copy() if tracked else deepcopy(messages)
+        run_id = None
+        if tracked:
+            active_turn = messages.get_active_turn()
+            if active_turn is None or not isinstance(active_turn.get("turn_id"), str):
+                raise RuntimeError(
+                    "Cannot attach a stream without an active Agent turn"
+                )
+            run_id = active_turn["turn_id"]
+            messages._claim_stream(run_id)
 
-        active_turn = messages.get_active_turn()
-        if active_turn is None or not isinstance(active_turn.get("turn_id"), str):
-            raise RuntimeError("Cannot attach a stream without an active Agent turn")
-        run_id = active_turn["turn_id"]
-        messages._claim_stream(run_id)
-        source_state = messages._to_state()
-        stream_messages = messages.copy()
-
-        def finalize_checkpoint(final_state) -> None:
-            response_item_start = len(stream_messages)
+        def prepare(final_state):
+            start = len(stream_messages)
             stream_messages.extend(final_state.items)
             attach_response_metadata(
-                stream_messages,
-                final_state.metadata,
-                after_index=response_item_start,
+                stream_messages, final_state.metadata, after_index=start
             )
-            try:
-                if final_state.status == "completed":
-                    stream_messages.end_turn(event="complete")
-                    self._checkpoint_save(stream_messages, vars, status="completed")
-                    return
+            return self._run_end_context(
+                outcome=final_state.status,
+                messages=stream_messages,
+                vars=vars,
+                scope=scope,
+                output=final_state.output,
+                error=final_state.error,
+            )
 
-                reason = (
-                    str(final_state.error) if final_state.error is not None else None
+        def close_turn(settled, status, error):
+            if not isinstance(settled, ChatMessages):
+                return
+            if status == "interrupted":
+                self._close_interrupted_tool_calls(
+                    settled, reason=str(error) if error is not None else None
                 )
-                if final_state.status == "interrupted":
-                    self._close_interrupted_tool_calls(stream_messages, reason=reason)
-                    self._checkpoint_save(stream_messages, vars, status="interrupted")
-                    return
+            elif settled.get_active_turn() is not None:
+                settled.end_turn(event="complete" if status == "completed" else "fail")
 
-                if stream_messages.get_active_turn() is not None:
-                    stream_messages.end_turn(
-                        event="fail",
-                        metadata={"error": reason} if reason is not None else None,
-                    )
-                self._checkpoint_save(stream_messages, vars, status="failed")
-            finally:
-                try:
+        def release(settled, committed):
+            if not tracked:
+                if committed:
+                    messages[:] = settled
+                return
+            try:
+                if committed:
                     if messages._to_state() != source_state:
                         raise RuntimeError(
                             "ChatMessages changed while its Agent stream was active; "
                             "the completed stream was checkpointed but was not allowed "
                             "to overwrite the newer in-memory history."
                         )
-                    messages._hydrate_state(stream_messages._to_state())
-                finally:
-                    messages._release_stream(run_id)
+                    messages._hydrate_state(settled._to_state())
+            finally:
+                messages._release_stream(run_id)
 
-        def finalize_stream(final_state) -> None:
-            scope = get_execution_context().get("scope")
-            run_end = self._run_run_end_hook(
-                "before_run_end",
-                self._run_end_context(
-                    outcome=final_state.status,
-                    messages=stream_messages,
-                    vars=vars,
-                    scope=scope,
-                    output=final_state.output,
-                    error=final_state.error,
-                ),
-            )
-            finalize_checkpoint(final_state)
-            self._run_after_run_end_hook(
-                self._run_end_context(
-                    outcome=final_state.status,
-                    messages=run_end.messages,
-                    vars=vars,
-                    scope=scope,
-                    output=run_end.output,
-                    error=final_state.error,
-                )
-            )
-
-        if not async_mode:
-            model_response.add_finalizer(finalize_stream)
-            return
+        def finalize_stream(final_state):
+            settled = stream_messages
+            committed = False
+            try:
+                run_end = prepare(final_state)
+                try:
+                    run_end = self._run_run_end_hook("before_run_end", run_end)
+                except Exception:
+                    close_turn(settled, "failed", final_state.error)
+                    self._checkpoint_save(settled, vars, status="failed")
+                    committed = True
+                    raise
+                settled = run_end.messages
+                close_turn(settled, final_state.status, final_state.error)
+                self._checkpoint_save(settled, vars, status=final_state.status)
+                committed = True
+                model_response._settled_output = run_end.output
+                self._run_after_run_end_hook(run_end)
+            finally:
+                release(settled, committed)
 
         async def finalize_async(final_state):
-            scope = get_execution_context().get("scope")
-            run_end = await self._arun_run_end_hook(
-                "before_run_end",
-                self._run_end_context(
-                    outcome=final_state.status,
-                    messages=stream_messages,
-                    vars=vars,
-                    scope=scope,
-                    output=final_state.output,
-                    error=final_state.error,
-                ),
-            )
-            settled = run_end.messages
-            if final_state.status == "completed":
-                settled.end_turn(event="complete")
-            elif final_state.status == "interrupted":
-                self._close_interrupted_tool_calls(
-                    settled,
-                    reason=str(final_state.error) if final_state.error else None,
-                )
-            elif settled.get_active_turn() is not None:
-                settled.end_turn(event="fail")
-            await self._acheckpoint_save(settled, vars, status=final_state.status)
-            await self._arun_after_run_end_hook(
-                self._run_end_context(
-                    outcome=final_state.status,
-                    messages=settled,
-                    vars=vars,
-                    scope=scope,
-                    output=run_end.output,
-                    error=final_state.error,
-                )
-            )
-            if messages._to_state() != source_state:
-                raise RuntimeError(
-                    "ChatMessages changed while its Agent stream was active"
-                )
-            messages._hydrate_state(settled._to_state())
-            messages._release_stream(run_id)
+            settled = stream_messages
+            committed = False
+            try:
+                run_end = prepare(final_state)
+                try:
+                    run_end = await self._arun_run_end_hook("before_run_end", run_end)
+                except Exception:
+                    close_turn(settled, "failed", final_state.error)
+                    await self._acheckpoint_save(settled, vars, status="failed")
+                    committed = True
+                    raise
+                settled = run_end.messages
+                close_turn(settled, final_state.status, final_state.error)
+                await self._acheckpoint_save(settled, vars, status=final_state.status)
+                committed = True
+                model_response._settled_output = run_end.output
+                await self._arun_after_run_end_hook(run_end)
+            finally:
+                release(settled, committed)
 
-        model_response.add_finalizer(finalize_async)
+        if async_mode:
+            model_response.add_finalizer(finalize_async)
+        else:
+            model_response.add_finalizer(
+                lambda state: context.run(finalize_stream, state)
+            )
 
     def _close_interrupted_tool_calls(
         self,
