@@ -23,6 +23,10 @@ _MODULE_EXPORTS = [
 __all__ = [
     "AgentExtension",
     "AgentExtensionHandle",
+    "Artifact",
+    "ArtifactExtension",
+    "ArtifactReferenceRenderer",
+    "ArtifactRegistry",
     "BackgroundTasksExtension",
     "CompactionExtension",
     "CompactionPolicy",
@@ -71,6 +75,10 @@ def __getattr__(name: str):
     elif name in {
         "AgentExtension",
         "AgentExtensionHandle",
+        "Artifact",
+        "ArtifactExtension",
+        "ArtifactReferenceRenderer",
+        "ArtifactRegistry",
         "BackgroundTasksExtension",
         "CompactionExtension",
         "CompactionPolicy",

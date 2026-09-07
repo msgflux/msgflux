@@ -5,6 +5,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from msgflux.nn.extensions.base import AgentExtension, AgentExtensionHandle
+    from msgflux.nn.extensions.artifact import (
+        Artifact,
+        ArtifactExtension,
+        ArtifactReferenceRenderer,
+        ArtifactRegistry,
+    )
     from msgflux.nn.extensions.compaction import (
         CONTEXT_COMPACTION_CAPABILITY,
         CompactionExtension,
@@ -33,6 +39,10 @@ if TYPE_CHECKING:
 __all__ = [
     "AgentExtension",
     "AgentExtensionHandle",
+    "Artifact",
+    "ArtifactExtension",
+    "ArtifactReferenceRenderer",
+    "ArtifactRegistry",
     "CompactionExtension",
     "CompactionPolicy",
     "CONTEXT_COMPACTION_CAPABILITY",
@@ -59,6 +69,13 @@ _LAZY_IMPORTS = {
         "msgflux.nn.extensions.base",
         "AgentExtensionHandle",
     ),
+    "Artifact": ("msgflux.nn.extensions.artifact", "Artifact"),
+    "ArtifactExtension": ("msgflux.nn.extensions.artifact", "ArtifactExtension"),
+    "ArtifactReferenceRenderer": (
+        "msgflux.nn.extensions.artifact",
+        "ArtifactReferenceRenderer",
+    ),
+    "ArtifactRegistry": ("msgflux.nn.extensions.artifact", "ArtifactRegistry"),
     "CONTEXT_COMPACTION_CAPABILITY": (
         "msgflux.nn.extensions.compaction",
         "CONTEXT_COMPACTION_CAPABILITY",

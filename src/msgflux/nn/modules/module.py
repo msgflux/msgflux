@@ -1844,16 +1844,32 @@ class Module:
         return candidate if isinstance(candidate, ModelStreamResponse) else None
 
     @staticmethod
+    def _incremental_output_transformer(module: Any):
+        extensions = getattr(module, "extensions", None)
+        if extensions is None:
+            return None
+        for extension in extensions.values():
+            factory = getattr(extension, "create_output_transformer", None)
+            if callable(factory):
+                return factory()
+        return None
+
+    @staticmethod
     async def _aconsume_event_response(
         response: ModelStreamResponse,
         *,
         emit_content: bool = True,
+        output_transformer: Any = None,
     ) -> None:
         try:
             async for event in response.consume_events():
                 if event.type == "output.delta":
                     if emit_content:
-                        emit_event(EventType.MESSAGE_DELTA, {"delta": event.data})
+                        delta = event.data
+                        if output_transformer is not None and isinstance(delta, str):
+                            delta = output_transformer.feed(delta)
+                        if delta:
+                            emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
                 elif event.type == "reasoning.delta":
                     emit_event(EventType.REASONING_DELTA, {"delta": event.data})
                 elif event.type == "reasoning_summary.delta":
@@ -1869,9 +1885,16 @@ class Module:
 
     async def _afinalize_event_result(self, result: Any) -> Any:
         stream_response = self._stream_response_from_result(result)
+        terminal_transform = self.has_lifecycle_hooks("before_run_end") or self.has_lifecycle_hooks("after_run_end")
+        output_transformer = (
+            self._incremental_output_transformer(self)
+            if stream_response is not None and not terminal_transform
+            else None
+        )
         buffered = stream_response is not None and (
-            self.has_lifecycle_hooks("transform_output")
-            or self.has_lifecycle_hooks("before_run_end")
+            terminal_transform or (
+                self.has_lifecycle_hooks("transform_output") and output_transformer is None
+            )
         )
         emit_event(
             EventType.MESSAGE_START,
@@ -1879,8 +1902,14 @@ class Module:
         )
         if stream_response is not None:
             await self._aconsume_event_response(
-                stream_response, emit_content=not buffered
+                stream_response,
+                emit_content=not buffered,
+                output_transformer=output_transformer,
             )
+            if output_transformer is not None:
+                tail = output_transformer.finish()
+                if tail:
+                    emit_event(EventType.MESSAGE_DELTA, {"delta": tail})
             output = getattr(stream_response, "_settled_output", stream_response.data)
             output = await self._atransform_module_output(output)
             if result is not stream_response and isinstance(result, dict):
