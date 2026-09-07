@@ -331,6 +331,15 @@ Reasoning, tool, and progress events are independent and continue to arrive
 while assistant content is buffered. Reasoning and summaries are never passed
 through `transform_output`.
 
+### Stream completion and terminal hooks
+
+An Agent stream owns its terminal checkpoint. When the provider closes the
+`ModelStreamResponse`, the runtime first invokes `before_run_end`, persists the
+settled conversation, and then invokes `after_run_end`. The same ordering is
+used by synchronous and asynchronous Agent calls. A consumer that closes
+`stream_events()` also waits for the execution task to finish its cancellation
+cleanup, so the checkpoint is not left in the temporary `streaming` state.
+
 See [Canonical Responses vs. Presented Output](hooks.md#canonical-responses-vs-presented-output)
 for a complete example that replaces an artifact reference in the presented
 event output while preserving the original reference in `ChatMessages`.

@@ -281,7 +281,10 @@ class BaseStreamResponse(CoreResponse):
             else:
                 self._finalizers.append(finalizer)
         if final_state is not None:
-            finalizer(final_state)
+            result = finalizer(final_state)
+            if inspect.isawaitable(result):
+                with self._finalizer_lock:
+                    self._pending_finalizer_awaitables.append(result)
 
     def _add_consumer_finalizer(self, finalizer) -> None:
         """Run a callback after an owner has drained all stream queues."""

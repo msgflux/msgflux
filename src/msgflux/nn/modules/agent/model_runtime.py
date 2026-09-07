@@ -676,6 +676,7 @@ class AgentModelRuntimeMixin:
                     model_response,
                     messages,
                     vars,
+                    async_mode=True,
                 )
                 return self._prepare_response(
                     model_response,

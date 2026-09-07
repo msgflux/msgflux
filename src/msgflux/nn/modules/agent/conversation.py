@@ -611,11 +611,13 @@ class AgentConversationMixin:
             return
         messages.end_turn(event="complete")
 
-    def _attach_stream_checkpoint_finalizer(
+    def _attach_stream_checkpoint_finalizer(  # noqa: C901
         self,
         model_response: ModelStreamResponse,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
+        *,
+        async_mode: bool = False,
     ) -> None:
         if not isinstance(messages, ChatMessages):
             return
@@ -628,7 +630,7 @@ class AgentConversationMixin:
         source_state = messages._to_state()
         stream_messages = messages.copy()
 
-        def finalize_stream(final_state) -> None:
+        def finalize_checkpoint(final_state) -> None:
             response_item_start = len(stream_messages)
             stream_messages.extend(final_state.items)
             attach_response_metadata(
@@ -668,7 +670,77 @@ class AgentConversationMixin:
                 finally:
                     messages._release_stream(run_id)
 
-        model_response.add_finalizer(finalize_stream)
+        def finalize_stream(final_state) -> None:
+            scope = get_execution_context().get("scope")
+            run_end = self._run_run_end_hook(
+                "before_run_end",
+                self._run_end_context(
+                    outcome=final_state.status,
+                    messages=stream_messages,
+                    vars=vars,
+                    scope=scope,
+                    output=final_state.output,
+                    error=final_state.error,
+                ),
+            )
+            finalize_checkpoint(final_state)
+            self._run_after_run_end_hook(
+                self._run_end_context(
+                    outcome=final_state.status,
+                    messages=run_end.messages,
+                    vars=vars,
+                    scope=scope,
+                    output=run_end.output,
+                    error=final_state.error,
+                )
+            )
+
+        if not async_mode:
+            model_response.add_finalizer(finalize_stream)
+            return
+
+        async def finalize_async(final_state):
+            scope = get_execution_context().get("scope")
+            run_end = await self._arun_run_end_hook(
+                "before_run_end",
+                self._run_end_context(
+                    outcome=final_state.status,
+                    messages=stream_messages,
+                    vars=vars,
+                    scope=scope,
+                    output=final_state.output,
+                    error=final_state.error,
+                ),
+            )
+            settled = run_end.messages
+            if final_state.status == "completed":
+                settled.end_turn(event="complete")
+            elif final_state.status == "interrupted":
+                self._close_interrupted_tool_calls(
+                    settled,
+                    reason=str(final_state.error) if final_state.error else None,
+                )
+            elif settled.get_active_turn() is not None:
+                settled.end_turn(event="fail")
+            await self._acheckpoint_save(settled, vars, status=final_state.status)
+            await self._arun_after_run_end_hook(
+                self._run_end_context(
+                    outcome=final_state.status,
+                    messages=settled,
+                    vars=vars,
+                    scope=scope,
+                    output=run_end.output,
+                    error=final_state.error,
+                )
+            )
+            if messages._to_state() != source_state:
+                raise RuntimeError(
+                    "ChatMessages changed while its Agent stream was active"
+                )
+            messages._hydrate_state(settled._to_state())
+            messages._release_stream(run_id)
+
+        model_response.add_finalizer(finalize_async)
 
     def _close_interrupted_tool_calls(
         self,
