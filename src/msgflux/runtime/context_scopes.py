@@ -161,7 +161,7 @@ class ContextScopeController:
         messages.metadata[_RUNTIME_KEY][_SCOPE_KEY] = scopes
         messages._items = parent_items
         if summary:
-            messages.add_message("system", summary)
+            messages.add_assistant_response(content=summary)
         self._sync_active(messages, scopes)
         if self.run is not None:
             self.run.branch_id = branch_id
@@ -181,11 +181,24 @@ class ContextScopeController:
         self._check_revision(scopes, expected_revision)
         active = scopes["active"]
         if active == "root":
-            return ScopeTransition(
-                "close", name or "root", "root", False, scopes["revision"], summary
-            )
+            if name in (None, "root"):
+                return ScopeTransition(
+                    "close", name or "root", "root", False, scopes["revision"], summary
+                )
+            raise ContextScopeConflictError(f"Context scope `{name}` is not active")
         frame = scopes["stack"][-1]
         if name is not None and name != frame["name"]:
+            archived = [
+                branch
+                for branch in scopes["branches"].values()
+                if branch.get("name") == name
+                and branch.get("parent") == active
+                and branch.get("closed") is True
+            ]
+            if archived:
+                return ScopeTransition(
+                    "close", name, active, False, scopes["revision"], summary
+                )
             raise ContextScopeConflictError(
                 f"Cannot close scope `{name}` while `{frame['name']}` is active"
             )
@@ -201,7 +214,7 @@ class ContextScopeController:
         scopes["revision"] += 1
         messages._items = deepcopy(parent_branch["items"])
         close_summary = summary or f"Context scope `{frame['name']}` completed."
-        messages.add_message("system", close_summary)
+        messages.add_assistant_response(content=close_summary)
         self._sync_active(messages, scopes)
         messages.metadata[_RUNTIME_KEY][_SCOPE_KEY] = scopes
         if self.run is not None:

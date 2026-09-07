@@ -679,3 +679,55 @@ guarantee.
 `AgentRun.durable_state()` preserves budgets, extension state, run lineage, and the
 active branch so extensions can resume without allocating a new run or resetting
 limits.
+
+## Context scopes
+
+Context scopes are nested conversation branches within the same execution. They
+keep the same thread, run, and budgets. The built-in tools return a transition
+command; the Agent applies it only after every tool call and output in the
+current batch has settled. Opening a scope records the parent prefix and starts
+a child branch. Closing returns to the parent and copies a summary into it.
+Closing an already closed or root scope is idempotent, while closing a non-active
+name raises a conflict.
+
+Register the built-in tools when the model should decide when to enter and leave
+a scope:
+
+```python
+from msgflux.tools.builtin import close_context_scope, open_context_scope
+from msgflux.nn import Agent
+
+agent = Agent(
+    name="investigator",
+    model=model,
+    tools=[open_context_scope, close_context_scope],
+)
+```
+
+The tools emit a typed transition command. The Agent applies it after every call
+and output in the current batch has settled, so a scope change cannot split a
+partially completed tool batch. Applications can apply the same command directly:
+
+```python
+from msgflux.runtime import ContextScopeCommand, ContextScopeController
+
+controller = ContextScopeController()
+controller.apply_command(
+    messages,
+    ContextScopeCommand(action="open", name="research", summary="Research context"),
+)
+# The Agent continues on the research branch.
+controller.apply_command(
+    messages,
+    ContextScopeCommand(
+        action="close", name="research", summary="Research completed"
+    ),
+)
+```
+
+Summaries are recorded as assistant messages in the parent branch. The original
+call and output remain paired in the canonical timeline; closed branches retain
+their full snapshot in `ChatMessages.metadata` for recovery and inspection.
+The metadata records lineage, active head, and scope revisions while the message
+events remain append-only. Checkpoints therefore restore the active branch without
+allocating a new `ExecutionScope`, thread, run, or budget.

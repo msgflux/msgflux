@@ -20,7 +20,12 @@ def test_nested_context_scopes_restore_parent_and_close_idempotently():
     messages.add_user("nested")
     closed = controller.close(messages, "source", summary="Source summary")
     assert closed.branch_id == "research"
-    assert any(item.get("content") == "Source summary" for item in messages)
+    assert any(
+        item.get("role") == "assistant" and item.get("content") == "Source summary"
+        for item in messages
+    )
+    duplicate = controller.close(messages, "source")
+    assert duplicate.changed is False
     controller.close(messages, "research", summary="Research summary")
     again = controller.close(messages)
     assert again.changed is False
