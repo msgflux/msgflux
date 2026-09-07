@@ -7,31 +7,31 @@ from typing import Any
 from msgflux.tools.config import tool_config
 
 
-@tool_config(return_direct=True)
+@tool_config()
 def open_context_scope(
     name: str,
-    summary: str | None = None,
+    summary: str = "",
 ) -> dict[str, Any]:
     """Open a nested context branch and continue execution inside it."""
     return {
         "type": "context_scope_transition",
         "action": "open",
         "name": name,
-        "summary": summary,
+        "summary": summary or None,
     }
 
 
-@tool_config(return_direct=True)
+@tool_config()
 def close_context_scope(
-    name: str | None = None,
-    summary: str | None = None,
+    name: str = "",
+    summary: str = "",
 ) -> dict[str, Any]:
     """Close the active context branch and return to its parent."""
     return {
         "type": "context_scope_transition",
         "action": "close",
         "name": name,
-        "summary": summary,
+        "summary": summary or None,
     }
 
 

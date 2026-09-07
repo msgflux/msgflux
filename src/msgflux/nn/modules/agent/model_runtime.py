@@ -35,6 +35,7 @@ from msgflux.runtime.context import (
     ExecutionScope,
     get_execution_context,
 )
+from msgflux.runtime.context_scopes import ContextScopeController
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.tools.catalog import ToolCatalogView
 from msgflux.tools.helpers import coerce_tool_params
@@ -54,6 +55,67 @@ from msgflux.nn.modules.agent.continuation import _TerminalResponse
 
 class AgentModelRuntimeMixin:
     """Model request preparation, response processing, and tool-loop behavior."""
+
+    _context_scope_tool_names = frozenset({"open_context_scope", "close_context_scope"})
+
+    @classmethod
+    def _validate_context_scope_intents(cls, intents: Any) -> None:
+        """Reject mixed scope transitions before any tool in the batch runs."""
+        scope_intents = tuple(
+            intent
+            for intent in intents
+            if getattr(intent, "name", None) in cls._context_scope_tool_names
+        )
+        if scope_intents and len(tuple(intents)) != 1:
+            names = ", ".join(intent.name for intent in scope_intents)
+            raise ValueError(
+                "Context scope transitions are exclusive tool calls; "
+                f"cannot execute `{names}` with other tools in one batch."
+            )
+
+    @staticmethod
+    def _scope_command_value(value: Any) -> Mapping[str, Any] | None:
+        if not isinstance(value, Mapping):
+            return None
+        if value.get("type") != "context_scope_transition":
+            return None
+        return value
+
+    def _apply_context_scope_outcomes(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        outcomes: Any,
+    ) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+        commands = []
+        for outcome in outcomes:
+            if getattr(outcome, "status", None) != "completed":
+                continue
+            command = self._scope_command_value(getattr(outcome, "result", None))
+            if command is not None:
+                commands.append(command)
+        if len(commands) > 1:
+            raise ValueError("Only one context scope transition may settle per batch")
+        if commands:
+            ContextScopeController().apply_command(messages, commands[0])
+
+    def _apply_context_scope_tool_responses(
+        self,
+        messages: Union[ChatMessages, List[Mapping[str, Any]]],
+        responses: ToolResponses,
+    ) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+        commands = []
+        for call in responses.tool_calls:
+            command = self._scope_command_value(call.result)
+            if command is not None:
+                commands.append(command)
+        if len(commands) > 1:
+            raise ValueError("Only one context scope transition may settle per batch")
+        if commands:
+            ContextScopeController().apply_command(messages, commands[0])
 
     def _execute_model(
         self,
@@ -772,6 +834,13 @@ class AgentModelRuntimeMixin:
 
     # --- Tool Processing ---
 
+    @staticmethod
+    def _legacy_tool_intents(tool_callings: Any) -> tuple[ToolIntent, ...]:
+        return tuple(
+            ToolIntent(id=call[0], name=call[1], arguments=call[2])
+            for call in tool_callings
+        )
+
     def _process_tool_flow_control_response(
         self,
         message: Union[str, Mapping[str, Any], Message],
@@ -811,6 +880,7 @@ class AgentModelRuntimeMixin:
 
             if flow_result.tool_calls:
                 intents = self._flow_tool_intents(flow_result.tool_calls)
+                self._validate_context_scope_intents(intents)
                 outcomes = self._process_tool_intents(intents, message, messages, vars)
                 tool_results = ToolResponses.from_outcomes(intents, outcomes)
 
@@ -839,7 +909,13 @@ class AgentModelRuntimeMixin:
                 if feedback.action == "return":
                     return feedback.output, messages
                 self._drain_inbox_into_messages(messages, vars=vars)
+                self._apply_context_scope_tool_responses(messages, tool_results)
                 self._checkpoint_save(messages, vars)
+                if tool_results.return_directly:
+                    tool_calls = tool_results.to_dict().pop("return_directly")
+                    tool_calls["reasoning"] = flow_result.reasoning
+                    tool_responses = dotdict(tool_responses=tool_calls)
+                    return tool_responses, messages
 
             model_response = self._execute_model(
                 messages=messages,
@@ -889,6 +965,7 @@ class AgentModelRuntimeMixin:
 
             if flow_result.tool_calls:
                 intents = self._flow_tool_intents(flow_result.tool_calls)
+                self._validate_context_scope_intents(intents)
                 outcomes = await self._aprocess_tool_intents(
                     intents, message, messages, vars
                 )
@@ -921,7 +998,13 @@ class AgentModelRuntimeMixin:
                 if feedback.action == "return":
                     return feedback.output, messages
                 await self._adrain_inbox_into_messages(messages, vars=vars)
+                self._apply_context_scope_tool_responses(messages, tool_results)
                 await self._acheckpoint_save(messages, vars)
+                if tool_results.return_directly:
+                    tool_calls = tool_results.to_dict().pop("return_directly")
+                    tool_calls["reasoning"] = flow_result.reasoning
+                    tool_responses = dotdict(tool_responses=tool_calls)
+                    return tool_responses, messages
 
             model_response = await self._aexecute_model(
                 messages=messages,
@@ -972,6 +1055,7 @@ class AgentModelRuntimeMixin:
                         cprint(repr_str, bc="br2", ls="b")
 
                 tool_intents = model_response.get_tool_intents()
+                self._validate_context_scope_intents(tool_intents)
                 try:
                     tool_outcomes = self._process_tool_intents(
                         tool_intents, message, messages, vars
@@ -988,6 +1072,7 @@ class AgentModelRuntimeMixin:
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
+                self._apply_context_scope_outcomes(messages, tool_outcomes)
                 decision = self._resolve_continuation(
                     "after_tools", messages, vars, tool_intents, tool_outcomes
                 )
@@ -1062,6 +1147,7 @@ class AgentModelRuntimeMixin:
                         cprint(repr_str, bc="br2", ls="b")
 
                 tool_intents = model_response.get_tool_intents()
+                self._validate_context_scope_intents(tool_intents)
                 try:
                     tool_outcomes = await self._aprocess_tool_intents(
                         tool_intents, message, messages, vars
@@ -1078,6 +1164,7 @@ class AgentModelRuntimeMixin:
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
+                self._apply_context_scope_outcomes(messages, tool_outcomes)
                 decision = await self._aresolve_continuation(
                     "after_tools", messages, vars, tool_intents, tool_outcomes
                 )
