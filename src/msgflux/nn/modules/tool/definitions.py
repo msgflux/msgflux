@@ -7,6 +7,7 @@ from typing import Any, Callable, Collection, Mapping, Protocol, runtime_checkab
 
 import msgspec
 
+from msgflux.runtime.permissions import normalize_permissions
 from msgflux.tools.catalog import NativeToolBinding
 from msgflux.tools.helpers import RUNTIME_BACKGROUND_PARAM
 from msgflux.tools.runtime import FeedbackSpec, _copy_mapping, _require_name
@@ -72,6 +73,7 @@ class ToolDefinition(msgspec.Struct, frozen=True, kw_only=True):
     )
     loading: LoadingSpec = msgspec.field(default_factory=LoadingSpec)
     retry: Any = None
+    required_permissions: tuple[str, ...] = ()
     native_bindings: tuple[NativeToolBinding, ...] = ()
     kind: str = "tool"
     display_name: str | None = None
@@ -85,6 +87,11 @@ class ToolDefinition(msgspec.Struct, frozen=True, kw_only=True):
             raise TypeError(
                 "`executor` must provide synchronous `__call__` and async `acall`"
             )
+        msgspec.structs.force_setattr(
+            self,
+            "required_permissions",
+            normalize_permissions(self.required_permissions),
+        )
         if self.description is not None and not isinstance(self.description, str):
             raise TypeError("`description` must be a string or None")
         msgspec.structs.force_setattr(self, "kind", _require_name(self.kind, "kind"))
@@ -181,6 +188,7 @@ class ToolDefinitionCompiler:
             context=cls._compile_context(config),
             loading=LoadingSpec(deferred=bool(config.get("defer_loading", False))),
             retry=config.get("retry"),
+            required_permissions=config.get("required_permissions", ()),
             native_bindings=native_bindings,
             kind=config.get("tool_kind", "tool"),
             display_name=declaration.display_name,

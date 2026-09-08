@@ -44,4 +44,15 @@ class PermissionSet:
         return not self.missing(required)
 
 
+def require_permissions(required: Iterable[str]) -> None:
+    """Check live authority, never arguments or persisted execution identity."""
+    # Context imports PermissionSet; resolve the live reader only at invocation.
+    from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
+
+    permissions = get_execution_scope().permissions or PermissionSet()
+    missing = permissions.missing(required)
+    if missing:
+        raise PermissionError(f"Missing tool permissions: {', '.join(missing)}")
+
+
 __all__ = ["PermissionSet"]

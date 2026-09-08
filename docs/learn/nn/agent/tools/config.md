@@ -8,6 +8,59 @@ tool; remove and add it again when an application intentionally needs a new
 definition. This keeps concurrent executions on one stable schema and runtime
 policy.
 
+## required_permissions
+
+Declare the capabilities a tool requires. The trusted application supplies live
+grants through `ExecutionScope`; model arguments and runtime `vars` cannot grant
+permissions.
+
+```python
+import msgflux as mf
+from msgflux.nn import ToolLibrary
+from msgflux.runtime import ExecutionScope, PermissionSet, execution_context
+
+
+@mf.tool_config(required_permissions=["catalog.read"])
+def lookup(sku: str) -> str:
+    """Look up a catalog entry."""
+    return f"Product {sku}"
+
+
+library = ToolLibrary("catalog", [lookup])
+with execution_context(scope=ExecutionScope(
+    principal="user:42",
+    permissions=PermissionSet(["catalog.read"]),
+)):
+    result = library.run("lookup", {"sku": "ABC"})
+```
+
+This example grants `catalog.read` only for the enclosed execution. Names match
+exactly; wildcards and resource patterns are not supported. Nested scopes can
+restrict grants but cannot widen them or switch the principal. See
+[Live authority](../runtime.md#live-authority) for inheritance and serialization.
+
+Requirements are frozen when registered and are not model-input properties.
+The library checks them before argument injection and hooks, again before
+dispatch, and at executor entry. Captured tools and background dispatch use the
+same requirements; resuming a background agent checks the caller's current
+grants before changing task state. Checkpoints do not restore authority.
+
+Missing grants produce a blocked tool outcome with `tool_permission_denied`.
+The live stream emits `tool.permission_denied` and `tool.blocked`, identifying
+the tool call without copying arguments or grants into those events. This does
+not redact other execution events. Direct `library.run`/`arun` calls raise
+`RuntimeError`, like other blocked outcomes; direct local/MCP adapter calls
+raise `PermissionError`.
+
+!!! warning "Capability checks are not a sandbox"
+    Tools without declared requirements remain executable for compatibility.
+    Python implementations, policies and dispatchers are trusted host code;
+    calling a decorated Python function directly does not enforce this boundary.
+    Capability names do not restrict filesystem paths, network destinations or
+    process access. Provider-hosted tools are outside the local dispatch gate.
+    OS isolation, resource-scoped grants, user-approval suspension and durable
+    audit replay are follow-up work, not guarantees of this API.
+
 ## description
 
 Set `description` to replace the model-facing tool description without changing

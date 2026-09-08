@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+from contextvars import copy_context
 from copy import deepcopy
 from typing import Any, Callable, Dict, Mapping, Optional, get_type_hints
 
@@ -13,6 +14,7 @@ from msgflux.protocols.mcp import (
     convert_mcp_schema_to_tool_schema,
     extract_tool_result_text,
 )
+from msgflux.runtime.permissions import require_permissions
 from msgflux.telemetry.span import aset_tool_attributes, set_tool_attributes
 from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM,
@@ -115,6 +117,7 @@ class MCPTool(Tool):
     @set_tool_attributes(execution_type="remote", protocol="mcp")
     def forward(self, **kwargs) -> Any:
         """Execute MCP tool call."""
+        require_permissions(self.tool_config.get("required_permissions", ()))
         # Call MCP tool (wrap async in sync)
         result = F.wait_for(self._mcp_client.call_tool, self._mcp_tool_name, kwargs)
 
@@ -129,6 +132,7 @@ class MCPTool(Tool):
     @aset_tool_attributes(execution_type="remote", protocol="mcp")
     async def aforward(self, **kwargs) -> Any:
         """Execute MCP tool call asynchronously."""
+        require_permissions(self.tool_config.get("required_permissions", ()))
         # Call MCP tool
         result = await self._mcp_client.call_tool(self._mcp_tool_name, kwargs)
 
@@ -219,6 +223,7 @@ class LocalTool(Tool):
 
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
+        require_permissions(self.tool_config.get("required_permissions", ()))
         kwargs = self._prepare_call_kwargs(kwargs)
         if inspect.iscoroutinefunction(self.impl):
             return F.wait_for(self.impl, **kwargs)
@@ -226,6 +231,7 @@ class LocalTool(Tool):
 
     @aset_tool_attributes(execution_type="local")
     async def aforward(self, *args, **kwargs):
+        require_permissions(self.tool_config.get("required_permissions", ()))
         kwargs = self._prepare_call_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
@@ -233,7 +239,10 @@ class LocalTool(Tool):
             return await self.impl(*args, **kwargs)
         # Fall back to sync call in executor to avoid blocking event loop
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.impl(*args, **kwargs))
+        context = copy_context()
+        return await loop.run_in_executor(
+            None, lambda: context.run(self.impl, *args, **kwargs)
+        )
 
 
 def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901

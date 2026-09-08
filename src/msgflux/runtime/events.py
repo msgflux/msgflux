@@ -38,6 +38,7 @@ class EventType:
     TOOL_UPDATE = "tool.update"
     TOOL_END = "tool.end"
     TOOL_BLOCKED = "tool.blocked"
+    TOOL_PERMISSION_DENIED = "tool.permission_denied"
     TASK_START = "task.start"
     TASK_UPDATE = "task.update"
     TASK_END = "task.end"

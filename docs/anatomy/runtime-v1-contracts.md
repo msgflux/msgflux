@@ -36,6 +36,12 @@ are not sources of authority.
    tool/execution_runtime.py, runtime/background.py, runtime/events.py, tests,
    and existing tools/runtime learning pages.
 
+The tool milestone also preserves contextvars when LocalTool sends synchronous
+Python implementations to an async executor thread. Without that propagation,
+nested tool calls would lose their caller's live authority and execution identity.
+Standalone local/MCP adapters check their configuration as defense in depth;
+raw Python callables and arbitrary custom executor code remain trusted host code.
+
 Risks: permissions leaking across concurrent runs, explicit child scopes
 escalating authority, metadata silently dropped by compiler/adapters, captured
 or background tools bypassing checks, and checkpoint restore reviving authority.

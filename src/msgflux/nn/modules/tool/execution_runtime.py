@@ -33,6 +33,7 @@ from msgflux.nn.modules.tool.runtime import (
 from msgflux.runtime.abort import await_with_abort
 from msgflux.runtime.context import get_execution_context
 from msgflux.runtime.events import EventType, emit_event, event_source
+from msgflux.runtime.permissions import require_permissions
 from msgflux.tools.helpers import (
     RESERVED_TOOL_KINDS,
     RUNTIME_BACKGROUND_PARAM,
@@ -1171,6 +1172,9 @@ class ToolLibraryExecutionMixin:
             )
 
         definition = self.get_tool_definition(intent.name)
+        denied = self._permission_outcome(intent, definition)
+        if denied is not None:
+            return denied
         before_policy = F.wait_for(
             self._abefore_tool_policy,
             intent,
@@ -1264,6 +1268,9 @@ class ToolLibraryExecutionMixin:
             )
 
         definition = self.get_tool_definition(intent.name)
+        denied = self._permission_outcome(intent, definition)
+        if denied is not None:
+            return denied
         before_policy = await self._abefore_tool_policy(
             intent,
             definition,
@@ -1334,6 +1341,9 @@ class ToolLibraryExecutionMixin:
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome | Callable[[], Any]:
+        denied = self._permission_outcome(plan.intent, plan.definition)
+        if denied is not None:
+            return denied
         feedback = plan.feedback
         arguments = plan.visible_arguments
         if feedback.name == "call_as_response":
@@ -1356,6 +1366,9 @@ class ToolLibraryExecutionMixin:
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome | Callable[[], Any]:
+        denied = self._permission_outcome(plan.intent, plan.definition)
+        if denied is not None:
+            return denied
         feedback = plan.feedback
         arguments = plan.visible_arguments
         if feedback.name == "call_as_response":
@@ -1367,15 +1380,53 @@ class ToolLibraryExecutionMixin:
             )
         return partial(self._adispatch_runtime_plan, plan, context)
 
+    def _permission_outcome(
+        self, intent: ToolIntent, definition: RuntimeToolDefinition
+    ) -> ToolOutcome | None:
+        try:
+            require_permissions(definition.required_permissions)
+            # A transformed plan cannot drop its registered requirements.
+            require_permissions(
+                self.get_tool_definition(intent.name).required_permissions
+            )
+        except PermissionError as exc:
+            payload = {
+                "tool_call_id": intent.id,
+                "tool_name": intent.name,
+                "code": "tool_permission_denied",
+            }
+            emit_event(EventType.TOOL_PERMISSION_DENIED, payload)
+            emit_event(EventType.TOOL_BLOCKED, payload)
+            return self._failed_intent(
+                intent,
+                status="blocked",
+                code="tool_permission_denied",
+                message=str(exc),
+                arguments={},
+            )
+        return None
+
     async def _adispatch_runtime_plan(
         self,
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome:
+        denied = self._permission_outcome(plan.intent, plan.definition)
+        if denied is not None:
+            return denied
+        execution_denial = None
+
         async def execute(
             selected_plan: ToolExecutionPlan | None = None,
         ) -> ToolOutcome:
+            nonlocal execution_denial
+            if execution_denial is not None:
+                return execution_denial
             current = selected_plan or plan
+            denied = self._permission_outcome(current.intent, current.definition)
+            if denied is not None:
+                execution_denial = denied
+                return denied
             result = await self._aexecute_prepared_tool(
                 current.definition.executor,
                 current.call_arguments,
@@ -1394,6 +1445,8 @@ class ToolLibraryExecutionMixin:
             ),
             context.get("abort_signal"),
         )
+        if execution_denial is not None:
+            return execution_denial
         result = outcome.result
         if plan.dispatch.name == "detached" and result is None:
             result = (

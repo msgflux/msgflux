@@ -3,6 +3,7 @@ from types import FunctionType, MethodType
 from typing import Any, Callable, Collection, Dict, Optional, Union
 
 from msgflux.core.dotdict import dotdict
+from msgflux.runtime.permissions import normalize_permissions
 from msgflux.tools.helpers import normalize_background_capabilities
 from msgflux.tools.runtime import FeedbackSpec
 from msgflux.tools.specs import ContextBinding, ContextSpec
@@ -92,6 +93,7 @@ def tool_config(
     tool_kind: Optional[str] = None,
     name_override: Optional[str] = None,
     retry: Optional[Any] = None,
+    required_permissions: Collection[str] = (),
 ) -> Callable:
     """Decorator to inject meta-properties into functions, classes, or instances.
 
@@ -169,6 +171,9 @@ def tool_config(
             Retry configuration for this tool. Accepts a tenacity retry decorator
             for custom retry behavior, False to disable retry, or None (default)
             to use the default retry from envs.
+        required_permissions:
+            Exact capabilities required from the live execution scope. The runtime
+            blocks missing grants before tool preparation; this is not a sandbox.
 
     Returns:
         A decorator that modifies the target by injecting the specified properties.
@@ -212,6 +217,7 @@ def tool_config(
             >>> classifier.tool_config.return_direct
             True
     """
+    normalized_permissions = normalize_permissions(required_permissions)
 
     def decorator(f):
         _return_direct = return_direct  # Local copy
@@ -296,6 +302,7 @@ def tool_config(
                     "tool_kind": tool_kind,
                     "name_overridden": name_override,
                     "retry": retry,
+                    "required_permissions": normalized_permissions,
                 }
             )
         }

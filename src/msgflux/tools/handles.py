@@ -95,6 +95,10 @@ class ToolLibraryHandle:
     def get_ref(self, tool_name: str) -> ToolRef:
         return self._library.get_tool_ref(tool_name)
 
+    def get_tool_definition(self, tool_name: str) -> Any:
+        """Return the registered declaration, including execution requirements."""
+        return self._library.get_tool_definition(tool_name)
+
     def __call__(
         self,
         tool: ToolRef | str,

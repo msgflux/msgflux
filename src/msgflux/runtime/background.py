@@ -30,6 +30,7 @@ from msgflux.runtime.events import (
     emit_event,
     event_source,
 )
+from msgflux.runtime.permissions import require_permissions
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
 from msgflux.tools.builtin.task_tool import (
     build_background_dispatch_result,
@@ -134,6 +135,7 @@ class BackgroundTaskDispatcher:
         call_params: Dict[str, Any],
         execution_scope: Dict[str, Any] | None = None,
         agent_inbox: AgentInbox | None = None,
+        required_permissions: tuple[str, ...] = (),
     ) -> Any:
         scope = execution_scope or {}
         capture = (
@@ -148,6 +150,7 @@ class BackgroundTaskDispatcher:
         ):
             task_handle.set_running()
             try:
+                require_permissions(required_permissions)
                 result = tool(**call_params)
             except TaskInterruptRequestedError as exc:
                 task_handle.interrupt(reason=str(exc))
@@ -194,6 +197,10 @@ class BackgroundTaskDispatcher:
         task_store = self.library_handle.get_task_store()
         tool_name = task.tool_name
         tool = self.library_handle.get_tool(tool_name)
+        required_permissions = self.library_handle.get_tool_definition(
+            tool_name
+        ).required_permissions
+        require_permissions(required_permissions)
         checkpoint_namespace = task.metadata.get("checkpoint_namespace")
         if checkpoint_namespace is None:
             checkpoint_namespace = (
@@ -298,6 +305,7 @@ class BackgroundTaskDispatcher:
                 ),
                 tool_name=tool_name,
                 call_params=resume_params,
+                required_permissions=required_permissions,
                 execution_scope=execution_scope,
                 agent_inbox=root_inbox,
             )
@@ -329,6 +337,7 @@ class BackgroundTaskDispatcher:
         call_params: Dict[str, Any],
         visible_params: Mapping[str, Any],
     ) -> Any:
+        require_permissions(definition.required_permissions)
         task_kind = definition.kind
         task_capabilities = ToolBackground.get_background_capabilities(definition)
         task_store = self.library_handle.get_task_store()
@@ -459,6 +468,7 @@ class BackgroundTaskDispatcher:
                 ),
                 tool_name=tool_name,
                 call_params=runner_params,
+                required_permissions=definition.required_permissions,
                 execution_scope=execution_scope,
                 agent_inbox=root_agent_inbox,
             )
