@@ -1,8 +1,9 @@
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from msgflux.data.stores import InMemoryCheckpointStore
-from msgflux.models.response import ModelStreamResponse
+from msgflux.chat_messages import ChatMessages
+from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn import ArtifactExtension, ArtifactReferenceRenderer, ArtifactRegistry
 from msgflux.nn.modules.agent import Agent
 from msgflux.runtime.context import ExecutionScope
@@ -195,3 +196,23 @@ def test_escape_and_marker_recognition_do_not_depend_on_chunk_size(width):
         renderer.feed(raw[i : i + width]) for i in range(0, len(raw), width)
     )
     assert result + renderer.finish() == expected
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_nonstream_artifact_projection_preserves_canonical_history(wrapped):
+    registry = ArtifactRegistry()
+    registry.register("expanded", artifact_id="item")
+    agent = Agent(
+        name="artifact",
+        model=Mock(model_type="chat_completion"),
+        extensions=[ArtifactExtension(registry)],
+        config={"return_messages": wrapped},
+    )
+    response = ModelResponse()
+    response.set_response_type("text_generation")
+    response.add("{{artifact:item}}")
+    agent.generator.forward = Mock(return_value=response)
+    output = agent("question", messages=ChatMessages())
+    assert (output["response"] if wrapped else output) == "expanded"
+    if wrapped:
+        assert "{{artifact:item}}" in str(output["messages"])

@@ -276,15 +276,29 @@ class BaseStreamResponse(CoreResponse):
             self._response_type_event.set()
 
     def add_finalizer(self, finalizer) -> None:
-        if inspect.iscoroutinefunction(finalizer):
+        try:
             loop = asyncio.get_running_loop()
-            context = contextvars.copy_context()
-            callback = finalizer
+        except RuntimeError:
+            loop = None
+        context = contextvars.copy_context()
+        callback = finalizer
 
-            def finalizer(state):
+        async def await_result(result):
+            return await result
+
+        def finalizer(state):
+            result = callback(state)
+            if inspect.isawaitable(result):
+                if loop is None:
+                    if inspect.iscoroutine(result):
+                        result.close()
+                    raise RuntimeError(
+                        "Async stream finalizers require an event loop at registration"
+                    )
                 return context.run(
-                    asyncio.run_coroutine_threadsafe, callback(state), loop
+                    asyncio.run_coroutine_threadsafe, await_result(result), loop
                 )
+            return result
 
         final_state = None
         with self._finalizer_lock:
@@ -341,6 +355,10 @@ class BaseStreamResponse(CoreResponse):
             self.first_chunk_event.set()
         try:
             self._run_finalizers(status=status)
+        except Exception as finalizer_error:
+            self.set_error(finalizer_error)
+            self._final_status = "failed"
+            raise
         finally:
             self._close_stream_queues()
 

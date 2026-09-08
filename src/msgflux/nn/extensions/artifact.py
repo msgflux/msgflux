@@ -154,12 +154,16 @@ class ArtifactExtension(AgentExtension):
 
     def hooks(self):
         def transform(context: OutputContext) -> OutputContext:
-            if isinstance(context.output, str):
+            output = context.output
+            wrapped = isinstance(output, Mapping) and "response" in output
+            content = output["response"] if wrapped else output
+            if isinstance(content, str):
+                rendered = ArtifactReferenceRenderer(
+                    self.registry, max_marker_length=self.max_marker_length
+                ).render(content)
                 return replace(
                     context,
-                    output=ArtifactReferenceRenderer(
-                        self.registry, max_marker_length=self.max_marker_length
-                    ).render(context.output),
+                    output={**output, "response": rendered} if wrapped else rendered,
                 )
             return context
 

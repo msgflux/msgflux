@@ -492,3 +492,33 @@ class TestModelStreamResponse:
                 "content": "In stock.",
             },
         ]
+
+
+@pytest.mark.asyncio
+async def test_sync_finalizer_returning_coroutine_runs_without_consumption():
+    response = ModelStreamResponse()
+    completed = asyncio.Event()
+
+    async def settle(state):
+        completed.set()
+
+    response.add_finalizer(lambda state: settle(state))  # noqa: PLW0108
+    await asyncio.to_thread(response.finish)
+    await asyncio.wait_for(completed.wait(), 1)
+    await response._await_pending_finalizers()
+    await response._await_pending_finalizers()
+
+
+@pytest.mark.asyncio
+async def test_failed_sync_finalizer_is_visible_to_consumer():
+    response = ModelStreamResponse()
+
+    def fail(state):
+        raise RuntimeError("settlement failed")
+
+    response.add_finalizer(fail)
+    with pytest.raises(RuntimeError, match="settlement failed"):
+        response.finish()
+    with pytest.raises(RuntimeError, match="settlement failed"):
+        async for _ in response.consume_events():
+            pass
