@@ -14,6 +14,7 @@ Existing uncommitted work in the original checkout is excluded.
 | 6 | `feat/agent-context-scopes` | Conversation branch controller and builtin scope tools: inherit prefix, exclusive safe transitions, nested return points, summary import and idempotent close, revision checks. Tests: open/close/nesting/recovery, call-output pairing, budget inheritance, compaction and inbox interaction. |
 | 7 | `fix/agent-inbox-leases` | Validation follow-up: selectively release rejected notifications without releasing retained receipts in the same lease; regression tests for both stores. |
 | 8 | `fix/agent-checkpoint-atomicity` | Validation follow-up: shared revision metadata preparation, fail before publishing invalid state/events, retain fork provenance and resume under the target identity. |
+| 9 | `fix/agent-output-finalization` | Validation follow-up: non-streaming output envelopes, sync callbacks returning awaitables, and propagation of finalizer failures to stream consumers. |
 
 ## Implementation rules
 
