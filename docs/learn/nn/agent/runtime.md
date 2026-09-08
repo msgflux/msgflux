@@ -636,6 +636,34 @@ The model receives:
 Use `user_message(...)` for new user turns. Use a machine-friendly source such
 as `policy`, `task`, or `operator` for state that is not a direct user request.
 
+## Live authority
+
+`ExecutionScope` carries optional `principal` identity and immutable
+`PermissionSet` grants. These belong to the generic runtime, not to the model's
+messages or Agent variables.
+
+```python
+from msgflux.runtime import ExecutionScope, PermissionSet, execution_context
+
+scope = ExecutionScope(
+    principal="user:42",
+    permissions=PermissionSet(["filesystem.read"]),
+)
+with execution_context(scope=scope):
+    # Nested modules inherit filesystem.read, but cannot add filesystem.write.
+    result = system(input_data)
+```
+
+This example grants an exact capability at the trusted application entry point.
+An explicit child PermissionSet is intersected with the parent; an empty set
+removes all grants. Nested executions cannot change principal. Omitted child
+permissions inherit the parent's grants. Concurrent root executions are isolated.
+
+`scope.to_dict()` serializes execution identity only, excluding principal and
+grants. Restoring a checkpoint never restores authority: the application must
+supply current grants on resume. Capability names have no wildcard semantics.
+These grants are authorization metadata, not an operating-system sandbox.
+
 ## Abort Signal
 
 `AbortSignal` is local runtime cancellation for the currently active process.

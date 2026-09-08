@@ -15,6 +15,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.permissions import PermissionSet
 
 DEFAULT_NAMESPACE = "default_namespace"
 
@@ -37,6 +38,22 @@ class ExecutionScope:
     parent_run_id: str | None = None
     root_run_id: str | None = None
     abort_signal: AbortSignal | None = None
+    principal: str | None = None
+    permissions: PermissionSet | None = None
+
+    def __post_init__(self) -> None:
+        if self.permissions is not None and not isinstance(
+            self.permissions, PermissionSet
+        ):
+            raise TypeError(
+                "ExecutionScope.permissions must be a PermissionSet or None"
+            )
+        if self.principal is not None and (
+            not isinstance(self.principal, str) or not self.principal.strip()
+        ):
+            raise ValueError(
+                "ExecutionScope.principal must be a non-empty string or None"
+            )
 
     def with_overrides(
         self,
@@ -47,6 +64,8 @@ class ExecutionScope:
         parent_run_id: str | None = None,
         root_run_id: str | None = None,
         abort_signal: AbortSignal | None = None,
+        principal: str | None = None,
+        permissions: PermissionSet | None = None,
     ) -> ExecutionScope:
         resolved_run_id = run_id if run_id is not None else self.run_id
         return ExecutionScope(
@@ -64,6 +83,8 @@ class ExecutionScope:
             abort_signal=(
                 abort_signal if abort_signal is not None else self.abort_signal
             ),
+            principal=principal if principal is not None else self.principal,
+            permissions=permissions if permissions is not None else self.permissions,
         )
 
     def to_dict(self) -> dict[str, str | None]:
@@ -157,6 +178,18 @@ def execution_context(
 
     current_scope = get_execution_scope()
     base_scope = scope or current_scope
+    principal = base_scope.principal
+    permissions = base_scope.permissions
+    if _CURRENT_SCOPE.get() is not None:
+        if principal is not None and principal != current_scope.principal:
+            raise ValueError("Nested execution cannot change its principal")
+        principal = current_scope.principal
+        inherited = current_scope.permissions or PermissionSet()
+        permissions = (
+            inherited.intersect(permissions) if permissions is not None else inherited
+        )
+    elif permissions is None:
+        permissions = PermissionSet()
 
     current_thread_id = _CURRENT_THREAD_ID.get()
     resolved_thread_id = (
@@ -207,6 +240,8 @@ def execution_context(
         parent_run_id=resolved_parent_run_id,
         root_run_id=resolved_root_run_id,
         abort_signal=resolved_abort_signal,
+        principal=principal,
+        permissions=permissions,
     )
 
     current_checkpoint_store = _CURRENT_CHECKPOINT_STORE.get()
@@ -293,6 +328,8 @@ def get_execution_context() -> Mapping[str, Any | None]:
         "task_handle": _CURRENT_TASK_HANDLE.get(),
         "task_activity_recorder": _CURRENT_TASK_ACTIVITY_RECORDER.get(),
         "abort_signal": _CURRENT_ABORT_SIGNAL.get(),
+        "principal": scope.principal,
+        "permissions": scope.permissions,
     }
 
 

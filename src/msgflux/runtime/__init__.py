@@ -41,6 +41,7 @@ from msgflux.runtime.event_hub import (
     ThreadWatcher,
 )
 from msgflux.runtime.events import EventType, ExecutionEvent
+from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,
@@ -52,6 +53,7 @@ from msgflux.runtime.skills import (
 )
 
 __all__ = [
+    "PermissionSet",
     "AgentControlMessage",
     "AgentRun",
     "ContextScopeCommand",
