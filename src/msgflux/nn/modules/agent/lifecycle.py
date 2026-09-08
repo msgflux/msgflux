@@ -352,6 +352,15 @@ class AgentLifecycleMixin:
             run.run_id = state["scope"].run_id
             run.parent_run_id = state["scope"].parent_run_id
             run.root_run_id = state["scope"].root_run_id
+            messages = inputs.get("messages")
+            if isinstance(messages, ChatMessages):
+                branch = (
+                    messages.metadata.get("runtime", {})
+                    .get("context_scopes", {})
+                    .get("active")
+                )
+                if branch is not None:
+                    run.branch_id = branch
 
     def _output_context(self, output: Any) -> OutputContext:
         state = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self), {})

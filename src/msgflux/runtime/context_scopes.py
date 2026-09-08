@@ -142,12 +142,14 @@ class ContextScopeController:
             return ScopeTransition(
                 "open", name, active, False, scopes["revision"], summary
             )
-        self._sync_active(messages, scopes)
         branch_id = f"{active}/{name}" if active != "root" else name
         if branch_id in scopes["branches"]:
             raise ContextScopeConflictError(
                 f"Context branch `{branch_id}` already exists"
             )
+        if summary:
+            messages.add_assistant_response(content=summary)
+        self._sync_active(messages, scopes)
         parent_items = deepcopy(messages._items)
         scopes["stack"].append({"name": name, "branch_id": branch_id, "parent": active})
         scopes["branches"][branch_id] = {
@@ -160,8 +162,6 @@ class ContextScopeController:
         scopes["revision"] += 1
         messages.metadata[_RUNTIME_KEY][_SCOPE_KEY] = scopes
         messages._items = parent_items
-        if summary:
-            messages.add_assistant_response(content=summary)
         self._sync_active(messages, scopes)
         if self.run is not None:
             self.run.branch_id = branch_id
@@ -180,6 +180,15 @@ class ContextScopeController:
         scopes = self._metadata(messages)
         self._check_revision(scopes, expected_revision)
         active = scopes["active"]
+        if name is not None and any(
+            branch.get("name") == name
+            and branch.get("parent") == active
+            and branch.get("closed") is True
+            for branch in scopes["branches"].values()
+        ):
+            return ScopeTransition(
+                "close", name, active, False, scopes["revision"], summary
+            )
         if active == "root":
             if name in (None, "root"):
                 return ScopeTransition(
@@ -188,17 +197,6 @@ class ContextScopeController:
             raise ContextScopeConflictError(f"Context scope `{name}` is not active")
         frame = scopes["stack"][-1]
         if name is not None and name != frame["name"]:
-            archived = [
-                branch
-                for branch in scopes["branches"].values()
-                if branch.get("name") == name
-                and branch.get("parent") == active
-                and branch.get("closed") is True
-            ]
-            if archived:
-                return ScopeTransition(
-                    "close", name, active, False, scopes["revision"], summary
-                )
             raise ContextScopeConflictError(
                 f"Cannot close scope `{name}` while `{frame['name']}` is active"
             )

@@ -16,7 +16,7 @@ def open_context_scope(
     return {
         "type": "context_scope_transition",
         "action": "open",
-        "name": name,
+        "name": name or None,
         "summary": summary or None,
     }
 
@@ -30,7 +30,7 @@ def close_context_scope(
     return {
         "type": "context_scope_transition",
         "action": "close",
-        "name": name,
+        "name": name or None,
         "summary": summary or None,
     }
 
