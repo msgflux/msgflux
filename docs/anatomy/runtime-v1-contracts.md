@@ -1,7 +1,8 @@
 # Runtime v1 contracts
 
 Status: incremental implementation. This RFC separates implemented foundations
-from follow-up work; it does not claim host isolation or durable approval support.
+from follow-up work; it does not claim host isolation or end-to-end Agent
+approval support.
 
 ## Boundaries
 
@@ -72,6 +73,39 @@ of the capability labels declared here. Provider-hosted tools require separate
 gating at request compilation; local tool checks cannot intercept remote effects.
 
 ## Approval contract: follow-up
+
+### Implemented prerequisite: durable decision storage
+
+Branch: `feat/durable-approval-store`. This implements the storage prerequisite before
+exposing an Agent approval policy. The API is experimental and host-operated;
+it does not suspend tools, grant capabilities, or attach to watch snapshots yet.
+
+Implementation order and affected files:
+
+1. `runtime/approvals/`: immutable call bindings and records, shared transition
+   rules and typed conflicts. Bind namespace/thread/run/principal, call and tool
+   identity, tool revision, policy version, public argument and resource digests,
+   required capabilities, and an absolute expiration time. Never persist raw
+   arguments or injected runtime values in this journal.
+2. `runtime/approvals/providers/`: memory and SQLite implementations sharing
+   those rules; atomic record + append-only audit transitions and one-use
+   consumption. SQLite must arbitrate independent connections/processes.
+3. Runtime exports and `data/stores/{types,store,__init__}.py`: use the existing
+   typed factory/registry pattern, without new dependencies.
+4. `tests/test_approval_store.py`: shared provider conformance, strict binding,
+   expiry, decision conflicts, live-authority revalidation, concurrency,
+   restart and rollback. Validate async wrappers against the same transitions.
+5. Existing `docs/learn/nn/agent/runtime.md`: executable host-side example and
+   explicit security/lifecycle limitations; no navigation edits are needed.
+
+Risks: approving a changed invocation, replaying a consumed decision, reviving
+expired authority, returning a mutable record, and committing state without its
+audit event. Clock and database integrity belong to the trusted host. Digests
+bind data but are not encryption. Consumption commits before external effects;
+a crash after consumption must not automatically retry an external action.
+The following increment must connect Agent pending calls, checkpoint pause,
+decision routing, timeout, and watcher snapshots before advertising
+`require_approval` or end-to-end durable resumption.
 
 Approval requests must bind principal, run, tool identity, canonical public
 arguments, resource constraints, expiry and an application policy version.

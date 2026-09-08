@@ -9,10 +9,15 @@ from msgflux.data.stores.providers import (
     SQLiteCheckpointStore,
 )
 from msgflux.data.stores.store import Store
-from msgflux.data.stores.types import AgentInboxStoreType, CheckpointStoreType
+from msgflux.data.stores.types import (
+    AgentInboxStoreType,
+    ApprovalStoreType,
+    CheckpointStoreType,
+)
 
 __all__ = [
     "AgentInboxStoreType",
+    "ApprovalStoreType",
     "AsyncCheckpointStore",
     "CheckpointCommit",
     "CheckpointConflictError",

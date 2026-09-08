@@ -14,6 +14,16 @@ from msgflux.runtime.agent_run import (
     get_agent_run,
     get_current_agent_run,
 )
+from msgflux.runtime.approvals import (
+    ApprovalBinding,
+    ApprovalConflictError,
+    ApprovalEvent,
+    ApprovalExpiredError,
+    ApprovalRecord,
+    ApprovalStore,
+    InMemoryApprovalStore,
+    SQLiteApprovalStore,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -53,6 +63,14 @@ from msgflux.runtime.skills import (
 )
 
 __all__ = [
+    "ApprovalBinding",
+    "ApprovalConflictError",
+    "ApprovalEvent",
+    "ApprovalExpiredError",
+    "ApprovalRecord",
+    "ApprovalStore",
+    "InMemoryApprovalStore",
+    "SQLiteApprovalStore",
     "PermissionSet",
     "AgentControlMessage",
     "AgentRun",

@@ -12,7 +12,8 @@ class Store:
     def providers(cls) -> dict[str, list[str]]:
         # Import lazily so inbox providers register without creating package
         # initialization cycles.
-        import msgflux.runtime.agent_inbox  # noqa: F401, PLC0415
+        import msgflux.runtime.agent_inbox  # noqa: PLC0415
+        import msgflux.runtime.approvals  # noqa: F401, PLC0415
 
         return {
             store_type: list(providers)
@@ -41,3 +42,9 @@ class Store:
     @classmethod
     def checkpoint(cls, provider: str, **kwargs: Any) -> Any:
         return cls._create("checkpoint", provider, **kwargs)
+
+    @classmethod
+    def approval(cls, provider: str, **kwargs: Any) -> Any:
+        import msgflux.runtime.approvals  # noqa: F401, PLC0415
+
+        return cls._create("approval", provider, **kwargs)

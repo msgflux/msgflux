@@ -664,6 +664,120 @@ grants. Restoring a checkpoint never restores authority: the application must
 supply current grants on resume. Capability names have no wildcard semantics.
 These grants are authorization metadata, not an operating-system sandbox.
 
+## Approval journal (experimental)
+
+`Store.approval(...)` records host-created approval requests and decisions. It is
+a storage prerequisite, **not** an Agent approval policy: it does not pause a
+tool, resume a checkpoint, add permissions, or publish requests through `watch()`.
+
+Available providers are `in_memory` (process-local) and `sqlite` (persistent,
+including independent worker processes). Both use the same transition rules.
+
+```python
+import time
+from uuid import uuid4
+
+from msgflux.data.stores import Store
+from msgflux.runtime import ApprovalBinding, ExecutionScope, PermissionSet, execution_context
+
+store = Store.approval("sqlite", path=".msgflux/approvals.sqlite3")
+request_id = uuid4().hex
+binding = ApprovalBinding.from_call(
+    namespace="catalog", thread_id="thread:42", run_id="run:1",
+    principal="user:42", tool_call_id="call:1", tool_name="update_catalog",
+    tool_revision="implementation:v1", policy_version="policy:v1",
+    arguments={"sku": "ABC", "quantity": 3},
+    resources={"catalog_id": "warehouse:1"},
+    required_permissions=("catalog.write",),
+)
+
+try:
+    requested = store.request(
+        binding, request_id=request_id, expires_at=time.time() + 300,
+    )
+    pending = store.pending("catalog", "thread:42", "run:1")
+
+    # Only after authenticating the reviewer and receiving their actual decision:
+    decided = store.decide(
+        "catalog", request_id, approved=True, decided_by="reviewer:7",
+    )
+
+    # The host must recompute the binding from the current invocation and policy.
+    # This example retains the same binding because neither has changed.
+    with execution_context(scope=ExecutionScope(
+        namespace="catalog", thread_id="thread:42", run_id="run:1",
+        principal="user:42", permissions=PermissionSet(["catalog.write"]),
+    )):
+        receipt = store.consume(request_id, binding=binding)
+
+    audit = store.events("catalog", request_id)
+finally:
+    store.close()
+```
+
+This example creates a five-minute request, records a host-authenticated decision,
+and consumes it once. It deliberately performs no external action. The journal
+contains the `pending`, `approved`, and `consumed` revisions. A second consumption
+raises `ApprovalConflictError`, even from another process. `approved=False`
+records a terminal denial. Repeating the same request ID and binding/deadline or
+the same decision/reviewer is idempotent; conflicting retries are rejected.
+
+### Binding and authority
+
+Bindings include execution identity, principal, tool-call identity, a host-owned
+implementation revision, policy version, required capabilities, and SHA-256
+digests of canonical public arguments and resource constraints. Any change needs
+a new request; a request cannot be reused in another run or namespace. Argument
+objects must contain JSON values with string keys: custom objects, tuples, and
+non-finite numbers are rejected. Dictionary order does not change the digest.
+
+The journal does not store original arguments, resource values, injected runtime
+inputs, or a copy of the live grants. Keep invocation data in appropriately
+protected application state when it is needed for review or resumption. Digests
+are not encryption and may reveal low-entropy values through guessing; restrict
+database access and avoid sensitive text in identifiers.
+
+`consume` compares the supplied binding with the stored request and checks the
+live principal, namespace, thread/run, and required capabilities. Approval alone
+never widens authority. The host must recompute current arguments, resource
+constraints and policy/implementation versions, authenticate reviewers, authorize
+access to the journal, and enforce actual resource or sandbox restrictions.
+Do not expose `decide` directly as a model tool or accept reviewer identity from
+an unauthenticated request.
+
+### Expiration, recovery, and async calls
+
+Deadlines use absolute Unix seconds. `get`, `pending`, decision and consumption
+operations record expiration when they encounter an elapsed pending/approved
+request; no timer or background sweeper is installed. A recorded expiration
+cannot be reversed by a clock rollback. The host owns clock correctness.
+`ApprovalExpiredError` is a subclass of `ApprovalConflictError`.
+
+SQLite commits the current record and its append-only audit revision in one
+transaction. Reopening the database preserves decisions and used requests.
+`pending` is a polling view, not a gap-free, atomic watcher snapshot; audit
+revisions are per request, not cursors for the global execution stream. There is
+no automatic journal retention or deletion policy in this API.
+
+All operations have async counterparts: `arequest`, `aget`, `apending`, `adecide`,
+`aconsume`, `aevents`, and `aclose`. They run storage operations in worker threads
+and preserve execution context. For example, within the same live scope:
+
+```python
+receipt = await store.aconsume(request_id, binding=current_binding)
+```
+
+Use this **instead of** synchronous consumption for that request. It performs
+the same binding and live-authority checks and does not execute the tool.
+
+!!! warning "Consumption is not exactly-once execution"
+    Cancelling an async wait does not undo an already committed transaction.
+    A crash after consumption but before an external action leaves the request
+    consumed. Do not automatically execute or retry an action merely because a
+    record says `consumed`: external idempotency or reconciliation is still
+    required. This API neither coordinates an Agent checkpoint transaction nor
+    deduplicates every invocation across different approval request IDs.
+
 ## Abort Signal
 
 `AbortSignal` is local runtime cancellation for the currently active process.
