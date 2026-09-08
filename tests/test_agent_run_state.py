@@ -98,3 +98,25 @@ async def test_concurrent_runs_have_separate_durable_state():
     for i in range(3):
         state = store.load_state("state", "thread", f"run-{i}")
         assert state["runtime"]["extensions"]["counter"]["count"] == 1
+
+
+def test_fork_resume_commits_only_to_target_run_and_preserves_lineage():
+    store = InMemoryCheckpointStore()
+    agent = make_agent(store, Counter())
+    agent("start", scope=ExecutionScope(thread_id="thread", run_id="source"))
+    source = store.load_state("state", "thread", "source")
+    forked = store.fork_run(
+        "state",
+        "thread",
+        "source",
+        target_thread_id="fork-thread",
+        target_run_id="fork",
+        status="running",
+    )
+    assert forked["runtime"]["run_id"] == "fork"
+    agent(scope=ExecutionScope(thread_id="fork-thread", run_id="fork"))
+    assert store.load_state("state", "thread", "source") == source
+    target = store.load_state("state", "fork-thread", "fork")
+    assert target["status"] == "completed"
+    assert target["_checkpoint"]["fork_of"]["run_id"] == "source"
+    assert target["runtime"]["parent_run_id"] == "source"

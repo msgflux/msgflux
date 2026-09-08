@@ -680,6 +680,32 @@ guarantee.
 active branch so extensions can resume without allocating a new run or resetting
 limits.
 
+```python
+from msgflux.data.stores import InMemoryCheckpointStore
+
+store = InMemoryCheckpointStore()
+first = store.commit_state(
+    "agent", "thread", "run", {"status": "running"},
+    expected_revision=0, event={"event_type": "checkpoint"},
+)
+second = store.commit_state(
+    "agent", "thread", "run", {"status": "completed"},
+    expected_revision=first.revision, event={"event_type": "checkpoint"},
+)
+```
+
+This example atomically writes each snapshot and its event. Reusing
+`first.revision` after the second commit raises `CheckpointConflictError`.
+Invalid metadata or failed payload preparation does not publish a new revision.
+The Agent uses this operation automatically with the built-in stores; direct
+`save_state()` remains a legacy, unconditional snapshot operation.
+
+Forks record `fork_of` provenance, reset the destination revision, and retarget
+runtime identity to the destination run. A preserved scope tree retains its
+active branch; an ordinary history starts at `root`. Resuming the fork writes
+to the target run, never to its source. `load_latest_run()` selects the latest
+updated **run**, not a context branch; the active branch lives in run metadata.
+
 ## Context scopes
 
 Context scopes are nested conversation branches within the same execution. They
@@ -704,7 +730,9 @@ agent = Agent(
 )
 ```
 
-The tools emit a typed transition command. The Agent applies it after every call
+The tools emit a command mapping tagged as `context_scope_transition`. Only tools
+registered with `tool_kind="context_scope"` may request transitions, and their
+calls must be exclusive within a batch. The Agent applies the command after every call
 and output in the current batch has settled, so a scope change cannot split a
 partially completed tool batch. Applications can apply the same command directly:
 

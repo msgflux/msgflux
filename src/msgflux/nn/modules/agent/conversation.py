@@ -1186,7 +1186,9 @@ class AgentConversationMixin:
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
         restored._hydrate_state(state.get("messages", {}))
-        if restored.get_active_turn() is None and restored.turns:
+        if not restored.turns or restored.turns[-1]["turn_id"] != run_id:
+            restored.begin_turn(turn_id=run_id)
+        elif restored.get_active_turn() is None:
             restored.resume_turn(run_id, metadata={"source": "checkpoint"})
         effective_scope = (scope or get_execution_context()["scope"]).with_overrides(
             thread_id=effective_thread_id,
@@ -1243,7 +1245,9 @@ class AgentConversationMixin:
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
         restored._hydrate_state(state.get("messages", {}))
-        if restored.get_active_turn() is None and restored.turns:
+        if not restored.turns or restored.turns[-1]["turn_id"] != run_id:
+            restored.begin_turn(turn_id=run_id)
+        elif restored.get_active_turn() is None:
             restored.resume_turn(run_id, metadata={"source": "checkpoint"})
         effective_scope = (scope or get_execution_context()["scope"]).with_overrides(
             thread_id=effective_thread_id,

@@ -34,7 +34,6 @@ from msgflux._private.chat_items import (
 )
 from msgflux.data.stores.base import (
     CheckpointCommit,
-    CheckpointConflictError,
     CheckpointStore,
 )
 from msgflux.data.stores.registry import register_store
@@ -84,9 +83,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         if not isinstance(items, list):
             return normalized
 
-        item_store = self._message_items.setdefault(namespace, {}).setdefault(
-            thread_id, {}
-        )
+        item_store = {}
         item_entries = []
         item_ids: set[str] = set()
         for index, item in enumerate(items):
@@ -111,6 +108,9 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             "state": message_state,
             "item_entries": item_entries,
         }
+        self._message_items.setdefault(namespace, {}).setdefault(thread_id, {}).update(
+            item_store
+        )
         return normalized
 
     def _denormalize_state(
@@ -272,24 +272,15 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if status is not None:
                 forked["status"] = status
-            checkpoint = forked.get("_checkpoint")
-            self._validate_checkpoint_envelope(checkpoint)
-            source_checkpoint = dict(checkpoint or {})
-            forked["_checkpoint"] = {
-                "schema_version": 1,
-                "revision": 0,
-                "branch_id": "root",
-                "head_item_id": None,
-                "extensions": source_checkpoint.get("extensions", {}),
-                "fork_of": {
-                    "namespace": namespace,
-                    "thread_id": source_thread_id,
-                    "run_id": source_run_id,
-                    "item_id": at_item_id,
-                    "branch_id": source_checkpoint.get("branch_id"),
-                    "head_item_id": source_checkpoint.get("head_item_id"),
-                },
-            }
+            self._set_fork_metadata(
+                forked,
+                namespace=namespace,
+                source_thread_id=source_thread_id,
+                source_run_id=source_run_id,
+                target_thread_id=target_thread_id,
+                target_run_id=target_run_id,
+                at_item_id=at_item_id,
+            )
 
             messages = forked.get("messages")
             if isinstance(messages, dict):
@@ -339,48 +330,22 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 if run is not None
                 else {}
             )
-            checkpoint = current.get("_checkpoint", {})
-            self._validate_checkpoint_envelope(checkpoint)
-            revision = checkpoint.get("revision", 0)
-            if expected_revision is not None and revision != expected_revision:
-                raise CheckpointConflictError(
-                    f"Checkpoint revision conflict: expected {expected_revision}, "
-                    f"found {revision}."
-                )
-            next_revision = revision + 1
+            committed, next_revision = self._prepare_revision_state(
+                state,
+                current,
+                expected_revision=expected_revision,
+                branch_id=branch_id,
+                head_item_id=head_item_id,
+                extension_state=extension_state,
+            )
+            prepared_event = deepcopy(dict(event)) if event is not None else None
+            normalized = self._normalize_state(namespace, thread_id, committed)
             if run is None:
                 run = self._ensure_run(namespace, thread_id, run_id)
-            committed = deepcopy(dict(state))
-            runtime = committed.get("runtime")
-            if isinstance(runtime, Mapping):
-                runtime = dict(runtime)
-                runtime["revision"] = next_revision
-                if branch_id is not None:
-                    runtime["branch_id"] = branch_id
-                if head_item_id is not None:
-                    runtime["head_item_id"] = head_item_id
-                committed["runtime"] = runtime
-            committed["_checkpoint"] = {
-                "schema_version": 1,
-                "revision": next_revision,
-                "branch_id": branch_id
-                if branch_id is not None
-                else checkpoint.get("branch_id"),
-                "head_item_id": head_item_id
-                if head_item_id is not None
-                else checkpoint.get("head_item_id"),
-                "extensions": deepcopy(
-                    dict(
-                        checkpoint.get("extensions", {})
-                        if extension_state is None
-                        else extension_state
-                    )
-                ),
-            }
-            run["state"] = self._normalize_state(namespace, thread_id, committed)
+            run["state"] = normalized
             run["updated_at"] = time.time()
-            if event is not None:
-                run["events"].append(deepcopy(dict(event)))
+            if prepared_event is not None:
+                run["events"].append(prepared_event)
             return CheckpointCommit(
                 next_revision,
                 committed,

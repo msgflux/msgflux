@@ -26,7 +26,6 @@ import hashlib
 import json
 import sqlite3
 import time
-from copy import deepcopy
 from functools import wraps
 from pathlib import Path
 from threading import RLock
@@ -38,7 +37,6 @@ from msgflux._private.chat_items import (
 )
 from msgflux.data.stores.base import (
     CheckpointCommit,
-    CheckpointConflictError,
     CheckpointStore,
 )
 from msgflux.data.stores.registry import register_store
@@ -471,43 +469,14 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             current = (
                 self._denormalize_state(namespace, thread_id, row[0]) if row else {}
             )
-            checkpoint = current.get("_checkpoint", {})
-            self._validate_checkpoint_envelope(checkpoint)
-            revision = checkpoint.get("revision", 0)
-            if expected_revision is not None and revision != expected_revision:
-                self._conn.rollback()
-                raise CheckpointConflictError(
-                    f"Checkpoint revision conflict: expected {expected_revision}, "
-                    f"found {revision}."
-                )
-            next_revision = revision + 1
-            committed = deepcopy(dict(state))
-            runtime = committed.get("runtime")
-            if isinstance(runtime, Mapping):
-                runtime = dict(runtime)
-                runtime["revision"] = next_revision
-                if branch_id is not None:
-                    runtime["branch_id"] = branch_id
-                if head_item_id is not None:
-                    runtime["head_item_id"] = head_item_id
-                committed["runtime"] = runtime
-            committed["_checkpoint"] = {
-                "schema_version": 1,
-                "revision": next_revision,
-                "branch_id": branch_id
-                if branch_id is not None
-                else checkpoint.get("branch_id"),
-                "head_item_id": head_item_id
-                if head_item_id is not None
-                else checkpoint.get("head_item_id"),
-                "extensions": deepcopy(
-                    dict(
-                        checkpoint.get("extensions", {})
-                        if extension_state is None
-                        else extension_state
-                    )
-                ),
-            }
+            committed, next_revision = self._prepare_revision_state(
+                state,
+                current,
+                expected_revision=expected_revision,
+                branch_id=branch_id,
+                head_item_id=head_item_id,
+                extension_state=extension_state,
+            )
             normalized = self._normalize_state(
                 namespace, thread_id, committed, now, executor=cur
             )
@@ -582,24 +551,15 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         )
         if status is not None:
             state["status"] = status
-        checkpoint = state.get("_checkpoint")
-        self._validate_checkpoint_envelope(checkpoint)
-        source_checkpoint = dict(checkpoint or {})
-        state["_checkpoint"] = {
-            "schema_version": 1,
-            "revision": 0,
-            "branch_id": "root",
-            "head_item_id": None,
-            "extensions": source_checkpoint.get("extensions", {}),
-            "fork_of": {
-                "namespace": namespace,
-                "thread_id": source_thread_id,
-                "run_id": source_run_id,
-                "item_id": at_item_id,
-                "branch_id": source_checkpoint.get("branch_id"),
-                "head_item_id": source_checkpoint.get("head_item_id"),
-            },
-        }
+        self._set_fork_metadata(
+            state,
+            namespace=namespace,
+            source_thread_id=source_thread_id,
+            source_run_id=source_run_id,
+            target_thread_id=target_thread_id,
+            target_run_id=target_run_id,
+            at_item_id=at_item_id,
+        )
         messages = state.get("messages")
         if isinstance(messages, dict):
             messages["thread_id"] = target_thread_id

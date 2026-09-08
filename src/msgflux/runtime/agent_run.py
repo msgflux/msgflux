@@ -34,10 +34,18 @@ class AgentRun:
     extension_state: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.revision < 0:
+        if (
+            isinstance(self.revision, bool)
+            or not isinstance(self.revision, int)
+            or self.revision < 0
+        ):
             raise ValueError("`revision` must be non-negative")
         if not self.branch_id or not isinstance(self.branch_id, str):
             raise ValueError("`branch_id` must be a non-empty string")
+        if not isinstance(self.budgets, Mapping) or not isinstance(
+            self.extension_state, Mapping
+        ):
+            raise ValueError("AgentRun budgets and extensions must be mappings")
         self.budgets = deepcopy(dict(self.budgets))
         self.extension_state = deepcopy(dict(self.extension_state))
 
@@ -80,8 +88,12 @@ class AgentRun:
     ) -> AgentRun:
         if not isinstance(state, Mapping):
             return cls(namespace=namespace, thread_id=thread_id, run_id=run_id)
-        schema_version = int(state.get("schema_version", 1))
-        if schema_version > 1:
+        schema_version = state.get("schema_version", 1)
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version != 1
+        ):
             raise ValueError(f"Unsupported AgentRun schema version `{schema_version}`")
         return cls(
             namespace=state.get("namespace", namespace),
@@ -89,7 +101,7 @@ class AgentRun:
             run_id=state.get("run_id", run_id),
             parent_run_id=state.get("parent_run_id"),
             root_run_id=state.get("root_run_id"),
-            revision=int(state.get("revision", 0)),
+            revision=state.get("revision", 0),
             branch_id=state.get("branch_id", "root"),
             head_item_id=state.get("head_item_id"),
             budgets=state.get("budgets", {}),

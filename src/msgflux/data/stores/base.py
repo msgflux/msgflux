@@ -23,6 +23,8 @@ class CheckpointCommit:
 
 
 class CheckpointStore(ABC):
+    """Snapshots and append-only events keyed by namespace, thread and run."""
+
     supports_atomic_commit = False
 
     @staticmethod
@@ -35,7 +37,7 @@ class CheckpointStore(ABC):
         schema_version = checkpoint.get("schema_version", 1)
         if not isinstance(schema_version, int) or isinstance(schema_version, bool):
             raise ValueError("Checkpoint schema_version must be an integer")
-        if schema_version > 1:
+        if schema_version != 1:
             raise ValueError(
                 f"Unsupported checkpoint schema version `{schema_version}`"
             )
@@ -43,12 +45,8 @@ class CheckpointStore(ABC):
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
             raise ValueError("Checkpoint revision must be a non-negative integer")
         branch_id = checkpoint.get("branch_id")
-        if branch_id is not None and (
-            not isinstance(branch_id, str) or not branch_id
-        ):
-            raise ValueError(
-                "Checkpoint branch_id must be a non-empty string or null"
-            )
+        if branch_id is not None and (not isinstance(branch_id, str) or not branch_id):
+            raise ValueError("Checkpoint branch_id must be a non-empty string or null")
         head_item_id = checkpoint.get("head_item_id")
         if head_item_id is not None and (
             not isinstance(head_item_id, str) or not head_item_id
@@ -59,11 +57,66 @@ class CheckpointStore(ABC):
         extensions = checkpoint.get("extensions", {})
         if not isinstance(extensions, Mapping):
             raise ValueError("Checkpoint extensions must be a mapping")
-    """Unified store for agent and pipeline checkpoints.
 
-    The key is always `(namespace, thread_id, run_id)`. State snapshots use
-    UPSERT semantics while events remain append-only.
-    """
+    @classmethod
+    def _prepare_revision_state(
+        cls,
+        state,
+        current,
+        *,
+        expected_revision,
+        branch_id,
+        head_item_id,
+        extension_state,
+    ) -> tuple[dict[str, Any], int]:
+        """Prepare and validate a new snapshot without publishing any writes."""
+        checkpoint = current.get("_checkpoint", {})
+        cls._validate_checkpoint_envelope(checkpoint)
+        cls._validate_checkpoint_envelope(state.get("_checkpoint"))
+        revision = checkpoint.get("revision", 0)
+        if expected_revision is not None:
+            if (
+                isinstance(expected_revision, bool)
+                or not isinstance(expected_revision, int)
+                or expected_revision < 0
+            ):
+                raise ValueError("expected_revision must be a non-negative integer")
+            if expected_revision != revision:
+                raise CheckpointConflictError(
+                    f"Checkpoint revision conflict: expected {expected_revision}, "
+                    f"found {revision}."
+                )
+        committed = deepcopy(dict(state))
+        runtime = committed.get("runtime", {})
+        if not isinstance(runtime, Mapping):
+            raise ValueError("Checkpoint runtime must be a mapping")
+        envelope = {
+            **deepcopy(dict(checkpoint)),
+            "schema_version": 1,
+            "revision": revision + 1,
+            "branch_id": branch_id
+            if branch_id is not None
+            else runtime.get("branch_id", checkpoint.get("branch_id")),
+            "head_item_id": head_item_id
+            if head_item_id is not None
+            else runtime.get("head_item_id", checkpoint.get("head_item_id")),
+            "extensions": deepcopy(
+                extension_state
+                if extension_state is not None
+                else runtime.get("extensions", checkpoint.get("extensions", {}))
+            ),
+        }
+        cls._validate_checkpoint_envelope(envelope)
+        committed["_checkpoint"] = envelope
+        if "runtime" in committed:
+            committed["runtime"] = {
+                **runtime,
+                "revision": envelope["revision"],
+                "branch_id": envelope["branch_id"],
+                "head_item_id": envelope["head_item_id"],
+                "extensions": deepcopy(envelope["extensions"]),
+            }
+        return committed, revision + 1
 
     @abstractmethod
     def save_state(
@@ -179,24 +232,15 @@ class CheckpointStore(ABC):
             messages["thread_id"] = target_thread_id
         if status is not None:
             forked["status"] = status
-        checkpoint = forked.get("_checkpoint")
-        self._validate_checkpoint_envelope(checkpoint)
-        source_checkpoint = dict(checkpoint or {})
-        forked["_checkpoint"] = {
-            "schema_version": 1,
-            "revision": 0,
-            "branch_id": "root",
-            "head_item_id": None,
-            "extensions": source_checkpoint.get("extensions", {}),
-            "fork_of": {
-                "namespace": namespace,
-                "thread_id": source_thread_id,
-                "run_id": source_run_id,
-                "item_id": at_item_id,
-                "branch_id": source_checkpoint.get("branch_id"),
-                "head_item_id": source_checkpoint.get("head_item_id"),
-            },
-        }
+        self._set_fork_metadata(
+            forked,
+            namespace=namespace,
+            source_thread_id=source_thread_id,
+            source_run_id=source_run_id,
+            target_thread_id=target_thread_id,
+            target_run_id=target_run_id,
+            at_item_id=at_item_id,
+        )
         self.save_state(namespace, target_thread_id, target_run_id, forked)
         loaded = self.load_state(namespace, target_thread_id, target_run_id)
         if loaded is None:
@@ -204,6 +248,56 @@ class CheckpointStore(ABC):
                 f"Forked checkpoint `{target_run_id}` could not be loaded."
             )
         return loaded
+
+    @classmethod
+    def _set_fork_metadata(
+        cls,
+        state,
+        *,
+        namespace,
+        source_thread_id,
+        source_run_id,
+        target_thread_id,
+        target_run_id,
+        at_item_id,
+    ) -> None:
+        source = state.get("_checkpoint", {})
+        cls._validate_checkpoint_envelope(source)
+        messages = state.get("messages", {})
+        items = messages.get("items", [])
+        scopes = (
+            messages.get("metadata", {}).get("runtime", {}).get("context_scopes", {})
+        )
+        branch = scopes.get("active", "root")
+        head = items[-1].get("item_id") if items else None
+        state["_checkpoint"] = {
+            "schema_version": 1,
+            "revision": 0,
+            "branch_id": branch,
+            "head_item_id": head,
+            "extensions": source.get("extensions", {}),
+            "fork_of": {
+                "namespace": namespace,
+                "thread_id": source_thread_id,
+                "run_id": source_run_id,
+                "item_id": at_item_id,
+                "branch_id": source.get("branch_id"),
+                "head_item_id": source.get("head_item_id"),
+            },
+        }
+        for key in ("runtime", "scope"):
+            if isinstance(state.get(key), Mapping):
+                value = dict(state[key])
+                value.update(
+                    namespace=namespace,
+                    thread_id=target_thread_id,
+                    run_id=target_run_id,
+                    parent_run_id=source_run_id,
+                    root_run_id=value.get("root_run_id") or source_run_id,
+                )
+                if key == "runtime":
+                    value.update(revision=0, branch_id=branch, head_item_id=head)
+                state[key] = value
 
     @classmethod
     def _prepare_fork_state(

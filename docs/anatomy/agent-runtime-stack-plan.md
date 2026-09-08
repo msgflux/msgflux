@@ -12,6 +12,8 @@ Existing uncommitted work in the original checkout is excluded.
 | 4 | `feat/agent-tool-turn-extension` | Extensions and shared loop policy: terminal tool-turn budget, last-round context notice, persisted counters and structured stop reason; no repeated finalization requests. Tests: sync/async, native/flow, resume. |
 | 5 | `feat/agent-incremental-output` | Output streaming contract and artifact-reference renderer: bounded marker buffering, immutable registered artifacts, canonical/rendered separation. Tests: arbitrary chunk boundaries, escapes, malformed/missing references, cancellation and event parity. |
 | 6 | `feat/agent-context-scopes` | Conversation branch controller and builtin scope tools: inherit prefix, exclusive safe transitions, nested return points, summary import and idempotent close, revision checks. Tests: open/close/nesting/recovery, call-output pairing, budget inheritance, compaction and inbox interaction. |
+| 7 | `fix/agent-inbox-leases` | Validation follow-up: selectively release rejected notifications without releasing retained receipts in the same lease; regression tests for both stores. |
+| 8 | `fix/agent-checkpoint-atomicity` | Validation follow-up: shared revision metadata preparation, fail before publishing invalid state/events, retain fork provenance and resume under the target identity. |
 
 ## Implementation rules
 
@@ -39,4 +41,16 @@ report any environment limitation explicitly. Do not claim exactly-once
 external effects: recovery must retain evidence and avoid silently replaying
 unknown in-flight effects. Durable distributed event replay and a general
 external-effect reconciliation engine remain separate extensions of this work;
-the concrete scope is the six deliverables above.
+the concrete scope is the six deliverables above and their validation fixes.
+
+## Local validation
+
+The integrated stack is developed in `/tmp/msgflux-runtime-stack-R2bOK7` to leave
+the original checkout's uncommitted files untouched. Branches and commits are
+local; no push or PR submission is part of this handoff.
+
+Validation commands use `uv run` with the existing project environment and
+`PYTHONPATH=src` to test this worktree. Run the offline suite with
+`pytest -q --ignore=tests/integration`; the integration directory includes live
+provider tests that construct clients during collection and require credentials.
+Also run repository-wide `ruff check`, `ruff format --check`, and `mkdocs build`.
