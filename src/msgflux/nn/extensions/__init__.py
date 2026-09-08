@@ -4,13 +4,13 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from msgflux.nn.extensions.base import AgentExtension, AgentExtensionHandle
     from msgflux.nn.extensions.artifact import (
         Artifact,
         ArtifactExtension,
         ArtifactReferenceRenderer,
         ArtifactRegistry,
     )
+    from msgflux.nn.extensions.base import AgentExtension, AgentExtensionHandle
     from msgflux.nn.extensions.compaction import (
         CONTEXT_COMPACTION_CAPABILITY,
         CompactionExtension,
@@ -63,7 +63,10 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
-    "ToolTurnLimitExtension": ("msgflux.nn.extensions.limits", "ToolTurnLimitExtension"),
+    "ToolTurnLimitExtension": (
+        "msgflux.nn.extensions.limits",
+        "ToolTurnLimitExtension",
+    ),
     "AgentExtension": ("msgflux.nn.extensions.base", "AgentExtension"),
     "AgentExtensionHandle": (
         "msgflux.nn.extensions.base",
