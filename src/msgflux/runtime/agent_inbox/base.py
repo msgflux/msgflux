@@ -99,9 +99,10 @@ class AgentInboxStore(ABC, AgentInboxStoreType):
         run_id: str,
         *,
         lease_id: str,
+        notification_ids: Iterable[str] | None = None,
     ) -> None:
         """Release a claim so another consumer can retry it."""
-        del namespace, thread_id, run_id, lease_id
+        del namespace, thread_id, run_id, lease_id, notification_ids
 
     def move_notifications(
         self,

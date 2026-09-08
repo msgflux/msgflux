@@ -573,6 +573,31 @@ def test_agent_inbox_ack_only_removes_requested_ids():
     assert claimed
 
 
+@pytest.mark.parametrize("sqlite", [False, True])
+def test_partial_lease_release_keeps_delivered_notification_claimed(sqlite, tmp_path):
+    store = (
+        SQLiteAgentInboxStore(path=str(tmp_path / "inbox.sqlite"))
+        if sqlite
+        else InMemoryAgentInboxStore()
+    )
+    first = AgentInbox(store=store, namespace="agent", thread_id="thread", run_id="run")
+    second = first.fork()
+    delivered = first.user_message("delivered")
+    filtered = first.user_message("filtered")
+    first.claim()
+    first.mark_delivered([delivered.notification_id])
+    first.release(except_ids=[delivered.notification_id])
+    assert [item.notification_id for item in second.claim()] == [
+        filtered.notification_id
+    ]
+    first.ack([delivered.notification_id])
+    assert [item.notification_id for item in second.peek()] == [
+        filtered.notification_id
+    ]
+    if sqlite:
+        store.close()
+
+
 def test_agent_inbox_dedupe_replay_replaces_claimed_notification():
     inbox = _memory_inbox(namespace="assistant", thread_id="user_1", run_id="run_1")
     first = inbox.publish(

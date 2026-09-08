@@ -162,14 +162,18 @@ class InMemoryAgentInboxStore(AgentInboxStore):
         run_id: str,
         *,
         lease_id: str,
+        notification_ids: Iterable[str] | None = None,
     ) -> None:
+        ids = set(notification_ids) if notification_ids is not None else None
         with self._lock:
             run = self._get_run(namespace, thread_id, run_id)
             if run is None:
                 return
             claims = run.setdefault("claims", {})
             for notification_id, claim in list(claims.items()):
-                if claim.get("lease_id") == lease_id:
+                if claim.get("lease_id") == lease_id and (
+                    ids is None or notification_id in ids
+                ):
                     claims.pop(notification_id, None)
 
     def move_notifications(

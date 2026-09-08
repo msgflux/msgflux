@@ -280,14 +280,20 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         run_id: str,
         *,
         lease_id: str,
+        notification_ids: Iterable[str] | None = None,
     ) -> None:
+        ids = set(notification_ids) if notification_ids is not None else None
+        if ids is not None and not ids:
+            return
         with self._lock:
-            self._conn.execute(
-                """UPDATE agent_inbox_notifications SET status='pending', lease_id=NULL,
+            query = """UPDATE agent_inbox_notifications SET status='pending', lease_id=NULL,
                 lease_until=NULL, updated_at=? WHERE namespace=? AND thread_id=? AND
-                run_id=? AND lease_id=?""",
-                (time.time(), namespace, thread_id, run_id, lease_id),
-            )
+                run_id=? AND lease_id=?"""
+            params: list[object] = [time.time(), namespace, thread_id, run_id, lease_id]
+            if ids is not None:
+                query += f" AND notification_id IN ({','.join('?' for _ in ids)})"
+                params.extend(ids)
+            self._conn.execute(query, params)
             self._conn.commit()
 
     def move_notifications(

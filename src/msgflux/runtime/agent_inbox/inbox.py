@@ -282,12 +282,16 @@ class AgentInbox:
                 if notification_id not in preserved
                 and (lease_id is None or current_lease == lease_id)
             }
-            for current_lease in set(selected.values()):
+            by_lease: Dict[str, set[str]] = {}
+            for notification_id, current_lease in selected.items():
+                by_lease.setdefault(current_lease, set()).add(notification_id)
+            for current_lease, notification_ids in by_lease.items():
                 self.store.release_notifications(
                     self.namespace,
                     self.thread_id,
                     self.run_id,
                     lease_id=current_lease,
+                    notification_ids=notification_ids,
                 )
             self._claims = {
                 notification_id: current_lease
