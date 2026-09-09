@@ -10,6 +10,7 @@ from msgflux.data.stores import (
     InMemoryCheckpointStore,
     SQLiteCheckpointStore,
 )
+from msgflux.data.stores.base import CheckpointConflictError
 from msgflux.exceptions import TaskInterruptRequestedError, TaskPauseRequestedError
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
@@ -336,3 +337,111 @@ def test_competing_resume_cannot_repeat_in_flight_batch():
         assert running.result(timeout=5) == "done"
     assert calls == ["secret"]
     assert checkpoint.load_state("reviewer", "thread", "run")["status"] == "completed"
+
+
+@pytest.mark.parametrize("sqlite", [False, True])
+@pytest.mark.parametrize("abandon", [False, True])
+def test_host_reconciliation_is_atomic_and_idempotent(
+    tmp_path, monkeypatch, sqlite, abandon
+):
+    checkpoint = (
+        SQLiteCheckpointStore(str(tmp_path / "cp.db"))
+        if sqlite
+        else InMemoryCheckpointStore()
+    )
+    journal, calls = InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls)
+    with pytest.raises(TaskPauseRequestedError):
+        agent("lookup", scope=scope())
+    record = journal.pending("reviewer", "thread", "run")[0]
+    agent.decide_approval(record.request_id, approved=True, decided_by="human")
+
+    def crash(*args):
+        raise SystemExit("worker lost")
+
+    monkeypatch.setattr(agent, "_process_tool_intents", crash)
+    with pytest.raises(SystemExit):
+        agent("", scope=scope())
+    if sqlite:
+        checkpoint.close()
+
+        checkpoint = SQLiteCheckpointStore(str(tmp_path / "cp.db"))
+    restored = make_agent(checkpoint, journal, calls)
+    state = restored.inspect_approval_batch("thread", "run")
+    decision = {
+        "expected_revision": state["_checkpoint"]["revision"],
+        "decision_id": "repair:1",
+        "decided_by": "operator",
+        "reason": "checked external system",
+        "worker_stopped": True,
+        "abandon": abandon,
+        "results": None if abandon else {"call_1": "confirmed result"},
+    }
+    with pytest.raises(ValueError, match="stopped"):
+        restored.reconcile_approval_batch(
+            "thread", "run", **{**decision, "worker_stopped": False}
+        )
+    with pytest.raises(CheckpointConflictError):
+        restored.reconcile_approval_batch(
+            "thread", "run", **{**decision, "expected_revision": 0}
+        )
+    if not abandon:
+        with pytest.raises(ValueError, match="entire batch"):
+            restored.reconcile_approval_batch(
+                "thread", "run", **{**decision, "results": {}}
+            )
+    receipt = restored.reconcile_approval_batch("thread", "run", **decision)
+    assert restored.reconcile_approval_batch("thread", "run", **decision) == receipt
+    with pytest.raises(CheckpointConflictError):
+        restored.reconcile_approval_batch(
+            "thread", "run", **{**decision, "reason": "changed"}
+        )
+    events = checkpoint.load_events("reviewer", "thread", "run")
+    assert sum(e["event_type"] == "approval.reconciled" for e in events) == 1
+    if abandon:
+        with pytest.raises(ValueError, match="terminal"):
+            restored("", scope=scope())
+    else:
+        restored.generator.forward = Mock(return_value=text_response())
+        assert restored("", scope=scope()) == "done"
+        assert restored.reconcile_approval_batch("thread", "run", **decision) == receipt
+    assert calls == []
+    if sqlite:
+        checkpoint.close()
+
+
+@pytest.mark.asyncio
+async def test_async_reconciliation_rollback_and_stale_writer(monkeypatch):
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls)
+    with pytest.raises(TaskPauseRequestedError):
+        agent("lookup", scope=scope())
+    state = checkpoint.load_state("reviewer", "thread", "run")
+    state["runtime"]["extensions"]["pending_approvals"]["phase"] = "executing"
+    checkpoint.commit_state("reviewer", "thread", "run", state)
+    state = await agent.ainspect_approval_batch("thread", "run")
+    revision = state["_checkpoint"]["revision"]
+    decision = {
+        "expected_revision": revision,
+        "decision_id": "repair",
+        "decided_by": "host",
+        "reason": "verified",
+        "worker_stopped": True,
+        "results": {"call_1": "found"},
+    }
+    original = checkpoint.commit_state
+
+    def fail(*args, **kwargs):
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(checkpoint, "commit_state", fail)
+    with pytest.raises(OSError):
+        await agent.areconcile_approval_batch("thread", "run", **decision)
+    assert checkpoint.load_state("reviewer", "thread", "run") == state
+    monkeypatch.setattr(checkpoint, "commit_state", original)
+    await agent.areconcile_approval_batch("thread", "run", **decision)
+    with pytest.raises(CheckpointConflictError):
+        checkpoint.commit_state(
+            "reviewer", "thread", "run", state, expected_revision=revision
+        )
+    assert calls == []

@@ -175,6 +175,29 @@ Ruff and MkDocs; preserve unrelated user files and do not publish branches.
 
 ## Release gates
 
+## Recovery and durable observation implementation plan
+
+1. `feat/agent-approval-reconciliation`: host inspection and revision-checked
+   reconciliation of an uncertain whole batch. Record confirmed text results or
+   abandon the batch, never retry tools. Require explicit worker quiescence,
+   reviewer identity, reason and an idempotency key. Keep receipts and an audit
+   event in the same checkpoint transaction. Files: agent approvals mixin,
+   runtime approvals reconciliation helper, runtime learning page and tests.
+2. Durable observation: add a run-scoped cursor and atomic snapshot/read API to
+   checkpoint adapters, followed by a polling async observer. Persisted checkpoint
+   transitions are distinct from ephemeral model deltas and the live EventHub.
+   Files: store contracts, memory/SQLite adapters, Agent lifecycle, docs and
+   shared adapter tests. Missing/deleted streams and invalid cursors fail loudly.
+
+Risks: a live worker continuing external effects after reconciliation (the host
+must stop it; CAS only fences checkpoint writes), repeated/conflicting decisions,
+partial batch results, concurrent checkpoints, event gaps on reconnect and
+unbounded observer buffers. Test sync/async recovery, SQLite reopen, stale
+revisions, duplicate decisions, rollback, snapshot/cursor races and cancellation.
+Run focused tests, offline suite, Ruff and MkDocs. No external publishing.
+
+### Release checklist
+
 - Explicit stable/experimental/internal API classification and migration policy.
 - Mixed-model reference application exercising shared runtime contracts.
 - Permission conformance across supported invocation paths.

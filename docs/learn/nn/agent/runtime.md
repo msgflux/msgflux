@@ -891,7 +891,7 @@ Before dispatch, the Agent atomically checkpoints the batch as `executing`.
 Only a checkpoint containing the results clears that marker. A restart that
 finds `executing`, or an already consumed approval without results, **does not
 retry any tool in the batch**. The host must inspect external effects and
-reconcile the run. No automatic reconciliation API is exposed yet. Starting a
+reconcile the run using the host API below. Starting a
 new run is not a safe substitute unless the host has established that replaying
 the action is safe. Existing tool retry settings still apply within a single
 invocation; use explicit idempotency where external effects require it.
@@ -916,6 +916,48 @@ This prevents a competing resume from invalidating that worker's commit.
     Do not expose the decision method as a model tool. Keep the policy and stores
     configured throughout the run; they are live host dependencies, not objects
     reconstructed from the checkpoint.
+
+### Host reconciliation
+
+Stop the old worker and verify external effects before reconciling. The runtime
+cannot prove worker quiescence or undo an external write. These methods are
+host-only: authenticate the operator and authorize access to the run yourself.
+Never expose them as model tools.
+
+```python
+state = agent.inspect_approval_batch("catalog:42", "publication:1")
+receipt = agent.reconcile_approval_batch(
+    "catalog:42", "publication:1",
+    expected_revision=state["_checkpoint"]["revision"],
+    decision_id="incident:123", decided_by=authenticated_reviewer_id,
+    reason="Verified the catalog entry in the external system",
+    worker_stopped=True,
+    results={"call_123": "Published ABC; verified by the operator"},
+)
+result = agent("", scope=scope)
+```
+
+Replace `call_123` with the pending call ID. Supply confirmed text observations
+for **every** call in `state["runtime"]["extensions"]["pending_approvals"]["intents"]`,
+including unprotected siblings. This atomically appends outputs, clears the
+pending batch, saves a receipt and appends `approval.reconciled` to checkpoint
+events. Resume requests the model without executing those tools again. This
+initial API accepts text observations, not runtime commands or artifact objects.
+
+To stop instead, omit `results` and pass `abandon=True`. The run becomes
+`interrupted`; observations explicitly report unconfirmed effects, not success.
+This does not undo effects or authorize replay in another run.
+
+An identical `decision_id` and payload returns the original receipt; a conflicting
+reuse or stale revision raises `CheckpointConflictError`. Concurrent callers may
+retry the identical decision after a conflict. Revision checks fence old
+checkpoint writes, **not** external tool execution. Receipts include the reason
+and confirmed results: protect checkpoint access accordingly. Approval journal
+records remain unchanged, preserving their original execution evidence.
+
+`ainspect_approval_batch` and `areconcile_approval_batch` are async mirrors. A
+cancelled await may leave an already-started storage transaction committed;
+retry the same decision ID to discover its outcome safely.
 
 ## Abort Signal
 

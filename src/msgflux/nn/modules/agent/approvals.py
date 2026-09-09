@@ -16,6 +16,7 @@ from msgflux.runtime.approvals.agent import (
     ApprovalReconciliationRequiredError,
     approval_batch_active,
 )
+from msgflux.runtime.approvals.reconciliation import inspect_batch, reconcile_batch
 from msgflux.runtime.context import ExecutionScope
 from msgflux.runtime.events import EventType, _hub_event_sink
 
@@ -23,6 +24,33 @@ _KEY = "pending_approvals"
 
 
 class AgentApprovalMixin:
+    def inspect_approval_batch(self, thread_id: str, run_id: str):
+        """Return a detached checkpoint for authenticated host reconciliation."""
+        return inspect_batch(
+            self._get_effective_checkpoint_store(),
+            self.get_module_name(),
+            thread_id,
+            run_id,
+        )
+
+    def reconcile_approval_batch(self, thread_id: str, run_id: str, **decision):
+        """Resolve an uncertain batch after the host has stopped its worker."""
+        return reconcile_batch(
+            self._get_effective_checkpoint_store(),
+            self.get_module_name(),
+            thread_id,
+            run_id,
+            **decision,
+        )
+
+    async def ainspect_approval_batch(self, thread_id: str, run_id: str):
+        return await asyncio.to_thread(self.inspect_approval_batch, thread_id, run_id)
+
+    async def areconcile_approval_batch(self, thread_id: str, run_id: str, **decision):
+        return await asyncio.to_thread(
+            self.reconcile_approval_batch, thread_id, run_id, **decision
+        )
+
     def _validate_approval_execution(self, _intents):
         if self.approvals is not None and not approval_batch_active():
             raise ValueError("Approval policies require canonical Agent tool calls")
