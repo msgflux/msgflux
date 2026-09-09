@@ -129,10 +129,11 @@ replayable. Slow-consumer policies must bound buffering and report gaps instead
 of silently losing durable transitions. Observer detachment and execution
 cancellation are different operations.
 
-The current live event hub and revisioned checkpoints do not yet constitute a
-durable event replay service. Storage adapters should share conformance tests
-before that API is stabilized. The inline DSL should use these same boundaries
-instead of implementing another persistence or event engine.
+The live event hub remains ephemeral. The run-scoped commit feed implemented
+below provides durable checkpoint transitions, not replay of every live event.
+Storage adapters share conformance tests before that API is stabilized. The
+inline DSL should use these same boundaries instead of implementing another
+persistence or event engine.
 
 ## Agent approval integration plan
 
@@ -173,8 +174,6 @@ live stream events and pending snapshots without exposing arguments. Keep
 exactly-once external execution explicitly out of scope. Run offline pytest,
 Ruff and MkDocs; preserve unrelated user files and do not publish branches.
 
-## Release gates
-
 ## Recovery and durable observation implementation plan
 
 1. `feat/agent-approval-reconciliation`: host inspection and revision-checked
@@ -196,7 +195,15 @@ unbounded observer buffers. Test sync/async recovery, SQLite reopen, stale
 revisions, duplicate decisions, rollback, snapshot/cursor races and cancellation.
 Run focused tests, offline suite, Ruff and MkDocs. No external publishing.
 
-### Release checklist
+The committed feed intentionally uses a separate `checkpoint_commits` table
+(and memory collection), rather than changing the legacy `load_events` shape.
+Each atomic commit appends one transition in the state transaction. The checkpoint
+envelope gains a stream incarnation; revisions provide its sequence. Snapshot
+reads share a lock/SQLite read transaction with cursor validation. Legacy writes
+are explicitly outside this contract. Agent `watch_commits` polls bounded pages,
+without tying observer lifetime to producer cancellation or a background queue.
+
+## Release gates
 
 - Explicit stable/experimental/internal API classification and migration policy.
 - Mixed-model reference application exercising shared runtime contracts.

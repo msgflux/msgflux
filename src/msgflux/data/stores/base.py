@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, List, Literal, Mapping
+from uuid import uuid4
 
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
 
@@ -27,6 +29,17 @@ class CheckpointStore(ABC):
 
     supports_atomic_commit = False
 
+    def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
+        """Atomically read a snapshot or bounded durable transitions after a cursor."""
+        raise NotImplementedError("This provider has no durable observation support")
+
+    async def aread_commits(
+        self, namespace, thread_id, run_id, *, after=None, limit=100
+    ):
+        return await asyncio.to_thread(
+            self.read_commits, namespace, thread_id, run_id, after=after, limit=limit
+        )
+
     @staticmethod
     def _validate_checkpoint_envelope(checkpoint: Any) -> None:
         """Validate metadata while retaining compatibility with legacy states."""
@@ -44,6 +57,9 @@ class CheckpointStore(ABC):
         revision = checkpoint.get("revision", 0)
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
             raise ValueError("Checkpoint revision must be a non-negative integer")
+        stream_id = checkpoint.get("stream_id")
+        if stream_id is not None and (not isinstance(stream_id, str) or not stream_id):
+            raise ValueError("Checkpoint stream_id must be a non-empty string or null")
         branch_id = checkpoint.get("branch_id")
         if branch_id is not None and (not isinstance(branch_id, str) or not branch_id):
             raise ValueError("Checkpoint branch_id must be a non-empty string or null")
@@ -94,6 +110,7 @@ class CheckpointStore(ABC):
             **deepcopy(dict(checkpoint)),
             "schema_version": 1,
             "revision": revision + 1,
+            "stream_id": checkpoint.get("stream_id") or uuid4().hex,
             "branch_id": branch_id
             if branch_id is not None
             else runtime.get("branch_id", checkpoint.get("branch_id")),

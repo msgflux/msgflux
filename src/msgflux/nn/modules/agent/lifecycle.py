@@ -17,6 +17,7 @@ from typing import (
 
 from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores.base import CheckpointConflictError
+from msgflux.data.stores.observation import observe_checkpoints
 from msgflux.models.response import ModelStreamResponse
 from msgflux.nn.extensions.base import (
     AgentExtension,
@@ -53,6 +54,29 @@ from msgflux.nn.modules.agent.context import (
 
 class AgentLifecycleMixin:
     """Agent extension, lifecycle-hook, event-stream, and watch behavior."""
+
+    def watch_commits(
+        self,
+        thread_id: str,
+        run_id: str,
+        *,
+        after=None,
+        limit: int = 100,
+        poll_interval: float = 0.1,
+    ):
+        """Observe persisted commits with reconnect cursors, unlike live watch()."""
+        store = self._get_effective_checkpoint_store()
+        if store is None:
+            raise ValueError("watch_commits requires a checkpoint store")
+        return observe_checkpoints(
+            store,
+            self.get_module_name(),
+            thread_id,
+            run_id,
+            after=after,
+            limit=limit,
+            poll_interval=poll_interval,
+        )
 
     def _initialize_extensions(self) -> None:
         self._extension_lock = RLock()

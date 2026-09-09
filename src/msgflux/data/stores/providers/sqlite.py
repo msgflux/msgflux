@@ -39,6 +39,7 @@ from msgflux.data.stores.base import (
     CheckpointCommit,
     CheckpointStore,
 )
+from msgflux.data.stores.observation import make_page, validate_read
 from msgflux.data.stores.registry import register_store
 from msgflux.data.stores.types import CheckpointStoreType
 
@@ -117,6 +118,18 @@ CREATE TABLE IF NOT EXISTS checkpoint_events (
 
 CREATE INDEX IF NOT EXISTS idx_events_run
     ON checkpoint_events(namespace, thread_id, run_id);
+
+CREATE TABLE IF NOT EXISTS checkpoint_commits (
+    namespace TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (namespace, thread_id, run_id, stream_id, revision),
+    FOREIGN KEY (namespace, thread_id, run_id)
+        REFERENCES checkpoints(namespace, thread_id, run_id) ON DELETE CASCADE
+);
 """
 
 
@@ -137,6 +150,41 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     provider = "sqlite"
     supports_atomic_commit = True
+
+    @_locked
+    def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
+        try:
+            self._conn.execute("BEGIN")
+            state = self.load_state(namespace, thread_id, run_id)
+            latest = validate_read(state, namespace, thread_id, run_id, after, limit)
+            rows = (
+                []
+                if after is None
+                else self._conn.execute(
+                    "SELECT revision, data FROM checkpoint_commits "
+                    "WHERE namespace=? AND thread_id=? AND run_id=? AND stream_id=? "
+                    "AND revision>? ORDER BY revision LIMIT ?",
+                    (
+                        namespace,
+                        thread_id,
+                        run_id,
+                        latest.stream_id,
+                        after.revision,
+                        limit,
+                    ),
+                ).fetchall()
+            )
+            page = make_page(
+                state,
+                latest,
+                after,
+                [(revision, self._deserialize(data)) for revision, data in rows],
+            )
+            self._conn.commit()
+            return page
+        except BaseException:
+            self._conn.rollback()
+            raise
 
     def __init__(self, path: str = ".msgflux/checkpoints.sqlite3") -> None:
         self.path = path
@@ -504,6 +552,24 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                         self._serialize(event),
                     ),
                 )
+            cur.execute(
+                "INSERT INTO checkpoint_commits VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    namespace,
+                    thread_id,
+                    run_id,
+                    committed["_checkpoint"]["stream_id"],
+                    next_revision,
+                    self._serialize(
+                        event
+                        if event is not None
+                        else {
+                            "event_type": "checkpoint",
+                            "status": committed.get("status"),
+                        }
+                    ),
+                ),
+            )
             self._conn.commit()
             return CheckpointCommit(
                 next_revision,

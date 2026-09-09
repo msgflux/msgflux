@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from threading import Event
+from threading import Barrier, Event
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -421,6 +421,9 @@ async def test_async_reconciliation_rollback_and_stale_writer(monkeypatch):
     checkpoint.commit_state("reviewer", "thread", "run", state)
     state = await agent.ainspect_approval_batch("thread", "run")
     revision = state["_checkpoint"]["revision"]
+    observer = agent.watch_commits("thread", "run")
+    before = await observer.__anext__()
+    await observer.aclose()
     decision = {
         "expected_revision": revision,
         "decision_id": "repair",
@@ -440,8 +443,59 @@ async def test_async_reconciliation_rollback_and_stale_writer(monkeypatch):
     assert checkpoint.load_state("reviewer", "thread", "run") == state
     monkeypatch.setattr(checkpoint, "commit_state", original)
     await agent.areconcile_approval_batch("thread", "run", **decision)
+    resumed = agent.watch_commits("thread", "run", after=before.cursor)
+    page = await resumed.__anext__()
+    assert page.events[0].data["event_type"] == "approval.reconciled"
+    await resumed.aclose()
     with pytest.raises(CheckpointConflictError):
         checkpoint.commit_state(
             "reviewer", "thread", "run", state, expected_revision=revision
         )
     assert calls == []
+
+
+def test_competing_reconciliations_commit_only_one_decision(monkeypatch, tmp_path):
+    checkpoint = SQLiteCheckpointStore(str(tmp_path / "race.db"))
+    agent = make_agent(checkpoint, InMemoryApprovalStore(), [])
+    with pytest.raises(TaskPauseRequestedError):
+        agent("lookup", scope=scope())
+    state = checkpoint.load_state("reviewer", "thread", "run")
+    state["runtime"]["extensions"]["pending_approvals"]["phase"] = "executing"
+    claimed = checkpoint.commit_state("reviewer", "thread", "run", state)
+    original, barrier = checkpoint.load_state, Barrier(2)
+
+    def simultaneous_read(*args):
+        value = original(*args)
+        barrier.wait(timeout=5)
+        return value
+
+    def resolve(number):
+        try:
+            return agent.reconcile_approval_batch(
+                "thread",
+                "run",
+                expected_revision=claimed.revision,
+                decision_id=f"repair:{number}",
+                decided_by="operator",
+                reason="verified effects",
+                worker_stopped=True,
+                results={"call_1": f"confirmed:{number}"},
+            )
+        except CheckpointConflictError:
+            return None
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(checkpoint, "load_state", simultaneous_read)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(resolve, [1, 2]))
+        assert sum(result is not None for result in results) == 1
+        assert (
+            sum(
+                event["event_type"] == "approval.reconciled"
+                for event in checkpoint.load_events("reviewer", "thread", "run")
+            )
+            == 1
+        )
+    finally:
+        checkpoint.close()

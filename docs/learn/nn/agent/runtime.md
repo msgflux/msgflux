@@ -959,6 +959,79 @@ records remain unchanged, preserving their original execution evidence.
 cancelled await may leave an already-started storage transaction committed;
 retry the same decision ID to discover its outcome safely.
 
+## Durable commit observation (experimental)
+
+`agent.watch_commits(thread_id, run_id)` observes checkpoint transactions, not
+model deltas. It works across SQLite connections and process restarts. Memory
+storage only survives for the lifetime of its store instance. A run must have
+at least one new-format atomic commit before it can be observed.
+
+```python
+from contextlib import aclosing
+from dataclasses import asdict
+
+async with aclosing(agent.watch_commits("catalog:42", "publication:1")) as pages:
+    async for page in pages:
+        if page.snapshot is not None:
+            render_snapshot(page.snapshot)
+        for event in page.events:
+            render_transition(event.event_id, event.data)
+        save_cursor(asdict(page.cursor))
+```
+
+The first page contains an atomic snapshot and its cursor, with no old events.
+Subsequent pages contain only committed transitions. Persist the cursor **after**
+processing the entire page. Renderers should deduplicate by `event_id` when
+replaying a page after a consumer crash. Each event also carries its own cursor
+for consumers that acknowledge individual events.
+
+```python
+from msgflux.data.stores import CheckpointCursor
+
+cursor = CheckpointCursor(**load_cursor())
+async with aclosing(agent.watch_commits(
+    "catalog:42", "publication:1", after=cursor, limit=100, poll_interval=0.2,
+)) as pages:
+    async for page in pages:
+        for event in page.events:
+            render_transition(event.event_id, event.data)
+        save_cursor(asdict(page.cursor))
+```
+
+This resumes strictly after the supplied cursor, without replacing the consumer's
+existing snapshot. `CheckpointStore.read_commits(...)` and `aread_commits(...)`
+offer the same API as individual reads; an empty events page means caught up.
+The watcher polls until closed, including after terminal status. Closing it or
+cancelling observation never sends cancellation to the producer.
+
+Every new `commit_state` transaction stores one durable transition alongside its
+snapshot, using the supplied event or a generic `checkpoint` event. Stable event
+IDs combine a random stream incarnation and the checkpoint revision. Cursors
+also bind namespace, thread and run. Deletion/recreation invalidates old cursors.
+Missing history, unknown streams and invalid cursors raise `CheckpointCursorError`;
+do not silently reset to a new snapshot when replay continuity matters.
+
+Pages contain at most `limit` events (1–1000); slow readers leave their backlog in
+storage instead of building a background queue. This bounds event count, not
+payload bytes or the initial snapshot size. Events remain until the run is
+deleted; this release does not implement retention/compaction of commit history.
+
+!!! warning "Separate observation contracts"
+    This is a run-scoped commit feed, not a thread-wide event bus. It does not
+    replay token/reasoning deltas, `tool.start`, or every live `watch()` event.
+    Approval decisions written to the separate approval journal are not magically
+    part of a checkpoint transaction; reconciliation is, and emits a durable
+    `approval.reconciled` transition. Read the journal to refresh decisions.
+
+    `save_state`, `save_with_event`, `append_event`, and `load_events` retain their
+    legacy behavior and are outside this feed's atomicity contract. Do not mix
+    legacy writes with a run observed through commit cursors. Existing history is
+    not backfilled; a legacy run gains a stream on its next atomic commit. Forks
+    receive an independent stream on their first atomic commit.
+
+    Cursor possession grants no access. The host must authorize observation and
+    protect snapshots and event payloads, which may contain application data.
+
 ## Abort Signal
 
 `AbortSignal` is local runtime cancellation for the currently active process.

@@ -23,6 +23,7 @@ import hashlib
 import json
 import time
 from copy import deepcopy
+from itertools import islice
 from threading import RLock
 from typing import Any, Dict, List, Literal, Mapping
 
@@ -36,6 +37,7 @@ from msgflux.data.stores.base import (
     CheckpointCommit,
     CheckpointStore,
 )
+from msgflux.data.stores.observation import make_page, validate_read
 from msgflux.data.stores.registry import register_store
 from msgflux.data.stores.types import CheckpointStoreType
 
@@ -46,6 +48,28 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     provider = "in_memory"
     supports_atomic_commit = True
+
+    def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
+        with self._lock:
+            state = self.load_state(namespace, thread_id, run_id)
+            latest = validate_read(state, namespace, thread_id, run_id, after, limit)
+            run = self._get_run(namespace, thread_id, run_id)
+            records = (
+                []
+                if after is None
+                else list(
+                    islice(
+                        (
+                            (revision, data)
+                            for stream_id, revision, data in run.get("commits", [])
+                            if stream_id == latest.stream_id
+                            and revision > after.revision
+                        ),
+                        limit,
+                    )
+                )
+            )
+            return make_page(state, latest, after, records)
 
     def __init__(self) -> None:
         self._data: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
@@ -339,11 +363,19 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 extension_state=extension_state,
             )
             prepared_event = deepcopy(dict(event)) if event is not None else None
+            durable_event = (
+                deepcopy(dict(event))
+                if event is not None
+                else {"event_type": "checkpoint", "status": committed.get("status")}
+            )
             normalized = self._normalize_state(namespace, thread_id, committed)
             if run is None:
                 run = self._ensure_run(namespace, thread_id, run_id)
             run["state"] = normalized
             run["updated_at"] = time.time()
+            run.setdefault("commits", []).append(
+                (committed["_checkpoint"]["stream_id"], next_revision, durable_event)
+            )
             if prepared_event is not None:
                 run["events"].append(prepared_event)
             return CheckpointCommit(
