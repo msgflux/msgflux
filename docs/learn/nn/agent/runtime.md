@@ -666,9 +666,10 @@ These grants are authorization metadata, not an operating-system sandbox.
 
 ## Approval journal (experimental)
 
-`Store.approval(...)` records host-created approval requests and decisions. It is
-a storage prerequisite, **not** an Agent approval policy: it does not pause a
-tool, resume a checkpoint, add permissions, or publish requests through `watch()`.
+`Store.approval(...)` records host-created approval requests and decisions. The
+store alone does not pause or execute tools. To connect it to Agent checkpoints,
+use [Agent approvals](#agent-approvals-experimental) below. Neither API adds
+capabilities to the caller's live authority.
 
 Available providers are `in_memory` (process-local) and `sqlite` (persistent,
 including independent worker processes). Both use the same transition rules.
@@ -777,6 +778,144 @@ the same binding and live-authority checks and does not execute the tool.
     record says `consumed`: external idempotency or reconciliation is still
     required. This API neither coordinates an Agent checkpoint transaction nor
     deduplicates every invocation across different approval request IDs.
+
+## Agent approvals (experimental)
+
+Pass `AgentApprovals` to an Agent to require host approval for named tools. The
+`tools` mapping contains tool names and host-owned implementation revisions;
+`policy_version` identifies your current approval policy. Increment these
+versions when the implementation or policy changes. They are not inferred from
+Python source code.
+
+The following example assumes `model` is your configured chat-completion model.
+The demonstration tool returns a string; it performs no external write.
+
+```python
+from msgflux.data.stores import Store
+from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.nn import Agent
+from msgflux.runtime import AgentApprovals, ExecutionScope, PermissionSet
+from msgflux.tools.config import tool_config
+
+
+@tool_config(required_permissions=["catalog.write"], retry=False)
+def publish(sku: str) -> str:
+    """Publish a catalog entry."""
+    return f"Published {sku}"
+
+
+checkpoints = Store.checkpoint("sqlite", path=".msgflux/checkpoints.sqlite3")
+journal = Store.approval("sqlite", path=".msgflux/approvals.sqlite3")
+agent = Agent(
+    name="publisher", model=model, tools=[publish], checkpoint_store=checkpoints,
+    approvals=AgentApprovals(
+        store=journal, tools={"publish": "implementation:v1"},
+        policy_version="policy:v1", ttl_seconds=300,
+    ),
+)
+scope = ExecutionScope(
+    namespace="publisher", thread_id="catalog:42", run_id="publication:1",
+    principal="user:42", permissions=PermissionSet(["catalog.write"]),
+)
+
+try:
+    result = agent("Publish SKU ABC", scope=scope)
+except TaskPauseRequestedError:
+    requests = journal.pending("publisher", "catalog:42", "publication:1")
+    # Present these requests through your authenticated host UI.
+```
+
+When the model requests `publish`, the Agent checkpoints the pending tool-call
+batch and raises `TaskPauseRequestedError`. No tool in that batch runs yet,
+including siblings that do not require approval. The checkpoint retains the
+original public arguments and call IDs; the journal retains their digests.
+Protect both stores according to their contents.
+
+After the host has authenticated the reviewer, authorized their access to the
+request and received an actual decision, it can record that decision:
+
+```python
+agent.decide_approval(
+    request_id, approved=reviewer_approved, decided_by=authenticated_reviewer_id,
+)
+result = agent("", scope=scope)
+```
+
+Use the `request_id` returned in `requests` or a watcher snapshot. The second
+call resumes the **same** namespace, thread and run; its message is ignored.
+Pending calls are replayed before requesting another model response and without
+duplicating the original call history. Repeated resumes while decisions remain
+pending simply pause again. The model may request another protected call later,
+so the host should handle subsequent pauses too.
+
+An approval is consumed at foreground executor entry, after checking the final
+public arguments and dispatch plan. Hooks cannot alter a call and reuse its old
+approval. Declared capabilities and the live principal are checked again;
+checkpoint restoration never restores grants. Supply live runtime inputs again
+on resume, as for other Agent checkpoints.
+
+### Async execution and observation
+
+Use `agent.acall(...)` and `agent.adecide_approval(...)` for async applications.
+They share the same approval state machine. `stream_events(...)` yields
+`tool.approval_required` and `run.paused` before ending with
+`TaskPauseRequestedError`; catch the
+exception around the async iteration. The event identifies the request and tool
+call without including its arguments.
+
+Reconnect after a pause, including after recreating the Agent with the same
+SQLite stores and policy:
+
+```python
+async with agent.watch("catalog:42") as watcher:
+    requests = watcher.snapshot.approvals
+    # Render request IDs, status, deadline and tool identity in the host UI.
+```
+
+`snapshot.approvals` contains journal records referenced by the latest run's
+pending batch. They may be pending, decided, expired, or consumed-but-unsettled.
+`decide_approval` emits `tool.approval_resolved` to live watchers in this process;
+direct `journal.decide` only updates storage. A decision never automatically
+restarts the Agent. Cross-process live events and an atomic snapshot spanning
+the checkpoint and journal databases are not provided; reconnect or poll storage
+to refresh external decisions.
+
+### Denial, timeout, and recovery
+
+Denied or expired approvals become blocked tool observations on the next resume;
+the model can continue without executing those calls. Deadline checks are lazy:
+there is no timer that resumes a paused Agent automatically. Removing a pending
+rule or changing its binding leaves the run paused for host reconciliation.
+
+Before dispatch, the Agent atomically checkpoints the batch as `executing`.
+Only a checkpoint containing the results clears that marker. A restart that
+finds `executing`, or an already consumed approval without results, **does not
+retry any tool in the batch**. The host must inspect external effects and
+reconcile the run. No automatic reconciliation API is exposed yet. Starting a
+new run is not a safe substitute unless the host has established that replaying
+the action is safe. Existing tool retry settings still apply within a single
+invocation; use explicit idempotency where external effects require it.
+
+An `executing` batch raises `ApprovalReconciliationRequiredError`, a subclass
+of `TaskPauseRequestedError`, without changing the checkpoint. The original
+worker may still be active: wait for it before treating the state as a crash.
+This prevents a competing resume from invalidating that worker's commit.
+
+!!! warning "Supported boundary"
+    This integration requires atomic checkpoints and canonical foreground
+    ToolLibrary calls, including canonical Chat Completions and Responses tool
+    responses. Detached/background approval dispatch, flow-control DSL tools,
+    provider-hosted effects and resource-scoped sandbox policies are unsupported.
+    Nested protected calls without their own approved batch are blocked.
+    The Agent policy uses an empty resource binding; public arguments and host
+    policy versions provide its current binding boundary.
+
+    Policies, context injectors, dispatchers and raw Python implementations are
+    trusted host code. Agent approval rules do not protect arbitrary direct
+    Python or standalone ToolLibrary calls outside that Agent execution.
+    Do not expose the decision method as a model tool. Keep the policy and stores
+    configured throughout the run; they are live host dependencies, not objects
+    reconstructed from the checkpoint.
 
 ## Abort Signal
 

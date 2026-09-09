@@ -31,6 +31,7 @@ from msgflux.nn.modules.tool.runtime import (
     ToolDefinition as RuntimeToolDefinition,
 )
 from msgflux.runtime.abort import await_with_abort
+from msgflux.runtime.approvals.agent import guard_approved_plan
 from msgflux.runtime.context import get_execution_context
 from msgflux.runtime.events import EventType, emit_event, event_source
 from msgflux.runtime.permissions import require_permissions
@@ -1406,12 +1407,22 @@ class ToolLibraryExecutionMixin:
             )
         return None
 
+    @staticmethod
+    def _validate_dispatch_identity(plan, current):
+        if (current.intent.id, current.intent.name) != (
+            plan.intent.id,
+            plan.intent.name,
+        ):
+            raise ValueError("Dispatch cannot replace the executing tool intent")
+
     async def _adispatch_runtime_plan(
         self,
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome:
-        denied = self._permission_outcome(plan.intent, plan.definition)
+        denied = self._permission_outcome(
+            plan.intent, plan.definition
+        ) or guard_approved_plan(plan)
         if denied is not None:
             return denied
         execution_denial = None
@@ -1423,7 +1434,10 @@ class ToolLibraryExecutionMixin:
             if execution_denial is not None:
                 return execution_denial
             current = selected_plan or plan
-            denied = self._permission_outcome(current.intent, current.definition)
+            self._validate_dispatch_identity(plan, current)
+            denied = self._permission_outcome(
+                current.intent, current.definition
+            ) or guard_approved_plan(current, consume=True)
             if denied is not None:
                 execution_denial = denied
                 return denied

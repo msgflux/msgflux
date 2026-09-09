@@ -1,8 +1,8 @@
 # Runtime v1 contracts
 
 Status: incremental implementation. This RFC separates implemented foundations
-from follow-up work; it does not claim host isolation or end-to-end Agent
-approval support.
+from follow-up work. Foreground Agent approvals are implemented; host isolation
+and exactly-once external effects are not promised.
 
 ## Boundaries
 
@@ -103,9 +103,8 @@ expired authority, returning a mutable record, and committing state without its
 audit event. Clock and database integrity belong to the trusted host. Digests
 bind data but are not encryption. Consumption commits before external effects;
 a crash after consumption must not automatically retry an external action.
-The following increment must connect Agent pending calls, checkpoint pause,
-decision routing, timeout, and watcher snapshots before advertising
-`require_approval` or end-to-end durable resumption.
+The Agent integration below connects pending calls, checkpoint pause, decision
+routing, deadline checks on resume, and watcher snapshots to this journal.
 
 Approval requests must bind principal, run, tool identity, canonical public
 arguments, resource constraints, expiry and an application policy version.
@@ -134,6 +133,45 @@ The current live event hub and revisioned checkpoints do not yet constitute a
 durable event replay service. Storage adapters should share conformance tests
 before that API is stabilized. The inline DSL should use these same boundaries
 instead of implementing another persistence or event engine.
+
+## Agent approval integration plan
+
+Branch `feat/agent-approval-resume` connects host-configured approval rules to
+canonical tool-call batches. Files: runtime/approvals Agent policy and execution
+guard; nn/modules/agent approval mixin, core, model runtime and lifecycle;
+nn/modules/tool/execution_runtime.py; runtime/events.py and event_hub.py;
+runtime exports; tests/test_agent_approvals.py; existing runtime learning page.
+The shared Module event boundary also classifies cooperative pauses as
+`run.paused`, rather than `run.error`; EventHub settles the paused projection.
+
+Order: (1) batch preflight and immutable call binding; (2) checkpoint pending
+intents before suspension, replay pending calls before a new model request;
+(3) final-plan validation and consume at foreground executor entry; (4) pending
+watcher snapshot and approval events; (5) sync/async and SQLite recovery tests.
+
+The entire batch waits before any tool executes. Denied/expired requests become
+blocked observations; changed bindings or consumed approvals without committed
+results remain paused for host reconciliation. Approval removal on a pending
+run fails closed. Capabilities remain mandatory. This initial integration
+supports canonical local foreground tool calls, not flow-control DSL execution,
+provider-hosted effects or detached/background approval dispatch. This Agent
+policy uses an empty resource binding; argument-aware resource policies and
+OS sandbox enforcement remain separate follow-up work.
+
+Before dispatch, an atomic checkpoint changes the batch to `executing`. A resume
+observing that marker cannot repeat any sibling, even one without an approval.
+Only a checkpoint containing the batch results removes the pending marker.
+This deliberately chooses manual reconciliation over automatic retry when the
+process dies after claiming the batch. No background timeout timer is installed.
+Competing resumes exit without writing a paused checkpoint over the claimed
+batch, so a still-active worker can commit its results normally.
+
+Risks/tests: duplicate model calls or history on resume; partial batch effects;
+checkpoint/journal failures; altered public arguments after hooks; stale policy
+versions or grants; competing resumes; expiration; denial; process restart;
+live stream events and pending snapshots without exposing arguments. Keep
+exactly-once external execution explicitly out of scope. Run offline pytest,
+Ruff and MkDocs; preserve unrelated user files and do not publish branches.
 
 ## Release gates
 

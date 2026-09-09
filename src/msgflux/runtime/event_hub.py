@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 if TYPE_CHECKING:
+    from msgflux.runtime.approvals.records import ApprovalRecord
     from msgflux.runtime.events import ExecutionEvent
 
 
@@ -54,6 +55,7 @@ class ThreadSnapshot:
     active_runs: tuple[LiveRunSnapshot, ...] = ()
     running_tools: tuple[RunningToolSnapshot, ...] = ()
     background_tasks: tuple[BackgroundTaskSnapshot, ...] = ()
+    approvals: tuple[ApprovalRecord, ...] = ()
 
     @property
     def active_run(self) -> LiveRunSnapshot | None:
@@ -131,11 +133,13 @@ class ThreadWatcher:
         thread_id: str,
         namespace: str | None,
         load_messages: Callable[[], Any] | None,
+        load_approvals: Callable[[], tuple[Any, ...]] | None = None,
     ) -> None:
         self._hub = hub
         self.thread_id = thread_id
         self.namespace = namespace
         self._load_messages = load_messages
+        self._load_approvals = load_approvals
         self._loop: asyncio.AbstractEventLoop | None = None
         self._queue: asyncio.Queue[ExecutionEvent | object] | None = None
         self._closed = False
@@ -200,6 +204,7 @@ class EventHub:
         *,
         namespace: str | None = None,
         load_messages: Callable[[], Any] | None = None,
+        load_approvals: Callable[[], tuple[Any, ...]] | None = None,
     ) -> ThreadWatcher:
         if not isinstance(thread_id, str) or not thread_id:
             raise ValueError("`thread_id` must be a non-empty string.")
@@ -208,6 +213,7 @@ class EventHub:
             thread_id=thread_id,
             namespace=namespace,
             load_messages=load_messages,
+            load_approvals=load_approvals,
         )
 
     def publish(self, thread_id: str | None, event: ExecutionEvent) -> None:
@@ -233,6 +239,10 @@ class EventHub:
                 namespace=watcher.namespace,
                 messages=messages,
                 state=state,
+            )
+            snapshot = replace(
+                snapshot,
+                approvals=watcher._load_approvals() if watcher._load_approvals else (),
             )
             self._watchers.setdefault(watcher.thread_id, set()).add(watcher)
             return snapshot
@@ -318,7 +328,7 @@ class EventHub:
             return
 
         run = state.runs.get(run_key)
-        if run is None and event_type not in {"run.end", "run.error"}:
+        if run is None and event_type not in {"run.end", "run.error", "run.paused"}:
             run = _LiveRun(run_id=event.run_id, source_path=event.source_path)
             state.runs[run_key] = run
 
@@ -353,7 +363,7 @@ class EventHub:
         elif event_type == "tool.end":
             tool_call_id = event.data.get("tool_call_id")
             state.tools.pop((event.run_id, event.source_path, tool_call_id), None)
-        elif event_type in {"run.end", "run.error", "run.interrupted"}:
+        elif event_type in {"run.end", "run.error", "run.interrupted", "run.paused"}:
             state.runs.pop(run_key, None)
             for tool_key in tuple(state.tools):
                 if tool_key[:2] == run_key:

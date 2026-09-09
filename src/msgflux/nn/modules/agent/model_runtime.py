@@ -1040,8 +1040,8 @@ class AgentModelRuntimeMixin:
                 tool_intents = model_response.get_tool_intents()
                 self._validate_context_scope_intents(tool_intents)
                 try:
-                    tool_outcomes = self._process_tool_intents(
-                        tool_intents, message, messages, vars
+                    tool_outcomes = self._process_approval_intents(
+                        model_response, tool_intents, message, messages, vars
                     )
                 except TaskInterruptRequestedError as exc:
                     self._append_interrupted_tool_response_messages(
@@ -1055,6 +1055,7 @@ class AgentModelRuntimeMixin:
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
+                self._clear_approval_batch()
                 self._apply_context_scope_outcomes(messages, tool_outcomes)
                 decision = self._resolve_continuation(
                     "after_tools", messages, vars, tool_intents, tool_outcomes
@@ -1132,8 +1133,8 @@ class AgentModelRuntimeMixin:
                 tool_intents = model_response.get_tool_intents()
                 self._validate_context_scope_intents(tool_intents)
                 try:
-                    tool_outcomes = await self._aprocess_tool_intents(
-                        tool_intents, message, messages, vars
+                    tool_outcomes = await self._aprocess_approval_intents(
+                        model_response, tool_intents, message, messages, vars
                     )
                 except TaskInterruptRequestedError as exc:
                     self._append_interrupted_tool_response_messages(
@@ -1147,6 +1148,7 @@ class AgentModelRuntimeMixin:
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
+                self._clear_approval_batch()
                 self._apply_context_scope_outcomes(messages, tool_outcomes)
                 decision = await self._aresolve_continuation(
                     "after_tools", messages, vars, tool_intents, tool_outcomes
@@ -1189,6 +1191,7 @@ class AgentModelRuntimeMixin:
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
     ) -> tuple[ToolOutcome, ...]:
+        self._validate_approval_execution(intents)
         self.tool_library.set_lifecycle_owner(self)
         self._log_tool_intents(intents)
         outcomes = self.tool_library.execute_intents(
@@ -1207,6 +1210,7 @@ class AgentModelRuntimeMixin:
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
         vars: Mapping[str, Any],
     ) -> tuple[ToolOutcome, ...]:
+        self._validate_approval_execution(intents)
         self.tool_library.set_lifecycle_owner(self)
         self._log_tool_intents(intents)
         outcomes = await self.tool_library.aexecute_intents(

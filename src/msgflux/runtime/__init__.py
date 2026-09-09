@@ -24,6 +24,10 @@ from msgflux.runtime.approvals import (
     InMemoryApprovalStore,
     SQLiteApprovalStore,
 )
+from msgflux.runtime.approvals.agent import (
+    AgentApprovals,
+    ApprovalReconciliationRequiredError,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -63,6 +67,8 @@ from msgflux.runtime.skills import (
 )
 
 __all__ = [
+    "AgentApprovals",
+    "ApprovalReconciliationRequiredError",
     "ApprovalBinding",
     "ApprovalConflictError",
     "ApprovalEvent",

@@ -37,6 +37,7 @@ from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.envs import envs
+from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
@@ -80,6 +81,14 @@ MSGFLUX_DESERIALIZABLE_CLS: Dict[str, Type] = {
 
 
 T = TypeVar("T", bound="Module")
+
+
+def _run_exception_event(error: BaseException) -> str:
+    return (
+        EventType.RUN_PAUSED
+        if isinstance(error, TaskPauseRequestedError)
+        else EventType.RUN_ERROR
+    )
 
 
 class _IncompatibleKeys(
@@ -1445,7 +1454,7 @@ class Module:
             except BaseException as exc:
                 if run_boundary:
                     emit_event(
-                        EventType.RUN_ERROR,
+                        _run_exception_event(exc),
                         {"error": str(exc)},
                         scope=scope,
                     )
@@ -1467,7 +1476,7 @@ class Module:
             await self._afinalize_event_result(result)
         except BaseException as exc:
             emit_event(
-                EventType.RUN_ERROR,
+                _run_exception_event(exc),
                 {"error": str(exc)},
                 scope=scope,
             )
@@ -1652,7 +1661,7 @@ class Module:
             except BaseException as exc:
                 if run_boundary:
                     emit_event(
-                        EventType.RUN_ERROR,
+                        _run_exception_event(exc),
                         {"error": str(exc)},
                         scope=scope,
                     )
@@ -1971,7 +1980,7 @@ class Module:
                     event_source(source_name, source_type),
                 ):
                     emit_event(
-                        EventType.RUN_ERROR,
+                        _run_exception_event(exc),
                         {"error": str(exc)},
                         scope=scope,
                     )

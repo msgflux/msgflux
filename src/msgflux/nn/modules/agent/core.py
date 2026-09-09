@@ -42,11 +42,16 @@ from msgflux.nn.hooks.events import (
     BeforeResume,
     BeforeRun,
 )
+from msgflux.nn.modules.agent.approvals import AgentApprovalMixin
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 from msgflux.runtime.agent_inbox import (
     AgentInbox,
     InMemoryAgentInboxStore,
+)
+from msgflux.runtime.approvals.agent import (
+    AgentApprovals,
+    ApprovalReconciliationRequiredError,
 )
 from msgflux.runtime.context import (
     execution_context,
@@ -72,6 +77,7 @@ from msgflux.nn.modules.agent.model_runtime import AgentModelRuntimeMixin
 
 
 class Agent(
+    AgentApprovalMixin,
     AgentLifecycleMixin,
     AgentContinuationMixin,
     AgentModelRuntimeMixin,
@@ -136,6 +142,7 @@ class Agent(
         annotations: Optional[Mapping[str, type]] = None,
         checkpoint_store: Optional["CheckpointStore"] = None,
         agent_inbox: Optional[AgentInbox] = None,
+        approvals: Optional[AgentApprovals] = None,
     ):
         """Initialize the Agent module.
 
@@ -281,6 +288,10 @@ class Agent(
             Store used to persist and resume agent execution snapshots. A store
             configured directly on the agent takes precedence over one inherited
             from `execution_context(...)`.
+        approvals:
+            Optional host-owned AgentApprovals policy for foreground tool calls.
+            Requires atomic checkpoints and an explicit live principal. Pending
+            batches pause before execution and resume under the same run identity.
         """
         if annotations is None:
             annotations = _DEFAULT_AGENT_ANNOTATIONS.copy()
@@ -326,6 +337,9 @@ class Agent(
 
         self._set_config(config)
         self.checkpoint_store = checkpoint_store
+        if approvals is not None and not isinstance(approvals, AgentApprovals):
+            raise TypeError("approvals must be AgentApprovals or None")
+        self.approvals = approvals
         if agent_inbox is None:
             self.agent_inbox = AgentInbox(
                 verbose=config.get("verbose", False) if config else False,
@@ -542,7 +556,7 @@ class Agent(
         ):
             try:
                 try:
-                    model_response = self._execute_model(
+                    model_response = self._approval_replay() or self._execute_model(
                         prefilling=self.prefilling,
                         **inputs,
                     )
@@ -556,6 +570,8 @@ class Agent(
             except (AbortRequestedError, TaskInterruptRequestedError) as exc:
                 self._settle_terminal_run(inputs, "interrupted", exc)
                 self._raise_interrupted_from_abort(inputs, exc)
+            except ApprovalReconciliationRequiredError:
+                raise
             except TaskPauseRequestedError as exc:
                 self._settle_terminal_run(inputs, "paused", exc)
                 raise
@@ -613,10 +629,12 @@ class Agent(
         ):
             try:
                 try:
-                    model_response = await self._aexecute_model(
-                        prefilling=self.prefilling,
-                        **inputs,
-                    )
+                    model_response = self._approval_replay()
+                    if model_response is None:
+                        model_response = await self._aexecute_model(
+                            prefilling=self.prefilling,
+                            **inputs,
+                        )
                 except _GuardInterrupt as e:
                     model_response = self._guard_model_response(e.response)
                 response = await self._aprocess_model_response(
@@ -629,6 +647,8 @@ class Agent(
                 self._raise_interrupted_from_abort(inputs, exc)
             except asyncio.CancelledError as exc:
                 await self._asettle_terminal_run(inputs, "interrupted", exc)
+                raise
+            except ApprovalReconciliationRequiredError:
                 raise
             except TaskPauseRequestedError as exc:
                 await self._asettle_terminal_run(inputs, "paused", exc)

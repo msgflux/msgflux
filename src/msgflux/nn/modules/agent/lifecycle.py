@@ -598,6 +598,7 @@ class AgentLifecycleMixin:
             thread_id,
             namespace=self.get_module_name(),
             load_messages=load_messages,
+            load_approvals=lambda: self._load_approval_snapshot(thread_id),
         )
 
     def _prepare_event_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
