@@ -117,7 +117,10 @@ class MCPTool(Tool):
     @set_tool_attributes(execution_type="remote", protocol="mcp")
     def forward(self, **kwargs) -> Any:
         """Execute MCP tool call."""
-        require_permissions(self.tool_config.get("required_permissions", ()))
+        require_permissions(
+            self.tool_config.get("required_permissions", ()),
+            self.tool_config.get("required_resources", ()),
+        )
         # Call MCP tool (wrap async in sync)
         result = F.wait_for(self._mcp_client.call_tool, self._mcp_tool_name, kwargs)
 
@@ -132,7 +135,10 @@ class MCPTool(Tool):
     @aset_tool_attributes(execution_type="remote", protocol="mcp")
     async def aforward(self, **kwargs) -> Any:
         """Execute MCP tool call asynchronously."""
-        require_permissions(self.tool_config.get("required_permissions", ()))
+        require_permissions(
+            self.tool_config.get("required_permissions", ()),
+            self.tool_config.get("required_resources", ()),
+        )
         # Call MCP tool
         result = await self._mcp_client.call_tool(self._mcp_tool_name, kwargs)
 
@@ -223,7 +229,10 @@ class LocalTool(Tool):
 
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
-        require_permissions(self.tool_config.get("required_permissions", ()))
+        require_permissions(
+            self.tool_config.get("required_permissions", ()),
+            self.tool_config.get("required_resources", ()),
+        )
         kwargs = self._prepare_call_kwargs(kwargs)
         if inspect.iscoroutinefunction(self.impl):
             return F.wait_for(self.impl, **kwargs)
@@ -231,7 +240,10 @@ class LocalTool(Tool):
 
     @aset_tool_attributes(execution_type="local")
     async def aforward(self, *args, **kwargs):
-        require_permissions(self.tool_config.get("required_permissions", ()))
+        require_permissions(
+            self.tool_config.get("required_permissions", ()),
+            self.tool_config.get("required_resources", ()),
+        )
         kwargs = self._prepare_call_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)

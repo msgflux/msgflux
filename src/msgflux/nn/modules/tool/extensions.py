@@ -218,7 +218,14 @@ class ToolContextProvider(ToolExtension):
 class RuntimeContextProvider(ToolContextProvider):
     """Resolve explicitly bound values from ToolRuntimeContext."""
 
-    DEFAULT_SOURCES = ("handle", "message", "messages", "vars")
+    DEFAULT_SOURCES = (
+        "handle",
+        "message",
+        "messages",
+        "vars",
+        "filesystem",
+        "environment",
+    )
 
     def __init__(self, sources: Collection[str] = DEFAULT_SOURCES) -> None:
         super().__init__("context_runtime", sources=sources)

@@ -1,9 +1,10 @@
 from functools import wraps
+from inspect import iscoroutinefunction
 from types import FunctionType, MethodType
 from typing import Any, Callable, Collection, Dict, Optional, Union
 
 from msgflux.core.dotdict import dotdict
-from msgflux.runtime.permissions import normalize_permissions
+from msgflux.runtime.permissions import normalize_permissions, normalize_resources
 from msgflux.tools.helpers import normalize_background_capabilities
 from msgflux.tools.runtime import FeedbackSpec
 from msgflux.tools.specs import ContextBinding, ContextSpec
@@ -94,6 +95,7 @@ def tool_config(
     name_override: Optional[str] = None,
     retry: Optional[Any] = None,
     required_permissions: Collection[str] = (),
+    required_resources: Collection = (),
 ) -> Callable:
     """Decorator to inject meta-properties into functions, classes, or instances.
 
@@ -174,6 +176,10 @@ def tool_config(
         required_permissions:
             Exact capabilities required from the live execution scope. The runtime
             blocks missing grants before tool preparation; this is not a sandbox.
+        required_resources:
+            Static ResourcePermission requirements, enforced alongside capability
+            grants. Dynamic filesystem paths are checked by WorkspaceFilesystem
+            at operation time; these requirements do not isolate Python code.
 
     Returns:
         A decorator that modifies the target by injecting the specified properties.
@@ -218,6 +224,7 @@ def tool_config(
             True
     """
     normalized_permissions = normalize_permissions(required_permissions)
+    normalized_resources = normalize_resources(required_resources)
 
     def decorator(f):
         _return_direct = return_direct  # Local copy
@@ -303,6 +310,7 @@ def tool_config(
                     "name_overridden": name_override,
                     "retry": retry,
                     "required_permissions": normalized_permissions,
+                    "required_resources": normalized_resources,
                 }
             )
         }
@@ -321,6 +329,15 @@ def decorate_function(
     func: Union[FunctionType, MethodType],
     tool_config: Dict[str, Union[bool, str]],
 ) -> Union[FunctionType, MethodType]:
+    if iscoroutinefunction(func):
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            return await func(*args, **kwargs)
+
+        async_wrapper.__dict__.update(tool_config)
+        return async_wrapper
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)

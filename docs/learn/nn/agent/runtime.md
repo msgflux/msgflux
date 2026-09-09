@@ -907,8 +907,10 @@ This prevents a competing resume from invalidating that worker's commit.
     responses. Detached/background approval dispatch, flow-control DSL tools,
     provider-hosted effects and resource-scoped sandbox policies are unsupported.
     Nested protected calls without their own approved batch are blocked.
-    The Agent policy uses an empty resource binding; public arguments and host
-    policy versions provide its current binding boundary.
+    The Agent policy binds declared static resource requirements and, when an
+    environment is present, its workspace ID and isolation requirements. Public
+    arguments and host policy/tool versions remain part of the binding. It does
+    not infer every resource accessed by arbitrary Python or a shell command.
 
     Policies, context injectors, dispatchers and raw Python implementations are
     trusted host code. Agent approval rules do not protect arbitrary direct
@@ -972,6 +974,145 @@ caller while a worker thread is committing does not stop that thread: the write
 may still succeed. After an uncertain outcome, inspect committed state and use
 the original decision ID/revision instead of assuming rollback or replaying a
 tool. A stale checkpoint revision must fail, not overwrite the winner.
+
+## Workspaces and execution environments (experimental)
+
+`ExecutionEnvironment` supplies live execution dependencies: a virtual filesystem
+and an optional `ProcessExecutor`. `ExecutionScope.permissions` remains the only
+source of grants. Child executions inherit the same environment and may narrow
+permissions, but cannot replace the environment. Checkpoint identity serialization
+omits both environment and authority; supply them again on resume.
+
+### Virtual files and live resource grants
+
+`InMemoryWorkspace` implements `WorkspaceFilesystem` without accessing the host
+filesystem. Its initial files are supplied by trusted host code. Runtime operations
+require exact resource/action grants and an active scope bound to that filesystem.
+
+```python
+from msgflux.runtime import (
+    ExecutionEnvironment, ExecutionScope, InMemoryWorkspace, PermissionSet,
+    execution_context,
+)
+
+filesystem = InMemoryWorkspace(
+    "project-42", {"/workspace/report.txt": b"Quarterly report"},
+)
+environment = ExecutionEnvironment(filesystem)
+scope = ExecutionScope(
+    principal="user:42", environment=environment,
+    permissions=PermissionSet(resources=[
+        filesystem.permission("/workspace/report.txt", "filesystem.read"),
+        filesystem.permission("/workspace/output.txt", "filesystem.write"),
+        filesystem.permission("/workspace", "filesystem.list"),
+    ]),
+)
+
+with execution_context(scope=scope):
+    text = filesystem.read_text("/workspace/report.txt")
+    filesystem.write_text("/workspace/output.txt", text.upper())
+    names = filesystem.listdir("/workspace")
+```
+
+This reads one authorized file, writes another, and lists the directory. A write
+grant does not imply read access. A directory-list grant exposes child names, not
+child contents or recursive access. Resource IDs include the workspace ID and
+canonical virtual path; keep workspace IDs unique and stable within your host.
+
+Operations are `read_bytes`/`read_text`, `write_bytes`/`write_text`, `listdir`,
+`mkdir` and `unlink`, with async counterparts prefixed by `a`. Grants use
+`filesystem.read`, `filesystem.write`, `filesystem.list`, `filesystem.mkdir` and
+`filesystem.delete`, respectively. Writes create or replace a file in an existing
+parent directory. `mkdir` creates one directory; `unlink` deletes files only.
+The host's initial file map creates the required parent directories.
+
+Paths are absolute POSIX paths inside the workspace, independent of the host OS.
+Dot/repeated-separator aliases are canonicalized; `..`, backslashes, control
+characters and leading `//` are rejected. There are no symlinks, host mounts or
+implicit path-containment grants. Use `filesystem.permission(...)` to construct
+the same resource identity used by operations. Grants are checked on each
+operation, including when an injected handle is reused under a narrower scope.
+
+### Injecting a filesystem into tools
+
+Declare runtime inputs explicitly, so they remain outside the model-facing schema:
+
+```python
+from msgflux.nn import ToolLibrary
+from msgflux.tools.config import tool_config
+
+@tool_config(runtime_inputs=["filesystem"], retry=False)
+async def read_file(path: str, *, filesystem) -> str:
+    """Read an authorized file in the virtual workspace."""
+    return await filesystem.aread_text(path)
+
+tools = ToolLibrary("files", [read_file])
+with execution_context(scope=scope):
+    text = await tools.arun("read_file", {"path": "/workspace/report.txt"})
+```
+
+This is an application-defined example, not a shipped `read_file` builtin. The
+same tool can be passed to an Agent invoked with this live scope. The runtime
+supplies `filesystem`; model arguments and `vars` cannot supply a substitute.
+Missing bindings fail before tool execution. The VFS checks the actual `path`
+when called and raises `PermissionError` on denial. It also checks an already
+aborted scope before attempting an operation. Cancelling an async await cannot
+undo a write that already completed in the backend's worker thread.
+
+For tools accessing a fixed resource, `@tool_config(required_resources=[...])`
+adds mandatory preflight checks to the canonical ToolLibrary boundary and local/
+MCP adapters. Construct requirements using `ResourcePermission(resource, action)`
+or `filesystem.permission(...)`. `required_permissions` remains independent:
+declaring both requires both grants. Static requirements neither authorize a
+dynamic path by themselves nor stop arbitrary Python from using host APIs.
+
+### Process executors and future shell tools
+
+`ProcessExecutor` is an abstract, host-supplied backend. **No shell or OS sandbox
+backend is included.** An environment without one refuses process execution:
+
+```python
+from dataclasses import replace
+from msgflux.runtime import ProcessRequest
+
+process_scope = replace(scope, permissions=PermissionSet(["process.execute"]))
+with execution_context(scope=process_scope):
+    try:
+        await environment.arun(ProcessRequest(("bash", "-lc", "pwd")))
+    except PermissionError:
+        pass  # No executor configured; nothing was launched on the host.
+```
+
+A future `bash_tool` can declare `runtime_inputs=["environment"]` and call
+`environment.arun(...)`. It receives the same workspace as `read_file`; it must
+not fall back to `subprocess` when the backend cannot use that workspace.
+
+Before calling a backend, the environment checks `process.execute`, declared
+`SandboxCapabilities`, workspace compatibility and cancellation. Default
+`SandboxRequirements` require filesystem, network, process and resource-limit
+mechanisms. The trusted host owns any explicit relaxation. A backend must enforce
+the requested policy, the passed live resource grants, virtual cwd, timeout and
+output limit. It must not inherit the host's filesystem, credentials or environment
+implicitly. Cancellation must terminate/reap its children before cleanup returns.
+
+`ProcessRequest` carries explicit argv, a virtual cwd, timeout and output byte
+limit; `ProcessResult` carries return code and byte stdout/stderr. The runtime
+requests cancellation on timeout and rejects oversized returned output, but the
+backend must bound capture while running. Declaring capabilities is a contract,
+not proof of OS isolation. The current tests use a fake backend, never real bash.
+
+!!! warning "Current boundaries"
+    The memory VFS is process-local and has no persistence, quotas or artifact
+    resolver. Files are not checkpointed. Filesystem/network enforcement for real
+    processes, mounts/materialization, synchronization, shell emulation and durable
+    workspace versions remain future backend work. A VFS is not a Python sandbox.
+
+    Host tools, extensions and backend implementations remain trusted code.
+    Resource IDs are exact opaque names, not wildcard policies. Network resource
+    interpretation belongs to a future enforcing backend. Approval bindings include
+    static requirements, workspace identity and isolation mechanisms, but do not
+    pin file contents or inspect shell commands. Change host policy/tool revisions
+    when those implementations or their security meaning change.
 
 ## Durable commit observation (experimental)
 

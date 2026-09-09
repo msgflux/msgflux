@@ -329,6 +329,7 @@ class ToolLibraryExecutionMixin:
         sync_dispatch: bool,
     ) -> ToolRuntimeContext:
         execution = get_execution_context()
+        environment = execution.get("environment")
         handle = self.get_handle().for_tool(
             tool_name=tool_name,
             agent_inbox=execution.get("agent_inbox"),
@@ -351,6 +352,11 @@ class ToolLibraryExecutionMixin:
                 "activity_recorder": execution.get("task_activity_recorder"),
                 "background_dispatcher": _ToolBackgroundScheduler(self),
                 "sync_dispatch": sync_dispatch,
+                **(
+                    {"environment": environment, "filesystem": environment.filesystem}
+                    if environment is not None
+                    else {}
+                ),
             }
         )
 
@@ -1385,10 +1391,13 @@ class ToolLibraryExecutionMixin:
         self, intent: ToolIntent, definition: RuntimeToolDefinition
     ) -> ToolOutcome | None:
         try:
-            require_permissions(definition.required_permissions)
+            require_permissions(
+                definition.required_permissions, definition.required_resources
+            )
             # A transformed plan cannot drop its registered requirements.
             require_permissions(
-                self.get_tool_definition(intent.name).required_permissions
+                self.get_tool_definition(intent.name).required_permissions,
+                self.get_tool_definition(intent.name).required_resources,
             )
         except PermissionError as exc:
             payload = {

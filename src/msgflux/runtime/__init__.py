@@ -47,6 +47,12 @@ from msgflux.runtime.context_scopes import (
     ContextScopeController,
     ScopeTransition,
 )
+from msgflux.runtime.environment import (
+    ExecutionEnvironment,
+    ProcessExecutor,
+    ProcessRequest,
+    ProcessResult,
+)
 from msgflux.runtime.event_hub import (
     BackgroundTaskSnapshot,
     LiveRunSnapshot,
@@ -55,7 +61,8 @@ from msgflux.runtime.event_hub import (
     ThreadWatcher,
 )
 from msgflux.runtime.events import EventType, ExecutionEvent
-from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
+from msgflux.runtime.permissions import PermissionSet, ResourcePermission
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,
@@ -65,8 +72,18 @@ from msgflux.runtime.skills import (
     default_skill_paths,
     parse_skill_file,
 )
+from msgflux.runtime.workspace import InMemoryWorkspace, WorkspaceFilesystem
 
 __all__ = [
+    "ExecutionEnvironment",
+    "ProcessExecutor",
+    "ProcessRequest",
+    "ProcessResult",
+    "WorkspaceFilesystem",
+    "InMemoryWorkspace",
+    "ResourcePermission",
+    "SandboxCapabilities",
+    "SandboxRequirements",
     "AgentApprovals",
     "ApprovalReconciliationRequiredError",
     "ApprovalBinding",

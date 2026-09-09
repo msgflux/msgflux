@@ -156,8 +156,10 @@ results remain paused for host reconciliation. Approval removal on a pending
 run fails closed. Capabilities remain mandatory. This initial integration
 supports canonical local foreground tool calls, not flow-control DSL execution,
 provider-hosted effects or detached/background approval dispatch. This Agent
-policy uses an empty resource binding; argument-aware resource policies and
-OS sandbox enforcement remain separate follow-up work.
+policy initially used an empty resource binding. The resource-security increment
+binds static requirements plus workspace identity and isolation mechanisms;
+arbitrary argument-aware resource policies and OS sandbox enforcement remain
+separate follow-up work.
 
 Before dispatch, an atomic checkpoint changes the batch to `executing`. A resume
 observing that marker cannot repeat any sibling, even one without an approval.
@@ -204,6 +206,54 @@ are explicitly outside this contract. Agent `watch_commits` polls bounded pages,
 without tying observer lifetime to producer cancellation or a background queue.
 
 ## Release gates
+
+### Resource security foundation plan
+
+Branch `feat/runtime-resource-security` is the first security-boundary increment,
+not an OS sandbox implementation. Add immutable exact resource/action grants to
+PermissionSet (intersection-only delegation, no checkpoint restoration), static
+required_resources declarations to tool config/definitions and mandatory checks
+at existing permission boundaries. Resource IDs are host-owned opaque identifiers:
+no inferred path containment, symlink resolution, DNS matching or wildcards.
+This avoids making filesystem/network enforcement claims from string matching.
+
+Define an independent SandboxRequirements/SandboxCapabilities contract that
+rejects unsupported isolation mechanisms before a host launches a backend.
+Do not expose a pretend sandbox provider or route arbitrary Python through one.
+Actual backend enforcement, argument-to-resource resolution and dynamic approval
+resource bindings need subsequent reviewed integrations.
+
+Following the workspace discussion, this increment also introduces
+runtime/workspace.py (authorized VFS interface and memory backend),
+runtime/environment.py (host-owned ExecutionEnvironment and a process backend
+contract), and explicit `filesystem`/`environment` runtime-input bindings.
+ExecutionScope carries the environment only as a live reference; child scopes
+cannot replace it and checkpoint serialization omits it. Permissions remain in
+the scope rather than being copied into the environment.
+
+The VFS maps canonical absolute POSIX paths to workspace-qualified resource IDs.
+Read/write/list/mkdir/delete require exact operation grants. There are no host
+mounts, symlinks, path traversal, shell implementation or durable file storage in
+this increment. A process executor must explicitly accept the same workspace,
+receive a snapshot of live authority and enforce the requested policy; absent
+or incapable executors fail before execution. No subprocess fallback is supplied.
+Workspace backend implementations and arbitrary Python tool code remain trusted.
+Tests also cover dynamic paths, forged context parameters, workspace separation,
+sync/async injection, nested authority, cancellation, backend preflight and
+absence of environment/authority from serialized execution identity.
+
+The async filesystem injection test exposed that `tool_config` wraps coroutine
+functions in synchronous wrappers, preventing LocalTool from awaiting them.
+Preserve coroutine-function identity in the decorator and keep regression
+coverage for both sync and async ToolLibrary entry points.
+
+Order/files: runtime/permissions.py and new runtime/isolation.py; tool config,
+definitions and mandatory execution boundary; runtime exports; shared security
+tests and runtime learning page. Tests cover validation, denied-by-default grants,
+restrictive inheritance, serialization, sync/async denial, transformed definitions,
+and unsupported isolation requirements. Reuse capability checks, never make an
+optional policy the sole authorization boundary. Run offline pytest, Ruff and
+MkDocs. Preserve user files and do not publish this increment.
 
 ### Durability conformance gate implementation
 

@@ -74,9 +74,22 @@ class AgentApprovals:
             tool_revision=self.tools[intent.name],
             policy_version=self.policy_version,
             arguments=intent.arguments if arguments is None else arguments,
-            resources={},
+            resources=self._resource_binding(definition, scope),
             required_permissions=definition.required_permissions,
         )
+
+    @staticmethod
+    def _resource_binding(definition, scope):
+        resources = {}
+        if definition.required_resources:
+            resources["required"] = [
+                {"resource": item.resource, "action": item.action}
+                for item in definition.required_resources
+            ]
+        if scope.environment is not None:
+            resources["workspace_id"] = scope.environment.filesystem.workspace_id
+            resources["isolation"] = sorted(scope.environment.requirements.mechanisms)
+        return resources
 
     def prepare(self, library, intents, pending):
         records = {}
@@ -88,7 +101,10 @@ class AgentApprovals:
                     )
                 continue
             binding = self.binding(library, intent)
-            require_permissions(binding.required_permissions)
+            require_permissions(
+                binding.required_permissions,
+                library.get_tool_definition(intent.name).required_resources,
+            )
             key = json.dumps(
                 [binding.namespace, binding.thread_id, binding.run_id, intent.id]
             )

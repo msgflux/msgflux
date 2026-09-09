@@ -7,7 +7,11 @@ from typing import Any, Callable, Collection, Mapping, Protocol, runtime_checkab
 
 import msgspec
 
-from msgflux.runtime.permissions import normalize_permissions
+from msgflux.runtime.permissions import (
+    ResourcePermission,
+    normalize_permissions,
+    normalize_resources,
+)
 from msgflux.tools.catalog import NativeToolBinding
 from msgflux.tools.helpers import RUNTIME_BACKGROUND_PARAM
 from msgflux.tools.runtime import FeedbackSpec, _copy_mapping, _require_name
@@ -74,6 +78,7 @@ class ToolDefinition(msgspec.Struct, frozen=True, kw_only=True):
     loading: LoadingSpec = msgspec.field(default_factory=LoadingSpec)
     retry: Any = None
     required_permissions: tuple[str, ...] = ()
+    required_resources: tuple[ResourcePermission, ...] = ()
     native_bindings: tuple[NativeToolBinding, ...] = ()
     kind: str = "tool"
     display_name: str | None = None
@@ -94,6 +99,9 @@ class ToolDefinition(msgspec.Struct, frozen=True, kw_only=True):
         )
         if self.description is not None and not isinstance(self.description, str):
             raise TypeError("`description` must be a string or None")
+        msgspec.structs.force_setattr(
+            self, "required_resources", normalize_resources(self.required_resources)
+        )
         msgspec.structs.force_setattr(self, "kind", _require_name(self.kind, "kind"))
         msgspec.structs.force_setattr(
             self, "dispatch", DispatchSpec.coerce(self.dispatch)
@@ -189,6 +197,7 @@ class ToolDefinitionCompiler:
             loading=LoadingSpec(deferred=bool(config.get("defer_loading", False))),
             retry=config.get("retry"),
             required_permissions=config.get("required_permissions", ()),
+            required_resources=config.get("required_resources", ()),
             native_bindings=native_bindings,
             kind=config.get("tool_kind", "tool"),
             display_name=declaration.display_name,
