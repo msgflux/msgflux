@@ -8,22 +8,14 @@ from msgflux.data.stores import (
     CheckpointCursor,
     CheckpointCursorError,
     CheckpointConflictError,
-    InMemoryCheckpointStore,
     SQLiteCheckpointStore,
 )
 from msgflux.data.stores.observation import observe_checkpoints
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def store(request, tmp_path):
-    value = (
-        InMemoryCheckpointStore()
-        if request.param == "memory"
-        else SQLiteCheckpointStore(str(tmp_path / "commits.db"))
-    )
-    yield value
-    if hasattr(value, "close"):
-        value.close()
+@pytest.fixture
+def store(checkpoint_store):
+    return checkpoint_store
 
 
 def commit(store, revision, **kwargs):

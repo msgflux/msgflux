@@ -8,9 +8,8 @@ from msgflux.data.stores import (
 from msgflux.runtime.agent_run import AgentRun, agent_run_context, get_agent_run
 
 
-@pytest.mark.parametrize("store_factory", [InMemoryCheckpointStore])
-def test_checkpoint_commit_is_revision_checked_and_atomic(store_factory):
-    store = store_factory()
+def test_checkpoint_commit_is_revision_checked_and_atomic(checkpoint_store):
+    store = checkpoint_store
     first = store.commit_state(
         "agent",
         "thread",

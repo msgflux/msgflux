@@ -205,6 +205,35 @@ without tying observer lifetime to producer cancellation or a background queue.
 
 ## Release gates
 
+### Durability conformance gate implementation
+
+Branch `test/runtime-durability-conformance` extends the existing offline suite.
+Order/files: (1) shared memory/SQLite fixtures in tests/conftest.py, consumed by
+the existing approval and observation suites; (2) tests/test_durability_conformance.py
+for legacy upgrade, fork cursor isolation and cancellation during a storage
+transaction; (3) tests/test_durability_processes.py for spawned independent
+workers, abrupt process loss during a SQLite commit and the Agent approval /
+external-effect / crash / reconciliation / observer reconnect scenario;
+(4) contributor gate commands and runtime recovery guidance. Fix only production
+defects demonstrated by these tests, with regression coverage.
+
+Tests use temporary databases and deterministic fake models, never live APIs.
+Process synchronization uses bounded barriers/events and every worker is joined
+or terminated on failure. Risks: flaky timing, orphan workers, SQLite locks,
+mistaking cancelled awaits for rolled-back writes, and implicitly claiming
+exactly-once external effects. Run focused suites repeatedly, full offline pytest,
+Ruff and MkDocs. Existing user changes remain untouched. No publication in this
+step. New adapters must run the shared checkpoint/journal gates appropriate to
+the capabilities they advertise; persistent adapters additionally need crash and
+independent-worker tests equivalent to the SQLite cases.
+
+Fault injection exposed open SQLite transactions after `CancelledError`: the
+explicit transaction guards caught only `Exception`. Extend rollback to
+`BaseException` in commit/fork/save-with-event, immediately re-raising the original
+exception. Test transaction closure, unchanged snapshots/events, absent fork
+targets and subsequent connection reuse. This is not cancellation-driven rollback
+of an already committed worker-thread operation.
+
 - Explicit stable/experimental/internal API classification and migration policy.
 - Mixed-model reference application exercising shared runtime contracts.
 - Permission conformance across supported invocation paths.

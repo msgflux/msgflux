@@ -919,6 +919,13 @@ This prevents a competing resume from invalidating that worker's commit.
 
 ### Host reconciliation
 
+Recovery is covered by an offline process-level conformance gate: independent
+workers pause for approval, restart, perform a test effect, die before saving its
+result, refuse automatic replay, reconcile and reconnect a commit observer.
+The suite also checks legacy checkpoint upgrades and transaction rollback after
+abrupt process loss. These tests do not imply exactly-once external execution or
+power-loss guarantees for the underlying filesystem.
+
 Stop the old worker and verify external effects before reconciling. The runtime
 cannot prove worker quiescence or undo an external write. These methods are
 host-only: authenticate the operator and authorize access to the run yourself.
@@ -958,6 +965,13 @@ records remain unchanged, preserving their original execution evidence.
 `ainspect_approval_batch` and `areconcile_approval_batch` are async mirrors. A
 cancelled await may leave an already-started storage transaction committed;
 retry the same decision ID to discover its outcome safely.
+
+Cancellation has two distinct cases. An exception raised **inside** a SQLite
+transaction rolls back before the connection is reused. Cancelling an async
+caller while a worker thread is committing does not stop that thread: the write
+may still succeed. After an uncertain outcome, inspect committed state and use
+the original decision ID/revision instead of assuming rollback or replaying a
+tool. A stale checkpoint revision must fail, not overwrite the winner.
 
 ## Durable commit observation (experimental)
 

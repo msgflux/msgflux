@@ -577,7 +577,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 committed["_checkpoint"]["branch_id"],
                 committed["_checkpoint"]["head_item_id"],
             )
-        except Exception:
+        except BaseException:
             if self._conn.in_transaction:
                 self._conn.rollback()
             raise
@@ -655,7 +655,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 ),
             )
             self._conn.commit()
-        except Exception:
+        except BaseException:
             self._conn.rollback()
             raise
 
@@ -696,7 +696,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 (namespace, thread_id, run_id, event_type, now, event_data),
             )
             self._conn.commit()
-        except Exception:
+        except BaseException:
             self._conn.rollback()
             raise
 

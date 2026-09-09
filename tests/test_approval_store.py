@@ -48,17 +48,9 @@ def scope_for(binding):
     )
 
 
-@pytest.fixture(params=["in_memory", "sqlite"])
-def journal(request, tmp_path):
-    clock = [100.0]
-    options = (
-        {"path": str(tmp_path / "approvals.sqlite3")}
-        if request.param == "sqlite"
-        else {}
-    )
-    store = Store.approval(request.param, clock=lambda: clock[0], **options)
-    yield store, clock
-    store.close()
+@pytest.fixture
+def journal(approval_journal):
+    return approval_journal
 
 
 def approve(store, binding):

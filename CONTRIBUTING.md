@@ -361,6 +361,35 @@ uv run pytest
 
 ## 🎨 Code Quality
 
+### Runtime durability gate
+
+Changes to checkpoints, approval journals, or Agent recovery must pass the offline
+durability gate before review:
+
+```bash
+uv run pytest -q tests/test_checkpoint_store.py tests/test_checkpoint_revisions.py tests/test_checkpoint_observation.py tests/test_approval_store.py tests/test_agent_approvals.py tests/test_durability_conformance.py tests/test_durability_processes.py
+```
+
+`checkpoint_store` and `approval_journal` in `tests/conftest.py` register the
+adapters used by the shared contract tests. Add new adapters to the applicable
+fixture, including their setup/cleanup, rather than copying contract assertions
+into a provider-only suite. Existing legacy/provider-specific tests complement
+these shared gates. Persistent adapters also need the independent-worker and
+crash/restart cases; SQLite is the reference implementation, not a substitute
+for testing another backend's transactions.
+
+The process suite uses `spawn`, temporary databases, deterministic fake models,
+bounded synchronization and worker cleanup. It requires no API credentials and
+runs with ordinary pytest/CI discovery. Do not replace abrupt process exits with
+caught Python exceptions: the gate tests recovery without application cleanup.
+Passing it does not establish exactly-once external effects, power-loss safety,
+distributed leases or filesystem durability on every platform.
+
+For confidence in scheduling-sensitive changes, repeat the focused gate before
+running the full offline suite. A failed run must leave no workers behind.
+
+### Formatting and lint
+
 ```bash
 # Format code
 uv run ruff format
