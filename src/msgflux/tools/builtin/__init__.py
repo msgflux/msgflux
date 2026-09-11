@@ -2,6 +2,7 @@
 
 from msgflux.tools.builtin.agent_skills import SkillSearchTool, SkillTool
 from msgflux.tools.builtin.agent_tool import AgentTool
+from msgflux.tools.builtin.apply_patch import ApplyPatchTool
 from msgflux.tools.builtin.context_scope import close_context_scope, open_context_scope
 from msgflux.tools.builtin.task_tool import (
     BACKGROUND_CAPABILITY_TOOLS,
@@ -27,6 +28,7 @@ from msgflux.tools.builtin.web_search import WebSearchTool
 from msgflux.tools.builtin.workspace import BashTool, EditTool, ReadFileTool, WriteTool
 
 __all__ = [
+    "ApplyPatchTool",
     "WriteTool",
     "EditTool",
     "ReadFileTool",

@@ -38,6 +38,7 @@ from msgflux.models.reasoning import (
 from msgflux.models.registry import register_model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.sse import aiter_sse_json, iter_sse_json
+from msgflux.models.tool_adapters.openai_patch import OpenAIApplyPatchAdapter
 from msgflux.models.tool_adapters.openai_shell import OpenAIShellAdapter
 from msgflux.models.types import (
     ImageTextToImageModel,
@@ -84,7 +85,7 @@ class OpenAIChatCompletion(_OpenAICompatibleChatCompletion):
 
     provider = "openai"
     chat_extensions = (OpenAIServiceTierExtension(),)
-    native_tool_adapters = (OpenAIShellAdapter(),)
+    native_tool_adapters = (OpenAIShellAdapter(), OpenAIApplyPatchAdapter())
     capabilities = ChatProviderCapabilities(
         default_api_mode="responses",
         api_modes=(

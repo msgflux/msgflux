@@ -2,9 +2,10 @@
 
 from collections.abc import Mapping
 
+from msgflux.models.tool_adapters.openai_patch import OpenAIApplyPatchAdapter
 from msgflux.models.tool_adapters.openai_shell import OpenAIShellAdapter
 
-_ADAPTERS = (OpenAIShellAdapter(),)
+_ADAPTERS = (OpenAIShellAdapter(), OpenAIApplyPatchAdapter())
 
 
 def native_item_types(*, output=False):

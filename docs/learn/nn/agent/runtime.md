@@ -1419,8 +1419,86 @@ After the batch finishes its pending previews are cleared; retain an authorized
 audit artifact separately if long-term review history is needed.
 
 The provider-neutral `WorkspaceChangeTool` contract shares preparation/application
-across the two tools. OpenAI-native `apply_patch` and its V4A parser remain a
-separate upcoming adapter using this same contract.
+across the tools, including the patch frontend below.
+
+### Apply patch with OpenAI Responses
+
+`ApplyPatchTool(cwd="/")` creates, updates or deletes **one file per call** using
+a V4A diff. It inherits the same WorkspaceChangeTool contract, so approval previews,
+live filesystem grants and atomic compare/exchange work exactly as for write/edit.
+Creation refuses to overwrite an existing file; updates require an existing file;
+deletion requires `filesystem.delete` as well as read permission for its preview.
+Parent directories must already exist. There is no shell invocation, host-path
+fallback, multi-file rollback, rename operation or automatic retry.
+
+```python
+from msgflux.models.providers.openai import OpenAIChatCompletion
+from msgflux.nn import Agent
+from msgflux.runtime import AgentApprovals
+from msgflux.tools.builtin import ApplyPatchTool, ReadFileTool
+
+model = OpenAIChatCompletion(
+    model_id="gpt-5.4", api_mode="responses",  # choose a model supporting apply_patch
+)
+agent = Agent(
+    name="patcher", model=model,
+    tools=[ReadFileTool(), ApplyPatchTool()],
+    checkpoint_store=checkpoints,
+    approvals=AgentApprovals(journal, {"apply_patch": "implementation:v1"}, "review:v1"),
+)
+```
+
+This enables the model-owned native binding by default: Responses receives
+`{"type":"apply_patch"}` rather than a function schema. Its `apply_patch_call`
+operation becomes a canonical tool intent; the tool still returns only a compact
+result. The adapter produces `apply_patch_call_output` with `completed` or `failed`
+status, retaining `call_id`. Failed or denied changes include an error observation.
+See the [official protocol guide](https://developers.openai.com/api/docs/guides/tools-apply-patch).
+The application executes the operation locally through its configured workspace;
+OpenAI does not perform these filesystem writes for it.
+
+For ordinary function transport, construct the model with `native_tools=False`.
+The tool then exposes `operation` (`create`, `update`, `delete`), `path` and nullable
+`diff`. For example, an update uses:
+
+```python
+arguments = {
+    "operation": "update",
+    "path": "config.txt",
+    "diff": "@@\n-mode=old\n+mode=new",
+}
+```
+
+These are the canonical arguments accepted by the tool, not the native wire
+envelope. Native Responses uses `create_file`, `update_file`, or `delete_file`
+inside its `operation` object; only the adapter maps that representation. Create
+diffs use `+`-prefixed content lines (an empty diff creates an empty file); delete
+uses no diff. Supply a V4A **body**, not a multi-file `*** Begin Patch` envelope or
+a standard numbered unified diff. Function transport preserves extra runtime
+selectors such as `run_in_background` instead of silently dropping them, although
+the current approval policy only supports foreground execution.
+
+The parser is adapted from the OpenAI Agents SDK reference, with its MIT notice
+preserved and parser records implemented as `msgspec.Struct`. It supports context
+anchors, stacked anchors, EOF hunks and CRLF. It retains the reference whitespace
+matching behavior; the UI shows a unified diff of the **actual proposed old/new
+contents**, not merely the model's input patch. Single-file boundaries are stricter:
+embedded file operations and ignored trailing payloads are rejected. No-op and
+conflicting proposals become failed tool observations before effects.
+
+Streaming accumulates the operation until its completed output item arrives;
+partial diff events never execute a patch. Versioned transport metadata survives
+approval pause/restart, and interrupted calls or host reconciliation use the same
+adapter for continuation. Internal metadata is removed from provider requests.
+Renaming the tool preserves its logical name in portable history. The normal
+`inspect_approval_preview` API and host approval policy apply unchanged; omitting
+the policy explicitly leaves confirmation to the host, without granting resources.
+
+For custom frontends, `WorkspaceEditor.prepare_create(path, content)` and
+`prepare_transform(path, transform)` expose the same create-only and
+update-existing preparation. The transform is a trusted host-owned pure function,
+not a callable supplied by the model or restored from checkpoints. Async variants
+`aprepare_create` and `aprepare_transform` preserve execution context.
 
 ### Injecting a filesystem into tools
 

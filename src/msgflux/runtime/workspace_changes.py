@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from collections.abc import Callable
 from difflib import unified_diff
 
 import msgspec
@@ -132,6 +133,26 @@ class WorkspaceEditor:
             path, before, before[:start] + new + before[start + len(old) :]
         )
 
+    def prepare_create(self, path: str, content: str) -> PreparedFileChange:
+        """Prepare a creation that cannot overwrite an existing file."""
+        path = workspace_path(path)
+        if self._read(path) is not None:
+            raise FileExistsError(path)
+        return self._prepare(path, None, content)
+
+    def prepare_transform(
+        self, path: str, transform: Callable[[str], str]
+    ) -> PreparedFileChange:
+        """Apply a host-owned pure text transform to an existing file snapshot."""
+        path = workspace_path(path)
+        before = self._read(path)
+        if before is None:
+            raise FileNotFoundError(path)
+        after = transform(before)
+        if not isinstance(after, str):
+            raise TypeError("Text transforms must return text")
+        return self._prepare(path, before, after)
+
     def prepare_delete(self, path: str) -> PreparedFileChange:
         """Prepare deletion including the complete removed text for review."""
         path = workspace_path(path)
@@ -225,6 +246,14 @@ class WorkspaceEditor:
 
     async def aprepare_delete(self, path: str) -> PreparedFileChange:
         return await asyncio.to_thread(self.prepare_delete, path)
+
+    async def aprepare_create(self, path: str, content: str) -> PreparedFileChange:
+        return await asyncio.to_thread(self.prepare_create, path, content)
+
+    async def aprepare_transform(
+        self, path: str, transform: Callable[[str], str]
+    ) -> PreparedFileChange:
+        return await asyncio.to_thread(self.prepare_transform, path, transform)
 
     async def aapply(self, change: PreparedFileChange, **kwargs) -> None:
         await asyncio.to_thread(self.apply, change, **kwargs)

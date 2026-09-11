@@ -257,6 +257,26 @@ MkDocs. Preserve user files and do not publish this increment.
 
 ### Shared workspace changes and approval previews
 
+Native patch increment (`feat/openai-apply-patch`): adapt the OpenAI Agents SDK
+V4A text parser into `tools/patch.py`, preserve its MIT notice, replace parser
+dataclasses with msgspec.Struct, and reject ignored trailing file/envelope data.
+Add shared create/transform preparation in WorkspaceEditor and an ApplyPatchTool
+subclass using WorkspaceChangeTool, constructor cwd, public-only annotations and
+compact outcomes. Add `models/tool_adapters/openai_patch.py` to the explicit codec
+registry and OpenAI provider. Reuse request-local routing, completed stream items,
+portable history, approval previews and reconciliation without provider branches
+in Agent. No remote execution, subprocess patch command, SDK dependency or
+multi-file atomicity. Native calls represent one file each; ordinary function
+transport remains available through native_tools=False.
+
+Order/tests: pure parser create/update/anchors/EOF/CRLF/conflicts/malformed tails;
+workspace create-only/update-existing/delete authorization and CAS; native schema,
+renamed tools, mixed catalogs, decoding, failed output, streaming dedup, portable
+history/interruption, approval SQLite restart and host reconciliation. Document
+the model/native selection and host review policy in the runtime learning page.
+Run focused/full offline tests, durability gate, Ruff and MkDocs. Preserve local
+user changes; no commit or push of this increment without a new request.
+
 Agent integration increment (`feat/agent-workspace-edit-tools`): add a shared
 workspace-change tool contract and builtin WriteTool/EditTool with public-only
 annotations, constructor cwd and compact JSON results. Extend AgentApprovals
