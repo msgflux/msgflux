@@ -54,12 +54,12 @@ jobs:
       - name: Run ruff format check on changed files
         if: steps.changed-python.outputs.files != ''
         run: |
-          printf '%s\n' "${{ steps.changed-python.outputs.files }}" | xargs uv run --python 3.12 ruff format --check
+          printf '%s\n' "${{ steps.changed-python.outputs.files }}" | xargs uv run --python 3.12 ruff format --check --force-exclude
 
       - name: Run ruff lint on changed files
         if: steps.changed-python.outputs.files != ''
         run: |
-          printf '%s\n' "${{ steps.changed-python.outputs.files }}" | xargs uv run --python 3.12 ruff check --output-format=github
+          printf '%s\n' "${{ steps.changed-python.outputs.files }}" | xargs uv run --python 3.12 ruff check --force-exclude --output-format=github
 
       - name: Skip ruff when no Python files changed
         if: steps.changed-python.outputs.files == ''
