@@ -54,7 +54,7 @@ dev = [
     "pytest-cov>=6.2.1",
     "pytest-mock>=3.14.0",
     "pytest-xdist[psutil]>=3.6.1",
-    "ruff>=0.12.5",
+    "ruff==0.15.16",
     "twine>=6.0.1",
     "packaging>=24.0",
     "numpy>=1.24.0",
