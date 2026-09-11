@@ -532,6 +532,19 @@ def test_hidden_parameter_is_not_injected_without_tool_config():
     assert result.tool_calls[0].result == "lookup:True"
 
 
+def test_optional_hidden_annotation_is_recognized():
+    from typing import Any, Optional, Union
+
+    from msgflux.tools.types import is_hidden_annotation, unwrap_hidden_annotation
+
+    assert is_hidden_annotation(Optional[mf.Hidden])
+    assert unwrap_hidden_annotation(Optional[mf.Hidden]) is Any
+    assert unwrap_hidden_annotation(Optional[mf.Hidden[str]]) is str
+    assert unwrap_hidden_annotation(mf.Hidden[str] | None) is str
+    assert not is_hidden_annotation(Optional[str])
+    assert not is_hidden_annotation(Union[mf.Hidden, str, None])
+
+
 def test_hidden_parameter_is_ignored_from_model_params():
     def hidden_tool(name: str, secret: mf.Hidden[str] = "safe") -> str:
         """Hide a parameter from schema and runtime model params."""

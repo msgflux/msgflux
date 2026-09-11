@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import UnionType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -10,6 +11,7 @@ from typing import (
     Iterator,
     Mapping,
     TypeVar,
+    Union,
     get_args,
     get_origin,
 )
@@ -79,13 +81,25 @@ class Hidden(Generic[T]):
     """Type marker for parameters hidden from the model-facing tool schema."""
 
 
+def _normalize_hidden_annotation(annotation: Any) -> Any:
+    # Python 3.10 get_type_hints adds Optional for parameters defaulting to None.
+    if get_origin(annotation) in (Union, UnionType):
+        args = get_args(annotation)
+        non_none = tuple(arg for arg in args if arg is not type(None))
+        if len(args) == 2 and len(non_none) == 1:
+            return non_none[0]
+    return annotation
+
+
 def is_hidden_annotation(annotation: Any) -> bool:
     """Return whether an annotation is a `Hidden[...]` marker."""
+    annotation = _normalize_hidden_annotation(annotation)
     return annotation is Hidden or get_origin(annotation) is Hidden
 
 
 def unwrap_hidden_annotation(annotation: Any) -> Any | None:
     """Return the wrapped type from `Hidden[T]`, or Any for bare `Hidden`."""
+    annotation = _normalize_hidden_annotation(annotation)
     if not is_hidden_annotation(annotation):
         return None
     if annotation is Hidden:

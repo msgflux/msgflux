@@ -115,7 +115,9 @@ def test_parse_skill_file_supports_yaml_frontmatter(tmp_path):
     skill = parse_skill_file(skill_dir / "SKILL.md")
 
     assert skill.name == "research"
-    assert "http://example.com:443" in skill.description
+    assert (
+        skill.description == "Research topics with values like http://example.com:443."
+    )
     assert skill.metadata == {"tags": "['search', 'citations']"}
 
 
