@@ -565,6 +565,80 @@ external_inbox.user_message(
 )
 ```
 
+### Images and described conversation messages
+
+`user_message()` also accepts a non-empty list of canonical text/image blocks.
+Use `ChatBlock.image()` with an HTTP(S) URL or an image data URI:
+
+```python
+from msgflux.utils.chat import ChatBlock
+
+external_inbox.user_message([
+    ChatBlock.text("Please inspect this screenshot."),
+    ChatBlock.image("https://example.com/screenshot.png", detail="low"),
+])
+```
+
+This publishes an ordinary incoming user message containing both text and an
+image. Image-only messages are supported too. The inbox stores and forwards
+blocks; it does not download URLs, read host paths or decode images. To publish
+local bytes already obtained through authorized access, the publisher can use
+`Image(image_bytes)()` from `msgflux.data.types` to prepare an image block.
+Only text and images are supported here, not audio, video or arbitrary provider
+payloads. Actual image support depends on the selected model/provider.
+
+Use `message()` for content that should arrive as role `user` without claiming
+to be a new message from the human user:
+
+```python
+external_inbox.message(
+    [ChatBlock.image("https://example.com/chart.png")],
+    description="Image produced by the referenced tool call.",
+    source="render_chart",
+    ref="call_123",
+)
+```
+
+The resulting message contains a short `incoming_message` text wrapper with
+the source, reference and description, followed by the image and closing text.
+It does not use `incoming_user_message`. Source and reference are also retained
+in history metadata. These labels document provenance; they do not authenticate
+publishers or grant authority. Descriptions and text are escaped, and role is
+always `user`, never a publisher-controlled system role.
+
+Inside a tool, the existing notification handle can publish the same content:
+
+```python
+from msgflux.tools import Hidden, ToolLibraryHandle
+from msgflux.tools.config import tool_config
+
+@tool_config(runtime_inputs=["handle"], retry=False)
+def show_chart(*, handle: Hidden[ToolLibraryHandle]) -> str:
+    """Attach a chart to the next model turn."""
+    handle.get_notification().message(
+        [ChatBlock.image("https://example.com/chart.png")],
+        description="Chart attached by this tool call.",
+    )
+    return "The image follows as a user-role message."
+```
+
+The handle supplies its source and reference: a tool-call ID for foreground
+calls, or the existing task reference for background tools. Foreground delivery
+follows the tool results, before the next provider request. Multiple described
+or multimodal conversation messages retain their relative inbox order; system
+notifications retain their existing separate rendering. Background publication
+is delivered at the next inbox drain, not synchronized with a future task result.
+`clear_user_messages()` removes user-origin text/images but preserves described
+messages and runtime signals.
+
+Memory and SQLite stores use the existing claim/receipt/ack mechanism for these
+messages. Checkpoints preserve the image blocks; URL references are not immutable
+snapshots and data URIs increase storage size. This increment does not add an
+artifact store or make publication atomic with external tool effects. It also
+does not delegate to a vision model: the main agent/application must explicitly
+choose delegation when needed. No native multimodal tool-output support is
+required, but multimodal user-message support still is.
+
 ### Control Messages
 
 Control messages interrupt execution at safe provider boundaries.
@@ -854,6 +928,88 @@ approval. Declared capabilities and the live principal are checked again;
 checkpoint restoration never restores grants. Supply live runtime inputs again
 on resume, as for other Agent checkpoints.
 
+### Choosing when to ask for approval
+
+Approval is host policy, not a property of `BashTool` or its native transport.
+For new runs that should execute without confirmation prompts, omit `approvals`
+or pass `approvals=None`:
+
+```python
+from msgflux.nn import Agent
+from msgflux.tools.builtin import BashTool
+
+agent = Agent(
+    name="workspace", model=model, tools=[BashTool()],
+    checkpoint_store=checkpoints, approvals=None,
+)
+```
+
+This disables approval prompts, not sandboxing or authorization. Supply an
+`ExecutionScope` with an authorized `ExecutionEnvironment`, `process.execute`,
+and the necessary resource grants. There is no implicit wildcard/full-access
+grant. If your application's UI calls this mode “full access”, define its live
+grants separately. For selective approval, configure `AgentApprovals.tools` with
+only the names that need confirmation; omit `bash` to let it execute
+without a prompt. An empty mapping is not accepted; use `approvals=None` instead.
+An unprotected sibling still waits when another call in its batch needs approval.
+
+### Overriding approvals per invocation
+
+`forward`/`aforward` accept `approvals` as a keyword-only runtime override, also
+available through `agent(...)`, `agent.acall(...)` and `agent.stream_events(...)`.
+Omitting it uses the configured default; passing `None` explicitly disables
+prompts for new batches. Passing an `AgentApprovals` instance replaces the default
+for that invocation only, including when the constructor default is `None`.
+
+```python
+from msgflux.runtime import AgentApprovals
+
+policy = AgentApprovals(
+    store=journal, tools={"bash": "implementation:v1"},
+    policy_version="interactive:v1",
+)
+
+# The workspace agent above has approvals=None by default.
+try:
+    result = await agent.acall("Run the checks", scope=scope, approvals=policy)
+except TaskPauseRequestedError:
+    # Display requests; wait for an authenticated user's decision.
+    pass
+```
+
+This invocation requires approval for Bash without changing `agent.approvals`.
+Use `approvals=None` explicitly for an invocation without prompts, or omit the
+keyword to use the constructor default. The policy is held in execution-local
+context, not shared mutable Agent state or model inputs. Concurrent calls may
+use different policies. The override is not saved as a live object in checkpoints.
+
+Pass the policy again when observing, deciding and resuming a runtime-only policy:
+
+```python
+async with agent.watch(scope.thread_id, approvals=policy) as watcher:
+    requests = watcher.snapshot.approvals
+    # Render these records and obtain a decision outside this example.
+
+await agent.adecide_approval(
+    request_id, approved=reviewer_approved, decided_by=authenticated_reviewer_id,
+    approvals=policy,
+)
+result = await agent.acall("", scope=scope, approvals=policy)
+```
+
+The second example assumes the host has selected a request and authenticated the
+reviewer. Synchronous applications use `decide_approval(..., approvals=policy)`
+and `agent(..., approvals=policy)`. Watchers retain the policy selected when they
+are created; changing the mode in the UI does not reconfigure an existing watcher.
+
+The override is selected at invocation entry, not by mutating a running loop.
+To change modes during a conversation, serialize the UI's operations and pass the
+new policy on the next invocation or safe resume boundary. Permissions remain
+separate: supply their current values in the live `ExecutionScope` on each call.
+Do not remove a policy to bypass an already-pending approval. Pending requests
+retain their binding and must be resolved under the original policy; uncertain
+executing batches require host reconciliation.
+
 ### Async execution and observation
 
 Use `agent.acall(...)` and `agent.adecide_approval(...)` for async applications.
@@ -879,6 +1035,54 @@ direct `journal.decide` only updates storage. A decision never automatically
 restarts the Agent. Cross-process live events and an atomic snapshot spanning
 the checkpoint and journal databases are not provided; reconnect or poll storage
 to refresh external decisions.
+
+### Connecting a TUI
+
+Run event consumption in an async task so the UI stays responsive. For example,
+with the approval-enabled `agent`, `journal`, and `scope` above:
+
+```python
+import asyncio
+
+from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.runtime.approvals.agent import ApprovalReconciliationRequiredError
+
+
+async def run_turn(message):
+    try:
+        async for event in agent.stream_events(message, scope=scope):
+            render_event(event)
+    except ApprovalReconciliationRequiredError:
+        show_recovery_required()
+    except TaskPauseRequestedError:
+        requests = await asyncio.to_thread(
+            journal.pending, scope.namespace, scope.thread_id, scope.run_id,
+        )
+        show_approval_requests(requests)
+
+
+async def answer_request(request_id, approved, reviewer_id):
+    await agent.adecide_approval(
+        request_id, approved=approved, decided_by=reviewer_id,
+    )
+    await run_turn("")
+```
+
+`render_event`, `show_recovery_required`, and `show_approval_requests` are your
+UI functions. Schedule `run_turn(prompt)` as a task in the TUI event loop. Call
+`answer_request` only after that task has ended, from an explicit authenticated
+user action; serialize submissions so only one worker resumes a run at a time.
+Keep the same scope and re-supply live dependencies. A decision alone does not
+resume execution. If other requests remain pending, the resumed call pauses again.
+
+The approval event and journal intentionally omit raw arguments. To display the
+exact command batch, the authorized host can read the checkpoint through
+`await agent.ainspect_approval_batch(scope.thread_id, scope.run_id)` and correlate
+its pending intents by tool-call ID. Treat those arguments as untrusted display
+data, including terminal escape sequences. Use `agent.watch(...)` and its snapshot
+when reconnecting; live events alone are not a durable approval queue. Other
+extensions can also pause an Agent, so an empty approval list is not permission
+to automatically resume it.
 
 ### Denial, timeout, and recovery
 
@@ -1066,7 +1270,7 @@ or `filesystem.permission(...)`. `required_permissions` remains independent:
 declaring both requires both grants. Static requirements neither authorize a
 dynamic path by themselves nor stop arbitrary Python from using host APIs.
 
-### Process executors and future shell tools
+### Process executors
 
 `ProcessExecutor` is an abstract, host-supplied backend. **No shell or OS sandbox
 backend is included.** An environment without one refuses process execution:
@@ -1083,8 +1287,8 @@ with execution_context(scope=process_scope):
         pass  # No executor configured; nothing was launched on the host.
 ```
 
-A future `bash_tool` can declare `runtime_inputs=["environment"]` and call
-`environment.arun(...)`. It receives the same workspace as `read_file`; it must
+The builtin `bash` declares `runtime_inputs=["environment"]` and calls
+`environment.arun(...)`. It receives the same workspace as `read_file` and does
 not fall back to `subprocess` when the backend cannot use that workspace.
 
 Before calling a backend, the environment checks `process.execute`, declared
@@ -1113,6 +1317,244 @@ not proof of OS isolation. The current tests use a fake backend, never real bash
     static requirements, workspace identity and isolation mechanisms, but do not
     pin file contents or inspect shell commands. Change host policy/tool revisions
     when those implementations or their security meaning change.
+
+### Ready-to-use workspace tools
+
+`ReadFileTool` and `BashTool` use the same live dependencies described above. Add
+them explicitly to a ToolLibrary or an Agent; they are not enabled automatically.
+
+```python
+from msgflux.nn import ToolLibrary
+from msgflux.runtime import (
+    ExecutionEnvironment,
+    ExecutionScope,
+    InMemoryWorkspace,
+    PermissionSet,
+    execution_context,
+)
+from msgflux.tools.builtin import BashTool, ReadFileTool
+
+workspace = InMemoryWorkspace("report", {"/report.txt": b"Quarterly report"})
+scope = ExecutionScope(
+    environment=ExecutionEnvironment(workspace),
+    permissions=PermissionSet(
+        resources=[workspace.permission("/report.txt", "filesystem.read")],
+    ),
+)
+tools = ToolLibrary("workspace_tools", [ReadFileTool(), BashTool()])
+
+with execution_context(scope=scope):
+    text = tools.run("read", {"path": "/report.txt"})
+    assert text == "Quarterly report"
+```
+
+This example reads only the authorized virtual file, not a host path. The async
+equivalent is `await tools.arun("read", {"path": "/report.txt"})` inside
+the same execution context. For an Agent, pass `tools=[ReadFileTool(), BashTool()]`
+and supply the live scope to its call. `filesystem` and `environment` are injected
+runtime inputs, excluded from model schemas; arguments cannot replace them.
+
+`ReadFileTool` is exposed as `read(path, offset=None, limit=None)`. It accepts an absolute
+virtual path and returns strict UTF-8 text by default. There is no separate
+`read_file` Python function or shared default instance.
+
+For host-configured instructions, use a separate `ReadFileTool` instance for each
+agent. Guidance is optional and is not shared between instances:
+
+```python
+from msgflux.tools.builtin import ReadFileTool
+
+reader = ReadFileTool()
+reader.tool_config["usage_guidance"] = (
+    "Use this tool for text files. For image interpretation, explicitly "
+    "delegate to an available vision agent."
+)
+tools = ToolLibrary("reader", [reader])
+```
+
+This example provides guidance appropriate to a text-only main agent when a
+vision agent is available. It does not delegate automatically. For an agent whose
+model accepts image messages, enable image publication explicitly:
+
+```python
+class ProjectReader(ReadFileTool):
+    """Read project files and optionally attach images."""
+
+    tool_config = {
+        **ReadFileTool.tool_config,
+        "usage_guidance": "Read only files relevant to the current task.",
+    }
+
+reader = ProjectReader(supports_vision=True)
+```
+
+The constructor copies `tool_config` to the instance and appends an instruction
+explaining that images arrive in a subsequent user-role message linked to the
+tool call. Existing `tool_config["usage_guidance"]` is preserved; neither the
+class configuration nor other instances are modified. `usage_guidance` is not
+a constructor argument. Configure it before adding the instance to a library.
+The vision flag is host configuration, not a model argument;
+it does not change the model's capabilities. The default is `supports_vision=False`.
+
+PNG, JPEG, GIF and WebP paths are recognized by their filename MIME type. Image
+bytes are read through the same authorized VFS, encoded with the existing `Image`
+helper and published through `handle.get_notification().message(...)`. No host
+path is opened by the encoder. This is format routing, not image integrity or
+provider compatibility validation. Other image formats, images with vision
+disabled, or publication without an inbox raise errors. Standalone ToolLibrary
+calls normally have their own inbox; an Agent is needed to consume that inbox
+into a model conversation. The result is only a short publication confirmation,
+not base64 text. In foreground Agent execution, the attachment follows the tool
+results before the next model request.
+
+Both tools define explicit `annotations` containing only model-visible inputs
+and the return type. Runtime dependencies remain in `runtime_inputs`, not that
+mapping. Forged public arguments that collide with injected dependencies are
+rejected before execution. Their UI labels are `Read` and `Bash`.
+
+### Reading a window and configuring the working directory
+
+```python
+reader = ReadFileTool(cwd="/project")
+shell = BashTool(cwd="/project")
+tools = ToolLibrary("workspace_tools", [reader, shell])
+
+with execution_context(scope=scope):
+    snippet = tools.run("read", {"path": "src/main.py", "offset": 20, "limit": 40})
+```
+
+The example reads up to 40 lines starting at line 20 of `/project/src/main.py`;
+`scope` must authorize that exact virtual file. The result is only the selected
+text, preserving LF/CRLF line endings, without a metadata wrapper. `offset` is
+1-based and defaults to 1. `limit` defaults to 2000 lines and is capped at 2000.
+Both must be positive integers when supplied. An offset past EOF is an error;
+an empty file at offset 1 returns an empty string. Multiple ranges are not exposed.
+
+Only the selected text is decoded as UTF-8 and checked against the 1,000,000-byte
+output ceiling. A small window of a larger file is allowed. A selected window
+that exceeds the byte ceiling is rejected rather than silently cutting a line.
+Image reads reject explicit offset/limit and retain their existing size ceiling.
+
+`WorkspaceFilesystem.read_lines`/`aread_lines` authorize the same `filesystem.read`
+resource as `read_bytes`. Backends can implement `_read_lines` for bounded I/O;
+the compatibility implementation reads the source bytes once, scans newline
+positions and slices only the requested window. It does not split or decode the
+whole file, but does not promise bounded backend I/O for legacy implementations.
+Backends must enforce storage quotas and coherent reads as appropriate.
+
+`cwd` is constructor configuration, never a model argument or the host process's
+working directory. Relative read paths are resolved under it; absolute virtual
+paths remain allowed when authorized. Traversal (`..`) is still rejected. This
+cwd is not a security root: permissions and the sandbox define accessible paths.
+When changing constructor configuration for an approval-protected tool, update
+its host-owned implementation revision. A generic Agent resource container is
+not introduced; live resources still come from `ExecutionScope.environment`.
+
+`BashTool` is exposed as `bash(command, timeout_ms=None)` through function calling.
+Output budgets are internal execution controls, not model arguments. It requests
+`bash --noprofile --norc -c <command>` from the environment's executor. The entire
+command is one argv element; shell syntax is intentionally interpreted by Bash
+inside that executor. The executor must provide Bash, enforce the live resource
+grants and isolation requirements, and prevent inherited host environment or
+startup hooks such as `BASH_ENV`. `process.execute` alone does not grant file or
+network access. No command inspection here establishes which resources it uses.
+
+The host ceilings are 30 seconds per command and 1,000,000 combined output bytes
+per batch. The requested timeout may reduce the deadline, never increase it. A
+single command and a batch both return `ShellResult`, a `msgspec.Struct` from
+`msgflux.tools.shell`. Its `results` tuple contains `ShellCommandResult` records
+with `status` (`exited`, `timed_out`, or `not_executed`), `stdout`, `stderr`, and
+`returncode` (only set for an exited process). Function calling serializes this
+canonical result as JSON. Commands in a batch execute in order,
+in independent Bash processes with the same initial virtual cwd; `cd` and shell
+variables do not persist between commands. After the output budget is exhausted,
+remaining commands are not started and receive an explanatory error result.
+Invalid UTF-8 in process output is
+replaced for display. Automatic retries are disabled to avoid duplicating shell
+effects. Cancellation, cleanup and bounded output capture follow the executor
+contract above; this tool does not add durable process execution or live stdout
+deltas.
+
+`allow_background=True` injects only `run_in_background`, not a timeout. The
+tool's `timeout_ms` limits each process execution; the separate `TaskWaitTool.timeout`
+only limits how long a caller waits for a background task result, without changing
+the process deadline. Background execution does not bypass the shell's time cap.
+For example, configure `shell.tool_config["allow_background"] = True` before
+building the ToolLibrary. Existing approval restrictions for foreground tools
+still apply.
+
+An asyncio subprocess backend should disconnect stdin, enforce output limits
+during capture, and terminate and reap the process tree on timeout/cancellation.
+Collecting all output with `communicate()` and truncating afterward does not
+provide bounded memory. These responsibilities belong to the configured isolated
+executor, not a subprocess fallback inside the tool.
+
+### Native local shell in OpenAI Responses
+
+`BashTool()` declares the provider-independent `shell` tool kind. The model owns
+the binding, enabled by default through `native_tools=True`. With the OpenAI
+Responses provider, its adapter emits
+`{"type": "shell", "environment": {"type": "local"}}`. The model's
+`shell_call.action.commands` become the same canonical tool arguments used by
+the tool library; permissions, policies, approvals and the execution environment
+remain in that path. Results return as `shell_call_output`, not a JSON-encoded
+`function_call_output`. This is local execution by your configured backend, not
+an OpenAI-hosted container. See the [OpenAI shell contract](https://developers.openai.com/api/docs/guides/tools-shell).
+
+The tool contains no OpenAI configuration or wire-format results. For example:
+
+```python
+from msgflux.models.providers.openai import OpenAIChatCompletion
+
+model = OpenAIChatCompletion(model_id="your-shell-capable-model", native_tools=False)
+```
+
+This model uses function calling, including for `BashTool()`. Other providers and
+Chat Completions also retain function calling unless they implement a native
+adapter. A native shell can have any logical tool name, but only one shell tool
+can be bound per request, and it cannot use deferred loading. Use function mode
+for those configurations. Explicit selection of that native tool
+is translated to `tool_choice={"type": "shell"}`. The host must select a model
+that supports the shell tool; the runtime does not silently retry unsupported
+native requests through function calling.
+
+When a shell schema includes `run_in_background` or other inputs not representable
+by the native shell protocol, the adapter selects function calling at request
+construction. This preserves those controls instead of silently dropping them;
+it is not a retry after a provider error.
+
+For custom implementations, `tool_kind="shell"` is a contract, not merely a
+display category: the implementation must accept a command batch through
+`command`, optional `timeout_ms`, and return `ShellResult`.
+Use another kind for tools with a different interface. Provider wire fields such
+as `max_output_length` stay in versioned transport metadata and the provider
+continuation, not in tool arguments or the public function schema.
+
+Streaming accumulates only completed shell-call items; it never executes partial
+command text. Native calls/results survive history and checkpoint serialization,
+and pending approvals retain versioned codec metadata and the logical name on
+resume. This metadata is not a tool argument, is not sent to the provider, and
+does not grant execution authority. Unknown codec versions are rejected before
+replaying an approval. Routing is local to each request, including streaming.
+Experimental shell approval snapshots from before versioned transport metadata
+are not automatically migrated; do not resume them as a different tool protocol.
+For host reconciliation of a native shell batch, the confirmed text value must
+be canonical JSON, for example
+`{"results": [{"status": "exited", "returncode": 0, "stdout": "ok", "stderr": ""}]}`,
+with one result per command. The provider adapter converts it to Responses.
+Invalid results are rejected rather than assigned an invented success status.
+The current executor contract cannot recover partial captured output when its
+await times out, so that timeout observation has empty stdout. Abort/cancellation
+still propagates; it is not converted into successful completion or retried.
+
+!!! warning "No default shell execution"
+    The example intentionally has neither `process.execute` nor a process
+    executor: `bash` will refuse to run. To enable it, the host must supply a
+    trusted `ProcessExecutor` through `ExecutionEnvironment` and grant the needed
+    permissions. This release supplies the integration contract, not a concrete
+    sandbox backend, and never falls back to the host shell. Approval integration
+    is opt-in through `AgentApprovals`; resource grants do not substitute for
+    user confirmation when your application requires it.
 
 ## Durable commit observation (experimental)
 

@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     pass
 from msgflux.nn.modules.agent.context import (
     _CURRENT_AGENT_CONTEXT,
+    _UNSET,
     _agent_context,
     _BeforeRunEndHookError,
     _require_lifecycle_payload,
@@ -598,8 +599,9 @@ class AgentLifecycleMixin:
             )
         return scope
 
-    def watch(self, thread_id: str) -> ThreadWatcher:
+    def watch(self, thread_id: str, *, approvals=_UNSET) -> ThreadWatcher:
         """Observe a thread snapshot and its future process-local events."""
+        policy = self._get_effective_approvals(approvals)
 
         def load_messages() -> ChatMessages | None:
             checkpoint_store = self._get_effective_checkpoint_store()
@@ -622,7 +624,9 @@ class AgentLifecycleMixin:
             thread_id,
             namespace=self.get_module_name(),
             load_messages=load_messages,
-            load_approvals=lambda: self._load_approval_snapshot(thread_id),
+            load_approvals=lambda: self._load_approval_snapshot(
+                thread_id, approvals=policy
+            ),
         )
 
     def _prepare_event_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:

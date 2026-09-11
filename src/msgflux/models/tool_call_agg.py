@@ -1,11 +1,10 @@
 from collections import OrderedDict
 from typing import Any, Dict, List, Literal, Optional, Union
 
-import msgspec
-
+from msgflux.models.tool_transport import render_native_output, transport_adapter
 from msgflux.tools.runtime import ToolIntent, ToolOutcome
 from msgflux.utils.chat import ChatBlock
-from msgflux.utils.msgspec import msgspec_dumps
+from msgflux.utils.msgspec import msgspec_dumps, msgspec_loads
 
 
 class ToolCallAggregator:
@@ -27,6 +26,19 @@ class ToolCallAggregator:
         self.reasoning = reasoning
         self.api_mode = api_mode
         self.tool_calls = OrderedDict()
+        self.native_calls = {}
+
+    def process_native(self, index: int, item: dict, adapter, name: str):
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            raise ValueError("Native tool call requires a call_id")
+        if call_id in self.native_calls:
+            return
+        arguments, metadata = adapter.decode(item, name)
+        transport_adapter(metadata)
+        self.process(index, call_id, name, msgspec_dumps(arguments))
+        self.native_calls[call_id] = metadata
+        item.setdefault("metadata", {})["tool_transport"] = metadata.copy()
 
     def process(self, call_index: int, tool_id: str, name: str, arguments: str):
         """Add tool call.
@@ -62,7 +74,7 @@ class ToolCallAggregator:
         for call in self.tool_calls.values():
             arguments = call["arguments"].strip()
             if arguments:
-                arguments = msgspec.json.decode(arguments.encode())
+                arguments = msgspec_loads(arguments)
             tool_callings.append((call["id"], call["name"], arguments))
         return tool_callings
 
@@ -102,6 +114,17 @@ class ToolCallAggregator:
             rendered = []
             for call in self.tool_calls.values():
                 outcome = by_id[call["id"]]
+                native = self.native_calls.get(call["id"])
+                if native is not None:
+                    rendered.append(
+                        render_native_output(
+                            call["id"],
+                            outcome.result,
+                            native,
+                            error=outcome.error.message if outcome.error else None,
+                        )
+                    )
+                    continue
                 output = self._outcome_output(outcome)
                 if not isinstance(output, str):
                     output = msgspec_dumps(output)

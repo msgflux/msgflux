@@ -65,6 +65,7 @@ from msgflux.nn.modules.agent.configuration import AgentConfigurationMixin
 from msgflux.nn.modules.agent.context import (
     _DEFAULT_AGENT_ANNOTATIONS,
     _RESERVED_KWARGS,
+    _UNSET,
     _apply_before_resume,
     _prepare_agent_guard_input,
     _prepare_agent_guard_output,
@@ -447,6 +448,8 @@ class Agent(
     def forward(
         self,
         message: Optional[Union[str, Mapping[str, Any], Message]] = None,
+        *,
+        approvals: Optional[AgentApprovals] = _UNSET,
         **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Execute the agent with the given message.
@@ -459,6 +462,9 @@ class Agent(
                   message_fields={"task": "input.user"}
                 - dict: Task inputs as a dictionary
                 - None: When using named task arguments (see below)
+            approvals: Execution-local approval policy. Omitted uses the Agent
+                default; None explicitly disables prompts for new batches.
+                Pending approvals still require their host policy on resume.
             **kwargs: Can include:
                 - Reserved kwargs (runtime overrides for message_fields):
                     - task_multimodal: Override multimodal inputs
@@ -515,6 +521,7 @@ class Agent(
             >>> # Filter tools - block specific tools
             >>> agent("query", tool_filter={"block": ["browser"]})
         """
+        approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
         resumed = self._try_resume_from_checkpoint(
             kwargs.get("messages"),
@@ -548,11 +555,14 @@ class Agent(
         effective_checkpoint_store = self._get_effective_checkpoint_store()
         effective_task_store = self._get_effective_task_store()
         effective_inbox = self._get_scoped_agent_inbox(inputs.get("scope"))
-        with execution_context(
-            scope=inputs.get("scope"),
-            checkpoint_store=effective_checkpoint_store,
-            task_store=effective_task_store,
-            agent_inbox=effective_inbox,
+        with (
+            self._approval_context(approvals),
+            execution_context(
+                scope=inputs.get("scope"),
+                checkpoint_store=effective_checkpoint_store,
+                task_store=effective_task_store,
+                agent_inbox=effective_inbox,
+            ),
         ):
             try:
                 try:
@@ -585,9 +595,12 @@ class Agent(
     async def aforward(
         self,
         message: Optional[Union[str, Mapping[str, Any], Message]] = None,
+        *,
+        approvals: Optional[AgentApprovals] = _UNSET,
         **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
+        approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
         resumed = await self._atry_resume_from_checkpoint(
             kwargs.get("messages"),
@@ -621,11 +634,14 @@ class Agent(
         effective_checkpoint_store = self._get_effective_checkpoint_store()
         effective_task_store = self._get_effective_task_store()
         effective_inbox = self._get_scoped_agent_inbox(inputs.get("scope"))
-        with execution_context(
-            scope=inputs.get("scope"),
-            checkpoint_store=effective_checkpoint_store,
-            task_store=effective_task_store,
-            agent_inbox=effective_inbox,
+        with (
+            self._approval_context(approvals),
+            execution_context(
+                scope=inputs.get("scope"),
+                checkpoint_store=effective_checkpoint_store,
+                task_store=effective_task_store,
+                agent_inbox=effective_inbox,
+            ),
         ):
             try:
                 try:

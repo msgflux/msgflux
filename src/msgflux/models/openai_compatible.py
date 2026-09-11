@@ -47,6 +47,7 @@ from msgflux.models.reasoning import (
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.timing import ModelRequestTimer
 from msgflux.models.tool_call_agg import ToolCallAggregator
+from msgflux.models.tool_transport import native_item_types
 from msgflux.models.types import ChatCompletionModel, validate_reasoning_effort
 from msgflux.models.usage import UsageCodec, default_usage_codec
 from msgflux.runtime.context import get_execution_context
@@ -286,6 +287,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
     to_ignore = [*OpenAICompatibleModel.to_ignore, "chat_extensions"]
     chat_transport: ChatTransport | type[ChatTransport] = HTTPChatTransport
     chat_extensions: tuple[ChatModelExtension, ...] = ()
+    native_tools: bool = True
     usage_codec: UsageCodec = default_usage_codec
 
     def _initialize(self):
@@ -620,6 +622,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             Literal["chat_completions", "responses", "ollama_chat"]
         ] = None,
         reasoning_codec: Optional[ReasoningCodec] = None,
+        native_tools: bool = True,
         chat_transport: Optional[Union[ChatTransport, type[ChatTransport]]] = None,
         chat_extensions: Optional[Sequence[ChatModelExtension]] = None,
         credential_resolver: Optional[ModelCredentialResolver] = None,
@@ -723,6 +726,10 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         reasoning_codec:
             Codec responsible for extracting reasoning and encoding it back
             into provider history. Uses the provider class default when omitted.
+        native_tools:
+            Prefer provider-owned native adapters for compatible logical tool
+            kinds. Defaults to True. False keeps portable function declarations;
+            the tool implementation and execution authority do not change.
         chat_transport:
             Transport used to send prepared protocol requests. Transport classes
             are instantiated per model; instances may be supplied to inject
@@ -762,6 +769,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         ):
             raise TypeError("`reasoning_codec` must be a ReasoningCodec instance")
         self.api_mode = selected_api_mode
+        if not isinstance(native_tools, bool):
+            raise TypeError("native_tools must be a boolean")
+        self.native_tools = native_tools
         self.api_mode_capabilities = self.capabilities.mode(selected_api_mode)
         self.api_adapter = self.api_mode_capabilities.adapter
         self._uses_canonical_history = self.api_adapter.canonical_history
@@ -1242,7 +1252,16 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         model_output,
         generation_schema=None,
         transport_generation_schema=None,
+        tool_routes=None,
     ):
+        if self.api_mode == "responses":
+            return self.api_adapter.process_output(
+                self,
+                model_output,
+                generation_schema,
+                transport_generation_schema,
+                tool_routes=tool_routes,
+            )
         return self.api_adapter.process_output(
             self,
             model_output,
@@ -1261,6 +1280,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         model_output,
         generation_schema=None,
         transport_generation_schema=None,
+        tool_routes=None,
     ) -> ModelResponse:
         output_items = self._response_value(model_output, "output", []) or []
         text_chunks_by_phase: dict[str | None, list[str]] = {}
@@ -1314,6 +1334,14 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             ),
                         }
                     )
+                continue
+
+            if item_type in self._native_item_types():
+                serialized = self._serialize_openai_value(item)
+                self._process_native_call(
+                    aggregator, output_index, serialized, tool_routes
+                )
+                history_items.append(serialized)
                 continue
 
             if item_type == "function_call":
@@ -1561,10 +1589,16 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
     def _prepare_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Strip internal generation-only args before raw streaming requests."""
         kwargs.pop("generation_schema", None)
-        kwargs.pop("tool_catalog", None)
+        catalog = kwargs.pop("tool_catalog", None)
+        if self.api_mode == "responses":
+            kwargs["_tool_routes"] = self._request_native_tool_routes(kwargs, catalog)
         return kwargs
 
     def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        tool_routes = self._request_native_tool_routes(
+            kwargs, kwargs.get("tool_catalog")
+        )
+        cache_kwargs = dict(kwargs)
         cache_timer = ModelRequestTimer(source="cache")
         cached = self._check_cache(**kwargs)
         if cached is not None:
@@ -1583,17 +1617,21 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             model_output,
             generation_schema,
             transport_generation_schema,
+            tool_routes=tool_routes,
         )
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
             response,
-            **kwargs,
-            generation_schema=generation_schema,
+            **cache_kwargs,
         )
         return response
 
     async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        tool_routes = self._request_native_tool_routes(
+            kwargs, kwargs.get("tool_catalog")
+        )
+        cache_kwargs = dict(kwargs)
         cache_timer = ModelRequestTimer(source="cache")
         cached = self._check_cache(**kwargs)
         if cached is not None:
@@ -1612,13 +1650,13 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             model_output,
             generation_schema,
             transport_generation_schema,
+            tool_routes=tool_routes,
         )
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
             response,
-            **kwargs,
-            generation_schema=generation_schema,
+            **cache_kwargs,
         )
         return response
 
@@ -2011,6 +2049,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         if event_type == "response.output_item.done":
             item = self._response_value(event, "item")
             item_type = self._response_value(item, "type")
+            if item_type in self._native_item_types():
+                serialized = self._serialize_openai_value(item)
+                if serialized.get("call_id") not in aggregator.native_calls:
+                    self._process_native_call(
+                        aggregator,
+                        self._response_value(event, "output_index", 0),
+                        serialized,
+                        state.get("tool_routes"),
+                    )
+                    stream_response.chat_accumulator.add_item(serialized)
+                    state["request_timer"].mark_first_output()
+                    stream_response.set_response_type("tool_call")
+                return
             if item_type == "reasoning":
                 provider_state = self.reasoning_codec.extract_state(
                     item,
@@ -2153,6 +2204,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
         state = self._new_responses_stream_state(request_timer)
+        state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         try:
             model_output = self._execute_model(**kwargs)
@@ -2191,6 +2243,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
         state = self._new_responses_stream_state(request_timer)
+        state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         try:
             model_output = await self._aexecute_model(**kwargs)
@@ -2322,6 +2375,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 provider=self.provider,
                 api_mode=self.api_mode,
                 reasoning_codec=self.reasoning_codec,
+                native_tools=self.native_tools,
             )
         elif isinstance(messages, str):
             response_input = [{"role": "user", "content": messages}]
@@ -2330,6 +2384,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 provider=self.provider,
                 api_mode=self.api_mode,
                 reasoning_codec=self.reasoning_codec,
+                native_tools=self.native_tools,
             )
 
         if isinstance(system_prompt, str):
@@ -2359,10 +2414,78 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             generation_params["tool_choice"] = self._tool_choice_to_responses(
                 self._catalog_choice_value(tool_catalog)
             )
+            generation_params["tool_choice"] = self._native_tool_choice(
+                tool_catalog, generation_params["tool_choice"]
+            )
             generation_params["parallel_tool_calls"] = self.parallel_tool_calls
         return generation_params
 
+    def _native_tool_choice(self, catalog, choice):
+        for route in self._native_tool_routes(catalog).values():
+            if choice == {"type": "function", "name": route["name"]}:
+                return {"type": route["kind"]}
+        return choice
+
     def _tools_to_responses(
+        self,
+        catalog: "Union[ToolCatalog, ToolCatalogView]",
+    ) -> List[Dict[str, Any]]:
+        tools = self._function_tools_to_responses(catalog)
+        routes = self._native_tool_routes(catalog)
+        declarations = {
+            route["name"]: adapter.declaration()
+            for adapter in getattr(self, "native_tool_adapters", ())
+            if (route := routes.get(adapter.item_type)) is not None
+        }
+        return [
+            declarations[tool["name"]]
+            if tool.get("type") == "function" and tool.get("name") in declarations
+            else tool
+            for tool in tools
+        ]
+
+    def _native_item_types(self):
+        return native_item_types()
+
+    def _request_native_tool_routes(self, params, catalog):
+        declared = {tool.get("type") for tool in params.get("tools", [])}
+        if not declared or declared == {"function"}:
+            return {}
+        return {
+            key: route
+            for key, route in self._native_tool_routes(catalog).items()
+            if route["kind"] in declared
+        }
+
+    def _native_tool_routes(self, catalog):
+        if not self.native_tools or self.api_mode != "responses" or catalog is None:
+            return {}
+        routes = {}
+        for entry in self._catalog_tool_entries(catalog):
+            for adapter in getattr(self, "native_tool_adapters", ()):
+                if entry.kind != adapter.kind or not adapter.supports(entry):
+                    continue
+                if getattr(entry, "deferred", getattr(entry, "defer_loading", False)):
+                    raise ValueError(
+                        "Native tools cannot be deferred; use native_tools=False"
+                    )
+                if adapter.item_type in routes:
+                    raise ValueError("Only one tool per native kind may be configured")
+                routes[adapter.item_type] = {"name": entry.name, "kind": adapter.kind}
+        return routes
+
+    def _process_native_call(self, aggregator, index, item, routes):
+        route = (routes or {}).get(item["type"])
+        if route is None:
+            raise ValueError("Unbound native tool call")
+        adapter = next(
+            adapter
+            for adapter in self.native_tool_adapters
+            if adapter.item_type == item["type"]
+        )
+        aggregator.process_native(index, item, adapter, route["name"])
+
+    def _function_tools_to_responses(
         self,
         catalog: "Union[ToolCatalog, ToolCatalogView]",
     ) -> List[Dict[str, Any]]:

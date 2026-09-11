@@ -40,7 +40,7 @@ def text_response():
     return response
 
 
-def make_agent(checkpoints, approvals, calls):
+def make_agent(checkpoints, approvals, calls, *, configured=True):
     def lookup(query: str) -> str:
         """Look up one entry."""
         calls.append(query)
@@ -53,7 +53,9 @@ def make_agent(checkpoints, approvals, calls):
         model=model,
         tools=[lookup],
         checkpoint_store=checkpoints,
-        approvals=AgentApprovals(approvals, {"lookup": "v1"}, "p1"),
+        approvals=AgentApprovals(approvals, {"lookup": "v1"}, "p1")
+        if configured
+        else None,
     )
     agent.generator.forward = Mock(side_effect=[tool_response(), text_response()])
     return agent
@@ -63,6 +65,134 @@ def scope():
     return ExecutionScope(
         namespace="reviewer", thread_id="thread", run_id="run", principal="user"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_runtime_only_policy_pause_decide_watch_resume(asynchronous):
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls, configured=False)
+    policy = AgentApprovals(journal, {"lookup": "v1"}, "p1")
+    agent.generator.aforward = AsyncMock(side_effect=[tool_response(), text_response()])
+
+    async def invoke(**kwargs):
+        if asynchronous:
+            return await agent.acall("lookup", scope=scope(), **kwargs)
+        return agent("lookup", scope=scope(), **kwargs)
+
+    with pytest.raises(TaskPauseRequestedError):
+        await invoke(approvals=policy)
+    assert agent.approvals is None
+    assert calls == []
+    async with agent.watch("thread", approvals=policy) as watcher:
+        record = watcher.snapshot.approvals[0]
+        assert record.status == "pending"
+    # Explicit None cannot release the persisted protected batch.
+    with pytest.raises(TaskPauseRequestedError, match="host approval configuration"):
+        await invoke(approvals=None)
+    assert calls == []
+    if asynchronous:
+        await agent.adecide_approval(
+            record.request_id, approved=True, decided_by="host", approvals=policy
+        )
+    else:
+        agent.decide_approval(
+            record.request_id, approved=True, decided_by="host", approvals=policy
+        )
+    assert await invoke(approvals=policy) == "done"
+    assert calls == ["secret"]
+    assert agent.approvals is None
+    assert agent._get_effective_approvals() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_explicit_none_overrides_default_without_mutating_it(asynchronous):
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls)
+    policy = agent.approvals
+    agent.generator.aforward = AsyncMock(side_effect=[tool_response(), text_response()])
+    if asynchronous:
+        assert await agent.acall("lookup", scope=scope(), approvals=None) == "done"
+    else:
+        assert agent("lookup", scope=scope(), approvals=None) == "done"
+    assert calls == ["secret"]
+    assert agent.approvals is policy
+    assert not journal.pending("reviewer", "thread", "run")
+    agent.generator.forward = Mock(return_value=tool_response())
+    agent.generator.aforward = AsyncMock(return_value=tool_response())
+    another = replace(scope(), run_id="next")
+    with pytest.raises(TaskPauseRequestedError):
+        if asynchronous:
+            await agent.acall("lookup", scope=another)
+        else:
+            agent("lookup", scope=another)
+    assert calls == ["secret"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_approval_policies_are_isolated_between_concurrent_runs():
+    from msgflux.runtime.context import get_execution_scope
+
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls, configured=False)
+    policy = AgentApprovals(journal, {"lookup": "v1"}, "p1")
+    arrived = set()
+    ready = asyncio.Event()
+
+    async def generate(**kwargs):
+        run_id = get_execution_scope().run_id
+        if run_id in arrived:
+            return text_response()
+        arrived.add(run_id)
+        if len(arrived) == 2:
+            ready.set()
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        return tool_response()
+
+    agent.generator.aforward = generate
+    results = await asyncio.gather(
+        agent.acall(
+            "lookup",
+            scope=replace(scope(), thread_id="protected", run_id="protected"),
+            approvals=policy,
+        ),
+        agent.acall(
+            "lookup",
+            scope=replace(scope(), thread_id="free", run_id="free"),
+            approvals=None,
+        ),
+        return_exceptions=True,
+    )
+    assert isinstance(results[0], TaskPauseRequestedError)
+    assert results[1] == "done"
+    assert calls == ["secret"]
+    assert agent.approvals is None
+
+
+@pytest.mark.asyncio
+async def test_stream_events_accepts_runtime_approval_policy():
+    agent = make_agent(
+        InMemoryCheckpointStore(), InMemoryApprovalStore(), [], configured=False
+    )
+    policy = AgentApprovals(InMemoryApprovalStore(), {"lookup": "v1"}, "p1")
+    agent.generator.aforward = AsyncMock(return_value=tool_response())
+    with pytest.raises(TaskPauseRequestedError):
+        async for _ in agent.stream_events("lookup", scope=scope(), approvals=policy):
+            pass
+    assert policy.store.pending("reviewer", "thread", "run")
+    assert agent.approvals is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [False, {}, "full_access"])
+async def test_invalid_runtime_approval_policy_rejected(value):
+    agent = make_agent(InMemoryCheckpointStore(), InMemoryApprovalStore(), [])
+    with pytest.raises(TypeError, match="approvals"):
+        agent("lookup", scope=scope(), approvals=value)
+    with pytest.raises(TypeError, match="approvals"):
+        await agent.acall("lookup", scope=scope(), approvals=value)
+    agent.generator.forward.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])

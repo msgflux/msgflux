@@ -52,6 +52,39 @@ def test_virtual_paths_never_resolve_on_host(path):
         workspace_path(path)
 
 
+def test_line_read_backend_hook_is_authorized_before_io():
+    fs = InMemoryWorkspace("lines")
+    fs._read_lines = Mock(return_value=b"selected\n")
+    with authorized(fs):
+        with pytest.raises(PermissionError):
+            fs.read_lines("/input", offset=500, limit=1)
+    fs._read_lines.assert_not_called()
+    with authorized(fs, ("/input", "filesystem.read")):
+        assert fs.read_lines("/input", offset=500, limit=1) == b"selected\n"
+    fs._read_lines.assert_called_once_with("/input", 500, 1, 1_000_000)
+
+
+@pytest.mark.asyncio
+async def test_async_line_read_limits_and_empty_files():
+    fs = InMemoryWorkspace("lines", {"/input": b"a\nb\nc", "/empty": b""})
+    with authorized(fs, ("/input", "filesystem.read"), ("/empty", "filesystem.read")):
+        assert await fs.aread_lines("/input", offset=2, limit=1, max_bytes=2) == b"b\n"
+        assert await fs.aread_lines("/empty") == b""
+        with pytest.raises(ValueError):
+            await fs.aread_lines("/input", limit=True)
+        with pytest.raises(ValueError):
+            await fs.aread_lines("/input", max_bytes=1)
+
+
+@pytest.mark.parametrize("data", [b"long", b"a\nb", "not bytes"])
+def test_line_read_backend_cannot_exceed_limits(data):
+    fs = InMemoryWorkspace("lines")
+    fs._read_lines = Mock(return_value=data)
+    with authorized(fs, ("/input", "filesystem.read")):
+        with pytest.raises(ValueError, match="Backend"):
+            fs.read_lines("/input", limit=1, max_bytes=3)
+
+
 def test_memory_workspace_operations_and_exact_grants():
     fs = InMemoryWorkspace("w", {"/workspace/input": b"hello"})
     with authorized(

@@ -76,6 +76,7 @@ _RESERVED_KWARGS = {
     "tool_filter",
     "scope",
     "tool_call_id",
+    "approvals",
 }
 
 _UNSET = object()

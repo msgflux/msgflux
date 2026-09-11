@@ -45,7 +45,7 @@ class WorkspaceFilesystem(ABC):
             f"workspace:{self.workspace_id}:{workspace_path(path)}", action
         )
 
-    def _perform(self, operation, path, data=None):
+    def _authorize(self, operation, path):
         from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
 
         canonical = workspace_path(path)
@@ -57,7 +57,10 @@ class WorkspaceFilesystem(ABC):
         require_permissions(
             (), (self.permission(canonical, f"filesystem.{operation}"),)
         )
-        return self._operate(operation, canonical, data)
+        return canonical
+
+    def _perform(self, operation, path, data=None):
+        return self._operate(operation, self._authorize(operation, path), data)
 
     @abstractmethod
     def _operate(self, operation: str, path: str, data: bytes | None):
@@ -66,6 +69,63 @@ class WorkspaceFilesystem(ABC):
 
     def read_bytes(self, path: str) -> bytes:
         return self._perform("read", path)
+
+    def read_lines(
+        self,
+        path: str,
+        *,
+        offset: int = 1,
+        limit: int = 2000,
+        max_bytes: int = 1_000_000,
+    ) -> bytes:
+        """Read LF-delimited lines, preserving bytes, after live authorization.
+
+        Backends may override _read_lines for bounded I/O. The compatibility
+        implementation reads bytes once but never splits/decodes the whole file.
+        """
+        if any(
+            type(value) is not int or value <= 0 for value in (offset, limit, max_bytes)
+        ):
+            raise ValueError("offset, limit and max_bytes must be positive integers")
+        canonical = self._authorize("read", path)
+        data = self._read_lines(canonical, offset, limit, max_bytes)
+        if not isinstance(data, bytes) or len(data) > max_bytes:
+            raise ValueError("Backend exceeded the requested read byte limit")
+        if data.count(b"\n") + bool(data and not data.endswith(b"\n")) > limit:
+            raise ValueError("Backend exceeded the requested read line limit")
+        return data
+
+    def _read_lines(self, path, offset, limit, max_bytes):
+        data = self._operate("read", path, None)
+        start = 0
+        for _ in range(offset - 1):
+            newline = data.find(b"\n", start)
+            if newline < 0:
+                raise ValueError("offset exceeds the number of lines")
+            start = newline + 1
+        if start >= len(data) and offset != 1:
+            raise ValueError("offset exceeds the number of lines")
+        end = start
+        for _ in range(limit):
+            newline = data.find(b"\n", end)
+            end = len(data) if newline < 0 else newline + 1
+            if end - start > max_bytes:
+                raise ValueError("Selected lines exceed the read byte limit")
+            if end == len(data):
+                break
+        return data[start:end]
+
+    async def aread_lines(
+        self,
+        path: str,
+        *,
+        offset: int = 1,
+        limit: int = 2000,
+        max_bytes: int = 1_000_000,
+    ) -> bytes:
+        return await asyncio.to_thread(
+            self.read_lines, path, offset=offset, limit=limit, max_bytes=max_bytes
+        )
 
     def write_bytes(self, path: str, data: bytes) -> None:
         if not isinstance(data, bytes):

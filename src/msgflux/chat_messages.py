@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Iterator, List, Literal, Mappin
 from msgflux._private.chat_items import legacy_item_id, new_item_id
 from msgflux.core.examples import Example
 from msgflux.data.types import Audio, File, Image, MediaType, Video
+from msgflux.models.tool_transport import history_adapter, native_item_types
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -725,14 +726,20 @@ class ChatMessages:
         reason: str | None = None,
     ) -> int:
         open_call_ids: list[str] = []
+        native_calls = {}
         closed_call_ids: set[str] = set()
         for item in self._items:
-            if item.get("type") == "function_call":
+            if item.get("type") in {"function_call", *native_item_types()}:
                 call_id = item.get("call_id") or item.get("id")
                 if isinstance(call_id, str) and call_id:
                     open_call_ids.append(call_id)
+                    if item.get("type") in native_item_types():
+                        native_calls[call_id] = item
                 continue
-            if item.get("type") == "function_call_output":
+            if item.get("type") in {
+                "function_call_output",
+                *native_item_types(output=True),
+            }:
                 call_id = item.get("call_id")
                 if isinstance(call_id, str) and call_id:
                     closed_call_ids.add(call_id)
@@ -741,6 +748,15 @@ class ChatMessages:
             call_id for call_id in open_call_ids if call_id not in closed_call_ids
         ]
         for call_id in missing_call_ids:
+            if call_id in native_calls:
+                item = native_calls[call_id]
+                self.append(
+                    history_adapter(item).interrupted(
+                        item,
+                        reason or "Tool call interrupted; effects may be unconfirmed.",
+                    )
+                )
+                continue
             self.append(
                 {
                     "type": "function_call_output",
@@ -840,8 +856,15 @@ class ChatMessages:
     ) -> List[dict[str, Any]]:
         messages: List[dict[str, Any]] = []
         pending_reasoning: list[Mapping[str, Any]] = []
-        for item in self._materialized_items(provider=provider, api_mode=api_mode):
+        for stored_item in self._materialized_items(
+            provider=provider, api_mode=api_mode
+        ):
+            item = stored_item
             item_type = item.get("type")
+            adapter = history_adapter(item)
+            if adapter is not None:
+                item = adapter.project_history(item)
+                item_type = item["type"]
             if item_type == "turn":
                 continue
             if item_type == "reasoning":
@@ -982,9 +1005,29 @@ class ChatMessages:
         provider: str = "openai",
         api_mode: str = "responses",
         reasoning_codec: ReasoningCodec | None = None,
+        native_tools: bool = True,
     ) -> List[dict[str, Any]]:
         result: List[dict[str, Any]] = []
-        for item in self._materialized_items(provider=provider, api_mode=api_mode):
+        for stored_item in self._materialized_items(
+            provider=provider, api_mode=api_mode
+        ):
+            item = stored_item
+            adapter = history_adapter(item)
+            if adapter is not None:
+                if (
+                    native_tools
+                    and provider == adapter.provider
+                    and api_mode == adapter.api_mode
+                ):
+                    result.append(
+                        {
+                            key: deepcopy(value)
+                            for key, value in item.items()
+                            if key not in {"item_id", "metadata"}
+                        }
+                    )
+                    continue
+                item = adapter.project_history(item)
             item_type = item.get("type")
             if item_type == "turn":
                 continue
@@ -1121,6 +1164,7 @@ class ChatMessages:
             if item_type:
                 converted = deepcopy(item)
                 converted.pop("item_id", None)
+                converted.pop("metadata", None)
                 result.append(converted)
                 continue
 

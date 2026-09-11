@@ -255,6 +255,148 @@ and unsupported isolation requirements. Reuse capability checks, never make an
 optional policy the sole authorization boundary. Run offline pytest, Ruff and
 MkDocs. Preserve user files and do not publish this increment.
 
+### Provider-owned tool transport refactor
+
+Public shell schema reduction: keep command and timeout_ms only; output byte
+budgets remain internal to ProcessRequest/execution, while Responses
+max_output_length stays in transport metadata. Update builtin tests and docs for
+the host's shorter read/bash names without rewriting legacy history names. Test
+schema size, native decoding/replay, rejection of obsolete model arguments and
+unchanged internal output enforcement. Do not migrate pending approval bindings
+implicitly when changing the tool implementation revision.
+
+Workspace tool ergonomics increment: explicit public annotations and UI
+labels in tools/builtin/workspace.py; offset/limit line reads backed by an
+authorized WorkspaceFilesystem.read_lines hook; cwd configured in tool
+constructors, never taken from the host process. Update tool/provider tests and
+runtime learning docs. Keep one shell process deadline (timeout_ms); background
+selection only injects run_in_background. No ranges, new Agent resource container
+or host subprocess fallback in this increment. Test backend authorization,
+bounded selection, UTF-8/newlines, invalid limits, image paging rejection,
+hidden schemas, cwd propagation, background schema and native continuation.
+Select function transport when the shell schema includes runtime selectors or
+other arguments not representable by the native shell protocol; never silently
+drop run_in_background. Injected dependencies stay outside public annotations;
+forged collisions are rejected by ToolExecutionPlan before dispatch.
+
+Follow-up: per-invocation approval override in Agent forward/aforward, with an
+omitted-value sentinel and execution-local ContextVar binding. Update approval
+dispatch/replay, decisions and watcher loading without mutating the constructor
+default or persisting live policy/store objects. Reserve the argument from task
+inputs. Validate sync/async, streaming, pause/resume, explicit None, concurrency,
+watch snapshots, invalid values and default restoration; document TUI usage in
+the runtime learning guide. Existing pending bindings must not be bypassed.
+
+Order/files: canonical `tools/shell.py` msgspec results; provider-independent
+BashTool arguments/results and shell kind; model-owned adapters in
+`models/tool_transport.py` and `models/tool_adapters/openai_shell.py`; request-local
+route resolution in OpenAICompatibleChatCompletion; generic transport metadata in
+ToolCallAggregator, approval checkpoints and reconciliation; ChatMessages native
+projection; tests and runtime learning documentation. Bindings are selected by
+logical capability rather than tool name. Model configuration owns native versus
+function representation; tools contain no provider switch or wire output fields.
+Versioned metadata must preserve routing and continuation but never carry live
+execution authority. Reject unbound native calls and unknown codec versions.
+Tests cover canonical results, renamed tools, mixed/concurrent catalogs,
+sync/async/streaming, disabled model-native mode, approvals, reconciliation,
+interruption and serialization. Run full offline pytest, Ruff and MkDocs.
+No automatic provider fallback, sandbox backend or command policy implementation
+is introduced. Existing uncommitted work and unrelated user files are preserved.
+
+Implemented boundary: `tool_kind="shell"` selects a provider-owned adapter;
+`BashTool` accepts commands and a millisecond deadline and returns canonical
+`ShellResult` records. Request-local routes carry logical names separately from
+provider declarations, are removed before HTTP dispatch and are represented in
+cache identity through the original catalog. Approval snapshots retain a codec
+identifier/version plus continuation options, never an executor or permission
+grant. The codec registry is explicit application code, not checkpoint-selected
+imports. History uses the same codecs for interruption and portable projection;
+internal metadata is stripped on provider replay. Unversioned experimental shell
+approval metadata is deliberately rejected rather than guessed.
+
+### Tool configuration and native shell increment
+
+Order: (1) reader instance-owned tool_config and BashTool class in
+tools/builtin/workspace.py, exports/tests; (2) native-binding propagation through
+the existing tool compiler and Responses catalog, shell call aggregation and
+history/streaming; (3) approval reconstruction and continuation fidelity;
+(4) offline integration tests and runtime learning docs. Use the public local
+shell contract (shell_call/shell_call_output), not hosted execution. Reuse the
+execution environment and permission boundary. Preserve current uncommitted
+work and user files; no commit/push requested. Risks: shared class config,
+ambiguous native-tool routing, interpreting incomplete streamed commands,
+loss of native identity on resume, timeout/output caps, and bypassing permissions.
+Validate focused/full offline pytest, Ruff and MkDocs.
+
+Security extension plan (not a default tool behavior): implement a reusable
+before_dispatch policy after canonical argument preparation, applicable to native
+and function calls. Its host-owned rule set can block, allow or require approval;
+approval requirements must bind the normalized command batch and policy version.
+Inspect shell syntax using an explicitly selected parser, not substring denylist
+claims. Reject unsupported constructs under restrictive policies. Separate cwd
+validation from relative paths inside shell syntax; shell expansions, scripts and
+interpreters prevent complete path/effect inference. Filesystem/network/process
+enforcement stays in the sandbox. Tests must cover substitutions, pipes, redirects,
+interpreters, alternate executable paths, nested/background dispatch and resume
+under changed policy. Start with explicit executable/construct allow rules and
+host confirmation, and clearly document what analysis cannot establish.
+Proposed follow-up files: `runtime/shell_policy.py` for immutable host rules,
+`nn/modules/tool/extensions.py` for policy registration, approval binding code
+for the policy revision, `tests/test_shell_policy.py` for parser/dispatch cases,
+and the runtime learning page for examples and limitations. Select the parser
+and supported shell subset before implementation; do not add a dependency or
+promise complete shell analysis in this increment.
+
+### Inbox conversation content increment
+
+Follow-up: unify the builtin reader in `tools/builtin/workspace.py` as
+`ReadFileTool`, removing the duplicate coroutine/export. Add host-only
+`supports_vision=False`; concatenate visual delivery guidance with existing
+instance/class guidance. Read image bytes through the authorized VFS and publish
+through the tool notification handle, never host paths. Reuse Image encoding and
+MIME helpers, dispatch supported image extensions explicitly, and reject disabled
+vision or missing inbox. Update builtin exports, runtime docs and reader tests;
+cover sync/async paths, guidance preservation, hidden inputs, denied reads,
+disabled vision, missing inbox and Agent trajectory/checkpoint ordering.
+
+Extend `runtime/agent_inbox/inbox.py` with described conversation messages and
+text/image content, preserving legacy user-message rendering and system signals.
+Reuse canonical ChatBlock dictionaries; validate before publishing, never resolve
+host paths or download images. Extend `agent_inbox/handles.py` so tools can publish
+conversation content with the handle's provenance. Test memory/SQLite roundtrips,
+claim/release/receipt recovery, multimodal delivery after tool outputs, validation,
+escaping, and verbose rendering. Update the runtime learning page. Risks include
+role/provenance confusion, losing image blocks during serialization, reordering
+messages and duplicate delivery. No automatic vision delegation or provider tool
+output formats are introduced. Existing uncommitted workspace-tool work is kept
+separate; no commit or publication in this increment.
+
+The requested guidance follow-up uses `ReadFileTool.tool_config["usage_guidance"]`
+in the pending workspace-tool increment, reusing the tool configuration API.
+Avoid global guidance mutation and test independent instances and both execution
+paths. Mark injected resources Hidden, retaining their runtime bindings. The
+unification follow-up above replaces the function entry point and adds image
+publication; ranged reading remains separate work.
+
+### Workspace builtin tools increment
+
+Branch `feat/workspace-builtin-tools` depends on `feat/runtime-resource-security`.
+Implementation order: add `tools/builtin/workspace.py`, export `ReadFileTool` and
+`BashTool` from `tools/builtin/__init__.py`, cover invocation and denial in
+`tests/test_workspace_builtin_tools.py`, then document both on the existing
+runtime learning page. Reuse runtime-input injection, VFS authorization and
+ExecutionEnvironment process preflight; no separate permission or shell runner.
+No new data contracts are needed; future contracts should prefer msgspec.Struct.
+
+Risks/tests: forged runtime inputs, missing authority or executors, traversal,
+invalid UTF-8 and oversized files, process errors, and duplicate shell effects
+from retries. Test sync/async ToolLibrary entry points with an in-memory workspace
+and a fake executor only. Disable automatic retries. Keep process limits out of
+model-controlled arguments. The read limit bounds returned content, not backend
+read allocation. Real isolation, resource-policy enforcement and bounded process
+capture remain backend responsibilities; this increment does not ship a sandbox.
+Run focused tests, full offline pytest, Ruff and MkDocs.
+
 ### Durability conformance gate implementation
 
 Branch `test/runtime-durability-conformance` extends the existing offline suite.

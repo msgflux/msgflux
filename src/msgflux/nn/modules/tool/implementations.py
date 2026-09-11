@@ -176,6 +176,9 @@ class LocalTool(Tool):
         self.register_buffer("tool_config", tool_config)
         self.register_buffer("transport_params", transport_params or {})
         self.impl = impl  # Not a buffer for now
+        self.register_buffer(
+            "native_bindings", tuple(getattr(impl, "native_bindings", ()))
+        )
         self._param_defaults = get_fn_param_defaults(impl)
 
         # Apply retry
@@ -259,6 +262,12 @@ class LocalTool(Tool):
 
 def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901
     """Normalize a callable into the frontend declaration contract."""
+    original_class = impl if inspect.isclass(impl) else None
+    if original_class is not None:
+        # Constructors may specialize tool_config for this instance.
+        impl = impl()
+        if not callable(impl):
+            raise AttributeError("Tool class instances must define __call__")
     tool_config = dotdict(deepcopy(getattr(impl, "tool_config", dotdict())))
     if "spawn" in tool_config:
         raise ValueError("The `spawn` tool option was removed; use `detached`.")
@@ -302,6 +311,7 @@ def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901
             name_overridden
             or getattr(impl, "name", None)
             or getattr(impl, "__name__", None)
+            or getattr(original_class, "__name__", None)
         )
         display_name = configured_display_name or getattr(impl, "display_name", None)
         usage_guidance = configured_usage_guidance or getattr(
@@ -309,11 +319,7 @@ def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901
         )
 
         # Instantiate class first if needed, so we can get instance attributes
-        class_annotation_source = impl if inspect.isclass(impl) else None
-        if inspect.isclass(impl):
-            impl = impl()  # Initialized
-            display_name = display_name or getattr(impl, "display_name", None)
-            usage_guidance = usage_guidance or getattr(impl, "usage_guidance", None)
+        class_annotation_source = original_class
 
         # Now extract annotations (after instantiation for classes)
         annotation_source = None

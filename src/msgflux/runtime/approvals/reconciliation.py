@@ -5,7 +5,9 @@ from copy import deepcopy
 
 from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores.base import CheckpointConflictError
+from msgflux.models.tool_transport import render_native_output, validate_native_calls
 from msgflux.runtime.approvals.records import require_name
+from msgflux.utils.msgspec import msgspec_loads
 
 PENDING_KEY = "pending_approvals"
 RECEIPTS_KEY = "approval_reconciliations"
@@ -94,6 +96,7 @@ def reconcile_batch(
         raise ValueError("No supported pending approval batch")
     if pending.get("phase") != "executing":
         raise ValueError("Only uncertain executing batches can be reconciled")
+    validate_native_calls(pending.get("native_calls", {}), pending["intents"])
     call_ids = [intent["id"] for intent in pending["intents"]]
     if not abandon and set(results) != set(call_ids):
         raise ValueError("Reconciliation requires results for the entire batch")
@@ -102,6 +105,19 @@ def reconcile_batch(
     if messages.get_active_turn() is None:
         messages.resume_turn(run_id, metadata={"source": "reconciliation"})
     for call_id in call_ids:
+        native = pending.get("native_calls", {}).get(call_id)
+        if native is not None:
+            messages.append(
+                render_native_output(
+                    call_id,
+                    None if abandon else msgspec_loads(results[call_id]),
+                    native,
+                    error="Host abandoned this run; external effects are unconfirmed."
+                    if abandon
+                    else None,
+                )
+            )
+            continue
         messages.append(
             {
                 "type": "function_call_output",
