@@ -35,7 +35,7 @@ The provider never sees `prefilling` as a parameter — msgFlux silently appends
 ## Usage
 
 ```python
-# pip install msgflux[openai]
+# pip install msgflux
 import msgflux as mf
 import msgflux.nn as nn
 

@@ -14,7 +14,7 @@ from msgflux.generation.reasoning.react import (
     Action,
     ReAct,
 )
-from msgflux.tools.definitions import ToolDefinitions
+from msgflux.tools.definitions import ToolCatalog, ToolSpec
 
 
 class TestChainOfThought:
@@ -44,8 +44,8 @@ class TestReActToolFlowControl:
         assert issubclass(ReAct, ToolFlowControl)
 
     def test_react_has_class_attributes(self):
-        """Test that ReAct has system_message and tools_template."""
-        assert ReAct.system_message == REACT_SYSTEM_MESSAGE
+        """Test that ReAct has system_prompt and tools_template."""
+        assert ReAct.system_prompt == REACT_SYSTEM_MESSAGE
         assert ReAct.tools_template == REACT_TOOLS_TEMPLATE
 
     def test_action_struct(self):
@@ -222,7 +222,7 @@ class TestReActToolFlowControl:
 
     def test_build_provider_response_format_flattens_tool_parameters(self):
         response_format = ReAct.build_provider_response_format(
-            ToolDefinitions(
+            ToolCatalog.from_function_schemas(
                 schemas=[
                     {
                         "type": "function",
@@ -275,8 +275,13 @@ class TestReActToolFlowControl:
 
         normalized = ReAct.normalize_provider_response(
             raw_response,
-            tool_definitions=ToolDefinitions(
-                annotations={"store_fields": {"fields": dict[str, str]}}
+            tool_catalog=ToolCatalog(
+                tools=[
+                    ToolSpec(
+                        name="store_fields",
+                        annotations={"fields": dict[str, str]},
+                    )
+                ]
             ),
         )
 

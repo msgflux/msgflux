@@ -3,12 +3,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-import httpx
+import httpx2
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever
 from msgflux.data.retrievers.registry import register_retriever
 from msgflux.data.retrievers.types import WeatherRetriever
+from msgflux.utils.time import utc_now
 
 WhenKind = Literal["now", "future", "past"]
 LocationSource = Literal["coordinates", "geocoding"]
@@ -47,7 +48,7 @@ class TTLCache:
         if entry is None:
             return None
 
-        if entry.expires_at <= datetime.now(timezone.utc):
+        if entry.expires_at <= utc_now():
             self._data.pop(key, None)
             return None
 
@@ -57,7 +58,7 @@ class TTLCache:
         ttl = self.default_ttl_seconds if ttl_seconds is None else ttl_seconds
         self._data[key] = CacheEntry(
             value=value,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl),
+            expires_at=utc_now() + timedelta(seconds=ttl),
         )
 
     def clear(self) -> None:
@@ -137,8 +138,8 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
         self.forecast_cache_ttl_seconds = forecast_cache_ttl_seconds
         self.timeout = timeout
         self._cache = TTLCache()
-        self.client = httpx.Client(timeout=self.timeout)
-        self.async_client = httpx.AsyncClient(timeout=self.timeout)
+        self.client = httpx2.Client(timeout=self.timeout)
+        self.async_client = httpx2.AsyncClient(timeout=self.timeout)
 
     def __call__(self, location: str, when: str = "now") -> dict[str, Any]:
         return self._call_with_client(self.client, location=location, when=when)
@@ -160,7 +161,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     def _call_with_client(
         self,
-        client: httpx.Client,
+        client: httpx2.Client,
         *,
         location: str,
         when: str,
@@ -174,7 +175,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
         return self._result(raw, loc, resolved_when)
 
     def _resolve_location(
-        self, client: httpx.Client, location: str
+        self, client: httpx2.Client, location: str
     ) -> ResolvedLocation:
         location = self._validate_text(location, "location")
         coord = self.coord_re.match(location)
@@ -196,7 +197,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
                 },
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(
                 f"Failed to resolve location {location!r}: {exc}"
             ) from exc
@@ -205,7 +206,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     async def _aresolve_location(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         location: str,
     ) -> ResolvedLocation:
         location = self._validate_text(location, "location")
@@ -228,7 +229,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
                 },
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(
                 f"Failed to resolve location {location!r}: {exc}"
             ) from exc
@@ -283,7 +284,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     def _resolve_when(self, when: str) -> ResolvedWhen:
         when = self._validate_text(when, "when")
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         if when == "now":
             return ResolvedWhen(input=when, target=now, kind="now")
 
@@ -329,7 +330,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     def _fetch_forecast(
         self,
-        client: httpx.Client,
+        client: httpx2.Client,
         loc: ResolvedLocation,
         when: ResolvedWhen,
     ) -> dict[str, Any]:
@@ -341,7 +342,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
         try:
             response = client.get(self.forecast_url, params=self._forecast_params(loc))
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(f"Failed to fetch weather forecast: {exc}") from exc
 
         data = response.json()
@@ -351,7 +352,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     async def _afetch_forecast(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         loc: ResolvedLocation,
         when: ResolvedWhen,
     ) -> dict[str, Any]:
@@ -365,7 +366,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
                 self.forecast_url, params=self._forecast_params(loc)
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(f"Failed to fetch weather forecast: {exc}") from exc
 
         data = response.json()
@@ -375,7 +376,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     def _fetch_historical(
         self,
-        client: httpx.Client,
+        client: httpx2.Client,
         loc: ResolvedLocation,
         when: ResolvedWhen,
     ) -> dict[str, Any]:
@@ -389,7 +390,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
                 self.archive_url, params=self._historical_params(loc, when)
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(f"Failed to fetch historical weather: {exc}") from exc
 
         data = response.json()
@@ -399,7 +400,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
 
     async def _afetch_historical(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         loc: ResolvedLocation,
         when: ResolvedWhen,
     ) -> dict[str, Any]:
@@ -414,7 +415,7 @@ class OpenMeteoWeatherRetriever(BaseRetriever, WeatherRetriever):
                 params=self._historical_params(loc, when),
             )
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(f"Failed to fetch historical weather: {exc}") from exc
 
         data = response.json()

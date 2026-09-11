@@ -24,7 +24,7 @@ def mock_httpx_clients():
     async_client_cls = MagicMock(return_value=async_client)
     fake_httpx = SimpleNamespace(Client=client_cls, AsyncClient=async_client_cls)
 
-    with patch.object(searxng_provider, "httpx", fake_httpx):
+    with patch.object(searxng_provider, "httpx2", fake_httpx):
         yield SimpleNamespace(
             response=response,
             client_cls=client_cls,
@@ -87,14 +87,6 @@ def test_init_reads_base_url_from_env(mock_httpx_clients):
 
     assert retriever.base_url == "http://searxng.local:8080"
     assert retriever.search_url == "http://searxng.local:8080/search"
-
-
-def test_init_raises_without_httpx():
-    with (
-        patch.object(searxng_provider, "httpx", None),
-        pytest.raises(ImportError),
-    ):
-        SearXNGWebRetriever()
 
 
 def test_build_search_params_with_filters(mock_httpx_clients):

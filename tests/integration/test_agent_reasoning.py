@@ -34,7 +34,7 @@ def agent(model):
     return Agent(
         name="test_agent",
         model=model,
-        instructions="Answer briefly and concisely.",
+        system_prompt="Answer briefly and concisely.",
     )
 
 
@@ -43,7 +43,7 @@ def agent_with_reasoning_in_response(model):
     return Agent(
         name="test_agent_reasoning",
         model=model,
-        instructions="Answer briefly and concisely.",
+        system_prompt="Answer briefly and concisely.",
         config={"reasoning_in_response": True},
     )
 
@@ -53,7 +53,7 @@ def agent_stream(model):
     return Agent(
         name="test_agent_stream",
         model=model,
-        instructions="Answer briefly and concisely.",
+        system_prompt="Answer briefly and concisely.",
         config={"stream": True},
     )
 
@@ -63,7 +63,7 @@ def agent_stream_with_reasoning(model):
     return Agent(
         name="test_agent_stream_reasoning",
         model=model,
-        instructions="Answer briefly and concisely.",
+        system_prompt="Answer briefly and concisely.",
         config={"stream": True, "reasoning_in_response": True},
     )
 
@@ -190,7 +190,7 @@ async def test_agent_async_streaming():
     agent = Agent(
         name="test_agent_async_stream",
         model=model,
-        instructions="Answer briefly and concisely.",
+        system_prompt="Answer briefly and concisely.",
         config={"stream": True},
     )
     response = await agent.acall("What is 2+2?")
@@ -229,7 +229,7 @@ async def test_agent_async_streaming_reasoning_first():
     agent = Agent(
         name="test_agent_async_stream_rf",
         model=model,
-        instructions="Answer briefly and concisely.",
+        system_prompt="Answer briefly and concisely.",
         config={"stream": True},
     )
     response = await agent.acall("What is 2+2?")
@@ -277,7 +277,7 @@ def test_agent_sync_tool_call_with_reasoning():
     agent = Agent(
         name="test_agent_tools",
         model=model,
-        instructions="Use the tools provided to compute the result. "
+        system_prompt="Use the tools provided to compute the result. "
         "Answer with just the number.",
         tools=[add, multiply],
     )
@@ -303,7 +303,7 @@ def test_agent_sync_tool_call_reasoning_in_response():
     agent = Agent(
         name="test_agent_tools_rir",
         model=model,
-        instructions="Use the tools provided to compute the result. "
+        system_prompt="Use the tools provided to compute the result. "
         "Answer with just the number.",
         tools=[add, multiply],
         config={"reasoning_in_response": True},
@@ -332,7 +332,7 @@ async def test_agent_async_tool_call_with_reasoning():
     agent = Agent(
         name="test_agent_tools_async",
         model=model,
-        instructions="Use the tools provided to compute the result. "
+        system_prompt="Use the tools provided to compute the result. "
         "Answer with just the number.",
         tools=[add, multiply],
     )
@@ -356,7 +356,7 @@ def test_agent_sync_no_reasoning():
     agent = Agent(
         name="test_agent_no_reasoning",
         model=model,
-        instructions="Answer briefly.",
+        system_prompt="Answer briefly.",
     )
     response = agent("What is 2+2?")
 

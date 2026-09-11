@@ -42,6 +42,9 @@ class TestBaseModel:
         assert "model" in model.to_ignore
         assert "processor" in model.to_ignore
         assert "client" in model.to_ignore
+        assert "chat_transport" in model.to_ignore
+        assert "http_transport" in model.to_ignore
+        assert "credential_resolver" in model.to_ignore
 
     def test_instance_type(self):
         """Test instance_type returns correct model_type."""

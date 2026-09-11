@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from msgflux.chat_messages import ChatMessages
+
 
 class TestVLLMProviderImport:
     """Test VLLM provider import and initialization."""
@@ -26,7 +28,6 @@ class TestVLLMProviderImport:
 
     def test_vllm_models_registered(self):
         """Test that VLLM models are registered with @register_model."""
-        pytest.importorskip("openai", reason="openai not installed")
 
         from msgflux.models.registry import model_registry
 
@@ -47,18 +48,8 @@ class TestVLLMChatCompletion:
         monkeypatch.setenv("VLLM_API_KEY", "test-key-12345")
         monkeypatch.setenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 
-    @pytest.fixture
-    def mock_openai_client(self):
-        """Mock OpenAI client."""
-        with (
-            patch("msgflux.models.providers.openai.OpenAI") as mock_client,
-            patch("msgflux.models.providers.openai.AsyncOpenAI") as mock_async_client,
-        ):
-            yield mock_client, mock_async_client
-
-    def test_chat_completion_initialization(self, mock_openai_client):
+    def test_chat_completion_initialization(self):
         """Test VLLMChatCompletion initialization."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -68,9 +59,34 @@ class TestVLLMChatCompletion:
         assert model.provider == "vllm"
         assert model.model_type == "chat_completion"
 
-    def test_chat_completion_with_parameters(self, mock_openai_client):
+    def test_responses_mode_uses_clear_text_reasoning_codec(self):
+
+        from msgflux.models.providers.vllm import VLLMChatCompletion
+
+        model = VLLMChatCompletion(model_id="deepseek-r1", api_mode="responses")
+
+        assert model.reasoning_codec.name == "responses_reasoning_text"
+
+    def test_chat_mode_does_not_replay_parsed_reasoning(self):
+
+        from msgflux.models.providers.vllm import VLLMChatCompletion
+
+        model = VLLMChatCompletion(model_id="deepseek-r1")
+        messages = ChatMessages()
+        messages.add_reasoning("private chain")
+        messages.add_assistant("answer")
+
+        params = model._build_generation_params(
+            messages,
+            system_prompt=None,
+            prefilling=None,
+            tool_catalog=None,
+        )
+
+        assert params["messages"] == [{"role": "assistant", "content": "answer"}]
+
+    def test_chat_completion_with_parameters(self):
         """Test VLLMChatCompletion with custom parameters."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -85,11 +101,8 @@ class TestVLLMChatCompletion:
         assert model.sampling_run_params["temperature"] == 0.7
         assert model.sampling_run_params["top_p"] == 0.9
 
-    def test_chat_completion_ignores_openai_only_prompt_cache_retention(
-        self, mock_openai_client
-    ):
+    def test_chat_completion_ignores_openai_only_prompt_cache_retention(self):
         """Test VLLMChatCompletion does not forward OpenAI-only cache params."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -100,9 +113,8 @@ class TestVLLMChatCompletion:
 
         assert "prompt_cache_retention" not in model.sampling_run_params
 
-    def test_chat_completion_ignores_openai_only_logprobs(self, mock_openai_client):
+    def test_chat_completion_ignores_openai_only_logprobs(self):
         """Test VLLMChatCompletion does not forward OpenAI-only logprobs."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -115,9 +127,8 @@ class TestVLLMChatCompletion:
         assert "logprobs" not in model.sampling_run_params
         assert "top_logprobs" not in model.sampling_run_params
 
-    def test_chat_completion_base_url(self, mock_openai_client):
+    def test_chat_completion_base_url(self):
         """Test VLLMChatCompletion uses VLLM_BASE_URL."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -126,9 +137,8 @@ class TestVLLMChatCompletion:
         assert "base_url" in model.sampling_params
         assert model.sampling_params["base_url"] == "http://localhost:8000/v1"
 
-    def test_chat_completion_adapt_params_response_format(self, mock_openai_client):
+    def test_chat_completion_adapt_params_response_format(self):
         """Test VLLMChatCompletion adapts response_format to guided_json."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -142,11 +152,8 @@ class TestVLLMChatCompletion:
         assert "extra_body" in adapted
         assert adapted["extra_body"]["guided_json"] == {"type": "json_object"}
 
-    def test_chat_completion_adapt_params_preserves_extra_body(
-        self, mock_openai_client
-    ):
+    def test_chat_completion_adapt_params_preserves_extra_body(self):
         """Test VLLMChatCompletion copies existing extra_body before extending it."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -166,9 +173,8 @@ class TestVLLMChatCompletion:
         assert adapted["extra_body"] is not extra_body
         assert extra_body == {"custom": {"value": 1}}
 
-    def test_chat_completion_adapt_params_enable_thinking(self, mock_openai_client):
+    def test_chat_completion_adapt_params_enable_thinking(self):
         """Test VLLMChatCompletion adapts enable_thinking parameter."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
 
@@ -191,18 +197,8 @@ class TestVLLMTextEmbedder:
         monkeypatch.setenv("VLLM_API_KEY", "test-key-12345")
         monkeypatch.setenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 
-    @pytest.fixture
-    def mock_openai_client(self):
-        """Mock OpenAI client."""
-        with (
-            patch("msgflux.models.providers.openai.OpenAI") as mock_client,
-            patch("msgflux.models.providers.openai.AsyncOpenAI") as mock_async_client,
-        ):
-            yield mock_client, mock_async_client
-
-    def test_text_embedder_initialization(self, mock_openai_client):
+    def test_text_embedder_initialization(self):
         """Test VLLMTextEmbedder initialization."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMTextEmbedder
 
@@ -212,9 +208,8 @@ class TestVLLMTextEmbedder:
         assert model.provider == "vllm"
         assert model.model_type == "text_embedder"
 
-    def test_text_embedder_base_url(self, mock_openai_client):
+    def test_text_embedder_base_url(self):
         """Test VLLMTextEmbedder uses VLLM_BASE_URL."""
-        pytest.importorskip("openai")
 
         from msgflux.models.providers.vllm import VLLMTextEmbedder
 
@@ -233,19 +228,8 @@ class TestVLLMSpeechToText:
         monkeypatch.setenv("VLLM_API_KEY", "test-key-12345")
         monkeypatch.setenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 
-    @pytest.fixture
-    def mock_openai_client(self):
-        """Mock OpenAI client."""
-        with (
-            patch("msgflux.models.providers.openai.OpenAI") as mock_client,
-            patch("msgflux.models.providers.openai.AsyncOpenAI") as mock_async_client,
-        ):
-            yield mock_client, mock_async_client
-
-    def test_speech_to_text_initialization(self, mock_openai_client):
+    def test_speech_to_text_initialization(self):
         """Test VLLMSpeechToText initialization."""
-        pytest.importorskip("openai")
-
         from msgflux.models.providers.vllm import VLLMSpeechToText
 
         model = VLLMSpeechToText(model_id="whisper-large")
@@ -268,14 +252,14 @@ class TestVLLMTextClassifier:
     def mock_httpx_client(self):
         """Mock HTTPX client."""
         with (
-            patch("msgflux.models.httpx.httpx.Client") as mock_client,
-            patch("msgflux.models.httpx.httpx.AsyncClient") as mock_async_client,
+            patch("msgflux.models.httpx.httpx2.Client") as mock_client,
+            patch("msgflux.models.httpx.httpx2.AsyncClient") as mock_async_client,
         ):
             yield mock_client, mock_async_client
 
     def test_text_classifier_initialization(self, mock_httpx_client):
         """Test VLLMTextClassifier initialization."""
-        pytest.importorskip("httpx")
+        pytest.importorskip("httpx2")
 
         from msgflux.models.providers.vllm import VLLMTextClassifier
 
@@ -287,7 +271,7 @@ class TestVLLMTextClassifier:
 
     def test_text_classifier_base_url(self, mock_httpx_client):
         """Test VLLMTextClassifier uses VLLM_BASE_URL."""
-        pytest.importorskip("httpx")
+        pytest.importorskip("httpx2")
 
         from msgflux.models.providers.vllm import VLLMTextClassifier
 
@@ -298,7 +282,7 @@ class TestVLLMTextClassifier:
 
     def test_text_classifier_custom_base_url(self, mock_httpx_client):
         """Test VLLMTextClassifier with custom base_url."""
-        pytest.importorskip("httpx")
+        pytest.importorskip("httpx2")
 
         from msgflux.models.providers.vllm import VLLMTextClassifier
 
@@ -309,7 +293,7 @@ class TestVLLMTextClassifier:
 
     def test_text_classifier_endpoint(self, mock_httpx_client):
         """Test VLLMTextClassifier has correct endpoint."""
-        pytest.importorskip("httpx")
+        pytest.importorskip("httpx2")
 
         from msgflux.models.providers.vllm import VLLMTextClassifier
 
@@ -326,18 +310,8 @@ class TestVLLMBaseURL:
         """Setup environment variables for tests."""
         monkeypatch.setenv("VLLM_API_KEY", "test-key-12345")
 
-    @pytest.fixture
-    def mock_openai_client(self):
-        """Mock OpenAI client."""
-        with (
-            patch("msgflux.models.providers.openai.OpenAI") as mock_client,
-            patch("msgflux.models.providers.openai.AsyncOpenAI") as mock_async_client,
-        ):
-            yield mock_client, mock_async_client
-
-    def test_default_base_url(self, mock_openai_client, monkeypatch):
+    def test_default_base_url(self, monkeypatch):
         """Test default VLLM base URL when not set."""
-        pytest.importorskip("openai")
         monkeypatch.delenv("VLLM_BASE_URL", raising=False)
 
         from msgflux.models.providers.vllm import VLLMChatCompletion
@@ -347,9 +321,8 @@ class TestVLLMBaseURL:
         # Should default to localhost:8000/v1
         assert model.sampling_params["base_url"] == "http://localhost:8000/v1"
 
-    def test_custom_base_url(self, mock_openai_client, monkeypatch):
+    def test_custom_base_url(self, monkeypatch):
         """Test custom VLLM base URL from environment."""
-        pytest.importorskip("openai")
         custom_url = "http://vllm.example.com:8080/v1"
         monkeypatch.setenv("VLLM_BASE_URL", custom_url)
 

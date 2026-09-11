@@ -86,14 +86,19 @@ class STT(nn.Transcriber):
 class ExtractorAgent(nn.Agent):
     """Extracts PIX payment fields from text and image."""
     model          = mm_model
-    system_message = "You are a specialist in Brazilian PIX payments."
-    instructions   = """
+    system_prompt = "\n\n".join(
+        (
+            "You are a specialist in Brazilian PIX payments.",
+            """
     Extract the PIX transfer details from the user message.
     The key_type must be one of: cpf, cnpj, email, phone_number, random_key.
     recipient_name is the person's name when mentioned (e.g. "send to Fernanda").
     key_id is the actual PIX key value (email, CPF, phone, etc.) — not a name.
     If a field is not clearly stated, return null for that field.
-    """
+    """,
+        )
+    )
+
     generation_schema = ChainOfThought
     signature = """
     text ->
@@ -232,7 +237,9 @@ def transfer_pix(amount: float, key_type: str, key_id: str, **kwargs) -> str:
 class Assistant(nn.Agent):
     """Banking assistant with PIX extraction and payment execution."""
     model          = chat_model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a helpful banking assistant.
 
     Answer general banking and PIX questions naturally.
@@ -245,8 +252,11 @@ class Assistant(nn.Agent):
     If the amount is missing, ask for it.
 
     After the user confirms the recipient and amount, call TransferPix() to execute.
-    """
-    system_extra_message = "The user's name is: {{ user_full_name }}"
+    """,
+            "The user's name is: {{ user_full_name }}",
+        )
+    )
+
     message_fields = {
         "task":         "user.text",
         "task_context": "vars",

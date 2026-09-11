@@ -5,6 +5,10 @@ The `text_embedder` model transforms text into dense vector representations (emb
 !!! info "Dependencies"
     See [Dependency Management](../../dependency-management.md) for the complete provider matrix.
 
+    OpenAI-compatible embedders use msgFlux's direct HTTP transport. OpenAI,
+    Together AI, vLLM, and Ollama embeddings therefore do not require the
+    optional OpenAI SDK dependency.
+
 ## ✦₊⁺ Overview
 
 Text embeddings convert sentences, paragraphs, or documents into numerical vectors that encode their semantic meaning. Unlike simple word counts or TF-IDF, embeddings capture:
@@ -415,4 +419,3 @@ Access usage and cost information:
     except Exception as e:
         print(f"API error: {e}")
     ```
-

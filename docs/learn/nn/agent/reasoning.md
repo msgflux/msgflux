@@ -20,7 +20,7 @@ For schema-level reasoning (CoT, ReAct, SelfConsistency), see [Generation Schema
 
 ---
 
-## 1. **Configuration**
+## 1. Configuration
 
 Model-level reasoning is configured at model initialization through parameters forwarded to the provider:
 
@@ -46,7 +46,7 @@ import msgflux.nn as nn
 
 class Solver(nn.Agent):
     model = model
-    instructions = "Solve the problem step by step."
+    system_prompt = "Solve the problem step by step."
     config = {"reasoning_in_response": True}
 ```
 
@@ -55,7 +55,7 @@ class Solver(nn.Agent):
 
 ---
 
-## 2. **Non-Streaming**
+## 2. Non-Streaming
 
 In non-streaming mode, the model completes its full response before returning. Reasoning is available immediately as a string field.
 
@@ -77,7 +77,7 @@ In non-streaming mode, the model completes its full response before returning. R
 
         class Solver(nn.Agent):
             model = model
-            instructions = "Solve the problem. Answer with just the result."
+            system_prompt = "Solve the problem. Answer with just the result."
 
         agent = Solver()
         response = agent("What is 15 * 7 + 3?")
@@ -102,7 +102,7 @@ In non-streaming mode, the model completes its full response before returning. R
 
         class Solver(nn.Agent):
             model = model
-            instructions = "Solve the problem. Answer with just the result."
+            system_prompt = "Solve the problem. Answer with just the result."
             config = {"reasoning_in_response": True}
 
         agent = Solver()
@@ -127,7 +127,7 @@ In non-streaming mode, the model completes its full response before returning. R
 
         class Solver(nn.Agent):
             model = model
-            instructions = "Solve the problem."
+            system_prompt = "Solve the problem."
             config = {"reasoning_in_response": True}
 
         agent = Solver()
@@ -154,7 +154,7 @@ In non-streaming mode, the model completes its full response before returning. R
 
         class Solver(nn.Agent):
             model = model
-            instructions = "Solve the problem. Answer with just the result."
+            system_prompt = "Solve the problem. Answer with just the result."
             config = {"reasoning_in_response": True}
 
         agent = Solver()
@@ -191,9 +191,12 @@ The key insight is that `model_response.reasoning` is **always** populated (when
 
 ---
 
-## 3. **Streaming**
+## 3. Streaming
 
-Streaming with reasoning introduces a **dual-queue architecture**. Content and reasoning flow through independent queues, allowing consumers to process them in parallel or sequentially.
+Streaming responses expose channel-specific consumers for compatibility and an
+ordered LM event stream. `consume_events()` preserves the relative provider
+order of reasoning, reasoning summaries, and visible output. This is the path
+used by `Agent.stream_events()`.
 
 ### Consuming streams
 
@@ -215,7 +218,7 @@ When `stream=True`, the Agent returns a `ModelStreamResponse`. Both `consume()` 
 
         class Assistant(nn.Agent):
             model = model
-            instructions = "Answer concisely."
+            system_prompt = "Answer concisely."
             config = {"stream": True}
 
         agent = Assistant()
@@ -249,6 +252,26 @@ When `stream=True`, the Agent returns a `ModelStreamResponse`. Both `consume()` 
         async for chunk in response.consume():
             print(chunk, end="", flush=True)
         ```
+
+    === "Provider Order"
+
+        Use the canonical stream when one consumer needs to render every model
+        channel in the order produced:
+
+        ```python
+        response = await agent.acall("Solve: 15 * 7 + 3")
+
+        async for event in response.consume_events():
+            if event.type == "reasoning.delta":
+                show_reasoning(event.data)
+            elif event.type == "reasoning_summary.delta":
+                show_summary(event.data)
+            elif event.type == "output.delta":
+                show_answer(event.data)
+        ```
+
+        A missing reasoning channel produces no event. The final accumulated
+        field remains `None`.
 
     === "Sync Polling"
 
@@ -292,7 +315,7 @@ When `stream=True`, the Agent returns a `ModelStreamResponse`. Both `consume()` 
 
         class Assistant(nn.Agent):
             model = model
-            instructions = "Answer concisely."
+            system_prompt = "Answer concisely."
             config = {"stream": True}
 
         agent = Assistant()
@@ -345,8 +368,10 @@ if isinstance(model_response, ModelStreamResponse):
 # Now response_type is guaranteed to be set
 if "tool_call" in model_response.response_type:
     # enter tool call loop...
+    ...
 else:
     # return stream response to caller
+    ...
 ```
 
 ### How the dual-queue works internally
@@ -375,44 +400,78 @@ Provider stream (background thread)
 
 Each queue uses a `deque` as a pending buffer that is flushed into an `asyncio.Queue` when a consumer first calls `consume()` / `consume_reasoning()`. The `None` sentinel signals end-of-stream to the async generator.
 
+The queues are the live delivery path. In parallel, `ChatStreamAccumulator`
+combines those deltas into ordered interaction items. A checkpoint receives the
+accumulator snapshot only when the stream completes, fails, or is interrupted;
+it never stores one record per token and the Agent does not append a second
+copy reconstructed from `stream_response.reasoning` and `.data`.
+
+### Reasoning saved in history
+
+Reasoning history has two layers:
+
+- `text` and `summary` are normalized fields that can be inspected or adapted
+  to another provider.
+- `provider_state` is an opaque payload paired with the provider that produced
+  it. Examples include encrypted reasoning, OpenRouter `reasoning_details`,
+  redacted thinking, and thought signatures.
+
+msgFlux preserves opaque state without interpreting it and sends it back only
+to the same provider. The field may be attached to any interaction item—not
+only a reasoning item—because some providers sign a function-call part. Moving
+a trajectory to another provider can retain normalized text or summaries, but
+does not promise that provider-specific reasoning state is portable.
+
 !!! info "reasoning_in_response has no effect in streaming"
     When `stream=True`, the Agent returns the `ModelStreamResponse` directly — it does not wrap it. The consumer accesses reasoning through `consume_reasoning()` and content through `consume()`. The `reasoning_in_response` config only applies to non-streaming responses.
 
 ---
 
-## 4. **Reasoning Across Tool Calls**
+## 4. Reasoning Across Tool Calls
 
 When a reasoning model calls tools, it normally loses its chain of thought between rounds. Enable `reasoning_in_tool_call=True` on the model to preserve the reasoning context.
 
 ### How it works
 
-After each tool call round, the `ToolCallAggregator` formats the assistant message that goes back into the conversation history. When `reasoning_in_tool_call=True`, the reasoning is embedded in `<think>` tags inside that message:
+After each tool-call round, msgFlux adds the reasoning, function calls, and
+function outputs to the same provider-neutral interaction timeline. Reasoning
+is stored once as a `reasoning` item; it is not copied into the assistant
+message as `<think>` text.
+
+Immediately before the next request, the selected model converts that timeline
+to its provider format. This conversion happens inside the model, after gateway
+routing, so opaque state such as OpenRouter `reasoning_details` is returned only
+when the selected provider matches the provider that produced it.
 
 ```
-Message history:
+Interaction timeline:
 [
-  {"role": "user", "content": "What is (14+28)*3-7?"},
+  {"type": "message", "role": "user", "content": "What is (14+28)*3-7?"},
 
-  {"role": "assistant",
-   "content": "<think>I need to compute (14+28) first, then multiply by 3, then subtract 7. Let me use the calculator.</think>",
-   "tool_calls": [{"function": {"name": "calc", "arguments": {"expr": "14+28"}}}]},
+  {"type": "reasoning", "role": "assistant",
+   "text": "I need to compute (14+28) first."},
+  {"type": "function_call", "call_id": "call_1",
+   "name": "calc", "arguments": "{\"expr\":\"14+28\"}"},
+  {"type": "function_call_output", "call_id": "call_1", "output": "42"},
 
-  {"role": "tool", "tool_call_id": "call_1", "content": "42"},
-
-  {"role": "assistant",
-   "content": "<think>14+28=42. Now I need 42*3. Let me call calc again.</think>",
-   "tool_calls": [{"function": {"name": "calc", "arguments": {"expr": "42*3"}}}]},
-
-  {"role": "tool", "tool_call_id": "call_2", "content": "126"},
-
-  {"role": "assistant", "content": "The answer is 119."}
+  {"type": "reasoning", "role": "assistant",
+   "text": "14+28=42. Now I need 42*3."},
+  {"type": "function_call", "call_id": "call_2",
+   "name": "calc", "arguments": "{\"expr\":\"42*3\"}"},
+  {"type": "function_call_output", "call_id": "call_2", "output": "126"},
+  {"type": "message", "role": "assistant", "content": "The answer is 119."}
 ]
 ```
 
-The model sees its own previous reasoning at each step, enabling coherent multi-step problem solving.
+The selected model sees the compatible representation of its previous
+reasoning at each step, enabling coherent multi-step problem solving without a
+second copy in history.
 
-!!! info "Two separate reasoning stores"
-    The `ToolCallAggregator` keeps its own copy of the reasoning for message formatting (`<think>` tags in the conversation). The `ModelResponse.reasoning` field on the **final** model call reflects only the reasoning from that last call. These are intentionally separate — the conversation history needs the full chain, while the response field exposes the latest trace.
+!!! info "History and response have different views"
+    The interaction timeline retains each reasoning item needed for later model
+    calls and checkpoints. `ModelResponse.reasoning` exposes the reasoning from
+    the current model call to application code; it is not another persisted
+    history store.
 
 ???+ example
 
@@ -439,7 +498,7 @@ The model sees its own previous reasoning at each step, enabling coherent multi-
 
         class Calculator(nn.Agent):
             model = model
-            instructions = "Use the tools to compute the result. Answer with just the number."
+            system_prompt = "Use the tools to compute the result. Answer with just the number."
             tools = [add, multiply]
 
         agent = Calculator()
@@ -452,7 +511,7 @@ The model sees its own previous reasoning at each step, enabling coherent multi-
         ```python
         class Calculator(nn.Agent):
             model = model
-            instructions = "Use the tools to compute the result. Answer with just the number."
+            system_prompt = "Use the tools to compute the result. Answer with just the number."
             tools = [add, multiply]
             config = {"reasoning_in_response": True}
 
@@ -481,7 +540,7 @@ The model sees its own previous reasoning at each step, enabling coherent multi-
 
 ---
 
-## 5. **Combining with Generation Schemas**
+## 5. Combining with Generation Schemas
 
 Model-level reasoning and schema-level reasoning serve different purposes and can be combined:
 
@@ -507,7 +566,7 @@ Model-level reasoning and schema-level reasoning serve different purposes and ca
 
         class Solver(nn.Agent):
             model = model
-            instructions = "Solve the problem."
+            system_prompt = "Solve the problem."
             config = {"reasoning_in_response": True}
 
         agent = Solver()
@@ -566,14 +625,14 @@ Model-level reasoning and schema-level reasoning serve different purposes and ca
 
 ---
 
-## 6. **Verbose Mode**
+## 6. Verbose Mode
 
 When `verbose=True`, the Agent prints both the reasoning trace and the response to the console:
 
 ```python
 class Solver(nn.Agent):
     model = model
-    instructions = "Solve the problem."
+    system_prompt = "Solve the problem."
     config = {"verbose": True}
 
 agent = Solver()
@@ -591,7 +650,7 @@ This is useful for debugging the relationship between the model's thinking and i
 
 ---
 
-## 7. **Quick Reference**
+## 7. Quick Reference
 
 ### Model parameters
 
@@ -601,7 +660,7 @@ This is useful for debugging the relationship between the model's thinking and i
 | `return_reasoning` | `bool` | `True` | Store reasoning in `response.reasoning` |
 | `reasoning_max_tokens` | `int` | — | OpenRouter-only cap on reasoning token budget |
 | `reasoning_in_tool_call` | `bool` | `False` | Embed reasoning in `<think>` tags across tool call rounds |
-| `enable_thinking` | `bool` | `False` | Provider-level switch (e.g. Anthropic) |
+| `enable_thinking` | `bool \| str` | `False` | Provider-level switch; native Ollama also accepts `"low"`, `"medium"`, and `"high"` |
 
 ### Agent config
 
@@ -622,5 +681,5 @@ This is useful for debugging the relationship between the model's thinking and i
 
 - [Chat Completion — Reasoning Models](../../models/chat_completion.md#12-reasoning-models) — Model-level reasoning reference with internal architecture details
 - [Generation Schemas — Reasoning Schemas](generation-schemas.md#reasoning-schemas) — CoT, ReAct, SelfConsistency
-- [Tools](tools.md) — Tool calling overview
+- [Tools](tools/index.md) — Tool calling overview
 - [Streaming](streaming.md) — General streaming overview

@@ -1,14 +1,11 @@
 from urllib.parse import urlparse
 
+import httpx2
+
 from msgflux.utils.html import html_to_text
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
 
-
-class WebFetch:
+class WebFetchTool:
     """Fetches web pages as Markdown via a remote parser endpoint."""
 
     name = "web_fetch"
@@ -49,37 +46,30 @@ class WebFetch:
             Parsed response body as a string.
 
         Raises:
-            ImportError: If httpx is not installed.
             RuntimeError: On network or HTTP failure.
         """
-        if httpx is None:
-            raise ImportError(
-                "httpx is required for WebFetch."
-                " Install it with: pip install msgflux[httpx]"
-            )
-
         final_url = self._build_url(url)
         try:
-            response = httpx.get(
+            response = httpx2.get(
                 final_url,
                 headers=self.default_headers,
                 timeout=self.timeout,
             )
             response.raise_for_status()
             return response.text
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             pass
 
         target_url = self._normalize_url(url)
         try:
-            response = httpx.get(
+            response = httpx2.get(
                 target_url,
                 headers=self.default_headers,
                 timeout=self.timeout,
             )
             response.raise_for_status()
             return html_to_text(response.text)
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise RuntimeError(f"Failed to fetch {url}: {exc}") from exc
 
     async def acall(self, url: str) -> str:
@@ -95,28 +85,21 @@ class WebFetch:
             Parsed response body as a string.
 
         Raises:
-            ImportError: If httpx is not installed.
             RuntimeError: On network or HTTP failure.
         """
-        if httpx is None:
-            raise ImportError(
-                "httpx is required for WebFetch."
-                " Install it with: pip install msgflux[httpx]"
-            )
-
         final_url = self._build_url(url)
         target_url = self._normalize_url(url)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx2.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.get(final_url, headers=self.default_headers)
                 response.raise_for_status()
                 return response.text
-            except httpx.HTTPError:
+            except httpx2.HTTPError:
                 pass
 
             try:
                 response = await client.get(target_url, headers=self.default_headers)
                 response.raise_for_status()
                 return html_to_text(response.text)
-            except httpx.HTTPError as exc:
+            except httpx2.HTTPError as exc:
                 raise RuntimeError(f"Failed to fetch {url}: {exc}") from exc

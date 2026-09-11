@@ -432,6 +432,41 @@ class TestModule:
         assert module.transform("hello") == "hello!"
         handle.remove()
 
+    def test_lifecycle_hook_transforms_payload_in_registration_order(self):
+        """Lifecycle hooks compose without exposing a private method name."""
+        from msgflux.nn.hooks import Hook
+
+        module = MethodHookModule()
+        first = Hook(event="transform_output", handler=lambda value: value + "!")
+        second = Hook(event="transform_output", handler=lambda value: value.upper())
+
+        first.register(module)
+        second.register(module)
+
+        assert module.has_lifecycle_hooks("transform_output") is True
+        assert module._run_lifecycle_hooks("transform_output", "hello") == "HELLO!"
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_hook_supports_async_handler(self):
+        """Async lifecycle dispatch awaits coroutine handlers."""
+        from msgflux.nn.hooks import Hook
+
+        async def transform(value):
+            return value + "!"
+
+        module = MethodHookModule()
+        Hook(event="transform_output", handler=transform).register(module)
+
+        result = await module._arun_lifecycle_hooks("transform_output", "hello")
+
+        assert result == "hello!"
+
+    def test_lifecycle_and_method_hook_options_are_mutually_exclusive(self):
+        from msgflux.nn.hooks import Hook
+
+        with pytest.raises(ValueError, match="cannot be combined"):
+            Hook(event="before_request", on="pre")
+
     def test_set_hooks_rejects_non_module_target(self):
         """Test declarative hooks reject targets that are not modules."""
         from msgflux.nn.hooks import Hook

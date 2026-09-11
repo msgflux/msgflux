@@ -19,7 +19,7 @@ either a verdict, a winner, or a tournament ranking.
 ## Single Candidate
 
 ```python
-# pip install msgflux[openai]
+# pip install msgflux
 import msgflux as mf
 from msgflux.generation.verifiers import LLMAsVerifier, VerificationCriterion
 

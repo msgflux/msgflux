@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, "./src")
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from msgflux.nn.modules import ToolLibrary
 
@@ -36,7 +36,7 @@ def search_database(query: str, limit: int = 10) -> List[Dict[str, str]]:
     ][:limit]
 
 
-def format_response(data: Dict, format_type: str = "json") -> str:
+def format_response(data: Dict[str, Any], format_type: str = "json") -> str:
     """Format data in specified format."""
     if format_type == "json":
         import json

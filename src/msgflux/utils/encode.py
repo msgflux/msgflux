@@ -1,17 +1,17 @@
 import asyncio
 import base64
 import io
+import mimetypes
 import os
 from typing import Optional, Union
+from urllib.parse import urlparse
 
-import requests
+import httpx2
 
 try:
     import anyio
-    import httpx
 except ImportError:
     anyio = None
-    httpx = None
 
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -19,10 +19,10 @@ _HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def encode_base64_from_url(url: str) -> str:
     try:
-        with requests.get(url, headers=_HEADERS, timeout=300) as response:
-            response.raise_for_status()
-            return base64.b64encode(response.content).decode("utf-8")
-    except (requests.RequestException, UnicodeDecodeError):
+        response = httpx2.get(url, headers=_HEADERS, timeout=300)
+        response.raise_for_status()
+        return base64.b64encode(response.content).decode("utf-8")
+    except (httpx2.HTTPError, UnicodeDecodeError):
         return url  # Fallback
 
 
@@ -44,18 +44,13 @@ def encode_data_to_base64(path: Union[str, bytes]) -> str:
 
 # Async versions
 async def aencode_base64_from_url(url: str) -> str:
-    """Async version of encode_base64_from_url using httpx."""
-    if httpx is None:
-        # Fallback to sync version using run_in_executor
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, encode_base64_from_url, url)
-
+    """Async version of encode_base64_from_url using httpx2."""
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx2.AsyncClient(timeout=300.0) as client:
             response = await client.get(url, headers=_HEADERS)
             response.raise_for_status()
             return base64.b64encode(response.content).decode("utf-8")
-    except (httpx.HTTPError, UnicodeDecodeError):
+    except (httpx2.HTTPError, UnicodeDecodeError):
         return url  # Fallback
 
 
@@ -105,7 +100,7 @@ def encode_to_io_object(input_data: Union[bytes, str]) -> io.IOBase:
 
     if isinstance(input_data, str):
         if input_data.startswith("http://") or input_data.startswith("https://"):
-            response = requests.get(input_data, timeout=300)
+            response = httpx2.get(input_data, timeout=300)
             response.raise_for_status()
             return io.BytesIO(response.content)
 
@@ -147,46 +142,93 @@ def encode_data_to_bytes(
     Raises:
         ValueError: If the input string cannot be resolved to a valid source.
     """
-    filename = None
     if isinstance(input_data, bytes):
-        data = input_data
-        if input_data[:2] == b"\xff\xd8":
-            filename = "image.jpg"
-        elif input_data[:4] == b"\x89PNG":
-            filename = "image.png"
-        elif input_data[:4] == b"RIFF" and input_data[8:12] == b"WEBP":
-            filename = "image.webp"
-        else:
-            filename = "image.jpg"
-
+        data, resolved_filename = _resolve_bytes_input(input_data, filename)
     elif isinstance(input_data, str):
-        # 1. Check if it's a valid local file path
-        if os.path.isfile(input_data):
-            with open(input_data, "rb") as f:
-                data = f.read()
-            filename = os.path.basename(input_data)
-
-        # 2. Check if it's a URL
-        elif input_data.startswith(("http://", "https://")):
-            response = requests.get(input_data, timeout=300)
-            response.raise_for_status()
-            data = response.content
-            filename = os.path.basename(response.url) or filename
-
-        # 3. Try to decode base64
-        else:
-            try:
-                data = base64.b64decode(input_data)
-            except (base64.binascii.Error, ValueError) as e:
-                raise ValueError(
-                    "Invalid string input (not a valid path, URL, or base64): "
-                    f"{input_data}"
-                ) from e
-
+        data, resolved_filename = _resolve_string_input(input_data, filename)
     else:
         raise ValueError(f"Invalid input type: {type(input_data)}")
 
     buffer = io.BytesIO(data)
-    if filename:
-        buffer.name = filename
+    if resolved_filename:
+        buffer.name = resolved_filename
+    return buffer
+
+
+def _resolve_bytes_input(
+    input_data: bytes,
+    filename: Optional[str],
+) -> tuple[bytes, Optional[str]]:
+    if input_data[:2] == b"\xff\xd8":
+        filename = "image.jpg"
+    elif input_data[:4] == b"\x89PNG":
+        filename = "image.png"
+    elif input_data[:4] == b"RIFF" and input_data[8:12] == b"WEBP":
+        filename = "image.webp"
+    return input_data, filename
+
+
+def _resolve_string_input(
+    input_data: str,
+    filename: Optional[str],
+) -> tuple[bytes, Optional[str]]:
+    if input_data.startswith("data:"):
+        return _decode_data_url(input_data, filename)
+    if os.path.isfile(input_data):
+        with open(input_data, "rb") as file:
+            return file.read(), os.path.basename(input_data)
+    if input_data.startswith(("http://", "https://")):
+        response = httpx2.get(input_data, timeout=300)
+        response.raise_for_status()
+        resolved = os.path.basename(urlparse(str(response.url)).path) or filename
+        return response.content, resolved
+    try:
+        return base64.b64decode(input_data), filename
+    except (base64.binascii.Error, ValueError) as exc:
+        raise ValueError(
+            f"Invalid string input (not a valid path, URL, or base64): {input_data}"
+        ) from exc
+
+
+def _decode_data_url(
+    value: str,
+    filename: Optional[str],
+) -> tuple[bytes, Optional[str]]:
+    try:
+        header, encoded = value.split(",", 1)
+        if ";base64" not in header:
+            raise ValueError("data URL is not base64 encoded")
+        data = base64.b64decode(encoded, validate=True)
+    except (base64.binascii.Error, ValueError) as exc:
+        raise ValueError("Invalid base64 data URL") from exc
+    media_type = header[5:].split(";", 1)[0]
+    extension = mimetypes.guess_extension(media_type) if media_type else None
+    return data, f"upload{extension}" if extension else filename
+
+
+async def aencode_data_to_bytes(
+    input_data: Union[bytes, str], *, filename: Optional[str] = "image.png"
+) -> io.BytesIO:
+    """Async version of :func:`encode_data_to_bytes`.
+
+    Remote inputs use an async HTTPX2 client. Local file reads and base64
+    decoding run in a worker thread so model ``acall`` does not block its event
+    loop.
+    """
+    if not (
+        isinstance(input_data, str) and input_data.startswith(("http://", "https://"))
+    ):
+        return await asyncio.to_thread(
+            encode_data_to_bytes,
+            input_data,
+            filename=filename,
+        )
+
+    async with httpx2.AsyncClient(timeout=300.0) as client:
+        response = await client.get(input_data)
+        response.raise_for_status()
+    resolved_filename = os.path.basename(urlparse(str(response.url)).path) or filename
+    buffer = io.BytesIO(response.content)
+    if resolved_filename:
+        buffer.name = resolved_filename
     return buffer

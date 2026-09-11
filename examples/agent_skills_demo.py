@@ -6,7 +6,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from msgflux import nn
+from msgflux import SkillsExtension, nn
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.utils.msgspec import msgspec_dumps
@@ -43,9 +43,9 @@ class ScriptedModel:
                 call_id="call_skill_search",
             ),
             tool_call_response(
-                "activate_skill",
+                "skill",
                 {"name": "code-review"},
-                call_id="call_activate_skill",
+                call_id="call_skill",
             ),
             text_response("I loaded the code-review skill and will use its checklist."),
         ]
@@ -65,18 +65,18 @@ def write_skill(
     description: str,
     body: str,
     *,
-    catalog: bool = True,
+    include_in_prompt: bool = True,
 ) -> None:
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
-    catalog_line = ["catalog: false"] if not catalog else []
+    prompt_line = ["include_in_prompt: false"] if not include_in_prompt else []
     (skill_dir / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
                 f"name: {name}",
                 f"description: {description}",
-                *catalog_line,
+                *prompt_line,
                 "---",
                 body,
             ]
@@ -101,18 +101,22 @@ def main() -> None:
             "release-notes",
             "Write concise release notes from merged changes.",
             "# Release Notes\n\nGroup changes by user-visible impact.",
-            catalog=False,
+            include_in_prompt=False,
         )
 
         agent = nn.Agent(
             name="developer_agent",
             model=ScriptedModel(),
-            skills={
-                "paths": [project_skills, codex_skills],
-                "catalog_limit": 1,
-                "search_top_k": 3,
-            },
-            instructions="Use Agent Skills when they match the user's request.",
+            extensions=[
+                SkillsExtension(
+                    {
+                        "paths": [project_skills, codex_skills],
+                        "catalog_limit": 1,
+                        "search_top_k": 3,
+                    }
+                )
+            ],
+            system_prompt="Use Agent Skills when they match the user's request.",
         )
 
         print("Available skills:", agent.agent_skill_manager.names())

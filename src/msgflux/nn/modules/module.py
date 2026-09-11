@@ -1,11 +1,14 @@
 import asyncio
+import contextvars
 import functools
 import inspect
 import weakref
 from collections import OrderedDict, namedtuple
+from contextlib import nullcontext, suppress
 from types import MethodType
 from typing import (
     Any,
+    AsyncGenerator,
     Callable,
     Dict,
     Iterator,
@@ -34,11 +37,27 @@ from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.envs import envs
+from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.nn.hooks import Hook, RemovableHandle
+from msgflux.nn.hooks.events import RunEndContext
 from msgflux.nn.parameter import Parameter
+from msgflux.runtime.abort import await_with_abort
+from msgflux.runtime.context import execution_context, get_execution_context
+from msgflux.runtime.events import (
+    EventType,
+    ExecutionEvent,
+    _AsyncEventChannel,
+    _capture_events,
+    _hub_event_sink,
+    _is_capturing_events,
+    _is_event_stream_root,
+    _track_event_task,
+    emit_event,
+    event_source,
+)
 from msgflux.telemetry import Spans
 from msgflux.utils.convert import convert_camel_snake_to_title
 from msgflux.utils.mermaid import plot_mermaid
@@ -62,6 +81,14 @@ MSGFLUX_DESERIALIZABLE_CLS: Dict[str, Type] = {
 
 
 T = TypeVar("T", bound="Module")
+
+
+def _run_exception_event(error: BaseException) -> str:
+    return (
+        EventType.RUN_PAUSED
+        if isinstance(error, TaskPauseRequestedError)
+        else EventType.RUN_ERROR
+    )
 
 
 class _IncompatibleKeys(
@@ -364,6 +391,7 @@ class Module:
     _forward_pre_hooks_with_kwargs: Dict[int, bool]
     _method_pre_hooks: Dict[str, Dict[int, Callable]]
     _method_hooks: Dict[str, Dict[int, Callable]]
+    _lifecycle_hooks: Dict[str, Dict[int, "Hook"]]
     _load_state_dict_post_hooks: Dict[int, Callable]
     _load_state_dict_pre_hooks: Dict[int, Callable]
     _state_dict_hooks: Dict[int, Callable]
@@ -398,6 +426,7 @@ class Module:
         super().__setattr__("_forward_hooks_always_called", OrderedDict())
         super().__setattr__("_method_pre_hooks", {})
         super().__setattr__("_method_hooks", {})
+        super().__setattr__("_lifecycle_hooks", {})
         super().__setattr__("_state_dict_hooks", OrderedDict())
         super().__setattr__("_state_dict_pre_hooks", OrderedDict())
         super().__setattr__("_load_state_dict_pre_hooks", OrderedDict())
@@ -709,7 +738,7 @@ class Module:
 
         Args:
             templates: Dictionary mapping template types to Jinja template strings.
-                Valid keys: "task", "response", "task_context", "system_prompt"
+                Valid keys: "task", "response", "task_context"
 
         Raises:
             TypeError: If templates is not a dict or None
@@ -720,7 +749,7 @@ class Module:
             context_cache.
         """
         # Define valid keys
-        valid_keys = {"task", "response", "task_context", "system_prompt"}
+        valid_keys = {"task", "response", "task_context"}
 
         if templates is None:
             self.templates = {}
@@ -1225,6 +1254,94 @@ class Module:
             bucket.move_to_end(handle.id, last=False)
         return handle
 
+    def register_lifecycle_hook(
+        self,
+        event: str,
+        hook: "Hook",
+        *,
+        prepend: bool = False,
+    ) -> RemovableHandle:
+        """Register a hook on a stable module lifecycle event."""
+        if not isinstance(event, str) or not event.strip():
+            raise ValueError("`event` must be a non-empty string")
+        if not isinstance(hook, Hook) or not hook.is_lifecycle:
+            raise TypeError("`hook` must be a lifecycle Hook")
+        if hook.event != event:
+            raise ValueError(
+                f"Hook declares event `{hook.event}`, cannot register for `{event}`"
+            )
+
+        bucket = self._lifecycle_hooks.get(event)
+        if bucket is None:
+            bucket = OrderedDict()
+            self._lifecycle_hooks[event] = bucket
+        handle = RemovableHandle(bucket)
+        bucket[handle.id] = hook
+        if prepend:
+            bucket.move_to_end(handle.id, last=False)
+        return handle
+
+    def _run_lifecycle_hooks(
+        self,
+        event: str,
+        payload: Any,
+        *,
+        stop_when: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """Run lifecycle hooks in registration order.
+
+        A non-``None`` result replaces the payload seen by later handlers.
+        When ``stop_when`` accepts the current payload, remaining handlers for
+        this event invocation are skipped.
+        """
+        current = payload
+        for hook in tuple(self._lifecycle_hooks.get(event, {}).values()):
+            abort_signal = self._get_lifecycle_abort_signal(current)
+            if abort_signal is not None:
+                abort_signal.raise_if_aborted()
+            result = hook.handle(current)
+            if result is not None:
+                current = result
+            if abort_signal is not None:
+                abort_signal.raise_if_aborted()
+            if stop_when is not None and stop_when(current):
+                break
+        return current
+
+    async def _arun_lifecycle_hooks(
+        self,
+        event: str,
+        payload: Any,
+        *,
+        stop_when: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """Async counterpart to :meth:`_run_lifecycle_hooks`."""
+        current = payload
+        for hook in tuple(self._lifecycle_hooks.get(event, {}).values()):
+            abort_signal = self._get_lifecycle_abort_signal(current)
+            result = await await_with_abort(hook.ahandle(current), abort_signal)
+            if result is not None:
+                current = result
+            if stop_when is not None and stop_when(current):
+                break
+        return current
+
+    @staticmethod
+    def _get_lifecycle_abort_signal(payload: Any):
+        """Resolve cancellation from a typed payload or the ambient execution."""
+        if isinstance(payload, RunEndContext):
+            return None
+        scope = getattr(payload, "scope", None)
+        if scope is None and hasattr(payload, "kwargs"):
+            scope = getattr(payload, "kwargs", {}).get("scope")
+        if scope is not None and getattr(scope, "abort_signal", None) is not None:
+            return scope.abort_signal
+        return get_execution_context().get("abort_signal")
+
+    def has_lifecycle_hooks(self, event: str) -> bool:
+        """Return whether at least one handler is registered for ``event``."""
+        return bool(self._lifecycle_hooks.get(event))
+
     def register_forward_hook(
         self,
         hook: Union[
@@ -1277,9 +1394,110 @@ class Module:
             self._forward_hooks.move_to_end(handle.id, last=False)
         return handle
 
+    def _event_source_identity(self) -> tuple[str, str]:
+        return (
+            str(self.get_module_name()),
+            str(getattr(self, "_event_source_type", "module")),
+        )
+
+    def _should_emit_nested_run_events(self) -> bool:
+        return bool(
+            _is_capturing_events()
+            and getattr(self, "_emit_nested_run_events", False)
+            and not _is_event_stream_root(self)
+        )
+
+    @staticmethod
+    def _emit_nested_run_completion(result: Any, *, scope: Any = None) -> None:
+        emit_event(
+            EventType.MESSAGE_START,
+            {"buffered": False},
+            scope=scope,
+        )
+        emit_event(
+            EventType.MESSAGE_END,
+            {"content": result},
+            scope=scope,
+        )
+        emit_event(EventType.TURN_END, scope=scope)
+        emit_event(
+            EventType.RUN_END,
+            {"outcome": "completed"},
+            scope=scope,
+        )
+
     def _call_impl(self, *args, **kwargs):
+        root_hub_run = bool(
+            not _is_capturing_events()
+            and getattr(self, "_emit_nested_run_events", False)
+        )
+        scope = kwargs.get("scope")
+        if root_hub_run:
+            prepared = self._prepare_event_stream_kwargs(dict(kwargs))
+            scope = prepared.get("scope")
+            if kwargs.get("scope") is not None:
+                kwargs = prepared
+        source_name, source_type = self._event_source_identity()
+        capture = (
+            _capture_events(_hub_event_sink(root_module=self))
+            if root_hub_run
+            else nullcontext()
+        )
+        root_context = execution_context(scope=scope) if root_hub_run else nullcontext()
+        with root_context, capture, event_source(source_name, source_type):
+            run_boundary = root_hub_run or self._should_emit_nested_run_events()
+            if run_boundary:
+                emit_event(EventType.RUN_START, scope=scope)
+                emit_event(EventType.TURN_START, scope=scope)
+            try:
+                result = self._call_impl_with_hooks(*args, **kwargs)
+            except BaseException as exc:
+                if run_boundary:
+                    emit_event(
+                        _run_exception_event(exc),
+                        {"error": str(exc)},
+                        scope=scope,
+                    )
+                raise
+            if run_boundary:
+                if self._stream_response_from_result(result) is not None:
+                    self._start_detached_event_finalizer(result, scope=scope)
+                else:
+                    self._emit_nested_run_completion(result, scope=scope)
+            return result
+
+    async def _afinalize_detached_event_result(
+        self,
+        result: ModelStreamResponse,
+        *,
+        scope: Any = None,
+    ) -> None:
+        try:
+            await self._afinalize_event_result(result)
+        except BaseException as exc:
+            emit_event(
+                _run_exception_event(exc),
+                {"error": str(exc)},
+                scope=scope,
+            )
+
+    def _start_detached_event_finalizer(
+        self,
+        result: ModelStreamResponse,
+        *,
+        scope: Any = None,
+    ) -> None:
+        context = contextvars.copy_context()
+
+        def finalize() -> None:
+            asyncio.run(self._afinalize_detached_event_result(result, scope=scope))
+
+        Executor.get_instance().submit(context.run, finalize)
+
+    def _call_impl_with_hooks(self, *args, **kwargs):
         if not (self._forward_hooks or self._forward_pre_hooks):
-            return self._call(*args, **kwargs)
+            result = self._call(*args, **kwargs)
+            return self._transform_module_output(result)
 
         for hook in self._forward_pre_hooks.values():
             hook_result = hook(self, args, kwargs)
@@ -1298,7 +1516,13 @@ class Module:
             if hook_result is not None:
                 result = hook_result
 
-        return result
+        return self._transform_module_output(result)
+
+    def _transform_module_output(self, output: Any) -> Any:
+        """Apply presentation-only output hooks to a settled result."""
+        if isinstance(output, ModelStreamResponse):
+            return output
+        return self._run_lifecycle_hooks("transform_output", output)
 
     def _call_method_impl(
         self,
@@ -1410,8 +1634,56 @@ class Module:
             return await loop.run_in_executor(None, functools.partial(hook, *args))
 
     async def _acall_impl(self, *args, **kwargs):
+        root_hub_run = bool(
+            not _is_capturing_events()
+            and getattr(self, "_emit_nested_run_events", False)
+        )
+        scope = kwargs.get("scope")
+        if root_hub_run:
+            prepared = self._prepare_event_stream_kwargs(dict(kwargs))
+            scope = prepared.get("scope")
+            if kwargs.get("scope") is not None:
+                kwargs = prepared
+        source_name, source_type = self._event_source_identity()
+        capture = (
+            _capture_events(_hub_event_sink(root_module=self))
+            if root_hub_run
+            else nullcontext()
+        )
+        root_context = execution_context(scope=scope) if root_hub_run else nullcontext()
+        with root_context, capture, event_source(source_name, source_type):
+            run_boundary = root_hub_run or self._should_emit_nested_run_events()
+            if run_boundary:
+                emit_event(EventType.RUN_START, scope=scope)
+                emit_event(EventType.TURN_START, scope=scope)
+            try:
+                result = await self._acall_impl_with_hooks(*args, **kwargs)
+            except BaseException as exc:
+                if run_boundary:
+                    emit_event(
+                        _run_exception_event(exc),
+                        {"error": str(exc)},
+                        scope=scope,
+                    )
+                raise
+            if run_boundary:
+                if self._stream_response_from_result(result) is not None:
+                    _track_event_task(
+                        asyncio.create_task(
+                            self._afinalize_detached_event_result(
+                                result,
+                                scope=scope,
+                            )
+                        )
+                    )
+                else:
+                    self._emit_nested_run_completion(result, scope=scope)
+            return result
+
+    async def _acall_impl_with_hooks(self, *args, **kwargs):
         if not (self._forward_hooks or self._forward_pre_hooks):
-            return await self._acall(*args, **kwargs)
+            result = await self._acall(*args, **kwargs)
+            return await self._atransform_module_output(result)
 
         # Execute forward pre-hooks (sync or async)
         for hook in self._forward_pre_hooks.values():
@@ -1434,7 +1706,13 @@ class Module:
             if hook_result is not None:
                 result = hook_result
 
-        return result
+        return await self._atransform_module_output(result)
+
+    async def _atransform_module_output(self, output: Any) -> Any:
+        """Async counterpart to :meth:`_transform_module_output`."""
+        if isinstance(output, ModelStreamResponse):
+            return output
+        return await self._arun_lifecycle_hooks("transform_output", output)
 
     async def _acall_method_impl(
         self,
@@ -1554,6 +1832,179 @@ class Module:
             # Use native async implementation
             return await self._acall_impl(*args, **kwargs)
 
+    def _prepare_event_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare execution kwargs for an event-stream-owned call."""
+        return kwargs
+
+    def _event_stream_execution_context(self, _kwargs: Dict[str, Any]):
+        """Return optional module-specific context kept through stream finalization."""
+        return nullcontext()
+
+    @staticmethod
+    def _stream_response_from_result(result: Any) -> ModelStreamResponse | None:
+        """Find a model stream wrapped by a presentation response envelope."""
+        if isinstance(result, ModelStreamResponse):
+            return result
+        if isinstance(result, dict):
+            candidate = result.get("response")
+            if isinstance(candidate, ModelStreamResponse):
+                return candidate
+        candidate = getattr(result, "response", None)
+        return candidate if isinstance(candidate, ModelStreamResponse) else None
+
+    @staticmethod
+    def _incremental_output_transformer(module: Any):
+        extensions = getattr(module, "extensions", None)
+        if extensions is None:
+            return None
+        factories = []
+        for extension in extensions.values():
+            visible = getattr(module, "_extension_is_visible", lambda _name: True)
+            if not visible(extension.name):
+                continue
+            factory = getattr(extension, "create_output_transformer", None)
+            if callable(factory):
+                factories.append(factory)
+        if len(factories) != 1:
+            return None
+        if len(module._lifecycle_hooks.get("transform_output", {})) != 1:
+            return None
+        return factories[0]()
+
+    @staticmethod
+    async def _aconsume_event_response(
+        response: ModelStreamResponse,
+        *,
+        emit_content: bool = True,
+        output_transformer: Any = None,
+    ) -> None:
+        try:
+            async for event in response.consume_events():
+                if event.type == "output.delta":
+                    if emit_content:
+                        delta = event.data
+                        if output_transformer is not None and isinstance(delta, str):
+                            delta = output_transformer.feed(delta)
+                        if delta:
+                            emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
+                elif event.type == "reasoning.delta":
+                    emit_event(EventType.REASONING_DELTA, {"delta": event.data})
+                elif event.type == "reasoning_summary.delta":
+                    emit_event(
+                        EventType.REASONING_SUMMARY_DELTA,
+                        {"delta": event.data},
+                    )
+        finally:
+            if not response._is_finalized():
+                response.finish(status="interrupted")
+            await response._await_pending_finalizers()
+            response._run_consumer_finalizers()
+
+    async def _afinalize_event_result(self, result: Any) -> Any:
+        stream_response = self._stream_response_from_result(result)
+        terminal_transform = self.has_lifecycle_hooks(
+            "before_run_end"
+        ) or self.has_lifecycle_hooks("after_run_end")
+        output_transformer = (
+            self._incremental_output_transformer(self)
+            if stream_response is not None and not terminal_transform
+            else None
+        )
+        buffered = stream_response is not None and (
+            terminal_transform
+            or (
+                self.has_lifecycle_hooks("transform_output")
+                and output_transformer is None
+            )
+        )
+        emit_event(
+            EventType.MESSAGE_START,
+            {"buffered": buffered},
+        )
+        if stream_response is not None:
+            await self._aconsume_event_response(
+                stream_response,
+                emit_content=not buffered,
+                output_transformer=output_transformer,
+            )
+            if output_transformer is not None:
+                tail = output_transformer.finish()
+                if tail:
+                    emit_event(EventType.MESSAGE_DELTA, {"delta": tail})
+            output = getattr(stream_response, "_settled_output", stream_response.data)
+            output = await self._atransform_module_output(output)
+            if result is not stream_response and isinstance(result, dict):
+                result["response"] = output
+                output = result
+        else:
+            output = result
+        emit_event(EventType.MESSAGE_END, {"content": output})
+        emit_event(EventType.TURN_END)
+        outcome = (
+            stream_response._final_status
+            if stream_response is not None
+            else "completed"
+        )
+        emit_event(EventType.RUN_END, {"outcome": outcome})
+        return output
+
+    async def stream_events(
+        self,
+        *args,
+        **kwargs,
+    ) -> AsyncGenerator[ExecutionEvent, None]:
+        """Run the module and asynchronously yield execution events."""
+        channel = _AsyncEventChannel(root_module=self)
+        error: BaseException | None = None
+        stream_kwargs = self._prepare_event_stream_kwargs(dict(kwargs))
+        scope = stream_kwargs.get("scope")
+        source_name, source_type = self._event_source_identity()
+
+        async def run() -> None:
+            nonlocal error
+            try:
+                with (
+                    _capture_events(channel.sink),
+                    execution_context(scope=scope),
+                    event_source(source_name, source_type),
+                    self._event_stream_execution_context(stream_kwargs),
+                ):
+                    emit_event(EventType.RUN_START)
+                    emit_event(EventType.TURN_START)
+                    result = await self.acall(*args, **stream_kwargs)
+                    await self._afinalize_event_result(result)
+            except BaseException as exc:
+                error = exc
+                with (
+                    _capture_events(channel.sink),
+                    event_source(source_name, source_type),
+                ):
+                    emit_event(
+                        _run_exception_event(exc),
+                        {"error": str(exc)},
+                        scope=scope,
+                    )
+            finally:
+                channel.close()
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                event = await channel.get()
+                if event is None:
+                    break
+                yield event
+            await task
+        finally:
+            if not task.done():
+                if scope is not None and scope.abort_signal is not None:
+                    scope.abort_signal.abort("event stream consumer closed")
+                task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        if error is not None:
+            raise error
+
     def __getstate__(self):
         state = self.__dict__.copy()
         return state
@@ -1570,6 +2021,7 @@ class Module:
             self._method_pre_hooks = {}
         if "_method_hooks" not in self.__dict__:
             self._method_hooks = {}
+        self.__dict__.setdefault("_lifecycle_hooks", {})
         if "_state_dict_hooks" not in self.__dict__:
             self._state_dict_hooks = OrderedDict()
         if "_state_dict_pre_hooks" not in self.__dict__:

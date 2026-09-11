@@ -1,7 +1,7 @@
 from os import getenv
 from typing import Any, Dict
 
-from msgflux.models.providers.openai import OpenAIChatCompletion
+from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.registry import register_model
 
 
@@ -27,7 +27,7 @@ class _BaseExa:
 
 
 @register_model
-class ExaChatCompletion(_BaseExa, OpenAIChatCompletion):
+class ExaChatCompletion(_BaseExa, OpenAICompatibleChatCompletion):
     """Exa Chat Completion for Answer endpoint.
 
     Models available:

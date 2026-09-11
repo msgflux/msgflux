@@ -3,6 +3,7 @@ from typing import Any, Dict, Literal, Mapping, Optional, Union
 from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.exceptions import _GuardInterrupt
 from msgflux.models.base import BaseModel
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse
@@ -15,7 +16,6 @@ from msgflux.models.types import (
     VideoTextToAudioModel,
     VideoTextToVideoModel,
 )
-from msgflux.exceptions import _GuardInterrupt
 from msgflux.nn.modules.generator import Generator
 from msgflux.nn.modules.module import Module
 

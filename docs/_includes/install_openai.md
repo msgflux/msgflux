@@ -3,11 +3,11 @@
     === "uv"
 
         ```bash
-        uv add msgflux[openai]
+        uv add msgflux
         ```
 
     === "pip"
 
         ```bash
-        pip install msgflux[openai]
+        pip install msgflux
         ```

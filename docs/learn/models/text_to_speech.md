@@ -31,7 +31,7 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
     === "OpenAI"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
 
         # mf.set_envs(OPENAI_API_KEY="...")
@@ -42,7 +42,7 @@ Text-to-speech (TTS) models transform written text into spoken audio. They enabl
     === "Together AI"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
 
         # mf.set_envs(TOGETHER_API_KEY="...")
@@ -171,7 +171,7 @@ Generate and play audio in real-time:
         asyncio.run(handle())
         ```
 
-        `stream_chunk_size` controls the byte size requested from the SDK when msgFlux reads streaming audio. Smaller values can make local playback controls feel more responsive, but may add Python and queue overhead. It does not pause or resume generation on the remote provider.
+        `stream_chunk_size` controls the byte size requested from the provider response when msgFlux reads streaming audio. Smaller values can make local playback controls feel more responsive, but may add Python and queue overhead. It does not pause or resume generation on the remote provider. OpenAI and Together speech requests use msgFlux's built-in HTTP transport, so they do not require the OpenAI Python SDK.
 
     === "Basic"
 

@@ -5,10 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
+import httpx2
 
 from msgflux.logger import logger
 from msgflux.protocols.mcp.exceptions import (
@@ -68,7 +65,6 @@ class HTTPTransport(BaseTransport):
     """HTTP/SSE transport for MCP.
 
     Uses Server-Sent Events for server-initiated messages.
-    Requires httpx to be installed.
     Supports connection pooling and authentication.
     """
 
@@ -89,12 +85,6 @@ class HTTPTransport(BaseTransport):
             pool_limits: Connection pool configuration.
             auth: Authentication provider (optional).
         """
-        if httpx is None:
-            raise ImportError(
-                "httpx is required for HTTP transport. "
-                "Install it with: `pip install msgflux[httpx]`"
-            )
-
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.headers = headers or {}
@@ -103,7 +93,7 @@ class HTTPTransport(BaseTransport):
             "max_keepalive_connections": 20,
         }
         self.auth = auth
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: Optional[httpx2.AsyncClient] = None
         self._session_id: Optional[str] = None
         super().__init__()
 
@@ -116,13 +106,13 @@ class HTTPTransport(BaseTransport):
         # The session ID will be captured from the initialize response
 
         # Create limits with connection pooling
-        limits = httpx.Limits(
+        limits = httpx2.Limits(
             max_connections=self.pool_limits["max_connections"],
             max_keepalive_connections=self.pool_limits["max_keepalive_connections"],
         )
 
-        self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout), headers=self.headers, limits=limits
+        self._http_client = httpx2.AsyncClient(
+            timeout=httpx2.Timeout(self.timeout), headers=self.headers, limits=limits
         )
 
     async def disconnect(self):
@@ -225,9 +215,9 @@ class HTTPTransport(BaseTransport):
             else:
                 # Regular JSON response
                 return response.json()
-        except httpx.TimeoutException as e:
+        except httpx2.TimeoutException as e:
             raise MCPTimeoutError(f"Request to {method} timed out") from e
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             status_code = e.response.status_code
             error_text = e.response.text
             raise MCPError(f"HTTP error {status_code}: {error_text}") from e

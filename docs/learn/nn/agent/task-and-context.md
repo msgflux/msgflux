@@ -1,8 +1,8 @@
 # Task and Context
 
 The agent receives input through **task** (what to do) and **task_context**
-(background information). When both are provided, they're combined using
-XML-like tags in the final prompt.
+(background information). The canonical user message stores the task unchanged;
+the model-facing projection adds a tagged context section when one is present.
 
 ## Imperative vs Declarative
 
@@ -28,7 +28,7 @@ The **declarative approach** with `message_fields` shines when designing complex
 
 ## How Task and Context are Combined
 
-When you pass `task_context`, the context is injected **inside the task** using XML-like tags:
+When you pass `task_context`, only the context is tagged:
 
 ```xml
 <context>
@@ -37,13 +37,13 @@ Industry: FinTech
 Product: AI-powered risk analysis
 </context>
 
-<task>
 Create a pitch for this client
-</task>
 ```
 
-This structure helps the model clearly distinguish between background
-information (task context) and what it needs to do (task).
+The `user` role already identifies the task. The context is stored as metadata
+on that history item, so checkpoints and TUIs retain the original user text.
+`inspect_model_execution_params()` shows the tagged projection sent to the
+Model.
 
 ???+ example
 
@@ -52,7 +52,7 @@ information (task context) and what it needs to do (task).
         Pass task as first argument and task context via `task_context`:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -81,7 +81,7 @@ information (task context) and what it needs to do (task).
         Use `context_cache` for context that doesn't change between calls:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -110,7 +110,7 @@ information (task context) and what it needs to do (task).
         The same agent logic can be used imperatively or declaratively:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -162,7 +162,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         Use `templates={"task": ...}` to format the task input:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -193,7 +193,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         Use `templates={"task_context": ...}` to format structured task context:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -230,7 +230,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         For plain text outputs, use `{}` as placeholder for the model response:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -262,7 +262,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         When using `generation_schema`, access output fields directly in the template:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from msgspec import Struct
@@ -276,7 +276,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 
         class Assistant(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            instructions = "Only respond if the question is safe."
+            system_prompt = "Only respond if the question is safe."
             generation_schema = SafetyCheck
             templates={
                 "response": """
@@ -305,7 +305,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         Extract structured data and format a personalized response:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from msgspec import Struct
@@ -320,8 +320,8 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 
         class Extractor(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            system_message = "You are an information extractor."
-            instructions = "Extract information from the customer's message."
+            system_prompt = """You are an information extractor.
+            Extract information from the customer's message."""
             generation_schema = ClientInfo
             templates = {
                 "response": """
@@ -360,7 +360,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         Extract only `final_answer` from reasoning schemas like ReAct:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from msgflux.generation.reasoning import ReAct
@@ -394,7 +394,7 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
         Combine signature with response template for clean tool outputs:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from typing import Literal
@@ -456,7 +456,7 @@ Pass images, audio, or files via `task_multimodal`. Requires a multimodal model 
         Single image or multiple images for comparison:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -521,7 +521,7 @@ Pass images, audio, or files via `task_multimodal`. Requires a multimodal model 
             If an image cannot be retrieved from the declarative mapping (e.g., the field doesn't exist or is empty), the task will still be assembled normally — the missing image simply won't be included. This allows flexible pipelines where multimodal inputs are optional.
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -569,7 +569,7 @@ Pass images, audio, or files via `task_multimodal`. Requires a multimodal model 
         Transcribe or analyze audio files:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -591,7 +591,7 @@ Pass images, audio, or files via `task_multimodal`. Requires a multimodal model 
         Analyze PDF documents:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -632,7 +632,7 @@ Use `image_block_kwargs` and `video_block_kwargs` in `config` to pass extra para
     === "image_block_kwargs"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -657,7 +657,7 @@ Use `image_block_kwargs` and `video_block_kwargs` in `config` to pass extra para
     === "video_block_kwargs"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -699,7 +699,7 @@ The final assistant response is **never added automatically** — append it manu
         Only append the assistant reply manually after each turn:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -707,7 +707,7 @@ The final assistant response is **never added automatically** — append it manu
 
         class Advisor(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            system_message = "You are a helpful camera advisor."
+            system_prompt = "You are a helpful camera advisor."
 
         agent = Advisor()
         history = []
@@ -734,7 +734,7 @@ The final assistant response is **never added automatically** — append it manu
         message list returned alongside the response (e.g., for logging or inspection):
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -768,7 +768,7 @@ The final assistant response is **never added automatically** — append it manu
         means ephemeral — no list is needed until history starts accumulating:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -776,7 +776,7 @@ The final assistant response is **never added automatically** — append it manu
 
         class ChatBot(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            system_message = "You are a helpful assistant."
+            system_prompt = "You are a helpful assistant."
             config = {"stream": True, "return_messages": True}
 
         agent = ChatBot()
@@ -858,7 +858,7 @@ class VisionAgent(nn.Agent):
     A `Refiner` agent is an optional step that rewrites the user's question. The `Answerer` uses OR inputs so it works correctly whether or not the refiner ran:
 
     ```python
-    # pip install msgflux[openai]
+    # pip install msgflux
     import msgflux as mf
     import msgflux.nn as nn
 
@@ -866,7 +866,7 @@ class VisionAgent(nn.Agent):
 
     class Refiner(nn.Agent):
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-        instructions = "Rewrite the question to be clearer and more specific."
+        system_prompt = "Rewrite the question to be clearer and more specific."
         message_fields = {"task": "user.question"}
         response_mode = "refined.question"
 

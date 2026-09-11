@@ -5,6 +5,9 @@ The `moderation` models check whether text or images are potentially harmful. If
 !!! info "Dependencies"
     See [Dependency Management](../../dependency-management.md) for the complete provider matrix.
 
+    OpenAI moderation uses msgFlux's direct HTTP transport and does not require
+    the optional OpenAI SDK dependency.
+
 ## ✦₊⁺ Overview
 
 Moderation models act as guardians of your application. Each model has its own set of outputs, but to unify a general form of verification, all models produce a common flag `safe` — if `False`, the content is not considered safe.

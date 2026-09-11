@@ -24,7 +24,7 @@ def mock_httpx_clients():
     async_client_cls = MagicMock(return_value=async_client)
     fake_httpx = SimpleNamespace(Client=client_cls, AsyncClient=async_client_cls)
 
-    with patch.object(ceramic_provider, "httpx", fake_httpx):
+    with patch.object(ceramic_provider, "httpx2", fake_httpx):
         yield SimpleNamespace(
             response=response,
             client_cls=client_cls,
@@ -58,15 +58,6 @@ def test_reads_ceramic_api_key(mock_httpx_clients):
     with patch.dict("os.environ", {"CERAMIC_API_KEY": "test_key"}, clear=True):
         retriever = CeramicWebRetriever()
         assert retriever._get_api_key() == "test_key"
-
-
-def test_init_raises_without_httpx():
-    with (
-        patch.object(ceramic_provider, "httpx", None),
-        patch.dict("os.environ", {"CERAMIC_API_KEY": "test_key"}),
-        pytest.raises(ImportError),
-    ):
-        CeramicWebRetriever()
 
 
 def test_sync_search_uses_direct_httpx_request(retriever, mock_httpx_clients):

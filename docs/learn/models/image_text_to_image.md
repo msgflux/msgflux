@@ -2,6 +2,10 @@
 
 The `image_text_to_image` model edits existing images using text descriptions. This enables modifications, inpainting, object removal, style changes, and creative transformations of existing visual content.
 
+OpenAI image editing uses msgFlux's built-in HTTP transport and does not
+require the optional OpenAI SDK. Set `OPENAI_API_KEY` before creating the
+model.
+
 ## ✦₊⁺ Overview
 
 Image editing models take an existing image and modify it based on text prompts. They enable:
@@ -30,7 +34,7 @@ Image editing models take an existing image and modify it based on text prompts.
     import msgflux as mf
 
     # Create image editor
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # Edit image
     response = model(
@@ -50,7 +54,7 @@ Image editing models take an existing image and modify it based on text prompts.
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # Edit only masked area
     response = model(
@@ -74,11 +78,8 @@ Image editing models take an existing image and modify it based on text prompts.
     ```python
     import msgflux as mf
 
-    # Latest model — precise editing with logo and face preservation
-    model = mf.Model.image_text_to_image("openai/gpt-image-1.5")
-
-    # Stable release
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    # Current model — precise editing with high-fidelity image inputs
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
     ```
 
 ### Replicate
@@ -103,7 +104,7 @@ When no mask is provided, the model edits the entire image:
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # Edit entire image
     response = model(
@@ -121,7 +122,7 @@ Masks define which areas to edit:
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # Only edit masked areas
     response = model(
@@ -131,7 +132,7 @@ Masks define which areas to edit:
     )
     ```
 
-The mask is a hint to the model alongside the prompt — masking with `gpt-image-1` is entirely prompt-based. The image must be a PNG and the mask (if provided) the same dimensions as the input.
+The mask is a hint to the model alongside the prompt — masking with `gpt-image-2` is entirely prompt-based. The image must be a PNG and the mask (if provided) the same dimensions as the input.
 
 ## 4. **Image Input Formats**
 
@@ -144,7 +145,7 @@ The `image` parameter accepts multiple formats:
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Change background to beach",
@@ -157,7 +158,7 @@ The `image` parameter accepts multiple formats:
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Add winter atmosphere",
@@ -174,7 +175,7 @@ The `image` parameter accepts multiple formats:
         with open("photo.png", "rb") as f:
             img_data = base64.b64encode(f.read()).decode()
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Make it artistic",
@@ -184,10 +185,12 @@ The `image` parameter accepts multiple formats:
 
 ## 5. **Response Formats**
 
-!!! info "gpt-image-1 always returns base64"
-    `gpt-image-1` does not support the `response_format` parameter in the edit endpoint — it always returns a **base64 string**. The `response_format` parameter is only supported by legacy models (`dall-e-2`).
+!!! info "GPT Image models return base64"
+    `gpt-image-2` returns a **base64 string**. The `response_format` parameter
+    remains available for OpenAI-compatible providers and legacy models that
+    support URL responses.
 
-### Base64 (default for gpt-image-1)
+### Base64 (default for gpt-image-2)
 
 ???+ example
 
@@ -195,7 +198,7 @@ The `image` parameter accepts multiple formats:
     import msgflux as mf
     import base64
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     response = model(
         prompt="Change to evening lighting",
@@ -217,7 +220,7 @@ Generate multiple edited versions:
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # Generate 4 variations
     response = model(
@@ -241,24 +244,25 @@ Generate multiple edited versions:
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # Image requirements:
     # - PNG, WEBP, or JPEG format
-    # - Less than 25MB
+    # - Less than 50MB per image
     # - If using mask, same dimensions as the image
 
-    # Note: the edit endpoint does not support a `size` parameter —
-    # output dimensions match the input image.
     response = model(
         prompt="Edit the background",
-        image="photo.png"
+        image="photo.png",
+        size="1024x1024",
+        quality="low",
+        output_format="png"
     )
     ```
 
 ## 8. **Creating Masks**
 
-With `gpt-image-1`, masking is **prompt-based**: the mask tells the model *where* to focus, and the prompt tells it *what* to do.
+With `gpt-image-2`, masking is **prompt-based**: the mask tells the model *where* to focus, and the prompt tells it *what* to do.
 
 ### Programmatic Mask Creation
 
@@ -268,7 +272,7 @@ With `gpt-image-1`, masking is **prompt-based**: the mask tells the model *where
     from PIL import Image, ImageDraw
 
     # Create a mask the same size as the input image
-    # White = keep, Black = edit region (for gpt-image-1, this is a hint)
+    # White = keep, Black = edit region (for gpt-image-2, this is a hint)
     img = Image.open("photo.png")
     mask = Image.new("RGBA", img.size, (255, 255, 255, 255))
     draw = ImageDraw.Draw(mask)
@@ -281,14 +285,14 @@ With `gpt-image-1`, masking is **prompt-based**: the mask tells the model *where
 
 ### Prompt-Only Editing (no mask)
 
-With `gpt-image-1` you can edit without a mask — the model infers the region from the prompt:
+With `gpt-image-2` you can edit without a mask — the model infers the region from the prompt:
 
 ???+ example
 
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     # The model understands "the background" from the prompt alone
     response = model(
@@ -306,7 +310,7 @@ With `gpt-image-1` you can edit without a mask — the model infers the region f
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Professional studio background with soft lighting",
@@ -320,7 +324,7 @@ With `gpt-image-1` you can edit without a mask — the model infers the region f
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Natural grass lawn",
@@ -334,7 +338,7 @@ With `gpt-image-1` you can edit without a mask — the model infers the region f
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Oil painting in impressionist style, vibrant colors",
@@ -348,7 +352,7 @@ With `gpt-image-1` you can edit without a mask — the model infers the region f
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="A red sports car parked",
@@ -362,7 +366,7 @@ With `gpt-image-1` you can edit without a mask — the model infers the region f
         ```python
         import msgflux as mf
 
-        model = mf.Model.image_text_to_image("openai/gpt-image-1")
+        model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
         response = model(
             prompt="Warm sunset lighting, golden hour atmosphere",
@@ -380,7 +384,7 @@ Edit images asynchronously:
     import msgflux as mf
     import msgflux.nn.functional as F
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     edits = [
         ("photo1.png", "Add sunset sky"),
@@ -408,7 +412,7 @@ Edit multiple images:
     import msgflux as mf
     import msgflux.nn.functional as F
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     images = ["photo1.png", "photo2.png", "photo3.png"]
     prompt = "Professional studio background"
@@ -435,7 +439,7 @@ Edit multiple images:
     ```python
     import msgflux as mf
 
-    model = mf.Model.image_text_to_image("openai/gpt-image-1")
+    model = mf.Model.image_text_to_image("openai/gpt-image-2")
 
     try:
         response = model(
@@ -449,7 +453,7 @@ Edit multiple images:
     except ValueError as e:
         print(f"Invalid parameters: {e}")
         # Common issues:
-        # - Image too large (>25MB)
+        # - Image too large (>50MB)
         # - Mask doesn't match image dimensions
         # - Invalid image format
     except Exception as e:
@@ -463,7 +467,7 @@ Edit multiple images:
 ## 13. **Limitations**
 
 - **Format**: PNG, WEBP, or JPEG for input; PNG for masks
-- **File Size**: Up to 25MB per image
-- **Output size**: Matches input image dimensions — `size` parameter is not supported in editing
-- **Response format**: Always base64 for `gpt-image-1` — `response_format` is not accepted
+- **File Size**: Up to 50MB per input image; masks must be smaller than 4MB
+- **Output size**: Select with `size`; `gpt-image-2` also supports compatible custom dimensions
+- **Response format**: GPT Image models return base64; legacy models may support URLs
 - **Masking**: Prompt-based — complex pixel-perfect edits may need multiple iterations

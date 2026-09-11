@@ -219,7 +219,7 @@ All operations in `msgflux.nn.functional` are automatically traced:
 | `scatter_gather` / `ascatter_gather` | Scatter inputs and gather outputs |
 | `bcast_gather` | Broadcast and gather |
 | `Inline` | DSL workflow execution |
-| `spawn` | Background execution |
+| `detached` | Detached execution |
 
 ---
 

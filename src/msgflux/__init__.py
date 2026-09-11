@@ -13,6 +13,12 @@ if TYPE_CHECKING:
     from msgflux.data.dbs import DB
     from msgflux.data.parsers import Parser
     from msgflux.data.retrievers import Retriever
+    from msgflux.data.stores import (
+        CheckpointStore,
+        InMemoryCheckpointStore,
+        SQLiteCheckpointStore,
+        Store,
+    )
     from msgflux.data.types import Audio, File, Image, Video
     from msgflux.dsl.inline import Inline
     from msgflux.dsl.signature import InputField, OutputField, Signature
@@ -20,18 +26,37 @@ if TYPE_CHECKING:
     from msgflux.exceptions import TaskError
     from msgflux.models import Model
     from msgflux.models.gateway import ModelGateway
+    from msgflux.nn.extensions import (
+        AgentExtension,
+        AgentExtensionHandle,
+        CurrentDateExtension,
+        SkillsExtension,
+        ToolUsageGuidanceExtension,
+    )
     from msgflux.runtime import (
         AbortSignal,
+        AgentControlMessage,
+        AgentInbox,
+        AgentInboxStore,
+        AgentNotification,
         AgentSkill,
         AgentSkillManager,
+        EventType,
+        ExecutionEvent,
         ExecutionScope,
+        InMemoryAgentInboxStore,
         SkillsConfig,
+        SQLiteAgentInboxStore,
+        ThreadSnapshot,
+        ThreadWatcher,
+        ToolNotificationHandle,
         default_skill_paths,
         execution_context,
         get_execution_scope,
         parse_skill_file,
     )
     from msgflux.telemetry import Spans
+    from msgflux.tools import Hidden, ToolLibraryHandle
     from msgflux.tools.config import tool_config
     from msgflux.utils.chat import ChatBlock, ChatML
     from msgflux.utils.console import cprint
@@ -43,14 +68,27 @@ __all__ = [
     "Audio",
     "AgentSkill",
     "AgentSkillManager",
+    "AgentExtension",
+    "AgentExtensionHandle",
+    "CurrentDateExtension",
+    "AgentInbox",
+    "AgentInboxStore",
+    "AgentControlMessage",
+    "AgentNotification",
     "AbortSignal",
     "ChatMessages",
     "ChatBlock",
     "ChatML",
+    "CheckpointStore",
     "Example",
     "ExecutionScope",
+    "ExecutionEvent",
+    "EventType",
     "File",
     "Image",
+    "Hidden",
+    "InMemoryCheckpointStore",
+    "InMemoryAgentInboxStore",
     "Inline",
     "InputField",
     "Message",
@@ -60,10 +98,19 @@ __all__ = [
     "Parser",
     "Registry",
     "Retriever",
+    "SQLiteCheckpointStore",
+    "SQLiteAgentInboxStore",
+    "ThreadSnapshot",
+    "ThreadWatcher",
     "Signature",
     "Spans",
     "SkillsConfig",
+    "SkillsExtension",
+    "ToolUsageGuidanceExtension",
+    "Store",
     "TaskError",
+    "ToolNotificationHandle",
+    "ToolLibraryHandle",
     "Video",
     "cprint",
     "default_skill_paths",
@@ -82,18 +129,31 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "AgentExtension": ("msgflux.nn.extensions", "AgentExtension"),
+    "AgentExtensionHandle": ("msgflux.nn.extensions", "AgentExtensionHandle"),
+    "CurrentDateExtension": ("msgflux.nn.extensions", "CurrentDateExtension"),
     "Audio": ("msgflux.data.types", "Audio"),
     "AgentSkill": ("msgflux.runtime", "AgentSkill"),
     "AgentSkillManager": ("msgflux.runtime", "AgentSkillManager"),
+    "AgentInbox": ("msgflux.runtime", "AgentInbox"),
+    "AgentInboxStore": ("msgflux.runtime", "AgentInboxStore"),
+    "AgentControlMessage": ("msgflux.runtime", "AgentControlMessage"),
+    "AgentNotification": ("msgflux.runtime", "AgentNotification"),
     "AbortSignal": ("msgflux.runtime", "AbortSignal"),
     "ChatMessages": ("msgflux.chat_messages", "ChatMessages"),
     "ChatBlock": ("msgflux.utils.chat", "ChatBlock"),
     "ChatML": ("msgflux.utils.chat", "ChatML"),
+    "CheckpointStore": ("msgflux.data.stores", "CheckpointStore"),
     "DB": ("msgflux.data.dbs", "DB"),
     "Example": ("msgflux.core.examples", "Example"),
     "ExecutionScope": ("msgflux.runtime", "ExecutionScope"),
+    "ExecutionEvent": ("msgflux.runtime", "ExecutionEvent"),
+    "EventType": ("msgflux.runtime", "EventType"),
     "File": ("msgflux.data.types", "File"),
     "Image": ("msgflux.data.types", "Image"),
+    "Hidden": ("msgflux.tools", "Hidden"),
+    "InMemoryCheckpointStore": ("msgflux.data.stores", "InMemoryCheckpointStore"),
+    "InMemoryAgentInboxStore": ("msgflux.runtime", "InMemoryAgentInboxStore"),
     "Inline": ("msgflux.dsl.inline", "Inline"),
     "InputField": ("msgflux.dsl.signature", "InputField"),
     "Message": ("msgflux.core.message", "Message"),
@@ -103,10 +163,22 @@ _LAZY_IMPORTS = {
     "Parser": ("msgflux.data.parsers", "Parser"),
     "Registry": ("msgflux.core.registry", "Registry"),
     "Retriever": ("msgflux.data.retrievers", "Retriever"),
+    "SQLiteCheckpointStore": ("msgflux.data.stores", "SQLiteCheckpointStore"),
+    "SQLiteAgentInboxStore": ("msgflux.runtime", "SQLiteAgentInboxStore"),
+    "ThreadSnapshot": ("msgflux.runtime", "ThreadSnapshot"),
+    "ThreadWatcher": ("msgflux.runtime", "ThreadWatcher"),
     "Signature": ("msgflux.dsl.signature", "Signature"),
     "SkillsConfig": ("msgflux.runtime", "SkillsConfig"),
+    "SkillsExtension": ("msgflux.nn.extensions", "SkillsExtension"),
+    "ToolUsageGuidanceExtension": (
+        "msgflux.nn.extensions",
+        "ToolUsageGuidanceExtension",
+    ),
     "Spans": ("msgflux.telemetry", "Spans"),
+    "Store": ("msgflux.data.stores", "Store"),
     "TaskError": ("msgflux.exceptions", "TaskError"),
+    "ToolNotificationHandle": ("msgflux.runtime", "ToolNotificationHandle"),
+    "ToolLibraryHandle": ("msgflux.tools", "ToolLibraryHandle"),
     "Video": ("msgflux.data.types", "Video"),
     "cprint": ("msgflux.utils.console", "cprint"),
     "default_skill_paths": ("msgflux.runtime", "default_skill_paths"),

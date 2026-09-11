@@ -8,10 +8,10 @@ except ImportError:
     np = None
 
 import msgflux.nn.functional as F
+from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseLexical, BaseRetriever
 from msgflux.data.retrievers.registry import register_retriever
 from msgflux.data.retrievers.types import LexicalRetriever
-from msgflux.core.dotdict import dotdict
 
 
 @register_retriever

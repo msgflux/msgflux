@@ -2,11 +2,11 @@ from email import policy
 from email.parser import BytesParser
 from typing import Dict, Union
 
+from msgflux.core.dotdict import dotdict
 from msgflux.data.parsers.base import BaseParser
 from msgflux.data.parsers.registry import register_parser
 from msgflux.data.parsers.response import ParserResponse
 from msgflux.data.parsers.types import EmailParser
-from msgflux.core.dotdict import dotdict
 
 
 @register_parser

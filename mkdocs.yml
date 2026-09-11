@@ -122,6 +122,14 @@ markdown_extensions:
 nav:
   - Home: 
     - index.md
+  - Anatomy:
+    - anatomy/agent-inbox.md
+    - anatomy/agent.md
+    - anatomy/checkpoints-and-replay.md
+    - anatomy/compaction-and-context-views.md
+    - anatomy/execution-event-streaming.md
+    - anatomy/index.md
+    - anatomy/tool-library.md
   - Learn:
     - ✧ Models:
       - learn/models/model.md
@@ -161,15 +169,28 @@ nav:
         - learn/nn/agent/quickstart.md
         - learn/nn/agent/async.md
         - learn/nn/agent/streaming.md
+        - learn/nn/agent/event-streaming.md
         - learn/nn/agent/prompt-cache.md
         - learn/nn/agent/reasoning.md
         - learn/nn/agent/debug.md
         - learn/nn/agent/system-prompt.md
         - learn/nn/agent/generation-schemas.md
         - learn/nn/agent/task-and-context.md
+        - learn/nn/agent/runtime.md
+        - learn/nn/agent/compaction.md
         - learn/nn/agent/vars.md
-        - learn/nn/agent/tools.md
+        - Tools:
+          - Intro: learn/nn/agent/tools/index.md
+          - learn/nn/agent/tools/builtin.md
+          - learn/nn/agent/tools/config.md
+          - learn/nn/agent/tools/tool-bucket.md
+          - learn/nn/agent/tools/tool-library-extensions.md
+          - learn/nn/agent/tools/tool-search.md
+          - learn/nn/agent/tools/background-tasks.md
+          - learn/nn/agent/tools/agent-tool.md
+          - learn/nn/agent/tools/mcp.md
         - learn/nn/agent/skills.md
+        - learn/nn/agent/extensions.md
         - learn/nn/agent/signatures.md
         - learn/nn/agent/hooks.md
         - learn/nn/agent/model-gateway.md
@@ -197,6 +218,8 @@ nav:
           - api-reference/nn/modules/agent.md       
   - Tutorials:
     - tutorials/index.md
+    - Agent Runtime:
+      - Durable Operations Coordinator: tutorials/durable-operations-agent.md
     - Payments & Commerce:
       - PIX Assistant: tutorials/pix-assistant.md
       - Food Delivery Assistant: tutorials/food-delivery-assistant.md

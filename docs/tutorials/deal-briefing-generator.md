@@ -447,10 +447,10 @@ else:
 Deliver the briefing to the rep's channel immediately after the call ends:
 
 ```python
-import httpx
+import httpx2
 
 def post_to_slack(briefing: str, webhook_url: str) -> None:
-    httpx.post(webhook_url, json={"text": briefing})
+    httpx2.post(webhook_url, json={"text": briefing})
 
 result = generator(audio=audio_bytes)
 post_to_slack(result["briefing"], webhook_url="https://hooks.slack.com/...")

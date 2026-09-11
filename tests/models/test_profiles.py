@@ -1,39 +1,49 @@
-"""Quick test for model profiles system."""
-
-from msgflux.models.profiles import get_model_profile, get_provider_profile
+from msgflux.models.profiles.base import ModelCost
 
 
-def test_provider_profile():
-    """Test getting provider profile."""
-    provider = get_provider_profile("openai")
+def test_model_cost_replaces_input_rate_for_cached_tokens():
+    cost = ModelCost(
+        input_per_million=10,
+        output_per_million=20,
+        cache_read_per_million=2,
+    )
 
-    if provider:
-        print("\n=== OpenAI Provider ===")
-        print(f"Name: {provider.name}")
-        print(f"Models available: {len(provider.models)}")
-        print(f"First 5 models: {list(provider.models.keys())[:5]}")
-        print("✓ Provider profile retrieved successfully")
-    else:
-        print("⚠ Provider profile not found (cache may not be loaded yet)")
+    total = cost.calculate(
+        input_tokens=1_000,
+        output_tokens=100,
+        cached_tokens=800,
+    )
+
+    assert total == 0.0056
 
 
-def test_openrouter_profile():
-    """Test getting OpenRouter model profile."""
-    provider = get_provider_profile("openrouter")
+def test_model_cost_caps_cached_tokens_at_input_tokens():
+    cost = ModelCost(
+        input_per_million=10,
+        output_per_million=20,
+        cache_read_per_million=2,
+    )
 
-    if provider and provider.models:
-        # Use first available model
-        model_id = list(provider.models.keys())[0]
-        profile = get_model_profile(model_id, provider_id="openrouter")
+    total = cost.calculate(
+        input_tokens=1_000,
+        output_tokens=0,
+        cached_tokens=2_000,
+    )
 
-        if profile:
-            print("\n=== OpenRouter Model ===")
-            print(f"Model ID: {model_id}")
-            print(f"Name: {profile.name}")
-            print(f"Provider in profile: {profile.provider_id}")
-            print(f"Open weights: {profile.open_weights}")
-            print("✓ OpenRouter profile retrieved successfully")
-        else:
-            print("⚠ OpenRouter profile not found")
-    else:
-        print("⚠ OpenRouter provider not found (cache may not be loaded yet)")
+    assert total == 0.002
+
+
+def test_model_cost_preserves_free_cached_input_rate():
+    cost = ModelCost(
+        input_per_million=10,
+        output_per_million=20,
+        cache_read_per_million=0,
+    )
+
+    total = cost.calculate(
+        input_tokens=1_000,
+        output_tokens=0,
+        cached_tokens=1_000,
+    )
+
+    assert total == 0

@@ -326,7 +326,7 @@ The user asks the root assistant a product question. The root decides to call `a
 
 ## Further Reading
 
-- [Tools](../learn/nn/agent/tools.md) — agent-as-tool patterns and tool configuration
+- [Tools](../learn/nn/agent/tools/index.md) — agent-as-tool patterns and tool configuration
 - [Generation Schemas](../learn/nn/agent/generation-schemas.md) — `ChainOfThought` and structured reasoning
 - [Task and Context](../learn/nn/agent/task-and-context.md) — response templates and context caches
 - [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts for specialists

@@ -1,6 +1,284 @@
 # Hooks & Guards
 
-Hooks are the primary mechanism for intercepting and validating data flowing through Modules. The `Hook` base class provides the interface, and `Guard` is a built-in hook for input/output validation. Hooks can target either the module execution boundary (`forward`) or a specific method on the module.
+Hooks are the primary mechanism for intercepting and validating data flowing through Modules. The `Hook` base class provides the interface, and `Guard` is a built-in hook for input/output validation. Hooks can target a stable lifecycle event, the module execution boundary (`forward`), or a specific method on the module.
+
+## Lifecycle Hooks
+
+Lifecycle hooks attach to a named execution boundary instead of a Python method.
+This keeps extensions independent from internal method names and allows the same
+hook to work in synchronous and asynchronous execution.
+
+```python
+from dataclasses import replace
+
+from msgflux.nn.hooks import Hook
+
+
+def expand_references(ctx):
+    return replace(
+        ctx,
+        output=ctx.output.replace("artifact://report", "the complete report"),
+    )
+
+
+output_hook = Hook(
+    event="transform_output",
+    handler=expand_references,
+)
+```
+
+Pass the hook through the module's `hooks` argument. When the module reaches
+`transform_output`, the handler receives the current payload. Returning a value
+replaces the payload for the next handler; returning `None` leaves it unchanged.
+Handlers run in registration order.
+
+The Agent currently exposes these lifecycle boundaries:
+
+| Event | Payload | Replacement behavior |
+| --- | --- | --- |
+| `before_run` | `BeforeRun` | May replace the message or call arguments before a fresh run is prepared. |
+| `before_resume` | `BeforeResume` | May replace restored messages, model preference, or non-identity scope fields before execution resumes. |
+| `transform_context` | `ConversationContext` | May replace the model-visible messages for the current request. |
+| `before_compaction` | `BeforeCompaction` | May approve or skip automatic compaction after token estimation and before the Model creates a complete context view. |
+| `transform_notifications` | `NotificationContext` | May filter or replace non-control notifications before they enter model context. |
+| `transform_tool_catalog` | `ToolCatalogContext` | May replace the logical tool catalog before prompt rendering and provider compilation. |
+| `transform_system_prompt` | `ModelContext` | May replace the rendered prompt; includes `scope`, `vars`, and a read-only view of the active tool catalog. |
+| `before_request` | `ModelRequestContext` | May replace provider-neutral request parameters immediately before the LM call. |
+| `after_response` | `ModelResponseContext` | May replace a settled, non-streaming response before it enters history. |
+| `before_tool` | `BeforeTool` | May replace model-visible arguments or block local execution. |
+| `before_dispatch` | `BeforeToolDispatch` | May block a validated call or reduce background/detached dispatch to foreground. |
+| `after_tool` | `AfterTool` | May replace the result or error before it becomes a tool result. |
+| `resolve_tool_feedback` | `ToolFeedbackContext` | May continue the model loop or return an Agent result after a batch of tool outcomes. The first return decision stops this hook chain. |
+| `before_run_end` | `RunEndContext` | May inspect or replace the terminal outcome immediately before the final checkpoint. |
+| `after_run_end` | `RunEndContext` | Runs after the final checkpoint is committed. |
+| `transform_output` | `OutputContext` for Agents; settled value for other Modules | May replace only the value presented to the caller. |
+
+`before_compaction` is inactive unless an extension or application hook is
+registered for it. The built-in `CompactionExtension` uses this boundary to
+apply `CompactionPolicy`; returning `action="skip"` prevents both the
+compaction call and its execution events. The hook controls the decision, while
+the Model remains responsible for counting tokens and producing the compacted
+view. See [Conversation Compaction](compaction.md).
+
+`before_run_end` participates in the terminal commit and may still turn a
+successful run into a failure. `after_run_end` runs after that commit. If its
+handler raises, the committed output and outcome remain primary and the hook
+failure produces a runtime warning. The run is not executed or checkpointed a
+second time. A completed turn therefore cannot be silently rewritten as failed
+by an observational hook.
+
+Import typed payloads from `msgflux.nn.hooks`. Dataclass replacement keeps a
+handler explicit and preserves fields added to the contract later:
+
+```python
+from dataclasses import replace
+
+from msgflux.nn.hooks import BeforeTool, Hook
+
+
+def authorize_tool(event: BeforeTool):
+    if event.tool_name == "delete_record":
+        return replace(event, block="Deletion requires approval")
+    return event
+
+
+agent = Agent(
+    name="operator",
+    model=model,
+    tools=[delete_record],
+    hooks=[Hook(event="before_tool", handler=authorize_tool)],
+)
+```
+
+`before_tool` runs after the tool has been resolved and its arguments prepared.
+It receives only model-visible arguments. Runtime injections such as
+`runtime_inputs` bindings remain attached to the
+call and are not exposed to or removed by the hook. If a `before_tool` handler
+raises or returns an invalid payload, execution fails closed and the tool is not
+called. An `after_tool` handler failure leaves the original outcome unchanged
+and emits a `handler.error` execution event.
+
+Handlers are sequential for each call. When a `before_tool` or
+`before_dispatch` handler sets `block`, later handlers for that event and that
+call do not run. Other tool calls from the same model response continue through
+their own hook chains. The reason becomes the tool error returned to the model,
+and the runtime emits `tool.blocked`; it does not emit `tool.start`, `tool.end`,
+or call `after_tool` because execution never began.
+
+`before_dispatch` runs after `ToolExecutionPlan` selects `foreground`,
+`background`, or `detached`. Its payload exposes public
+arguments and normalized tool config, but not runtime injections. A handler may
+keep the selected mode, reduce `background` or `detached` to `foreground`, or
+block. It cannot redirect a foreground call into detached execution.
+
+Use `before_resume` to restore extension-owned resources or transform the
+conversation loaded from a checkpoint. A replacement must remain a
+`BeforeResume` instance. It may change `messages`, `model_preference`, and
+non-identity scope fields such as the abort signal, but it cannot change the
+restored `thread_id`, `namespace`, or `run_id`.
+
+The tool catalog on `ModelContext` lets prompt extensions describe the tools
+available to the current request. It is contextual and read-only at this
+boundary. Use `transform_tool_catalog` when an extension needs to change the
+request tool surface; the transformed catalog is used both for prompt guidance
+and provider compilation.
+
+`ToolCatalogContext.catalog` is an immutable `ToolCatalogView`. Filter its
+regular entries with `with_tools(...)` instead of rebuilding schemas:
+
+```python
+from dataclasses import replace
+
+from msgflux.nn.hooks import Hook
+from msgflux.tools import ToolCatalogView
+
+
+def expose_read_only_tools(ctx):
+    assert isinstance(ctx.catalog, ToolCatalogView)
+    allowed = {"search_orders", "lookup_customer"}
+    names = (
+        entry.name
+        for entry in ctx.catalog.tool_entries()
+        if entry.name in allowed
+    )
+    return replace(ctx, catalog=ctx.catalog.with_tools(names))
+
+
+catalog_hook = Hook(
+    event="transform_tool_catalog",
+    handler=expose_read_only_tools,
+)
+```
+
+The returned view preserves stable tool references, native bindings, loading
+state, and thread identity. `with_choice(...)` can apply a provider-neutral
+selection after filtering. The Agent sends the view unchanged to the Model;
+the concrete provider adapter compiles it to its wire protocol.
+
+`transform_notifications` receives only ordinary progress and task
+notifications. Control messages such as pause and interrupt are handled before
+the hook and cannot be suppressed by an extension.
+
+`before_run_end` and `after_run_end` receive the same terminal context for
+completed, failed, interrupted, and paused non-streaming runs. The final
+checkpoint is written between these boundaries. A direct `ModelStreamResponse`
+settles later in its stream finalizer, so these hooks do not run when that
+stream is handed directly to the caller; use `stream_events()` when lifecycle
+observation must include the complete streamed execution.
+
+```python
+agent = Agent(
+    name="reporter",
+    model=model,
+    hooks=[output_hook],
+)
+```
+
+An async handler is awaited during async execution:
+
+```python
+async def load_artifacts(ctx):
+    expanded = await artifact_store.expand(ctx.output, tenant=ctx.vars["tenant"])
+    return replace(ctx, output=expanded)
+
+
+output_hook = Hook(
+    event="transform_output",
+    handler=load_artifacts,
+)
+```
+
+Lifecycle hooks observe the active `AbortSignal` before and after synchronous
+handlers. During async execution, aborting the signal also cancels an in-flight
+async handler. This lets hooks perform network or LM work without delaying
+execution cancellation. Prefer `agent.acall(...)` or `agent.stream_events(...)`
+for extensions that use async handlers; synchronous execution rejects an
+awaitable handler.
+
+For a removable package containing several hooks or tools, use an
+[Agent Extension](extensions.md). The `hooks=` argument remains the direct API
+for one-off interception and guards.
+
+### Canonical Responses vs. Presented Output
+
+`after_response` and `transform_output` serve different purposes:
+
+| Event | Changes checkpoint history | Visible to the model later | Changes user output |
+| --- | --- | --- | --- |
+| `after_response` | Yes | Yes | Yes |
+| `transform_output` | No | No | Yes |
+
+Use `transform_output` for presentation work such as replacing an artifact
+reference with the file contents. The Agent commits the original response to
+`ChatMessages` first, then transforms the value returned to the caller:
+
+```python
+import asyncio
+
+import msgflux as mf
+from msgflux.chat_messages import ChatMessages
+from msgflux.nn import Agent
+from msgflux.nn.hooks import Hook
+
+
+REFERENCE = "artifact://incident-report"
+REPORT = "Incident report: scanner recovered; reconciliation pending."
+
+
+def expand_artifact_reference(ctx):
+    return replace(ctx, output=ctx.output.replace(REFERENCE, REPORT))
+
+
+async def main():
+    history = ChatMessages()
+    agent = Agent(
+        name="reporter",
+        model=mf.Model.chat_completion(
+            "openai/gpt-5.6-luna",
+            api_mode="responses",
+            store=False,
+        ),
+        system_prompt=f"Reply with exactly {REFERENCE} and nothing else.",
+        hooks=[Hook(event="transform_output", handler=expand_artifact_reference)],
+        config={"stream": True},
+    )
+
+    events = [
+        event
+        async for event in agent.stream_events(
+            "Return the incident report reference.",
+            messages=history,
+        )
+    ]
+
+    message_end = next(event for event in events if event.type == "message.end")
+    run_end = next(event for event in events if event.type == "run.end")
+    assert message_end.data["content"] == REPORT
+    assert run_end.data == {"outcome": "completed"}
+
+    assistant = [
+        item for item in history.to_chatml() if item["role"] == "assistant"
+    ][-1]
+    assert assistant["content"] == REFERENCE
+
+
+asyncio.run(main())
+```
+
+When the async `stream_events()` iterator consumes a provider stream, a
+registered `transform_output` hook puts assistant content in buffered mode.
+Tool and reasoning events remain live, raw `message.delta` events are withheld,
+and the transformed complete value is emitted once in `message.end`.
+`to_chatml()` is used above only to make the assertion provider-independent;
+the canonical timeline may store Responses content as typed content blocks.
+
+For direct token streaming through `ModelStreamResponse`, no complete-output
+transformation is applied. Use the execution event stream when a hook requires
+the fully accumulated assistant output.
+
+`event=...` cannot be combined with `on=...` or `method=...`. Forward and
+method hooks remain available as lower-level extension points, while lifecycle
+events are the recommended contract for agent execution boundaries.
 
 ## Guard
 
@@ -310,7 +588,7 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
     === "Async Custom Hook"
 
         ```python
-        import httpx
+        import httpx2
         from msgflux.nn.hooks import Hook
 
         class AsyncWebhookHook(Hook):
@@ -324,7 +602,7 @@ Both pre and post hooks share the same signature. For pre hooks, `output` is alw
                 pass  # sync fallback — no-op
 
             async def acall(self, module, args, kwargs, output=None):                
-                async with httpx.AsyncClient() as client:
+                async with httpx2.AsyncClient() as client:
                     await client.post(self.webhook_url, json={"status": "ok"})
         ```
 

@@ -1,13 +1,25 @@
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
+from msgflux.models.chat_capabilities import (
+    ChatAPIModeCapabilities,
+    ChatProviderCapabilities,
+)
 from msgflux.models.httpx import HTTPXModelClient
+from msgflux.models.openai_compatible import (
+    OpenAIChatCompletionsAPI,
+    OpenAICompatibleChatCompletion,
+    OpenAIResponsesAPI,
+)
 from msgflux.models.profiles import get_model_profile
 from msgflux.models.providers.jinaai import JinaAITextReranker
 from msgflux.models.providers.openai import (
-    OpenAIChatCompletion,
     OpenAISpeechToText,
     OpenAITextEmbedder,
+)
+from msgflux.models.reasoning import (
+    OpenAICompatibleReasoningCodec,
+    TextResponsesReasoningCodec,
 )
 from msgflux.models.registry import register_model
 from msgflux.models.response import ModelResponse
@@ -41,8 +53,26 @@ class _BaseVLLM:
 
 
 @register_model
-class VLLMChatCompletion(_BaseVLLM, OpenAIChatCompletion):
+class VLLMChatCompletion(_BaseVLLM, OpenAICompatibleChatCompletion):
     """vLLM Chat Completion."""
+
+    capabilities = ChatProviderCapabilities(
+        default_api_mode="chat_completions",
+        api_modes=(
+            ChatAPIModeCapabilities(
+                name="chat_completions",
+                adapter=OpenAIChatCompletionsAPI(),
+                request_reasoning_effort=True,
+            ),
+            ChatAPIModeCapabilities(
+                name="responses",
+                adapter=OpenAIResponsesAPI(),
+                reasoning_codec=TextResponsesReasoningCodec(),
+                request_reasoning_effort=True,
+            ),
+        ),
+        default_reasoning_codec=OpenAICompatibleReasoningCodec(),
+    )
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         response_format = params.pop("response_format", None)

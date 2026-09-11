@@ -1,8 +1,8 @@
 from os import getenv
 from typing import Any, Dict
 
+from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.providers.openai import (
-    OpenAIChatCompletion,
     OpenAITextEmbedder,
     OpenAITextToSpeech,
 )
@@ -30,7 +30,7 @@ class _BaseTogether:
 
 
 @register_model
-class TogetherChatCompletion(_BaseTogether, OpenAIChatCompletion):
+class TogetherChatCompletion(_BaseTogether, OpenAICompatibleChatCompletion):
     """Together Chat Completion."""
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -48,10 +48,10 @@ class TogetherChatCompletion(_BaseTogether, OpenAIChatCompletion):
 
 
 @register_model
-class TogetherTextEmbedder(OpenAITextEmbedder, _BaseTogether):
+class TogetherTextEmbedder(_BaseTogether, OpenAITextEmbedder):
     """Together Text Embedder."""
 
 
 @register_model
-class TogetherTextToSpeech(OpenAITextToSpeech, _BaseTogether):
+class TogetherTextToSpeech(_BaseTogether, OpenAITextToSpeech):
     """Together Text to Speech."""

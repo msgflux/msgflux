@@ -10,78 +10,79 @@ hide:
 
 ### Chat Completion
 
-| Provider    | Dependency        | Auth Env               |
-|-------------|-------------------|------------------------|
-| Brave       | `msgflux[openai]` | `BRAVE_SEARCH_API_KEY` |
-| Cerebras    | `msgflux[openai]` | `CEREBRAS_API_KEY`     |
-| Groq        | `msgflux[openai]` | `GROQ_API_KEY`         |
-| Ollama      | `msgflux[openai]` |                        |
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`       |
-| OpenRouter  | `msgflux[openai]` | `OPENROUTER_API_KEY`   |
-| SambaNova   | `msgflux[openai]` | `SAMBANOVA_API_KEY`    |
-| Together    | `msgflux[openai]` | `TOGETHER_API_KEY`     |
-| vLLM        | `msgflux[openai]` |                        |
+| Provider    | Dependency | Auth Env               |
+|-------------|------------|------------------------|
+| Brave       | `msgflux`  | `BRAVE_SEARCH_API_KEY` |
+| Cerebras    | `msgflux`  | `CEREBRAS_API_KEY`     |
+| Groq        | `msgflux`  | `GROQ_API_KEY`         |
+| Ollama      | `msgflux`  |                        |
+| OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
+| OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
+| SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
+| Together    | `msgflux`  | `TOGETHER_API_KEY`     |
+| vLLM        | `msgflux`  |                        |
 
 ### Image Embedder
 
-| Provider    | Dependency       | Auth Env           |
-|-------------|------------------|--------------------|
-| JinaAI      | `msgflux[httpx]` | `JINAAI_API_KEY`   |
+| Provider    | Dependency | Auth Env         |
+|-------------|------------|------------------|
+| JinaAI      | `msgflux`  | `JINAAI_API_KEY` |
 
 ### Text To Image
 
-| Provider    | Dependency        | Auth Env           |
-|-------------|-------------------|--------------------|
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
+| Provider    | Dependency | Auth Env             |
+|-------------|------------|----------------------|
+| ImageRouter | `msgflux`  | `IMAGEROUTER_API_KEY` |
+| OpenAI      | `msgflux`  | `OPENAI_API_KEY`      |
 
 ### Image Text To Image
 
-| Provider    | Dependency        | Auth Env           |
-|-------------|-------------------|--------------------|
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
+| Provider | Dependency | Auth Env         |
+|----------|------------|------------------|
+| OpenAI   | `msgflux`  | `OPENAI_API_KEY` |
 
 ### Moderation
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
+| OpenAI      | `msgflux`         | `OPENAI_API_KEY`   |
 
 ### Speech To Text
 
-| Provider    | Dependency        | Auth Env           |
-|-------------|-------------------|--------------------|
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
-| vLLM        | `msgflux[openai]` |                    |
+| Provider | Dependency | Auth Env         |
+|----------|------------|------------------|
+| OpenAI   | `msgflux`  | `OPENAI_API_KEY` |
+| vLLM     | `msgflux`  |                  |
 
 ### Text Classifier
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| vLLM        | `msgflux[openai]` |                    |
+| vLLM        | `msgflux`         |                    |
 
 ### Text Embedder
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
-| Ollama      | `msgflux[openai]` |                    |
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
-| Together    | `msgflux[openai]` | `TOGETHER_API_KEY` |
-| vLLM        | `msgflux[openai]` |                    |
+| JinaAI      | `msgflux`          | `JINAAI_API_KEY`   |
+| Ollama      | `msgflux`         |                    |
+| OpenAI      | `msgflux`         | `OPENAI_API_KEY`   |
+| Together    | `msgflux`         | `TOGETHER_API_KEY` |
+| vLLM        | `msgflux`         |                    |
 
 ### Text Reranker
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| JinaAI      | `msgflux[httpx]`  | `JINAAI_API_KEY`   |
-| vLLM        | `msgflux[openai]` |                    |
+| JinaAI      | `msgflux`          | `JINAAI_API_KEY`   |
+| vLLM        | `msgflux`         |                    |
 
 ### Text To Speech
 
 | Provider    | Dependency        | Auth Env           |
 |-------------|-------------------|--------------------|
-| OpenAI      | `msgflux[openai]` | `OPENAI_API_KEY`   |
-| Together    | `msgflux[openai]` | `TOGETHER_API_KEY` |
+| OpenAI      | `msgflux`         | `OPENAI_API_KEY`   |
+| Together    | `msgflux`         | `TOGETHER_API_KEY` |
 
 ## Parsers
 
@@ -145,12 +146,15 @@ hide:
 
 ### Web Search
 
+HTTPX2 is a base msgFlux dependency; providers listing it below require no
+additional HTTP client installation.
+
 | Provider    | Installation                     | Auth Env                         |
 |-------------|----------------------------------|-----------------------------------|
-| Trafilatura | `httpx`, `trafilatura`           |                                   |
-| SearXNG     | `httpx`                          |                                   |
-| SerpApi     | `httpx`                          | `SERPAPI_KEY`                     |
-| Ceramic     | `httpx`                          | `CERAMIC_API_KEY`                 |
+| Trafilatura | `httpx2`, `trafilatura`           |                                   |
+| SearXNG     | `httpx2`                          |                                   |
+| SerpApi     | `httpx2`                          | `SERPAPI_KEY`                     |
+| Ceramic     | `httpx2`                          | `CERAMIC_API_KEY`                 |
 | Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
 | Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
 | Exa         | `exa-py`                         | `EXA_API_KEY`                     |

@@ -16,7 +16,7 @@ Replace the sync call `agent(...)` with `await agent.acall(...)`:
 
         class Assistant(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            instructions = "Answer concisely."
+            system_prompt = "Answer concisely."
 
         agent = Assistant()
         response = agent("What is the capital of Japan?")
@@ -31,7 +31,7 @@ Replace the sync call `agent(...)` with `await agent.acall(...)`:
 
         class Assistant(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            instructions = "Answer concisely."
+            system_prompt = "Answer concisely."
 
         agent = Assistant()
         response = await agent.acall("What is the capital of Japan?")
@@ -59,11 +59,11 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
 
         class Summarizer(nn.Agent):
             model = model
-            instructions = "Summarize the text in one sentence."
+            system_prompt = "Summarize the text in one sentence."
 
         class Translator(nn.Agent):
             model = model
-            instructions = "Translate the text to Portuguese."
+            system_prompt = "Translate the text to Portuguese."
 
         summarizer = Summarizer()
         translator = Translator()
@@ -91,7 +91,7 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
 
         class Classifier(nn.Agent):
             model = model
-            instructions = "Classify the sentiment as positive, negative, or neutral."
+            system_prompt = "Classify the sentiment as positive, negative, or neutral."
 
         agent = Classifier()
 
@@ -123,11 +123,11 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
 
         class Summarizer(nn.Agent):
             model = model
-            instructions = "Summarize the text in one sentence."
+            system_prompt = "Summarize the text in one sentence."
 
         class Translator(nn.Agent):
             model = model
-            instructions = "Translate the text to Portuguese."
+            system_prompt = "Translate the text to Portuguese."
 
         summarizer = Summarizer()
         translator = Translator()
@@ -160,7 +160,7 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
 
         class Assistant(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-            instructions = "Answer the user's question."
+            system_prompt = "Answer the user's question."
 
         agent = Assistant()
 
@@ -173,4 +173,4 @@ The real power of async is running multiple agents concurrently. `msgflux.nn.fun
 ## See Also
 
 - [Streaming](streaming.md) — Async streaming with `consume()` and `consume_reasoning()`
-- [Functional API](../functional.md) — `abcast_gather`, `amap_gather`, `ascatter_gather`, `aspawn`
+- [Functional API](../functional.md) — `abcast_gather`, `amap_gather`, `ascatter_gather`, `adetached`

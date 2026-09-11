@@ -7,7 +7,7 @@ Use warmup when your agent has a large static system prompt, many tools, or load
 ## Basic Usage
 
 ```python
-# pip install msgflux[openai]
+# pip install msgflux
 import msgflux as mf
 import msgflux.nn as nn
 
@@ -18,7 +18,7 @@ def lookup_ticket(ticket_id: str) -> str:
 
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = """
+    system_prompt = """
     You are a support agent.
     Follow the escalation policy and use tools when needed.
     """
@@ -43,7 +43,7 @@ await agent.awarmup_system_prompt()
 response = await agent.acall("Check ticket MSGFLUX-42")
 ```
 
-## Fire And Forget
+## Detached Warmup
 
 Warmup can run in the background while the process continues initializing:
 
@@ -146,6 +146,19 @@ OpenAI reports prompt cache hits in usage metadata:
 - Chat Completions: `usage.prompt_tokens_details.cached_tokens`
 - Responses API: `usage.input_tokens_details.cached_tokens`
 
+msgFlux normalizes both protocols as
+`response.metadata.usage.cache_hit_percentage`. The value is the percentage of
+input tokens served from cache, so it can be compared consistently across
+providers and API modes:
+
+```python
+usage = response.metadata.usage
+print(f"Cache hit: {usage.cache_hit_percentage:.1f}%")
+```
+
+The value is `None` when the provider does not report a valid input-token
+denominator. A valid request with no cached tokens reports `0.0`.
+
 msgflux currently implements this warmup path for chat completions.
 
 ## Practical Guidance
@@ -156,4 +169,3 @@ msgflux currently implements this warmup path for chat completions.
 - Do not expect warmup to persist conversation state.
 - Use foreground warmup during tests so failures are visible.
 - Use background warmup during app startup when failures should not block serving.
-

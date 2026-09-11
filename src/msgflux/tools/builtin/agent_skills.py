@@ -3,18 +3,18 @@ from typing import Optional
 from msgflux.runtime.skills import AgentSkillManager
 
 
-class ActivateSkill:
-    """Activate an Agent Skill and return its full instructions."""
+class SkillTool:
+    """Load an Agent Skill and return its full instructions."""
 
-    name = "activate_skill"
+    name = "skill"
     display_name = "Skill"
-    description = "Activate an Agent Skill and return its full instructions."
+    description = "Load an Agent Skill and return its full instructions."
 
     def __init__(self, manager: AgentSkillManager):
         self.manager = manager
 
     def __call__(self, name: str) -> str:
-        """Activate an Agent Skill and return its full instructions.
+        """Load an Agent Skill and return its full instructions.
 
         Args:
             name: Name of the skill to activate.
@@ -25,7 +25,7 @@ class ActivateSkill:
         return self(name)
 
 
-class SkillSearch:
+class SkillSearchTool:
     """Search Agent Skills that are not listed in the initial catalog."""
 
     name = "skill_search"

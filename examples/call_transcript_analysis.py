@@ -93,10 +93,12 @@ class CallTranscriber(nn.Transcriber):
 
 class _Analyzer(nn.Agent):
     model = chat_model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a call quality analyst for customer support teams.
-    """
-    instructions = """
+    """,
+            """
     Analyze the transcript across the opening, middle, and closing stages.
 
     Rules:
@@ -105,7 +107,10 @@ class _Analyzer(nn.Agent):
     - Use satisfied only when the closing stage clearly ends positive after progress or resolution.
     - Mark quality as escalated when the issue is handed to another team or tier.
     - Predict csat_prediction on a 1 to 5 scale.
-    """
+    """,
+        )
+    )
+
     generation_schema = CallAnalysis
     templates = {"task": "Transcript:\n{{ transcript }}"}
     config = {"verbose": True}

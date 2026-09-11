@@ -2,10 +2,7 @@ import asyncio
 from os import getenv
 from typing import Any, List, Mapping, Optional
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
+import httpx2
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
@@ -41,17 +38,9 @@ class CeramicWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             timeout:
                 Request timeout in seconds. Defaults to 30.
         """
-        self._ensure_httpx()
         self.timeout = timeout or 30.0
-        self.client = httpx.Client(timeout=self.timeout)
-        self.aclient = httpx.AsyncClient(timeout=self.timeout)
-
-    def _ensure_httpx(self) -> None:
-        if httpx is None:
-            raise ImportError(
-                "The 'httpx' package is not installed. "
-                "Please install it via pip: pip install httpx"
-            )
+        self.client = httpx2.Client(timeout=self.timeout)
+        self.aclient = httpx2.AsyncClient(timeout=self.timeout)
 
     def _get_api_key(self) -> str:
         api_key = getenv(API_KEY_ENV_NAME)

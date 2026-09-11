@@ -34,8 +34,6 @@ hide:
 
 msgFlux is an open-source framework for building dynamic AI systems with **composable modules**. It treats prompts, signatures, tools, and message flow as explicit program structure instead of ad-hoc glue. Architecture, data flow, and prompting remain separate layers, so systems can evolve by changing contracts, modules, or routes without forcing everything to change together.
 
-For web search, msgFlux includes both retriever-backed and model-backed options. The built-in `WebSearch` tool can be pointed at a retriever backend like `retriever/wikipedia` or a model backend like `model/openai/gpt-4o-search-preview`, returns `data` plus `annotations` when the backend supplies citations, and can read its engine plus JSON params from `MSGFLUX_TOOL_WEB_SEARCH_*` environment variables.
-
 ## **AI Systems *not* ML Systems**
 
 **ML systems** are systems *for* AI - they train, evaluate, and deploy models. **AI systems** are systems *with* AI - software where pretrained models operate as components inside a broader application. In that setting, the model is not the whole product; it is one building block among many. You are not optimizing weights - you are designing behavior, interfaces, and flow around a model. This is the space msgFlux occupies.
@@ -210,7 +208,8 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
         class Support(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             instructions = "Help the customer based on their account information."
-            config = {"verbose": True, "include_date": True}
+            extensions = [nn.CurrentDateExtension()]
+            config = {"verbose": True}
 
         agent = Support()
 
@@ -283,18 +282,18 @@ Agents in msgFlux are flexible — prompt them directly, use **signatures** for 
 
     === "ReAct"
 
-        Agents that reason step-by-step and use tools to find answers. `WebFetch` is a built-in tool that fetches web pages as Markdown:
+        Agents that reason step-by-step and use tools to find answers. `WebFetchTool` is a built-in tool that fetches web pages as Markdown:
 
         ```python linenums="1"
         import msgflux as mf
         import msgflux.nn as nn
         from msgflux.generation.reasoning import ReAct
-        from msgflux.tools.builtin import WebFetch
+        from msgflux.tools.builtin import WebFetchTool
 
         class ResearchAgent(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             generation_schema = ReAct
-            tools = [WebFetch]
+            tools = [WebFetchTool]
             config = {"verbose": True}
 
         agent = ResearchAgent()

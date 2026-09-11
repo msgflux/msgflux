@@ -15,7 +15,6 @@ from typing import (
 import msgspec
 from jinja2 import Template
 
-from msgflux.dsl.typed_parsers.base import BaseTypedParser
 from msgflux.generation.templates import EXPECTED_OUTPUTS_TEMPLATE
 from msgflux.utils.msgspec import StructFactory
 from msgflux.utils.xml import apply_xml_tags
@@ -263,7 +262,6 @@ class SignatureFactory:
         cls,
         inputs_info: List[FieldInfo],
         outputs_info: Optional[List[FieldInfo]] = None,
-        typed_parser_cls: Optional[Type[BaseTypedParser]] = None,
     ) -> str:
         expected_inputs = ""
         for i, input_info in enumerate(inputs_info, 1):
@@ -273,17 +271,12 @@ class SignatureFactory:
             expected_inputs += part + "\n"
 
         expected_outputs = ""
-        if typed_parser_cls is None:
-            # Expose ONLY the outputs for JSON-based. If fused with another Struct
-            # (e.g ReAct) it will be passed as 'response_format' to the model client.
-            # This removes duplication.
-            ##expected_outputs += "Your task outputs are:" + "\n\n" TODO depreciado
-            for i, output_info in enumerate(outputs_info, 1):
-                part = f"{i}. `{output_info.name}` ({output_info.dtype})"
-                if output_info.desc:
-                    part += f": {output_info.desc}"
-                expected_outputs += part + "\n"
-            expected_outputs += "\nWrite an encoded JSON."
+        for i, output_info in enumerate(outputs_info, 1):
+            part = f"{i}. `{output_info.name}` ({output_info.dtype})"
+            if output_info.desc:
+                part += f": {output_info.desc}"
+            expected_outputs += part + "\n"
+        expected_outputs += "\nWrite an encoded JSON."
         io = {"expected_inputs": expected_inputs, "expected_outputs": expected_outputs}
         template = Template(EXPECTED_OUTPUTS_TEMPLATE)
         rendered = template.render(io)

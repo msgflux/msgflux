@@ -11,7 +11,7 @@ Enable streaming with `config={"stream": True}`. The agent returns a `ModelStrea
     === "Async"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -90,14 +90,17 @@ When `stream=True`, the agent returns a `ModelStreamResponse` instead of a plain
 | Attribute / Method | Description |
 |---|---|
 | `response.consume()` | Async generator that yields `str` chunks until the stream ends. |
+| `response.consume_events()` | Async generator that preserves the provider order across output, reasoning, and reasoning-summary deltas. |
 | `response.data` | Full accumulated content after the stream completes (or `None` while streaming). |
 | `response.response_type` | `"text_generation"` or `"tool_call"` — set when the first content token arrives. |
-| `response.metadata` | Usage stats — set when the stream finishes. `None` while streaming, useful as a completion signal. |
+| `response.metadata` | Usage and request timing — set when the stream finishes. `None` while streaming, useful as a completion signal. |
 | `response.first_chunk_event` | Event that fires on the very first token (reasoning or content). |
 
 ## Streaming with Reasoning
 
-When the model supports reasoning (`return_reasoning=True`), content and reasoning flow through **independent queues**. Use `consume_reasoning()` to read the chain of thought separately:
+When the model supports reasoning (`return_reasoning=True`), the compatibility
+methods `consume()` and `consume_reasoning()` remain independent. Use
+`consume_reasoning()` to read the chain of thought separately:
 
 ```python
 model = mf.Model.chat_completion(
@@ -108,7 +111,7 @@ model = mf.Model.chat_completion(
 
 class Solver(nn.Agent):
     model = model
-    instructions = "Solve the problem."
+    system_prompt = "Solve the problem."
     config = {"stream": True}
 
 agent = Solver()
@@ -123,9 +126,25 @@ async for chunk in response.consume():
     print(chunk, end="", flush=True)
 ```
 
+When relative ordering matters, consume the canonical event stream instead:
+
+```python
+async for event in response.consume_events():
+    if event.type == "reasoning.delta":
+        show_reasoning(event.data)
+    elif event.type == "reasoning_summary.delta":
+        show_summary(event.data)
+    elif event.type == "output.delta":
+        show_answer(event.data)
+```
+
+`consume_events()` omits absent channels. A model that exposes only a reasoning
+summary starts with `reasoning_summary.delta`; it does not produce a placeholder
+`reasoning.delta` containing `None`.
+
 For the full dual-queue architecture, event system, and internal details, see [Reasoning — Streaming](reasoning.md#3-streaming).
 
 ## See Also
 
-- [Reasoning](reasoning.md) — Dual-queue streaming, `consume_reasoning()`, two-event system
+- [Reasoning](reasoning.md) — Ordered LM events and channel-specific consumers
 - [Chat Completion — Streaming](../../models/chat_completion.md#6-streaming) — Model-level streaming reference

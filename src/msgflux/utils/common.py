@@ -3,12 +3,12 @@ from typing import Any, Literal, Optional, Set, Tuple, Union
 
 
 def is_jinja_template(template: str) -> bool:
-    """Return True if the template contains Jinja2 syntax (``{{ }}``, ``{% %}``, ``{# #}``)."""
+    """Return True if the template contains Jinja2 syntax."""
     return bool(re.search(r"\{\{|\{%|\{#", template))
 
 
 def has_format_placeholder(template: str) -> bool:
-    """Return True if the template contains a Python positional format placeholder (``{}`` or ``{0}``)."""
+    """Return True if the template contains a positional format placeholder."""
     return bool(re.search(r"\{(?:\d+)?\}", template))
 
 

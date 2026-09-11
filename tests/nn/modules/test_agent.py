@@ -1,13 +1,24 @@
 """Tests for msgflux.nn.modules.agent module."""
 
+from types import MappingProxyType
+
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
+from msgflux.chat_messages import ChatMessages
+from msgflux.runtime.agent_inbox import AgentInbox, InMemoryAgentInboxStore
 from msgflux.nn.modules.agent import Agent, _RESERVED_KWARGS
 from msgflux.core.message import Message
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.nn import CurrentDateExtension, FewShotExamplesExtension
 from msgflux.nn.modules.tool import ToolLibrary, ToolResponses, ToolCall
 from msgflux.core.examples import Example
+from msgflux.dsl.signature import (
+    InputField,
+    OutputField,
+    Signature,
+    SignatureExamples,
+)
 
 
 @pytest.fixture
@@ -88,42 +99,18 @@ class TestAgentInitialization:
         assert agent.name == "test_agent"
         assert agent.generator.model == mock_model
 
-    def test_agent_with_system_message(self):
-        """Test Agent with system message."""
+    def test_agent_with_system_prompt(self):
+        """Test Agent with one canonical system prompt."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are a helpful assistant.",
+            system_prompt="You are a helpful assistant.",
         )
 
-        assert hasattr(agent, "system_message") and agent.system_message is not None
-
-    def test_agent_with_instructions(self):
-        """Test Agent with instructions."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-
-        agent = Agent(
-            name="agent", model=mock_model, instructions="Follow these steps carefully."
-        )
-
-        assert hasattr(agent, "instructions") and agent.instructions is not None
-
-    def test_agent_with_expected_output(self):
-        """Test Agent with expected output."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-
-        agent = Agent(
-            name="agent",
-            model=mock_model,
-            expected_output="Provide a detailed response.",
-        )
-
-        assert hasattr(agent, "expected_output") and agent.expected_output is not None
+        assert agent.system_prompt.data == "You are a helpful assistant."
 
     def test_agent_with_examples_string(self):
         """Test Agent with examples as string."""
@@ -144,6 +131,50 @@ class TestAgentInitialization:
         agent = Agent(name="agent", model=mock_model, examples=[example1])
 
         assert hasattr(agent, "_buffers")
+
+    def test_signature_does_not_mutate_caller_examples(self):
+        class Classification(Signature):
+            __examples__ = SignatureExamples(
+                inputs={"text": "bad"},
+                outputs={"label": "negative"},
+            )
+
+            text: str = InputField()
+            label: str = OutputField()
+
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        caller_examples = [Example(inputs="good", labels="positive")]
+
+        first = Agent(
+            name="first",
+            model=mock_model,
+            signature=Classification,
+            examples=caller_examples,
+        )
+        second = Agent(
+            name="second",
+            model=mock_model,
+            signature=Classification,
+            examples=caller_examples,
+        )
+
+        assert len(caller_examples) == 1
+        assert first.get_system_prompt().count("<example ") == 2
+        assert second.get_system_prompt().count("<example ") == 2
+
+    def test_string_examples_remain_supported_with_inline_signature(self):
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            signature="text: str -> label: str",
+            examples="Input: good\nOutput: positive",
+        )
+
+        assert "Input: good" in agent.get_system_prompt()
 
     def test_agent_with_hooks(self):
         """Test Agent with hooks."""
@@ -372,7 +403,7 @@ class TestAgentForward:
 
     @pytest.mark.asyncio
     async def test_agent_aforward_raises_explicit_stream_error(self):
-        """Async stream failures should surface as explicit agent errors."""
+        """Async stream failures should surface as the original provider error."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
@@ -387,10 +418,7 @@ class TestAgentForward:
         stream_response.set_error(TypeError("backend blew up"))
         agent.generator.acall = AsyncMock(return_value=stream_response)
 
-        with pytest.raises(
-            RuntimeError,
-            match="Model stream failed before producing a response: backend blew up",
-        ):
+        with pytest.raises(TypeError, match="backend blew up"):
             await agent.aforward(query="Test input")
 
 
@@ -405,7 +433,7 @@ class TestAgentInspect:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="System prompt",
+            system_prompt="System prompt",
             signature="input -> output",  # Need signature for task template
         )
 
@@ -418,35 +446,15 @@ class TestAgentInspect:
 class TestAgentSetters:
     """Test Agent setter methods."""
 
-    def test_set_system_message(self):
-        """Test _set_system_message method."""
+    def test_set_system_prompt(self):
+        """Test _set_system_prompt method."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
         agent = Agent(name="agent", model=mock_model)
 
-        agent._set_system_message("New system message")
+        agent._set_system_prompt("New system prompt")
 
-        assert agent.system_message.data == "New system message"
-
-    def test_set_instructions(self):
-        """Test _set_instructions method."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-        agent = Agent(name="agent", model=mock_model)
-
-        agent._set_instructions("New instructions")
-
-        assert agent.instructions.data == "New instructions"
-
-    def test_set_expected_output(self):
-        """Test _set_expected_output method."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-        agent = Agent(name="agent", model=mock_model)
-
-        agent._set_expected_output("Expected format")
-
-        assert agent.expected_output.data == "Expected format"
+        assert agent.system_prompt.data == "New system prompt"
 
     def test_set_config(self):
         """Test _set_config method."""
@@ -489,7 +497,7 @@ class TestAgentProcessing:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are helpful",
+            system_prompt="You are helpful",
             signature="input -> output",
         )
 
@@ -636,8 +644,7 @@ class TestAgentTemplates:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are helpful",
-            instructions="Be concise",
+            system_prompt="You are helpful\n\nBe concise",
         )
 
         system_prompt = agent.get_system_prompt()
@@ -662,7 +669,7 @@ class TestAgentTemplates:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are helpful",
+            system_prompt="You are helpful",
             tools=[lookup_order],
         )
 
@@ -695,7 +702,7 @@ class TestAgentTemplates:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are helpful",
+            system_prompt="You are helpful",
             tools=[search_orders, cancel_order],
         )
 
@@ -732,7 +739,7 @@ class TestAgentTemplates:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are helpful",
+            system_prompt="You are helpful",
             tools=[search_orders, cancel_order],
         )
 
@@ -828,19 +835,34 @@ class TestAgentExamples:
 
         agent = Agent(name="agent", model=mock_model, examples=[ex1, ex2])
 
-        assert hasattr(agent, "examples")
+        assert agent.has_extension("few_shot_examples")
+        assert not hasattr(agent, "examples")
 
-    def test_agent_set_examples(self):
-        """Test _set_examples method."""
+    def test_examples_are_removable_with_the_extension(self):
+        """Examples do not mutate the canonical system prompt parameter."""
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
-        agent = Agent(name="agent", model=mock_model)
-
         ex1 = Example(inputs="Test", labels="Output")
-        agent._set_examples([ex1])
+        agent = Agent(name="agent", model=mock_model, examples=[ex1])
+        assert "<examples>" in agent.get_system_prompt()
 
-        assert hasattr(agent, "examples")
+        agent.remove_extension("few_shot_examples")
+        assert "<examples>" not in agent.get_system_prompt()
+
+    def test_examples_reject_aliased_few_shot_extension(self):
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+
+        with pytest.raises(ValueError, match="cannot be combined"):
+            Agent(
+                name="agent",
+                model=mock_model,
+                examples="frontend example",
+                extensions={
+                    "custom_alias": FewShotExamplesExtension("extension example")
+                },
+            )
 
     def test_examples_not_html_escaped_in_system_prompt(self):
         """Regression test: examples with XML tags must not be HTML-escaped.
@@ -870,20 +892,6 @@ class TestAgentExamples:
         assert "<input>" in system_prompt, "Input tag must be present"
 
 
-class TestAgentTypedParser:
-    """Test Agent typed parser functionality."""
-
-    def test_agent_typed_parser_attribute(self):
-        """Test Agent has typed_parser attribute when configured."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-
-        agent = Agent(name="agent", model=mock_model)
-
-        # Agent should have typed_parser attribute
-        assert hasattr(agent, "typed_parser")
-
-
 class TestAgentConfigOptions:
     """Test various Agent config options."""
 
@@ -895,6 +903,22 @@ class TestAgentConfigOptions:
         agent = Agent(name="agent", model=mock_model, config={"verbose": True})
 
         assert agent.config.get("verbose") is True
+
+    def test_agent_verbose_propagates_to_external_inbox(self):
+        """Verbose agents should enable verbose mode on inherited inboxes."""
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        inbox = AgentInbox(store=InMemoryAgentInboxStore())
+
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            config={"verbose": True},
+            agent_inbox=inbox,
+        )
+
+        assert agent.agent_inbox is inbox
+        assert inbox.verbose is True
 
     def test_agent_config_return_messages(self):
         """Test Agent with return_messages config."""
@@ -914,14 +938,12 @@ class TestAgentConfigOptions:
 
         assert agent.config.get("tool_choice") == "auto"
 
-    def test_agent_config_include_date(self):
-        """Test Agent with include_date config."""
+    def test_agent_config_rejects_include_date(self):
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
-        agent = Agent(name="agent", model=mock_model, config={"include_date": True})
-
-        assert agent.config.get("include_date") is True
+        with pytest.raises(ValueError, match="Invalid config keys"):
+            Agent(name="agent", model=mock_model, config={"include_date": True})
 
 
 class TestAgentAnnotations:
@@ -1023,6 +1045,49 @@ class TestAgentExecutionPaths:
 
         assert result is not None
 
+    def test_task_context_is_structured_in_history_and_projected_for_model(self):
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(name="agent", model=mock_model)
+        history = ChatMessages()
+
+        prepared = agent._prepare_inputs(
+            "Inspect the outage.",
+            messages=history,
+            task_context="Scanner A stopped at 09:02.",
+        )
+
+        user_item = history[-1]
+        assert user_item["content"] == "Inspect the outage."
+        assert user_item["metadata"]["task_context"] == ("Scanner A stopped at 09:02.")
+
+        projected = agent._build_model_messages(prepared["messages"])
+        projected_content = projected.to_chatml()[-1]["content"]
+        assert projected_content == (
+            "<context>Scanner A stopped at 09:02.</context>\n\nInspect the outage."
+        )
+        assert history[-1]["content"] == "Inspect the outage."
+
+    def test_task_context_mapping_is_copied_before_template_rendering(self):
+        mock_model = Mock()
+        mock_model.model_type = "chat_completion"
+        agent = Agent(
+            name="agent",
+            model=mock_model,
+            templates={"task_context": "{{ incident }} / {{ tenant }}"},
+        )
+        context = MappingProxyType({"incident": "scanner outage"})
+
+        prepared = agent._prepare_inputs(
+            "Inspect the outage.",
+            task_context=context,
+            vars={"tenant": "warehouse-a"},
+        )
+
+        user_item = prepared["messages"][-1]
+        assert user_item["metadata"]["task_context"] == ("scanner outage / warehouse-a")
+        assert dict(context) == {"incident": "scanner outage"}
+
     def test_agent_signature_context_is_not_reserved(self):
         """Test that signature fields named context work as normal task inputs."""
         mock_model = Mock()
@@ -1054,8 +1119,8 @@ class TestAgentSystemPrompt:
         agent = Agent(
             name="agent",
             model=mock_model,
-            system_message="You are helpful",
-            config={"include_date": True},
+            system_prompt="You are helpful",
+            extensions=[CurrentDateExtension()],
         )
 
         system_prompt = agent.get_system_prompt()
@@ -1069,26 +1134,11 @@ class TestAgentSystemPrompt:
         mock_model = Mock()
         mock_model.model_type = "chat_completion"
 
-        agent = Agent(name="agent", model=mock_model, system_message="Hello")
+        agent = Agent(name="agent", model=mock_model, system_prompt="Hello")
 
         system_prompt = agent.get_system_prompt(vars={"name": "Alice"})
 
         assert isinstance(system_prompt, str)
-
-    def test_agent_system_prompt_template_property(self):
-        """Test system_prompt_template property."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-
-        agent = Agent(
-            name="agent",
-            model=mock_model,
-            templates={"system_prompt": "Custom: {{system_message}}"},
-        )
-
-        template = agent.system_prompt_template
-
-        assert template == "Custom: {{system_message}}"
 
 
 class TestAgentMessagePreparation:
@@ -1234,25 +1284,6 @@ class TestAgentJinjaTaskTemplateValidation:
         agent._render_task("", vars={}, task="help me")
 
 
-class TestAgentSystemExtraMessage:
-    """Test Agent system_extra_message."""
-
-    def test_agent_with_system_extra_message(self):
-        """Test Agent with system_extra_message."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-
-        agent = Agent(
-            name="agent",
-            model=mock_model,
-            system_message="Main message",
-            system_extra_message="Extra info",
-        )
-
-        assert hasattr(agent, "system_extra_message")
-        assert agent.system_extra_message == "Extra info"
-
-
 class TestAgentMessagesAccumulator:
     """Test messages parameter accumulator semantics.
 
@@ -1300,7 +1331,7 @@ class TestAgentMessagesAccumulator:
         agent._prepare_inputs("Hello", messages=history)
         assert len(history) == 1
         assert history[0]["role"] == "user"
-        assert history[0]["content"] == "<task>Hello</task>"
+        assert history[0]["content"] == "Hello"
 
     def test_none_messages_does_not_mutate_any_external_list(self, agent):
         """Passing messages=None explicitly behaves as ephemeral (no crash, no side effect)."""
@@ -1374,7 +1405,8 @@ class TestAgentModelStringShorthand:
         mock_model.model_type = "chat_completion"
 
         with patch(
-            "msgflux.nn.modules.agent.Model.chat_completion", return_value=mock_model
+            "msgflux.nn.modules.agent.configuration.Model.chat_completion",
+            return_value=mock_model,
         ) as mock_factory:
             agent = Agent(name="agent", model="openai/gpt-4.1-mini")
 
@@ -1392,7 +1424,8 @@ class TestAgentModelStringShorthand:
         new_mock.model_type = "chat_completion"
 
         with patch(
-            "msgflux.nn.modules.agent.Model.chat_completion", return_value=new_mock
+            "msgflux.nn.modules.agent.configuration.Model.chat_completion",
+            return_value=new_mock,
         ) as mock_factory:
             agent.model = "groq/llama-3.1-8b-instant"
 

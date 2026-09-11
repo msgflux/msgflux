@@ -8,7 +8,7 @@
 ???+ example
 
     ```python
-    # pip install msgflux[openai]
+    # pip install msgflux
     from msgspec import Struct
     import msgflux as mf
     import msgflux.nn as nn
@@ -70,7 +70,7 @@ The schema adds a single `reasoning` field whose description hint (`"Let's think
 | `final_answer` | `str` | The concluded response based on the reasoning chain   |
 
 ```python
-# pip install msgflux[openai]
+# pip install msgflux
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.generation.reasoning import ChainOfThought
@@ -153,18 +153,18 @@ Each `Action` contains:
     Unlike standard tool calling, ReAct injects tool schemas into the system prompt as text descriptions rather than passing function definitions to the model's native `tools` parameter. This makes the loop more portable across models and providers, but changes how tools are represented internally.
 
 ```python
-# pip install msgflux[openai]
+# pip install msgflux
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.generation.reasoning import ReAct
-from msgflux.tools.builtin import WebFetch
+from msgflux.tools.builtin import WebFetchTool
 
 # mf.set_envs(OPENAI_API_KEY="...")
 
 class WebResearcher(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
     generation_schema = ReAct
-    tools = [WebFetch]
+    tools = [WebFetchTool]
     config = {"verbose": True}
 
 agent = WebResearcher()
@@ -174,8 +174,11 @@ print(result.thought)       # "I need to fetch python.org to get the version..."
 print(result.final_answer)  # "Python 3.14.x"
 ```
 
-!!! tip "Default system_message"
-    `ReAct` ships with a built-in `system_message` that instructs the model to follow the Thought → Action → Observation loop. You can inspect it with `ReAct.system_message`. It can be overridden by setting `system_message` on the agent, though that is generally not recommended — the default prompt is carefully tuned to keep the loop stable.
+!!! tip "Default system_prompt"
+    `ReAct` ships with a built-in `system_prompt` that instructs the model to
+    follow the Thought → Action → Observation loop. You can inspect it with
+    `ReAct.system_prompt`. An Agent `system_prompt` is appended to this stable
+    flow-control contract.
 
 !!! tip "When to use"
     ReAct is the right choice when the agent needs external information to answer a question — web searches, API calls, database lookups, file reads, or any task requiring multi-turn tool interactions before an answer can be formed.
@@ -220,7 +223,7 @@ Each `ReasoningPath` contains:
 | `answer`    | `str` | The answer derived from this path       |
 
 ```python
-# pip install msgflux[openai]
+# pip install msgflux
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.generation.reasoning import SelfConsistency
@@ -282,7 +285,7 @@ You can extend any reasoning schema by inheriting from it and redefining the `fi
     === "Python Type"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from msgflux.generation.reasoning import ChainOfThought
@@ -305,7 +308,7 @@ You can extend any reasoning schema by inheriting from it and redefining the `fi
     === "Struct Type"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from msgspec import Struct

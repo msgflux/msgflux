@@ -270,7 +270,7 @@ The conversation history is built with `ChatBlock`, not manual role dictionaries
 
 ## Further Reading
 
-- [Tools](../learn/nn/agent/tools.md) — `inject_messages=True` and agent-as-tool patterns
+- [Tools](../learn/nn/agent/tools/index.md) — `inject_messages=True` and agent-as-tool patterns
 - [Task and Context](../learn/nn/agent/task-and-context.md) — conversation history with `messages`
 - [Generation Schemas](../learn/nn/agent/generation-schemas.md) — `ChainOfThought` reasoning
 - [Chat Completion](../learn/models/chat_completion.md) — `ChatBlock` helpers and message formats

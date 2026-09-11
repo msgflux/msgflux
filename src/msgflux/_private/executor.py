@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -82,6 +83,8 @@ class Executor:
             return self._submit_to_async_worker(target)
 
         sync_callable, sync_args, sync_kwargs = target
+        context = contextvars.copy_context()
+        sync_callable = partial(context.run, sync_callable)
         if self._is_in_thread_pool_worker():
             return self._execute_inline(sync_callable, *sync_args, **sync_kwargs)
 

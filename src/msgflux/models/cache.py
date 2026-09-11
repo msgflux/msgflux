@@ -23,15 +23,15 @@ def generate_cache_key(**kwargs) -> str:
         if key in ["stream_response"]:
             continue
 
-        # Handle typed_parser and generation_schema specially
+        # Handle generation_schema specially
         if key == "generation_schema" and value is not None:
             # Include schema name/type for caching
             cacheable_kwargs["generation_schema_type"] = (
                 value.__name__ if hasattr(value, "__name__") else str(type(value))
             )
             continue
-        elif key == "typed_parser":
-            cacheable_kwargs[key] = value
+        elif key == "tool_catalog" and hasattr(value, "cache_key_data"):
+            cacheable_kwargs[key] = value.cache_key_data()
             continue
 
         # Convert msgspec Structs to dicts

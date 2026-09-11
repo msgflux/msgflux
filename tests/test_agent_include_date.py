@@ -1,30 +1,29 @@
-"""Tests for Agent include_date feature with weekday."""
+"""Tests for the current-date Agent extension."""
 
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 
+from msgflux.nn import CurrentDateExtension
 from msgflux.nn.modules import Agent
 
 
-def test_agent_include_date_with_weekday():
-    """Test that include_date includes the day of the week."""
+def test_current_date_extension_includes_weekday():
 
     # Create mock model
     mock_model = Mock()
     mock_model.model_type = "chat_completion"
 
-    # Create agent with include_date enabled
     agent = Agent(
         name="test_agent",
         model=mock_model,
-        system_message="You are a helpful assistant",
-        config={"include_date": True},
+        system_prompt="You are a helpful assistant",
+        extensions=[CurrentDateExtension()],
     )
 
     # Mock datetime to have a predictable date
     mock_datetime = datetime(2025, 12, 9, 10, 30, 0, tzinfo=timezone.utc)  # Tuesday
 
-    with patch("msgflux.nn.modules.agent.datetime") as mock_dt:
+    with patch("msgflux.utils.time.datetime") as mock_dt:
         mock_dt.now.return_value = mock_datetime
         mock_dt.strftime = datetime.strftime  # Keep strftime working
 
@@ -41,19 +40,16 @@ def test_agent_include_date_with_weekday():
         assert "Tuesday, December 09, 2025" in system_prompt
 
 
-def test_agent_without_include_date():
-    """Test that date is not included when include_date is False."""
+def test_agent_without_current_date_extension():
 
     # Create mock model
     mock_model = Mock()
     mock_model.model_type = "chat_completion"
 
-    # Create agent without include_date
     agent = Agent(
         name="test_agent",
         model=mock_model,
-        system_message="You are a helpful assistant",
-        config={"include_date": False},
+        system_prompt="You are a helpful assistant",
     )
 
     # Get the system prompt
@@ -63,19 +59,20 @@ def test_agent_without_include_date():
     assert "current date" not in system_prompt.lower()
 
 
-def test_agent_include_date_default_false():
-    """Test that include_date defaults to False."""
+def test_current_date_extension_is_removable():
 
     # Create mock model
     mock_model = Mock()
     mock_model.model_type = "chat_completion"
 
-    # Create agent without specifying include_date
     agent = Agent(
         name="test_agent",
         model=mock_model,
-        system_message="You are a helpful assistant",
+        system_prompt="You are a helpful assistant",
+        extensions=[CurrentDateExtension()],
     )
+
+    agent.remove_extension("current_date")
 
     # Get the system prompt
     system_prompt = agent.get_system_prompt()
@@ -84,19 +81,18 @@ def test_agent_include_date_default_false():
     assert "current date" not in system_prompt.lower()
 
 
-def test_agent_include_date_format_consistency():
+def test_current_date_extension_format_consistency():
     """Test that the date format is consistent across different dates."""
 
     # Create mock model
     mock_model = Mock()
     mock_model.model_type = "chat_completion"
 
-    # Create agent with include_date
     agent = Agent(
         name="test_agent",
         model=mock_model,
-        system_message="You are a helpful assistant",
-        config={"include_date": True},
+        system_prompt="You are a helpful assistant",
+        extensions=[CurrentDateExtension()],
     )
 
     # Test multiple dates
@@ -113,7 +109,7 @@ def test_agent_include_date_format_consistency():
     ]
 
     for mock_datetime, expected_date in test_dates:
-        with patch("msgflux.nn.modules.agent.datetime") as mock_dt:
+        with patch("msgflux.utils.time.datetime") as mock_dt:
             mock_dt.now.return_value = mock_datetime
 
             # Get the system prompt

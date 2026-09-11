@@ -81,9 +81,9 @@ class TestToolFlowControl:
 
     def test_tool_flow_control_class_attributes(self):
         """Test that ToolFlowControl has class attributes."""
-        assert hasattr(ToolFlowControl, "system_message")
+        assert hasattr(ToolFlowControl, "system_prompt")
         assert hasattr(ToolFlowControl, "tools_template")
-        assert ToolFlowControl.system_message is None
+        assert ToolFlowControl.system_prompt is None
         assert ToolFlowControl.tools_template is None
 
     def test_tool_flow_control_abstract_methods(self):

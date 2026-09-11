@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
+import httpx2
+
 from msgflux.envs import envs
 from msgflux.models.profiles.base import (
     ModelCapabilities,
@@ -114,15 +116,7 @@ class ProfileLoader:
         Raises:
             Exception: If fetch fails
         """
-        try:
-            import httpx  # noqa: PLC0415
-        except ImportError as e:
-            raise ImportError(
-                "httpx is required for profile fetching. "
-                "Install with: pip install msgflux[httpx]"
-            ) from e
-
-        response = httpx.get(ProfileLoader.API_URL, timeout=10.0)
+        response = httpx2.get(ProfileLoader.API_URL, timeout=10.0)
         response.raise_for_status()
         raw_data = response.json()
 

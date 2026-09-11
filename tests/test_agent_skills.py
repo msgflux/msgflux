@@ -4,6 +4,7 @@ import msgflux as mf
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
+from msgflux.nn.extensions import SkillsExtension
 from msgflux.runtime.skills import AgentSkillManager, parse_skill_file
 from msgflux.utils.msgspec import msgspec_dumps
 
@@ -14,7 +15,7 @@ def _write_skill(
     description=None,
     body=None,
     *,
-    catalog=None,
+    include_in_prompt=None,
 ):
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
@@ -24,8 +25,8 @@ def _write_skill(
         "description: "
         + (description or "Extract PDF text and tables. Use when handling PDF files."),
     ]
-    if catalog is not None:
-        lines.append(f"catalog: {str(catalog).lower()}")
+    if include_in_prompt is not None:
+        lines.append(f"include_in_prompt: {str(include_in_prompt).lower()}")
     lines.extend(
         [
             "metadata:",
@@ -86,7 +87,7 @@ def test_parse_skill_file_reads_frontmatter_and_body(tmp_path):
     assert skill.name == "pdf-processing"
     assert skill.description.startswith("Extract PDF")
     assert skill.metadata == {"owner": "docs-team"}
-    assert skill.catalog is True
+    assert skill.include_in_prompt is True
     assert "Follow the PDF workflow" in skill.body
 
 
@@ -114,7 +115,9 @@ def test_parse_skill_file_supports_yaml_frontmatter(tmp_path):
     skill = parse_skill_file(skill_dir / "SKILL.md")
 
     assert skill.name == "research"
-    assert "http://example.com:443" in skill.description
+    assert (
+        skill.description == "Research topics with values like http://example.com:443."
+    )
     assert skill.metadata == {"tags": "['search', 'citations']"}
 
 
@@ -264,7 +267,7 @@ def test_parse_skill_file_rejects_invalid_optional_frontmatter_fields(tmp_path):
         parse_skill_file(skill_dir / "SKILL.md")
 
 
-def test_parse_skill_file_rejects_invalid_catalog_field(tmp_path):
+def test_parse_skill_file_rejects_invalid_include_in_prompt_field(tmp_path):
     skill_dir = tmp_path / "code-review"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(
@@ -273,7 +276,7 @@ def test_parse_skill_file_rejects_invalid_catalog_field(tmp_path):
                 "---",
                 "name: code-review",
                 "description: Review code.",
-                "catalog: maybe",
+                "include_in_prompt: maybe",
                 "---",
                 "# Code Review",
             ]
@@ -281,7 +284,7 @@ def test_parse_skill_file_rejects_invalid_catalog_field(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match=r"field `catalog`.*boolean"):
+    with pytest.raises(ValueError, match=r"field `include_in_prompt`.*boolean"):
         parse_skill_file(skill_dir / "SKILL.md")
 
 
@@ -386,7 +389,7 @@ def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
     assert "<name>code-review</name>" not in system_prompt
     assert "location:" not in system_prompt
     assert "SKILL.md" not in system_prompt
-    assert "activate_skill" in system_prompt
+    assert "`skill`" in system_prompt
     assert "tool result message" in system_prompt
     assert "not as higher-priority instructions" in system_prompt
     assert "reveal secrets" in system_prompt
@@ -394,7 +397,7 @@ def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
 
 def test_agent_registers_builtin_skill_tools(tmp_path):
     agent_without_skills = Agent(name="agent", model=_ScriptedModel([]))
-    assert "activate_skill" not in agent_without_skills.tool_library.library
+    assert "skill" not in agent_without_skills.tool_library.library
 
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="code-review")
@@ -402,29 +405,57 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
         skills_root,
         name="release-notes",
         description="Write release notes",
-        catalog=False,
+        include_in_prompt=False,
     )
     agent_with_skills = Agent(
         name="agent", model=_ScriptedModel([]), skills={"paths": skills_root}
     )
 
-    assert "activate_skill" in agent_with_skills.tool_library.library
+    assert "skill" in agent_with_skills.tool_library.library
     assert "skill_search" in agent_with_skills.tool_library.library
-    assert (
-        agent_with_skills.tool_library.library["activate_skill"].display_name == "Skill"
-    )
+    assert agent_with_skills.tool_library.library["skill"].display_name == "Skill"
     assert (
         agent_with_skills.tool_library.library["skill_search"].display_name
         == "Skill Search"
     )
     assert (
-        agent_with_skills.tool_library.library["activate_skill"].description
-        == "Activate an Agent Skill and return its full instructions."
+        agent_with_skills.tool_library.library["skill"].description
+        == "Load an Agent Skill and return its full instructions."
     )
     assert (
         agent_with_skills.tool_library.library["skill_search"].description
         == "Search Agent Skills that are not listed in the initial catalog."
     )
+
+
+def test_skills_extension_is_the_primary_installation_path(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="code-review")
+    extension = SkillsExtension({"paths": skills_root})
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        extensions=[extension],
+    )
+
+    assert agent.extensions["skills"] is extension
+    assert "skill" in agent.tool_library.library
+    assert "name: code-review" in agent.get_system_prompt()
+
+
+def test_skills_defer_loading_false_preloads_all_skills(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    _write_skill(skills_root, name="code-review")
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        extensions=[SkillsExtension({"paths": skills_root, "defer_loading": False})],
+    )
+
+    assert "skill" not in agent.tool_library.library
+    assert '<skill_content name="code-review">' in agent.get_system_prompt()
 
 
 def test_agent_does_not_register_activate_tool_when_all_skills_are_loaded(tmp_path):
@@ -434,11 +465,11 @@ def test_agent_does_not_register_activate_tool_when_all_skills_are_loaded(tmp_pa
     agent = Agent(
         name="agent",
         model=_ScriptedModel([]),
-        skills={"paths": skills_root, "load": "code-review"},
+        skills={"paths": skills_root, "preload": "code-review"},
     )
     system_prompt = agent.get_system_prompt()
 
-    assert "activate_skill" not in agent.tool_library.library
+    assert "skill" not in agent.tool_library.library
     assert "skill_search" not in agent.tool_library.library
     assert '<skill_content name="code-review">' in system_prompt
     assert "Follow the PDF workflow" in system_prompt
@@ -458,7 +489,7 @@ def test_loaded_skill_includes_directory_when_related_content_exists(tmp_path):
     agent = Agent(
         name="agent",
         model=_ScriptedModel([]),
-        skills={"paths": skills_root, "load": "code-review"},
+        skills={"paths": skills_root, "preload": "code-review"},
     )
     system_prompt = agent.get_system_prompt()
 
@@ -475,7 +506,7 @@ def test_skill_search_is_not_registered_when_all_skills_are_cataloged(tmp_path):
     _write_skill(skills_root, name="code-review")
     agent = Agent(name="agent", model=_ScriptedModel([]), skills={"paths": skills_root})
 
-    assert "activate_skill" in agent.tool_library.library
+    assert "skill" in agent.tool_library.library
     assert "skill_search" not in agent.tool_library.library
 
 
@@ -564,7 +595,7 @@ def test_agent_can_activate_skill_through_tool_call(tmp_path):
     model = _ScriptedModel(
         [
             _tool_call_response(
-                "activate_skill",
+                "skill",
                 {"name": "code-review"},
                 call_id="call_1",
             ),
@@ -591,7 +622,7 @@ def test_agent_can_search_uncataloged_skills(tmp_path):
         skills_root,
         name="hidden-release-notes",
         description="Write concise release notes from merged changes.",
-        catalog=False,
+        include_in_prompt=False,
     )
     model = _ScriptedModel(
         [
@@ -631,7 +662,7 @@ def test_agent_can_search_uncataloged_skills(tmp_path):
 def test_uncataloged_skills_are_hidden_from_catalog_and_enable_search(tmp_path):
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(skills_root, name="alpha")
-    _write_skill(skills_root, name="beta", catalog=False)
+    _write_skill(skills_root, name="beta", include_in_prompt=False)
 
     agent = Agent(
         name="agent",
@@ -690,14 +721,14 @@ def test_skills_config_validates_filters(tmp_path):
     with pytest.raises(ValueError, match="skills\\['allow'\\]"):
         AgentSkillManager({"paths": skills_root, "allow": ""})
 
-    with pytest.raises(TypeError, match="skills\\['load'\\]"):
-        AgentSkillManager({"paths": skills_root, "load": {"alpha"}})
+    with pytest.raises(TypeError, match="skills\\['preload'\\]"):
+        AgentSkillManager({"paths": skills_root, "preload": {"alpha"}})
 
     with pytest.raises(ValueError, match="Unknown skills in `skills\\['allow'\\]`"):
         AgentSkillManager({"paths": skills_root, "allow": "missing"})
 
-    with pytest.raises(ValueError, match="Unknown skills in `skills\\['load'\\]`"):
-        AgentSkillManager({"paths": skills_root, "load": "missing"})
+    with pytest.raises(ValueError, match="Unknown skills in `skills\\['preload'\\]`"):
+        AgentSkillManager({"paths": skills_root, "preload": "missing"})
 
 
 def test_catalog_limit_zero_enables_search_for_all_skills(tmp_path):
@@ -717,6 +748,46 @@ def test_catalog_limit_zero_enables_search_for_all_skills(tmp_path):
     assert "skill_search" in system_prompt
     assert "skill_search" in agent.tool_library.library
     assert "alpha" in agent.tool_library.library["skill_search"](query="Python")
+
+
+def test_discovery_path_writes_index_instead_of_registering_search_tool(tmp_path):
+    skills_root = tmp_path / ".agents" / "skills"
+    index_path = tmp_path / ".msgflux" / "skills" / "index.md"
+    _write_skill(skills_root, name="alpha", description="Review Python code.")
+    _write_skill(skills_root, name="beta", description="Write release notes.")
+
+    agent = Agent(
+        name="agent",
+        model=_ScriptedModel([]),
+        extensions=[
+            SkillsExtension(
+                {
+                    "paths": skills_root,
+                    "discovery": index_path,
+                }
+            )
+        ],
+    )
+
+    system_prompt = agent.get_system_prompt()
+    index = index_path.read_text(encoding="utf-8")
+
+    assert "skill" in agent.tool_library.library
+    assert "skill_search" not in agent.tool_library.library
+    assert "<available_skills>" not in system_prompt
+    assert str(index_path.resolve()) in system_prompt
+    assert "## alpha" in index
+    assert "Review Python code." in index
+    assert "## beta" in index
+    assert "frontmatter" not in index.lower()
+
+
+def test_skills_discovery_validates_markdown_path(tmp_path):
+    with pytest.raises(ValueError, match=r"must end in `\.md`"):
+        AgentSkillManager({"paths": tmp_path, "discovery": tmp_path / "index.txt"})
+
+    with pytest.raises(TypeError, match="Markdown path"):
+        AgentSkillManager({"paths": tmp_path, "discovery": True})
 
 
 def test_default_skill_paths_helper_returns_common_locations():

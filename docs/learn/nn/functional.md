@@ -36,7 +36,7 @@ All core functions have async counterparts prefixed with `a`. Use the sync versi
 | `bcast_gather` | `abcast_gather` | Multiple functions, same input |
 | `wait_for` | — | Execute a callable with optional timeout |
 | `wait_for_event` | `await_for_event` | Block until an `asyncio.Event` is set |
-| `spawn` | `aspawn` | Fire-and-forget task dispatch |
+| `detached` | `adetached` | Detached task dispatch |
 
 ---
 
@@ -505,7 +505,7 @@ With `bcast_gather`, all functions share the **same** `dotdict` object. This is 
 
 ## 3. **Utility Functions**
 
-Beyond the gather patterns, the functional module provides lower-level utilities for bridging sync/async boundaries and dispatching fire-and-forget tasks.
+Beyond the gather patterns, the functional module provides lower-level utilities for bridging sync/async boundaries and dispatching detached tasks.
 
 ### `wait_for`
 
@@ -580,9 +580,9 @@ Beyond the gather patterns, the functional module provides lower-level utilities
 
 ---
 
-### `spawn`
+### `detached`
 
-`spawn` dispatches a task without waiting for a result — fire-and-forget. The function runs in a background thread (sync) or as a detached coroutine (async). Errors are logged but never raised to the caller, making `spawn` safe for non-critical side effects like logging, cache warming, and notifications:
+`detached` dispatches a task without waiting for its result. The function runs in a background thread (sync) or as a detached coroutine (async). Errors are logged but never raised to the caller, making it suitable for non-critical side effects like logging, cache warming, and notifications:
 
 ???+ example
 
@@ -595,7 +595,7 @@ Beyond the gather patterns, the functional module provides lower-level utilities
             print(f"Logging: {event_type} for user {user_id}")
 
         # Returns immediately
-        F.spawn(log_event, "login", 12345)
+        F.detached(log_event, "login", 12345)
         print("Main thread continues...")
         ```
 
@@ -609,7 +609,7 @@ Beyond the gather patterns, the functional module provides lower-level utilities
             await asyncio.sleep(1)
             print(f"[Async] {message}")
 
-        F.spawn(async_log, "Hello from spawn")
+        F.detached(async_log, "Hello from detached execution")
         ```
 
     === "Error Handling"
@@ -621,10 +621,10 @@ Beyond the gather patterns, the functional module provides lower-level utilities
             raise ValueError("This task failed!")
 
         # Error is logged, not raised
-        F.spawn(failing_task)
+        F.detached(failing_task)
         ```
 
 !!! tip "Use Cases"
-    Spawn is ideal for logging, cache updates, notifications, and non-critical side effects.
+    Detached execution is ideal for logging, cache updates, notifications, and non-critical side effects.
 
-**Async version:** `aspawn`
+**Async version:** `adetached`

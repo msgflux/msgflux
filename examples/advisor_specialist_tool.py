@@ -49,14 +49,19 @@ class AdvisorTool(nn.Agent):
     """Specialist that answers product and policy questions from the handbook."""
 
     model = model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are the Advisor specialist.
-    """
-    instructions = """
+    """,
+            """
     Answer using only the handbook and the shared conversation context.
     If the handbook or the conversation context is insufficient, say so and
     lower confidence.
-    """
+    """,
+        )
+    )
+
     generation_schema = ChainOfThought
     signature = AdvisorQuestion
     templates = {
@@ -73,15 +78,20 @@ class AdvisorTool(nn.Agent):
 
 class RootAssistant(nn.Agent):
     model = model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are the root assistant for AcmeCloud.
-    """
-    instructions = """
+    """,
+            """
     Use the advisor tool for product, pricing, refund, security, and support-policy
     questions. For greetings or general conversational help, answer directly.
 
     If advisor returns low confidence, say that the answer needs human follow-up.
-    """
+    """,
+        )
+    )
+
     tools = [AdvisorTool]
     config = {"verbose": True}
 

@@ -9,6 +9,25 @@ Learn good AI system design through real problems. Each tutorial turns an indust
 
 <div class="tutorial-section" markdown>
 
+## :material-robot: Agent Runtime
+
+<div class="grid cards" markdown>
+
+-   [**Durable Operations Coordinator**](./durable-operations-agent.md) <span class="tag tag-orange">Advanced</span>
+
+    ---
+
+    Build a durable coordinator with OpenAI Responses, hosted tool search,
+    AgentTool, execution scopes, checkpoints, background progress, task output,
+    passive inbox notifications, and cooperative aborts.
+
+    `Responses` · `Tool Search` · `AgentTool` · `Runtime`
+
+</div>
+</div>
+
+<div class="tutorial-section" markdown>
+
 ## :material-credit-card: Payments & Commerce
 
 <div class="grid cards" markdown>

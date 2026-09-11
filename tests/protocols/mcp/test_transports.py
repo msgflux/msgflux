@@ -50,7 +50,7 @@ class TestHTTPTransport:
         assert transport.pool_limits["max_keepalive_connections"] == 20
 
     @pytest.mark.asyncio
-    @patch("msgflux.protocols.mcp.transports.httpx")
+    @patch("msgflux.protocols.mcp.transports.httpx2")
     async def test_connect(self, mock_httpx):
         """Test connecting creates AsyncClient."""
         mock_client = AsyncMock()
@@ -65,7 +65,7 @@ class TestHTTPTransport:
         mock_httpx.AsyncClient.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("msgflux.protocols.mcp.transports.httpx")
+    @patch("msgflux.protocols.mcp.transports.httpx2")
     async def test_send_request(self, mock_httpx):
         """Test sending JSON-RPC request."""
         mock_client = AsyncMock()
@@ -96,7 +96,7 @@ class TestHTTPTransport:
         assert "http://localhost:8080" in call_args[0]
 
     @pytest.mark.asyncio
-    @patch("msgflux.protocols.mcp.transports.httpx")
+    @patch("msgflux.protocols.mcp.transports.httpx2")
     async def test_send_notification(self, mock_httpx):
         """Test sending notification (fire-and-forget)."""
         mock_client = AsyncMock()
@@ -113,7 +113,7 @@ class TestHTTPTransport:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("msgflux.protocols.mcp.transports.httpx")
+    @patch("msgflux.protocols.mcp.transports.httpx2")
     async def test_disconnect(self, mock_httpx):
         """Test disconnect closes client."""
         mock_client = AsyncMock()

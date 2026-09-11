@@ -7,7 +7,7 @@ from msgflux.data.retrievers.retriever import Retriever
 from msgflux.models.model import Model
 
 
-class WebSearch:
+class WebSearchTool:
     """Search the web through a retriever backend or a web-search model.
 
     The engine string selects the execution mode:

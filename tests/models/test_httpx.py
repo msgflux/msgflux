@@ -9,16 +9,10 @@ class TestHTTPXModelClientImport:
     """Test HTTPXModelClient import and initialization."""
 
     def test_httpx_import_available(self):
-        """Test that HTTPXModelClient imports correctly when httpx is available."""
-        try:
-            from msgflux.models.httpx import HTTPXModelClient
+        """Test that HTTPXModelClient imports with the native HTTPX2 dependency."""
+        from msgflux.models.httpx import HTTPXModelClient
 
-            # If we get here, imports worked
-            assert True
-        except ImportError as e:
-            if "httpx" in str(e):
-                pytest.skip("httpx not installed")
-            raise
+        assert HTTPXModelClient is not None
 
 
 class TestHTTPXModelClient:
@@ -27,8 +21,6 @@ class TestHTTPXModelClient:
     @pytest.fixture
     def concrete_httpx_client(self):
         """Create concrete HTTPXModelClient for testing."""
-        pytest.importorskip("httpx")
-
         from msgflux.models.httpx import HTTPXModelClient
         from msgflux.models.response import ModelResponse
 
@@ -48,8 +40,8 @@ class TestHTTPXModelClient:
 
     @pytest.fixture
     def mock_httpx(self):
-        """Mock httpx module."""
-        with patch("msgflux.models.httpx.httpx") as mock_httpx:
+        """Mock the HTTPX2 module."""
+        with patch("msgflux.models.httpx.httpx2") as mock_httpx:
             # Mock Client and AsyncClient
             mock_client = MagicMock()
             mock_async_client = MagicMock()
@@ -61,7 +53,7 @@ class TestHTTPXModelClient:
             mock_httpx.AsyncHTTPTransport = MagicMock()
 
             yield {
-                "httpx": mock_httpx,
+                "httpx2": mock_httpx,
                 "client": mock_client,
                 "async_client": mock_async_client,
             }
@@ -224,8 +216,8 @@ class TestHTTPXModelClient:
         client._initialize()
 
         # Verify Limits was called with correct parameters
-        mock_httpx["httpx"].Limits.assert_called()
-        call_args = mock_httpx["httpx"].Limits.call_args
+        mock_httpx["httpx2"].Limits.assert_called()
+        call_args = mock_httpx["httpx2"].Limits.call_args
 
         # Check that limits were configured
         assert "max_connections" in call_args[1] or call_args[0]
@@ -237,5 +229,5 @@ class TestHTTPXModelClient:
         client._initialize()
 
         # Verify HTTPTransport was configured
-        mock_httpx["httpx"].HTTPTransport.assert_called()
-        mock_httpx["httpx"].AsyncHTTPTransport.assert_called()
+        mock_httpx["httpx2"].HTTPTransport.assert_called()
+        mock_httpx["httpx2"].AsyncHTTPTransport.assert_called()

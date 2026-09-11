@@ -34,11 +34,8 @@ pip install msgflux
 
 ### OpenAI and OpenAI-compatible providers
 
-```bash
-uv add "msgflux[openai]"
-# or
-pip install "msgflux[openai]"
-```
+They use the core installation above. Set the provider's API key before making
+a request; no provider SDK is required.
 
 More setup details: https://msgflux.com/dependency-management/
 
@@ -55,8 +52,10 @@ mf.set_envs(OPENAI_API_KEY="...")
 
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = "You are a helpful support agent."
-    instructions = "You are assisting {{ user_name }}."
+    system_prompt = (
+        "You are a helpful support agent.\n\n"
+        "You are assisting {{ user_name }}."
+    )
 
 
 agent = SupportAgent()
@@ -79,8 +78,10 @@ mf.set_envs(OPENAI_API_KEY="...")
 
 class SupportAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = "You are a helpful support agent."
-    instructions = "You are assisting {{ user_name }}."
+    system_prompt = (
+        "You are a helpful support agent.\n\n"
+        "You are assisting {{ user_name }}."
+    )
     message_fields = {"task": "issue", "vars": "variables"}
     response_mode = "solution"
 

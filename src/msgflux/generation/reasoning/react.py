@@ -15,7 +15,7 @@ from msgflux.utils.msgspec import restore_transport_value
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolResponses
-    from msgflux.tools.definitions import ToolDefinitions
+    from msgflux.tools.catalog import ToolCatalogView
 
 REACT_SYSTEM_MESSAGE = """
 You are an Agent. In each episode, you will be given the task as input.
@@ -107,11 +107,11 @@ class ReAct(Struct, ToolFlowControl):
 
     @classmethod
     def build_provider_response_format(
-        cls, tool_definitions: Optional["ToolDefinitions"] = None
+        cls, tool_catalog: Optional["ToolCatalogView"] = None
     ) -> Optional[Dict[str, Any]]:
         """Build a dynamic OpenAI transport schema from the available tools."""
         action_variants = []
-        tool_schemas = tool_definitions.schemas if tool_definitions else None
+        tool_schemas = tool_catalog.portable_schemas() if tool_catalog else None
         for tool_schema in tool_schemas or []:
             function_schema = deepcopy(tool_schema["function"])
             parameters = function_schema.get("parameters", {})
@@ -166,7 +166,7 @@ class ReAct(Struct, ToolFlowControl):
     def normalize_provider_response(
         cls,
         raw_response: Mapping[str, Any],
-        tool_definitions: Optional["ToolDefinitions"] = None,
+        tool_catalog: Optional["ToolCatalogView"] = None,
     ) -> Mapping[str, Any]:
         """Normalize flattened action params to the logical Action(arguments=...)."""
         normalized = {
@@ -180,9 +180,7 @@ class ReAct(Struct, ToolFlowControl):
             return normalized
 
         normalized_actions = []
-        tool_annotations = (
-            tool_definitions.annotations if tool_definitions else None
-        ) or {}
+        tool_annotations = (tool_catalog.annotations if tool_catalog else None) or {}
         for action in actions:
             name = action.get("name")
             argument_annotations = tool_annotations.get(name, {})
@@ -285,5 +283,5 @@ class ReAct(Struct, ToolFlowControl):
         return messages
 
 
-ReAct.system_message = REACT_SYSTEM_MESSAGE
+ReAct.system_prompt = REACT_SYSTEM_MESSAGE
 ReAct.tools_template = REACT_TOOLS_TEMPLATE

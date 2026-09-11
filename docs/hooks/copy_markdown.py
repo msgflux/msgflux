@@ -47,7 +47,8 @@ _JS = """\
 
     function copyMarkdownToClipboard(btn) {
         if (isAnimating) return;
-        const markdown = btn.closest(".copy-markdown-container").getAttribute("data-markdown");
+        const container = btn.closest(".copy-markdown-container");
+        const markdown = container.getAttribute("data-markdown");
         const icon = btn.querySelector("#copy-icon");
         if (navigator.clipboard && window.isSecureContext) {
             navigator.clipboard.writeText(markdown)
@@ -61,7 +62,12 @@ _JS = """\
     function fallback(text, icon) {
         const ta = document.createElement("textarea");
         ta.value = text;
-        Object.assign(ta.style, { position: "fixed", top: "0", left: "0", opacity: "0" });
+        Object.assign(ta.style, {
+            position: "fixed",
+            top: "0",
+            left: "0",
+            opacity: "0",
+        });
         document.body.appendChild(ta);
         ta.focus();
         ta.select();
@@ -110,7 +116,8 @@ def _build_button(markdown: str, button_text: str) -> str:
     return (
         f"{_CSS}\n"
         f'<div class="copy-markdown-container" data-markdown="{escaped}">\n'
-        f'  <button class="copy-markdown-button" onclick="copyMarkdownToClipboard(this)">\n'
+        f'  <button class="copy-markdown-button" '
+        f'onclick="copyMarkdownToClipboard(this)">\n'
         f'    <i id="copy-icon" class="ph ph-clipboard" style="font-size:16px;"></i>\n'
         f"    <span>{html_lib.escape(button_text)}</span>\n"
         f"  </button>\n"
@@ -128,6 +135,7 @@ def on_page_context(
     config: MkDocsConfig,
     nav,
 ) -> dict:
+    _ = config, nav
     if page.file.src_path in _HIDE_NAV_PAGES:
         page.meta.setdefault("hide", [])
         for item in ("navigation", "toc"):
@@ -142,6 +150,7 @@ def on_page_content(
     config: MkDocsConfig,
     files: Files,
 ) -> str:
+    _ = config, files
     if not page.markdown:
         return html
 

@@ -12,7 +12,7 @@ The main execution method. All module logic is defined in `forward`:
 Make synchronous HTTP requests in the main execution method:
 
 ```python
-import httpx
+import httpx2
 import msgflux.nn as nn
 
 class APIConsumer(nn.Module):
@@ -22,7 +22,7 @@ class APIConsumer(nn.Module):
 
     def forward(self, query: str, **kwargs):
         # Synchronous HTTP request
-        with httpx.Client() as client:
+        with httpx2.Client() as client:
             response = client.get(
                 f"{self.api_url}/search",
                 params={"q": query}
@@ -40,13 +40,13 @@ print(result)
 The async execution method enables non-blocking HTTP calls. Called via `.acall()`:
 
 ```python
-import httpx
+import httpx2
 import msgflux.nn as nn
 
 class AsyncAPIConsumer(APIConsumer):
     async def aforward(self, query: str, **kwargs):
         # Asynchronous HTTP request
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.get(
                 f"{self.api_url}/search",
                 params={"q": query}

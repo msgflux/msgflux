@@ -6,4 +6,6 @@
 
 ::: msgflux.nn.functional.wait_for_event
 
-::: msgflux.nn.functional.spawn
+::: msgflux.nn.functional.detached
+
+::: msgflux.nn.functional.adetached

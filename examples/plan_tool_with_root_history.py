@@ -17,21 +17,27 @@ class PlanTool(nn.Agent):
 
     name = "plan"
     model = model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a planning specialist.
-    """
-    instructions = """
+    """,
+            """
     Build plans using both the delegated task and the full conversation history.
     Use the history to extract constraints, goals, deadlines, stakeholders, and risks.
     Do not ignore details mentioned earlier in the conversation.
-    """
-    expected_output = """
+    """,
+            """
     Return a concise action plan with:
     - a one-line objective
     - the key constraints
     - 3 to 5 ordered steps
     - the immediate next action
-    """
+    """,
+        )
+    )
+
+
     generation_schema = ChainOfThought
     templates = {"response": "{{ final_answer }}"}
     config = {"verbose": True}
@@ -42,16 +48,21 @@ planner = PlanTool()
 
 class RootAssistant(nn.Agent):
     model = model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are the root assistant for AcmeCloud.
-    """
-    instructions = """
+    """,
+            """
     Use the plan tool whenever the user asks for a plan, rollout, checklist, roadmap,
     or next steps.
 
     Pass a clear task to the tool. The tool already receives the full conversation
     history, so you do not need to restate all prior details in the task.
-    """
+    """,
+        )
+    )
+
     tools = [planner]
     config = {"verbose": True}
 

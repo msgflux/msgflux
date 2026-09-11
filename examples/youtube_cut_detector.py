@@ -79,10 +79,12 @@ class CutAnalyzer(nn.Agent):
     """Analyzes a transcript and returns the strongest cut candidates."""
 
     model = chat_model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a short-form video editor who turns long YouTube videos into strong clip candidates.
-    """
-    instructions = """
+    """,
+            """
     Read the full transcript before choosing clips.
 
     Rules:
@@ -91,7 +93,10 @@ class CutAnalyzer(nn.Agent):
     - Avoid overlapping clips.
     - Keep each cut long enough to make sense without the rest of the video.
     - Score each cut from 1 to 10 for viral potential.
-    """
+    """,
+        )
+    )
+
     generation_schema = VideoCutAnalysis
     templates = {
         "task": "Select up to {{ max_cuts }} short-form clips from this transcript.\n\nTranscript:\n{{ transcript }}"

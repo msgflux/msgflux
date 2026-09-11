@@ -1,4 +1,4 @@
-"""Tests for tool_config(inject_message=True).
+"""Tests for the message runtime input.
 
 Unit tests use Agents with mock models.
 """
@@ -36,21 +36,21 @@ class TestToolConfigInjectMessage:
         def my_tool(x: str) -> str:
             return x
 
-        assert my_tool.tool_config.inject_message is False
+        assert my_tool.tool_config.runtime_inputs.bindings == ()
 
     def test_inject_message_true_on_function(self):
-        @mf.tool_config(inject_message=True)
+        @mf.tool_config(runtime_inputs=["message"])
         def my_tool(x: str) -> str:
             return x
 
-        assert my_tool.tool_config.inject_message is True
+        assert my_tool.tool_config.runtime_inputs.bindings[0].source == "message"
 
     def test_inject_message_on_agent_class(self):
-        @mf.tool_config(inject_message=True, return_direct=True)
+        @mf.tool_config(runtime_inputs=["message"], return_direct=True)
         class SubAgent(Agent):
             """A sub-agent used as a tool."""
 
-        assert SubAgent.tool_config.inject_message is True
+        assert SubAgent.tool_config.runtime_inputs.bindings[0].source == "message"
         assert SubAgent.tool_config.return_direct is True
 
 
@@ -60,12 +60,12 @@ class TestToolConfigInjectMessage:
 
 
 class TestInjectMessageAnnotations:
-    """Validate that inject_message=True strips 'message' from the tool schema."""
+    """Validate that the message runtime input is absent from the tool schema."""
 
     def test_message_excluded_from_tool_schema(self):
-        """With inject_message=True, LLM-facing schema must NOT have 'message'."""
+        """The LLM-facing schema must not contain the runtime message."""
 
-        @mf.tool_config(inject_message=True, return_direct=True)
+        @mf.tool_config(runtime_inputs=["message"], return_direct=True)
         class TranslationAgent(Agent):
             """Translate text to a target language."""
 
@@ -90,7 +90,7 @@ class TestInjectMessageAnnotations:
     def test_default_annotations_message_stripped(self):
         """Agent with default annotations (message: str) — message must be stripped."""
 
-        @mf.tool_config(inject_message=True, return_direct=True)
+        @mf.tool_config(runtime_inputs=["message"], return_direct=True)
         class SubAgent(Agent):
             """Sub-agent with default annotations."""
 
@@ -111,7 +111,7 @@ class TestInjectMessageAnnotations:
 
 
 class TestAgentAsToolInjectMessage:
-    """Validate inject_message=True end-to-end through ToolLibrary."""
+    """Validate the message runtime input end-to-end through ToolLibrary."""
 
     def test_message_not_present_when_flag_false(self):
         """Without inject_message, forward() does not receive message kwarg."""
@@ -143,7 +143,7 @@ class TestAgentAsToolInjectMessage:
     def test_message_not_leaked_in_tool_call_parameters(self):
         """message must not appear in the logged ToolCall.parameters."""
 
-        @mf.tool_config(inject_message=True, return_direct=True)
+        @mf.tool_config(runtime_inputs=["message"], return_direct=True)
         class SubAgent(Agent):
             """Sub."""
 

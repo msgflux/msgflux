@@ -1,7 +1,6 @@
 import logging
 import os
 import sys
-from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
 from logging.config import dictConfig
@@ -11,6 +10,7 @@ from typing import Optional
 import msgspec
 
 from msgflux.envs import envs
+from msgflux.utils.time import utc_now
 
 _FORMAT = (
     f"{envs.logging_prefix}%(levelname)s %(asctime)s "
@@ -116,7 +116,7 @@ def _trace_calls(log_path, root_dir, frame, event, arg=None):  # noqa: ARG001
                 last_lineno = 0
                 last_func_name = ""
             with open(log_path, "a") as f:
-                ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+                ts = utc_now().strftime("%Y-%m-%d %H:%M:%S.%f")
                 if event == "call":
                     f.write(
                         f"{ts} Call to"

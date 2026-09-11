@@ -494,6 +494,11 @@ def msgspec_dumps(obj: object) -> str:
     return msgspec.json.encode(obj).decode("utf-8")
 
 
+def msgspec_loads(data: str | bytes) -> Any:
+    """Decode JSON text or UTF-8 bytes without an intermediate conversion."""
+    return msgspec.json.decode(data)
+
+
 def export_to_json(
     obj: object, filepath: Union[str, os.PathLike], indent: Optional[int] = 4
 ):

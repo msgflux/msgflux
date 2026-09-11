@@ -6,7 +6,7 @@ Weather retrievers fetch current, forecast, or historical weather data through
 `mf.Retriever.weather(...)`. The built-in `open_meteo` provider uses Open-Meteo
 for geocoding, forecast data, and historical observations.
 
-Use the built-in `Weather` tool when an agent needs weather access. Use the
+Use the built-in `WeatherTool` when an agent needs weather access. Use the
 retriever directly when you want structured weather data in application code.
 
 ---
@@ -167,16 +167,16 @@ key or attribute:
 
 ## 4. **Agent Tool**
 
-The built-in `Weather` tool is a thin wrapper around this retriever:
+The built-in `WeatherTool` is a thin wrapper around this retriever:
 
 ```python
-from msgflux.tools.builtin import Weather
+from msgflux.tools.builtin import WeatherTool
 
-tool = Weather(engine="open_meteo")
+tool = WeatherTool(engine="open_meteo")
 ```
 
 The tool exposes only `location` and `when` to the agent, while provider
 configuration stays in the constructor.
 
-If `engine` is not passed, `Weather` reads `MSGFLUX_TOOL_WEATHER_ENGINE`.
+If `engine` is not passed, `WeatherTool` reads `MSGFLUX_TOOL_WEATHER_ENGINE`.
 When neither is set, it defaults to `open_meteo`.

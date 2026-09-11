@@ -25,7 +25,7 @@ class AdEvaluation(mf.Signature):
 
 class Teenager(nn.Agent):
     model = model
-    system_message = """You are a 17-year-old social media native. You care about
+    system_prompt = """You are a 17-year-old social media native. You care about
     aesthetics, trends, memes, and authenticity. Focus on whether the ad feels
     authentic or corporate and whether you would share it on social media."""
     signature = AdEvaluation
@@ -35,7 +35,7 @@ class Teenager(nn.Agent):
 
 class Professional(nn.Agent):
     model = model
-    system_message = """You are a 35-year-old working professional. You value clarity,
+    system_prompt = """You are a 35-year-old working professional. You value clarity,
     time-saving, and quality. Focus on whether the value proposition is clear
     and whether the ad respects your time."""
     signature = AdEvaluation
@@ -45,7 +45,7 @@ class Professional(nn.Agent):
 
 class BudgetShopper(nn.Agent):
     model = model
-    system_message = """You are a budget-conscious parent. You look for deals,
+    system_prompt = """You are a budget-conscious parent. You look for deals,
     compare prices, and distrust hype. Focus on whether the ad mentions price
     or value and whether it feels honest or manipulative."""
     signature = AdEvaluation
@@ -58,7 +58,7 @@ class CreativeDirector(nn.Agent):
     """Writes the first ad draft from a product description."""
 
     model = model
-    instructions = """
+    system_prompt = """
     You are a creative director at an ad agency. Given a product description,
     write compelling ad copy (3-5 sentences). Include:
     - A catchy headline
@@ -75,7 +75,7 @@ class Refiner(nn.Agent):
     """Rewrites ad copy based on focus group feedback."""
 
     model = model
-    instructions = """
+    system_prompt = """
     You are a senior copywriter. You receive the original ad text and feedback
     from three customer personas (teenager, professional, budget shopper).
 

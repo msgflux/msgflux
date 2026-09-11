@@ -67,7 +67,7 @@ class TestDictLowering:
         with pytest.raises(TypeError, match="bare `dict`"):
             hint_to_schema(dict)
 
-    def test_bare_Dict_raises(self):
+    def test_bare_typing_dict_raises(self):
         with pytest.raises(TypeError, match="bare `dict`"):
             hint_to_schema(Dict)
 
@@ -94,11 +94,11 @@ class TestDictLowering:
         assert "key" in entry["required"]
         assert "value" in entry["required"]
 
-    def test_additionalProperties_false_at_root(self):
+    def test_additional_properties_false_at_root(self):
         schema = hint_to_schema(dict[str, str])
         assert schema["additionalProperties"] is False
 
-    def test_additionalProperties_false_in_entry(self):
+    def test_additional_properties_false_in_entry(self):
         schema = hint_to_schema(dict[str, str])
         entry = schema["properties"]["entries"]["items"]
         assert entry["additionalProperties"] is False

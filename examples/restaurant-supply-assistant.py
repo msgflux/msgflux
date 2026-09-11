@@ -90,7 +90,7 @@ class STT(nn.Transcriber):
 
 class ShelfScanner(nn.Agent):
     model        = vision_model
-    instructions = """
+    system_prompt = """
     Look at this image and list every food product you can identify.
     For each one, estimate the approximate remaining quantity if visible.
     Be concise — one line per item.
@@ -102,7 +102,7 @@ class ShelfScanner(nn.Agent):
 
 class ItemExtractor(nn.Agent):
     model             = chat_model
-    instructions      = """
+    system_prompt = """
     Extract every product the user is requesting.
     For each item fill in name, quantity, and unit.
     Use null for quantity or unit when not specified.
@@ -242,7 +242,7 @@ def submit_order(**kwargs) -> str:
 
 class Assistant(nn.Agent):
     model          = chat_model
-    system_message = """
+    system_prompt = """
     You are a purchasing assistant for restaurant kitchens.
 
     Help the team place orders with suppliers.

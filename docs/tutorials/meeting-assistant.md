@@ -335,14 +335,14 @@ if result["follow_up_meeting"]:
 ### Posting to Slack
 
 ```python
-import httpx
+import httpx2
 
 def post_to_slack(result: dict, webhook_url: str) -> None:
     lines = [f"*{result['tldr']}*", ""]
     for item in result["action_items"]:
         deadline = item["deadline"] or "TBD"
         lines.append(f"• [{item['owner']}] {item['task']} — {deadline}")
-    httpx.post(webhook_url, json={"text": "\n".join(lines)})
+    httpx2.post(webhook_url, json={"text": "\n".join(lines)})
 ```
 
 ---

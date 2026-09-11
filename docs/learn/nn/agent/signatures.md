@@ -35,7 +35,7 @@ The default type is `str` when unspecified.
     === "Translation"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -56,7 +56,7 @@ The default type is `str` when unspecified.
     === "Sentiment Classification"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -79,7 +79,7 @@ The default type is `str` when unspecified.
     === "Calculator"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -117,7 +117,7 @@ The docstrings of a class-based Signature become the Agent instructions.
     === "Basic Classification"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         from typing import Literal
         import msgflux as mf
         import msgflux.nn as nn
@@ -147,7 +147,7 @@ The docstrings of a class-based Signature become the Agent instructions.
     === "Complex Extraction"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         from typing import List, Optional
         import msgflux as mf
         import msgflux.nn as nn
@@ -183,7 +183,7 @@ The docstrings of a class-based Signature become the Agent instructions.
     === "With Detailed Instructions"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -268,7 +268,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
     === "Class-based"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -301,7 +301,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
     === "Str-based"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -309,7 +309,7 @@ Use `Image`, `Audio`, `Video`, or `File` for multimodal inputs:
 
         class Classifier(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1")
-            instructions = "Classify the content of an image and describe what you see."
+            system_prompt = "Classify the content of an image and describe what you see."
             signature = "photo: Image -> label, description, confidence: float"
 
         agent = Classifier()
@@ -336,7 +336,7 @@ When using signatures, you can pass inputs in multiple ways:
         Pass inputs as keyword arguments (recommended):
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -355,7 +355,7 @@ When using signatures, you can pass inputs in multiple ways:
         Pass all inputs as a dictionary:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -374,7 +374,7 @@ When using signatures, you can pass inputs in multiple ways:
         Combine with `task_context`:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -406,10 +406,8 @@ Signatures can be combined with other Agent components. Here's how they interact
 
 | Component | Behavior with Signature |
 |-----------|------------------------|
-| `system_message` | **Additive** - Included in the system prompt alongside signature-generated content |
-| `instructions` | **Override** - If provided, takes precedence over the signature's docstring |
-| `examples` | **Additive** - Combined with any examples defined in the signature |
-| `system_extra_message` | **Additive** - Appended to the system prompt |
+| `system_prompt` | **Additive** - Combined with the signature docstring and generated output guidance |
+| `examples` | **Additive** - Installed through the few-shot examples extension |
 | `generation_schema` | **Fused** - Merged with signature outputs (e.g., ChainOfThought + Signature) |
 
 #### What the Signature Controls
@@ -417,17 +415,17 @@ Signatures can be combined with other Agent components. Here's how they interact
 | Component | Behavior |
 |-----------|----------|
 | `task` template | **Generated** - Created from input fields, overwrites any existing task template |
-| `expected_output` | **Generated** - Created from output fields |
+| output guidance | **Generated** - Compiled into `system_prompt` from output fields |
 | `annotations` | **Generated** - Created from input fields for tool integration |
 
 ???+ example "Combining Signature with System Components"
 
-    === "With system_message"
+    === "With system_prompt"
 
         Add context that applies to all requests:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -442,32 +440,32 @@ Signatures can be combined with other Agent components. Here's how they interact
         class Translator(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = Translate
-            system_message = "You are a professional translator specialized in technical documents."
+            system_prompt = "You are a professional translator specialized in technical documents."
 
         agent = Translator()
         print(agent.get_system_prompt())
         ```
 
-    === "With instructions (Override)"
+    === "With a custom system prompt"
 
-        Override the signature's docstring:
+        Add constraints alongside the signature's docstring:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
         # mf.set_envs(OPENAI_API_KEY="...")
 
         class Summarize(mf.Signature):
-            """Summarize the given text."""  # This will be ignored
+            """Summarize the given text."""
             text: str = mf.InputField()
             summary: str = mf.OutputField()
 
         class Summarizer(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = Summarize
-            instructions = "Create a bullet-point summary with exactly 3 key points."
+            system_prompt = "Create a bullet-point summary with exactly 3 key points."
 
         agent = Summarizer()
         print(agent.get_system_prompt())
@@ -478,7 +476,7 @@ Signatures can be combined with other Agent components. Here's how they interact
         Combine examples from multiple sources:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -492,18 +490,19 @@ Signatures can be combined with other Agent components. Here's how they interact
         class Classifier(nn.Agent):
             model = mf.Model.chat_completion("openai/gpt-4.1-mini")
             signature = Classify
-            # These examples are *combined* with any examples in the signature
+            # These examples are combined with any examples in the signature.
             examples = [
                 mf.Example(
                     inputs={"text": "I love it!"},
-                    outputs={"sentiment": "positive"}
+                    labels={"sentiment": "positive"},
                 ),
                 mf.Example(
                     inputs={"text": "Terrible product."},
-                    outputs={"sentiment": "negative"}
+                    labels={"sentiment": "negative"},
                 ),
             ]
 
+        agent = Classifier()
         print(agent.get_system_prompt())
         ```
 
@@ -512,7 +511,7 @@ Signatures can be combined with other Agent components. Here's how they interact
         Fuse reasoning strategies with typed outputs:
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
         from msgflux.generation.reasoning import ChainOfThought
@@ -571,7 +570,7 @@ When an agent has a signature, its annotations are automatically configured base
     class Coordinator(nn.Agent):
         model = model
         tools = [SentimentAnalyzer]
-        system_message = "You help analyze customer feedback."
+        system_prompt = "You help analyze customer feedback."
         config = {"verbose": True}
 
     coordinator = Coordinator()
@@ -601,7 +600,7 @@ If either condition is missing, validation is silently skipped.
     === "Catching Type Errors"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -625,7 +624,7 @@ If either condition is missing, validation is silently skipped.
     === "Catching Missing Fields"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -645,7 +644,7 @@ If either condition is missing, validation is silently skipped.
     === "With Optional Fields"
 
         ```python
-        # pip install msgflux[openai]
+        # pip install msgflux
         from typing import Optional
         import msgflux as mf
         import msgflux.nn as nn
@@ -680,3 +679,74 @@ If either condition is missing, validation is silently skipped.
     - **Docstrings matter**: The class docstring becomes the model's instruction
     - **Trust the system**: Avoid over-engineering prompts in descriptions
     - **Enable validation in development**: Use `config={"validate_inputs": True}` to catch input errors early
+
+### Building Examples from ChatMessages
+
+`ChatMessages` can split completed interaction trajectories into `mf.Example`
+objects. It does not need to know a signature's input and output field names,
+so the same saved trajectory works across provider APIs and future formats.
+
+Each completed turn becomes one example:
+
+- `begin_turn(...)` adds a `start` event to the interaction timeline.
+- Message, reasoning, tool-call, and tool-result items preserve the trajectory.
+- Tool traces can be replayed with `function_call` and `function_call_output`
+  items when you are building examples from a saved run.
+- `end_turn()` adds a `complete` event.
+- `to_examples()` splits each completed trajectory at its first assistant item.
+  The two sides are returned under the fixed `trajectory` key.
+
+```python
+import msgflux as mf
+
+messages = mf.ChatMessages(
+    thread_id="support_42",
+    namespace="support_triage",
+)
+
+messages.begin_turn(turn_id="triage_1")
+messages.add_user("Ticket: Checkout fails when paying by card. Tier: enterprise.")
+messages.append(
+    {
+        "type": "function_call",
+        "call_id": "call_sla_1",
+        "name": "lookup_customer_sla",
+        "arguments": '{"customer_tier": "enterprise"}',
+    }
+)
+messages.append(
+    {
+        "type": "function_call_output",
+        "call_id": "call_sla_1",
+        "output": {
+            "sla": "1 hour",
+            "escalation": "payments-oncall",
+        },
+    }
+)
+messages.add_assistant_response(
+    "This is a high-priority payments issue.",
+    reasoning_content="Payment failures block revenue and affect an enterprise account.",
+)
+messages.end_turn()
+
+messages.begin_turn(turn_id="triage_2")
+messages.add_user("Ticket: Can I export invoices as CSV? Tier: starter.")
+messages.add_assistant_response("This is a product how-to question.")
+messages.end_turn()
+
+examples = messages.to_examples()
+
+first = examples[0]
+print(first.inputs["trajectory"])
+print(first.labels["trajectory"])
+
+second = examples[1]
+print(second.inputs["trajectory"])
+print(second.labels["trajectory"])
+```
+
+The first side contains the user-side trajectory. The label side starts at the
+first assistant-owned item and retains reasoning and tool activity in their
+original order. No copy of `vars`, named signature inputs, assistant output, or
+provider response type is created solely for example generation.

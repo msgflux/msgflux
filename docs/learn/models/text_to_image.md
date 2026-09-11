@@ -2,6 +2,10 @@
 
 The `text_to_image` model generates images from text descriptions. These models can create photorealistic images, artwork, illustrations, and more from natural language prompts.
 
+OpenAI and ImageRouter image generation use msgFlux's built-in HTTP transport,
+so they do not require the optional OpenAI SDK. Set `OPENAI_API_KEY` or
+`IMAGEROUTER_API_KEY` for the selected provider.
+
 ## ✦₊⁺ Overview
 
 Text-to-image models transform textual descriptions into visual content. They enable:
@@ -29,7 +33,7 @@ Text-to-image models transform textual descriptions into visual content. They en
     import msgflux as mf
 
     # Create image generator
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     # Generate image
     response = model(prompt="A serene lake at sunset with mountains")
@@ -46,7 +50,7 @@ Text-to-image models transform textual descriptions into visual content. They en
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     response = model(
         prompt="A futuristic city with flying cars",
@@ -70,11 +74,8 @@ Text-to-image models transform textual descriptions into visual content. They en
     ```python
     import msgflux as mf
 
-    # gpt-image-1 — best quality/cost balance (recommended)
-    model = mf.Model.text_to_image("openai/gpt-image-1")
-
-    # gpt-image-1.5 — latest, superior detail and prompt adherence
-    model = mf.Model.text_to_image("openai/gpt-image-1.5")
+    # Current OpenAI image generation model
+    model = mf.Model.text_to_image("openai/gpt-image-2")
     ```
 
 ### Replicate
@@ -106,7 +107,7 @@ Text-to-image models transform textual descriptions into visual content. They en
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     # Square (default)
     response = model(prompt="A cat wearing sunglasses", size="1024x1024")
@@ -128,7 +129,7 @@ Text-to-image models transform textual descriptions into visual content. They en
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     # High quality — more detail, higher cost
     response = model(prompt="A detailed landscape", quality="high")
@@ -142,10 +143,12 @@ Text-to-image models transform textual descriptions into visual content. They en
 
 ## 5. **Response Formats**
 
-!!! info "gpt-image-1 always returns base64"
-    `gpt-image-1` does not support the `response_format` parameter — it always returns a **base64 string**. The `response_format` parameter (`"url"` / `"base64"`) is only supported by legacy models (`dall-e-2`, `dall-e-3`).
+!!! info "GPT Image models return base64"
+    GPT Image models return a **base64 string** and do not use the legacy
+    `response_format` parameter. msgFlux keeps `response_format` for
+    OpenAI-compatible providers and legacy models that support it.
 
-### Base64 (default for gpt-image-1)
+### Base64 (GPT Image models)
 
 ???+ example
 
@@ -153,7 +156,7 @@ Text-to-image models transform textual descriptions into visual content. They en
     import msgflux as mf
     import base64
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     response = model(prompt="A colorful abstract painting")
 
@@ -191,7 +194,7 @@ Generate multiple variations in a single call:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     response = model(
         prompt="A cute robot",
@@ -216,7 +219,7 @@ Control background transparency:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     # Transparent background (useful for product shots)
     response = model(prompt="A red apple", background="transparent")
@@ -238,10 +241,10 @@ Control content filtering:
     import msgflux as mf
 
     # Auto moderation (default)
-    model = mf.Model.text_to_image("openai/gpt-image-1", moderation="auto")
+    model = mf.Model.text_to_image("openai/gpt-image-2", moderation="auto")
 
     # Low moderation — more permissive
-    model = mf.Model.text_to_image("openai/gpt-image-1", moderation="low")
+    model = mf.Model.text_to_image("openai/gpt-image-2", moderation="low")
 
     response = model(prompt="Your prompt here")
     ```
@@ -256,7 +259,7 @@ Generate images concurrently with `F.map_gather`:
     import msgflux as mf
     import msgflux.nn.functional as F
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     prompts = [
         "A serene lake",
@@ -280,7 +283,7 @@ Generate images concurrently with `F.map_gather`:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     response = model(
         prompt="A beautiful sunset",
@@ -288,9 +291,17 @@ Generate images concurrently with `F.map_gather`:
         quality="high"
     )
 
-    # Access metadata
-    print(response.metadata)
-    # {'created': 1234567890, 'content_filter_results': {...}}
+    # Canonical token accounting across providers
+    print(response.metadata.usage.input_tokens)
+    print(response.metadata.usage.output_tokens)
+    print(response.metadata.usage.input_tokens_details.image_tokens)
+
+    # Image-generation fields returned by the provider
+    print(response.metadata.details.size)
+    print(response.metadata.details.quality)
+    print(response.metadata.details.output_format)
+    print(response.metadata.details.background)
+    print(response.metadata.details.created)
 
     # Access the model profile
     print(model.profile.cost.input_per_million)
@@ -305,7 +316,7 @@ Generate images concurrently with `F.map_gather`:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     # Good - Specific and detailed
     response = model(
@@ -329,7 +340,7 @@ Generate images concurrently with `F.map_gather`:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     # Different art styles
     styles = {
@@ -352,7 +363,7 @@ Generate images concurrently with `F.map_gather`:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     prompts = [
         # Rule of thirds
@@ -380,7 +391,7 @@ Generate images concurrently with `F.map_gather`:
     ```python
     import msgflux as mf
 
-    model = mf.Model.text_to_image("openai/gpt-image-1")
+    model = mf.Model.text_to_image("openai/gpt-image-2")
 
     try:
         response = model(prompt="A landscape")

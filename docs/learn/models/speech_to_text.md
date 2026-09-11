@@ -2,6 +2,10 @@
 
 The `speech_to_text` model transcribes spoken audio into written text. These models enable voice-to-text conversion for accessibility, transcription services, voice commands, and more.
 
+OpenAI and OpenAI-compatible transcription use msgFlux's built-in HTTP and
+multipart transports, including streamed transcript events. The optional
+OpenAI SDK is not required.
+
 ## ✦₊⁺ Overview
 
 Speech-to-text (STT) models convert audio recordings into text transcripts. They enable:
@@ -30,8 +34,8 @@ Speech-to-text (STT) models convert audio recordings into text transcripts. They
     ```python
     import msgflux as mf
 
-    # Recommended — best accuracy, supports streaming
-    model = mf.Model.speech_to_text("openai/whisper-1")
+    # Fast transcription with streaming support
+    model = mf.Model.speech_to_text("openai/gpt-4o-mini-transcribe")
 
     # Transcribe audio file
     response = model("path/to/audio.mp3")
@@ -180,6 +184,10 @@ Detailed output with metadata:
     #     "duration": 5.2,
     #     "segments": [...]
     # }
+
+    # Token usage is normalized separately from the transcript.
+    print(response.metadata.usage.input_tokens)
+    print(response.metadata.usage.input_tokens_details.audio_tokens)
     ```
 
 ### SRT (SubRip) Format

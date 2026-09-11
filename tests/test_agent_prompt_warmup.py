@@ -36,7 +36,7 @@ def test_agent_warmup_system_prompt_uses_only_system_prompt_and_tools():
     agent = Agent(
         name="support_agent",
         model=model,
-        system_message="You are a support agent for {{ product }}.",
+        system_prompt="You are a support agent for {{ product }}.",
         tools=[lookup_ticket],
     )
 
@@ -46,7 +46,7 @@ def test_agent_warmup_system_prompt_uses_only_system_prompt_and_tools():
     assert len(model.calls) == 1
     call = model.calls[0]
     assert "msgflux" in call["system_prompt"]
-    assert call["tool_definitions"].schemas[0]["function"]["name"] == "lookup_ticket"
+    assert call["tool_catalog"].tool_entries()[0].name == "lookup_ticket"
     assert "messages" not in call
     assert "generation_schema" not in call
     assert "typed_parser" not in call
@@ -58,7 +58,7 @@ async def test_agent_async_warmup_system_prompt_applies_tool_filter():
     agent = Agent(
         name="support_agent",
         model=model,
-        system_message="You are a support agent.",
+        system_prompt="You are a support agent.",
         tools=[lookup_ticket],
     )
 
@@ -66,24 +66,27 @@ async def test_agent_async_warmup_system_prompt_applies_tool_filter():
 
     assert result == {"warmed": True}
     assert len(model.calls) == 1
-    assert model.calls[0]["tool_definitions"] is None
+    assert model.calls[0]["tool_catalog"] is None
 
 
-def test_agent_warmup_system_prompt_can_spawn_background(monkeypatch):
+def test_agent_warmup_system_prompt_can_run_detached(monkeypatch):
     model = WarmupModel()
     agent = Agent(
         name="support_agent",
         model=model,
-        system_message="You are a support agent.",
+        system_prompt="You are a support agent.",
     )
     captured: dict[str, Any] = {}
 
-    def fake_spawn(to_send, *args: Any, **kwargs: Any) -> None:
+    def fake_detached(to_send, *args: Any, **kwargs: Any) -> None:
         captured["to_send"] = to_send
         captured["args"] = args
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr("msgflux.nn.modules.agent.spawn", fake_spawn)
+    monkeypatch.setattr(
+        "msgflux.nn.modules.agent.model_runtime.detached",
+        fake_detached,
+    )
 
     result = agent.warmup_system_prompt(background=True)
 

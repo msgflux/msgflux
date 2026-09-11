@@ -1,6 +1,6 @@
 from os import getenv
 
-from msgflux.models.providers.openai import OpenAIChatCompletion
+from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.registry import register_model
 
 
@@ -23,5 +23,5 @@ class _BaseBrave:
 
 
 @register_model
-class BraveChatCompletion(_BaseBrave, OpenAIChatCompletion):
+class BraveChatCompletion(_BaseBrave, OpenAICompatibleChatCompletion):
     """Brave Chat Completion."""

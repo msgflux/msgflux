@@ -1,5 +1,6 @@
 from glob import glob
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Annotated, Any, Iterable, Mapping, Optional, Sequence, Union
 
 import msgspec
@@ -54,7 +55,7 @@ class AgentSkill(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     body: str
     license: Optional[str] = None
     compatibility: Optional[SkillCompatibility] = None
-    catalog: bool = True
+    include_in_prompt: bool = True
     metadata: dict[str, str] = msgspec.field(default_factory=dict)
 
     @classmethod
@@ -136,8 +137,8 @@ def _frontmatter_error_message(path: Path, error: msgspec.ValidationError) -> st
             "field `metadata` must be a mapping.",
         ),
         (
-            ("at `$.catalog`",),
-            "field `catalog` must be a boolean.",
+            ("at `$.include_in_prompt`",),
+            "field `include_in_prompt` must be a boolean.",
         ),
     )
     for patterns, message in rules:
@@ -188,10 +189,19 @@ class AgentSkillManager:
         self.search_top_k = config["search_top_k"]
         self.allow = config["allow"]
         self.block = config["block"]
-        self.load = config["load"]
+        self.preload = config["preload"]
+        self.defer_loading = config["defer_loading"]
+        self.discovery = config["discovery"]
         self.skills: dict[str, AgentSkill] = {}
         self.diagnostics: list[str] = []
         self.discover()
+        if not self.defer_loading:
+            self.preload = set(self.skills)
+
+    @property
+    def load(self) -> set[str]:
+        """Compatibility alias for the previous internal attribute name."""
+        return self.preload
 
     def _normalize_config(self, config: Optional[SkillsConfig]) -> dict[str, Any]:
         if config is None:
@@ -201,12 +211,15 @@ class AgentSkillManager:
                 "search_top_k": 5,
                 "allow": None,
                 "block": None,
-                "load": set(),
+                "preload": set(),
+                "defer_loading": True,
+                "discovery": "tool",
             }
         if not isinstance(config, Mapping):
             raise TypeError(
                 "`skills` must be a dict with `paths`, `catalog_limit`, "
-                "`search_top_k`, `allow`, `block`, and `load` keys."
+                "`search_top_k`, `allow`, `block`, `preload`, "
+                "`defer_loading`, and `discovery` keys."
             )
         allowed_keys = {
             "paths",
@@ -215,6 +228,9 @@ class AgentSkillManager:
             "allow",
             "block",
             "load",
+            "preload",
+            "defer_loading",
+            "discovery",
         }
         invalid_keys = set(config) - allowed_keys
         if invalid_keys:
@@ -224,6 +240,12 @@ class AgentSkillManager:
             )
         if config.get("allow") is not None and config.get("block") is not None:
             raise ValueError("`skills` must contain only one of `allow` or `block`.")
+        if config.get("load") is not None and config.get("preload") is not None:
+            raise ValueError("`skills` must contain only one of `load` or `preload`.")
+        defer_loading = config.get("defer_loading", True)
+        if not isinstance(defer_loading, bool):
+            raise TypeError("`skills['defer_loading']` must be a bool.")
+        discovery = self._normalize_discovery(config.get("discovery", "tool"))
         catalog_limit = self._normalize_optional_int(
             config.get("catalog_limit"),
             name="catalog_limit",
@@ -240,9 +262,25 @@ class AgentSkillManager:
             "search_top_k": search_top_k,
             "allow": self._normalize_name_filter(config.get("allow"), name="allow"),
             "block": self._normalize_name_filter(config.get("block"), name="block"),
-            "load": self._normalize_name_filter(config.get("load"), name="load")
+            "preload": self._normalize_name_filter(
+                config.get("preload", config.get("load")), name="preload"
+            )
             or set(),
+            "defer_loading": defer_loading,
+            "discovery": discovery,
         }
+
+    def _normalize_discovery(self, value: Any) -> str | Path | None:
+        if value is None or value == "tool":
+            return value
+        if isinstance(value, (str, Path)):
+            path = Path(value).expanduser()
+            if path.suffix.lower() != ".md":
+                raise ValueError("`skills['discovery']` path must end in `.md`.")
+            return path.resolve()
+        raise TypeError(
+            "`skills['discovery']` must be `'tool'`, a Markdown path, or None."
+        )
 
     def _normalize_name_filter(
         self,
@@ -365,10 +403,10 @@ class AgentSkillManager:
             }
 
     def _validate_loaded_skills(self) -> None:
-        missing = self.load - set(self.skills)
+        missing = self.preload - set(self.skills)
         if missing:
             raise ValueError(
-                f"Unknown skills in `skills['load']`: {', '.join(sorted(missing))}."
+                f"Unknown skills in `skills['preload']`: {', '.join(sorted(missing))}."
             )
 
     def _iter_skill_files(self, root: Path) -> Iterable[Path]:
@@ -396,7 +434,11 @@ class AgentSkillManager:
         return bool(self.activatable_skills())
 
     def has_searchable_skills(self) -> bool:
-        return bool(self.searchable_skills())
+        return self.discovery == "tool" and bool(self.searchable_skills())
+
+    @property
+    def index_path(self) -> Optional[Path]:
+        return self.discovery if isinstance(self.discovery, Path) else None
 
     def names(self) -> list[str]:
         return sorted(self.skills)
@@ -414,20 +456,26 @@ class AgentSkillManager:
         skills = [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if skill.catalog and skill.name not in self.load
+            if (
+                self.index_path is None
+                and skill.include_in_prompt
+                and skill.name not in self.preload
+            )
         ]
         if self.catalog_limit is None:
             return skills
         return skills[: max(int(self.catalog_limit), 0)]
 
     def loaded_skills(self) -> list[AgentSkill]:
-        return [self.skills[name] for name in sorted(self.load) if name in self.skills]
+        return [
+            self.skills[name] for name in sorted(self.preload) if name in self.skills
+        ]
 
     def activatable_skills(self) -> list[AgentSkill]:
         return [
             skill
             for skill in sorted(self.skills.values(), key=lambda item: item.name)
-            if skill.name not in self.load
+            if self.defer_loading and skill.name not in self.preload
         ]
 
     def searchable_skills(self) -> list[AgentSkill]:
@@ -444,6 +492,53 @@ class AgentSkillManager:
             }
             for skill in self.catalog_skills()
         ]
+
+    def write_index(self) -> Optional[Path]:
+        """Write the deferred-skill discovery index when configured."""
+        path = self.index_path
+        if path is None:
+            return None
+        content = self.render_index()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.read_text(encoding="utf-8") == content:
+            return path
+        temporary_path = None
+        try:
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary.write(content)
+                temporary_path = Path(temporary.name)
+            temporary_path.replace(path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
+        return path
+
+    def render_index(self) -> str:
+        """Render a deterministic Markdown index for filesystem discovery."""
+        lines = [
+            "# Agent Skills Index",
+            "",
+            "Search this file by name or description, then load the selected skill "
+            "with `skill(name)`. Do not read `SKILL.md` directly.",
+        ]
+        for skill in self.activatable_skills():
+            lines.extend(
+                [
+                    "",
+                    f"## {skill.name}",
+                    "",
+                    skill.description,
+                ]
+            )
+        lines.append("")
+        return "\n".join(lines)
 
     def search(self, query: str, *, top_k: Optional[int] = None) -> str:
         results = self.search_results(query, top_k=top_k)
@@ -501,7 +596,7 @@ class AgentSkillManager:
 
     def activate(self, name: str) -> str:
         skill = self.get(name)
-        if skill.name in self.load:
+        if skill.name in self.preload:
             raise ValueError(f"Skill `{name}` is already loaded in the system prompt.")
         return self.render_skill_content(skill)
 

@@ -11,7 +11,13 @@ if TYPE_CHECKING:
     from msgflux.nn.modules.predictor import Predictor
     from msgflux.nn.modules.searcher import Searcher
     from msgflux.nn.modules.speaker import Speaker
-    from msgflux.nn.modules.tool import LocalTool, MCPTool, Tool, ToolLibrary
+    from msgflux.nn.modules.tool import (
+        LocalTool,
+        MCPTool,
+        Tool,
+        ToolExecutionPlan,
+        ToolLibrary,
+    )
     from msgflux.nn.modules.transcriber import Transcriber
 
 __all__ = [
@@ -29,6 +35,7 @@ __all__ = [
     "Sequential",
     "Speaker",
     "Tool",
+    "ToolExecutionPlan",
     "ToolLibrary",
     "Transcriber",
 ]
@@ -48,6 +55,7 @@ _LAZY_IMPORTS = {
     "Sequential": ("msgflux.nn.modules.container", "Sequential"),
     "Speaker": ("msgflux.nn.modules.speaker", "Speaker"),
     "Tool": ("msgflux.nn.modules.tool", "Tool"),
+    "ToolExecutionPlan": ("msgflux.nn.modules.tool", "ToolExecutionPlan"),
     "ToolLibrary": ("msgflux.nn.modules.tool", "ToolLibrary"),
     "Transcriber": ("msgflux.nn.modules.transcriber", "Transcriber"),
 }

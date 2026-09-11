@@ -426,10 +426,10 @@ class MeetingTracker(nn.Module):
 Add a plain function after the pipeline returns:
 
 ```python
-import httpx
+import httpx2
 
 def post_to_slack(checklist: str, webhook_url: str) -> None:
-    httpx.post(webhook_url, json={"text": checklist})
+    httpx2.post(webhook_url, json={"text": checklist})
 
 result = tracker.forward(transcript=transcript)
 post_to_slack(result["checklist"], webhook_url="https://hooks.slack.com/...")

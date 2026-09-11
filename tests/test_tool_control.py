@@ -1,12 +1,12 @@
 """Tests for tool_filter and max_tool_turns features."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from msgflux.core.message import Message
 from msgflux.nn.modules.agent import Agent
+from msgflux.tools import ToolSpec
 
 
 def search(query: str) -> str:
@@ -30,9 +30,9 @@ class TestToolFilter:
 
         # We'll test the _apply_tool_filter method directly
         self.mock_schemas = [
-            {"function": {"name": "search", "description": "Search tool"}},
-            {"function": {"name": "calculator", "description": "Calculator tool"}},
-            {"function": {"name": "browser", "description": "Browser tool"}},
+            ToolSpec(name="search", description="Search tool"),
+            ToolSpec(name="calculator", description="Calculator tool"),
+            ToolSpec(name="browser", description="Browser tool"),
         ]
 
     def test_allow_filter(self):
@@ -50,7 +50,7 @@ class TestToolFilter:
         )
 
         assert len(result) == 2
-        names = [s["function"]["name"] for s in result]
+        names = [tool.name for tool in result]
         assert "search" in names
         assert "calculator" in names
         assert "browser" not in names
@@ -63,7 +63,7 @@ class TestToolFilter:
 
         result = agent._apply_tool_filter(self.mock_schemas, {"allow": "search"})
 
-        assert [schema["function"]["name"] for schema in result] == ["search"]
+        assert [tool.name for tool in result] == ["search"]
 
     def test_block_filter(self):
         """Test that block filter removes specified tools."""
@@ -74,7 +74,7 @@ class TestToolFilter:
         result = agent._apply_tool_filter(self.mock_schemas, {"block": ["browser"]})
 
         assert len(result) == 2
-        names = [s["function"]["name"] for s in result]
+        names = [tool.name for tool in result]
         assert "search" in names
         assert "calculator" in names
         assert "browser" not in names
@@ -87,7 +87,7 @@ class TestToolFilter:
 
         result = agent._apply_tool_filter(self.mock_schemas, {"block": "browser"})
 
-        names = [s["function"]["name"] for s in result]
+        names = [tool.name for tool in result]
         assert "browser" not in names
         assert "search" in names
         assert "calculator" in names
@@ -159,9 +159,7 @@ class TestToolFilterIntegration:
         return Agent(name="agent", model=mock_model, tools=[search, browser], **kwargs)
 
     def _tool_names(self, params):
-        return [
-            schema["function"]["name"] for schema in params.tool_definitions.schemas
-        ]
+        return [tool.name for tool in params.tool_catalog.tool_entries()]
 
     def test_inspect_model_execution_params_accepts_tool_filter(self):
         """tool_filter should work with inspect_model_execution_params."""
@@ -218,7 +216,7 @@ class TestToolFilterIntegration:
         )
 
         assert self._tool_names(params) == ["search"]
-        assert params.tool_definitions.choice == "auto"
+        assert params.tool_catalog.choice.mode == "auto"
 
 
 class TestMaxToolTurnsConfig:
@@ -260,60 +258,12 @@ class TestMaxToolTurnsBehavior:
     """Tests for max_tool_turns execution behavior."""
 
     def test_second_tool_turn_is_blocked_before_execution(self):
-        """After the limit is reached, tools are removed for a final answer turn."""
-        agent = Agent.__new__(Agent)
-        agent.name = "agent"
-        agent.config = {"max_tool_turns": 1}
+        """The constructor shorthand installs the extensible terminal policy."""
+        from msgflux.nn.extensions import ToolTurnLimitExtension
 
-        processed_tool_turns = []
-        execution_filters = []
-
-        class ToolResults:
-            def __init__(self):
-                self.return_directly = False
-                self.tool_calls = [SimpleNamespace(id="id", result="ok", error=None)]
-
-        class RawResponse:
-            def __init__(self, label: str):
-                self.reasoning = None
-                self.label = label
-
-            def get_calls(self):
-                return [("id", self.label, {})]
-
-            def insert_results(self, id_results):
-                self.id_results = id_results
-
-            def get_messages(self):
-                return []
-
-        first = SimpleNamespace(
-            response_type="tool_call", data=RawResponse("first"), reasoning=None
+        agent = Agent(
+            name="agent",
+            model=Mock(model_type="chat_completion"),
+            config={"max_tool_turns": 1},
         )
-        second = SimpleNamespace(
-            response_type="tool_call", data=RawResponse("second"), reasoning=None
-        )
-        final = SimpleNamespace(
-            response_type="text_generation", data="done", reasoning=None
-        )
-        queued_responses = [second, final]
-
-        def process_tool_call(tool_callings, message, messages, vars):
-            processed_tool_turns.append(tool_callings[0][1])
-            return ToolResults()
-
-        def execute_model(**kwargs):
-            execution_filters.append(kwargs.get("tool_filter"))
-            return queued_responses.pop(0)
-
-        agent._process_tool_call = process_tool_call
-        agent._execute_model = execute_model
-
-        result, messages = agent._process_tool_call_response(
-            None, first, [], {}, None, None
-        )
-
-        assert processed_tool_turns == ["first"]
-        assert execution_filters == [None, {"block": "*"}]
-        assert result.response_type == "text_generation"
-        assert messages == []
+        assert isinstance(agent.extensions["tool_turn_limit"], ToolTurnLimitExtension)

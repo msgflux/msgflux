@@ -149,8 +149,7 @@ The `wikipedia` retriever fetches and returns Wikipedia article content at query
 The `serpapi` retriever queries SerpApi and returns structured search results from engines such as Google. Use it when you need general web, news, image, shopping, or localized search through SerpApi.
 
 !!! info "Dependencies"
-    Requires `httpx` and the `SERPAPI_KEY` env variable:
-    `pip install httpx`
+    HTTPX2 is installed with msgFlux. Set the `SERPAPI_KEY` env variable.
 
     For compatibility, `SERPAPI_API_KEY` and `SERP_API_KEY` are also accepted.
     Both synchronous and async calls use direct requests to
@@ -653,8 +652,8 @@ The `exa` retriever queries Exa for semantic web search results. It can return U
 The `searxng` retriever queries a local or self-hosted SearXNG instance and returns structured web results with title, content, URL, and optional image metadata. SearXNG is useful when you want free, private, local web search without adding a provider SDK or API key.
 
 !!! info "Dependencies"
-    Requires `httpx` and a running SearXNG instance with JSON output enabled:
-    `pip install httpx`
+    HTTPX2 is installed with msgFlux. A running SearXNG instance with JSON
+    output enabled is also required.
 
     By default, msgFlux uses `http://localhost:8080`. Set `SEARXNG_BASE_URL`
     or pass `base_url` to point at another local/self-hosted instance.
@@ -765,8 +764,7 @@ export SEARXNG_BASE_URL="http://localhost:8888"
 The `ceramic` retriever queries Ceramic Search and returns structured web results with title, content, and URL. Ceramic is a web search provider based on lexical query matching.
 
 !!! info "Dependencies"
-    Requires `httpx` and the `CERAMIC_API_KEY` env variable:
-    `pip install httpx`
+    HTTPX2 is installed with msgFlux. Set the `CERAMIC_API_KEY` env variable.
 
     Both synchronous and async calls use direct requests to
     `https://api.ceramic.ai/search`.

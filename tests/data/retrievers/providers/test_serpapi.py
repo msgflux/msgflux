@@ -29,7 +29,7 @@ def mock_httpx_clients():
     async_client_cls = MagicMock(return_value=async_context)
     fake_httpx = SimpleNamespace(Client=client_cls, AsyncClient=async_client_cls)
 
-    with patch.object(serpapi_provider, "httpx", fake_httpx):
+    with patch.object(serpapi_provider, "httpx2", fake_httpx):
         yield SimpleNamespace(
             response=response,
             client_cls=client_cls,
@@ -76,15 +76,6 @@ def test_init_accepts_legacy_env_names(mock_httpx_clients):
         retriever = SerpApiWebRetriever()
 
     assert retriever.api_key == "test_key"
-
-
-def test_init_raises_without_httpx():
-    with (
-        patch.object(serpapi_provider, "httpx", None),
-        patch.dict("os.environ", {"SERPAPI_KEY": "test_key"}),
-        pytest.raises(ImportError),
-    ):
-        SerpApiWebRetriever()
 
 
 def test_sync_search_uses_direct_httpx_request(mock_httpx_clients):

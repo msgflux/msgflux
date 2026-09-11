@@ -81,7 +81,7 @@ Always call the search tool — never return a name without searching first.
 
 
 class EntityResolver(nn.Agent):
-    instructions      = RESOLVER_INSTRUCTIONS
+    system_prompt = RESOLVER_INSTRUCTIONS
     model             = chat_model
     generation_schema = ReAct
     signature         = "query: str -> candidates: list[str], resolved: bool"
@@ -369,12 +369,14 @@ class STT(nn.Transcriber):
 
 class VisitAssistant(nn.Agent):
     model          = chat_model
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a CRM assistant integrated into the sales team's workflow.
     Your job is to help reps log client visit reports quickly and accurately
     through a natural conversation — no forms, no manual field entry.
-    """
-    instructions = """
+    """,
+            """
     The report has required fields that must all be present before submitting:
     companies, location, participants, purpose, next_steps.
 
@@ -397,9 +399,8 @@ class VisitAssistant(nn.Agent):
     - If the user wants to start a new report, call activate_report() — a new draft is created automatically.
     - If the user wants to resume a previous draft, call activate_report(report_id="draft_N").
     - All fill/validate/submit operations always target the currently active draft.
-    """
-    system_extra_message = (
-        "<customer_info>\n"
+    """,
+            "<customer_info>\n"
         "Rep name: {{ user_name }}\n"
         "Active report: {{ active_report or 'none' }}\n"
         "{% if drafts %}"
@@ -414,15 +415,19 @@ class VisitAssistant(nn.Agent):
         "  - {{ r.id }} ({{ r.date }}) — status: {{ r.status }}\n"
         "{% endfor %}"
         "{% endif %}"
-        "</customer_info>"
+        "</customer_info>",
+        )
     )
+
+
     message_fields = {
         "task": "user.text",
         "vars": "vars",
     }
     tools         = [QueryEntity, activate_report, fill_fields, validate_report, submit_report, get_report]
     response_mode = "response"
-    config        = {"verbose": True, "include_date": True}
+    extensions    = [nn.CurrentDateExtension()]
+    config        = {"verbose": True}
 
 
 class VisitReportAssistant(nn.Module):

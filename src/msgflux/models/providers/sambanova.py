@@ -1,7 +1,7 @@
 from os import getenv
 from typing import Any, Dict
 
-from msgflux.models.providers.openai import OpenAIChatCompletion
+from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.registry import register_model
 
 
@@ -27,7 +27,7 @@ class _BaseSambaNova:
 
 
 @register_model
-class SambaNovaChatCompletion(_BaseSambaNova, OpenAIChatCompletion):
+class SambaNovaChatCompletion(_BaseSambaNova, OpenAICompatibleChatCompletion):
     """SambaNova Chat Completion."""
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:

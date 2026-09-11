@@ -41,6 +41,73 @@ class AbortRequestedError(Exception):
         super().__init__(message or "Execution abort requested.")
 
 
+class ModelProviderHTTPError(RuntimeError):
+    """Structured HTTP failure returned by a model provider."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        description: str,
+        provider: Optional[str] = None,
+        model_id: Optional[str] = None,
+        code: Any = None,
+        error_type: Optional[str] = None,
+        param: Optional[str] = None,
+        request_id: Optional[str] = None,
+        response: Any = None,
+    ):
+        self.status_code = status_code
+        self.description = description
+        self.provider = provider
+        self.model_id = model_id
+        self.code = code
+        self.error_type = error_type
+        self.param = param
+        self.request_id = request_id
+        self.response = response
+
+        source = provider or "Model provider"
+        message = f"{source} request failed with HTTP {status_code}: {description}"
+        details = []
+        if code is not None:
+            details.append(f"code={code}")
+        if error_type:
+            details.append(f"type={error_type}")
+        if param:
+            details.append(f"param={param}")
+        if request_id:
+            details.append(f"request_id={request_id}")
+        if details:
+            message = f"{message} ({', '.join(details)})"
+        super().__init__(message)
+
+
+class TaskInterruptRequestedError(Exception):
+    """Raised when a cooperative background task receives an interrupt request."""
+
+    def __init__(self, task_id: str, message: Optional[str] = None):
+        self.task_id = task_id
+        super().__init__(message or f"Task `{task_id}` interrupt requested.")
+
+
+class TaskPauseRequestedError(Exception):
+    """Raised when a cooperative task or agent receives a pause request."""
+
+    def __init__(self, task_id: Optional[str] = None, message: Optional[str] = None):
+        self.task_id = task_id
+        label = f"`{task_id}`" if task_id else "execution"
+        super().__init__(message or f"Task {label} pause requested.")
+
+
+class TaskIdCollisionError(Exception):
+    """Raised when a task store receives an id already assigned to another task."""
+
+    def __init__(self, task_id: str):
+        super().__init__(f"Task id `{task_id}` already exists.")
+        self.task_id = task_id
+
+
 class UnsafeUserInputError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe user input detected")
@@ -51,10 +118,6 @@ class UnsafeModelResponseError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe model response detected")
         self.data = data
-
-
-class TypedParserNotFoundError(ValueError):
-    """Raised when a requested typed parser is not registered."""
 
 
 class TaskError:

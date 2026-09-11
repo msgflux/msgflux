@@ -7,7 +7,7 @@ import pytest
 
 from msgflux.core.dotdict import dotdict
 from msgflux.nn.modules.tool import ToolLibrary
-from msgflux.tools.builtin.web_search import WebSearch
+from msgflux.tools.builtin.web_search import WebSearchTool
 
 
 class TestRetrieverAlias:
@@ -25,10 +25,10 @@ class TestRetrieverAlias:
         mock_factory.assert_called_once_with("wikipedia", language="pt")
 
 
-class TestWebSearchInit:
+class TestWebSearchToolInit:
     def test_name_and_display_name_attributes(self):
-        assert WebSearch.name == "web_search"
-        assert WebSearch.display_name == "Web Search"
+        assert WebSearchTool.name == "web_search"
+        assert WebSearchTool.display_name == "Web Search"
 
     def test_engine_can_be_loaded_from_env(self, mocker):
         mock_retriever = MagicMock()
@@ -42,7 +42,7 @@ class TestWebSearchInit:
             clear=False,
         )
 
-        tool = WebSearch()
+        tool = WebSearchTool()
 
         assert tool.engine == "retriever/wikipedia"
         assert tool.engine_kind == "retriever"
@@ -63,7 +63,7 @@ class TestWebSearchInit:
             clear=True,
         )
 
-        tool = WebSearch()
+        tool = WebSearchTool()
         tool("python")
 
         assert tool.init_params == {"language": "pt"}
@@ -86,7 +86,7 @@ class TestWebSearchInit:
             clear=True,
         )
 
-        tool = WebSearch(
+        tool = WebSearchTool(
             "retriever/wikipedia",
             init_params={"language": "en"},
             call_params={"top_k": 3},
@@ -107,7 +107,7 @@ class TestWebSearchInit:
         )
 
         with pytest.raises(ValueError, match="MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS"):
-            WebSearch()
+            WebSearchTool()
 
     def test_explicit_params_must_be_dicts(self, mocker):
         mocker.patch(
@@ -116,10 +116,10 @@ class TestWebSearchInit:
         )
 
         with pytest.raises(TypeError, match="init_params"):
-            WebSearch("retriever/wikipedia", init_params=[])
+            WebSearchTool("retriever/wikipedia", init_params=[])
 
         with pytest.raises(TypeError, match="call_params"):
-            WebSearch("retriever/wikipedia", call_params=[])
+            WebSearchTool("retriever/wikipedia", call_params=[])
 
     def test_retriever_engine_sets_query_only_schema(self, mocker):
         mock_retriever = MagicMock()
@@ -128,7 +128,7 @@ class TestWebSearchInit:
             return_value=mock_retriever,
         )
 
-        tool = WebSearch("retriever/wikipedia")
+        tool = WebSearchTool("retriever/wikipedia")
 
         assert tool.name == "web_search"
         assert tool.engine_kind == "retriever"
@@ -144,7 +144,7 @@ class TestWebSearchInit:
             return_value=MagicMock(),
         )
 
-        tool = WebSearch(
+        tool = WebSearchTool(
             "model/openai/gpt-4o-search-preview",
             init_params={"web_search_options": {"search_context_size": "low"}},
         )
@@ -165,7 +165,7 @@ class TestWebSearchInit:
 
     def test_model_engine_rejects_call_params(self):
         with pytest.raises(ValueError, match="call_params"):
-            WebSearch(
+            WebSearchTool(
                 "model/openai/gpt-4o-search-preview",
                 call_params={"top_k": 2},
             )
@@ -178,11 +178,11 @@ class TestWebSearchInit:
         )
 
         with pytest.raises(ValueError, match="call_params"):
-            WebSearch("model/openai/gpt-4o-search-preview")
+            WebSearchTool("model/openai/gpt-4o-search-preview")
 
     def test_invalid_engine_format_raises(self):
         with pytest.raises(ValueError, match="engine format"):
-            WebSearch("invalid")
+            WebSearchTool("invalid")
 
     def test_retriever_engine_rejects_goal(self, mocker):
         mocker.patch(
@@ -190,7 +190,7 @@ class TestWebSearchInit:
             return_value=MagicMock(),
         )
 
-        tool = WebSearch("retriever/wikipedia")
+        tool = WebSearchTool("retriever/wikipedia")
 
         with pytest.raises(ValueError, match="goal"):
             tool("python", goal="Guide the model.")
@@ -199,10 +199,10 @@ class TestWebSearchInit:
         mocker.patch.dict("os.environ", {}, clear=True)
 
         with pytest.raises(ValueError, match="MSGFLUX_TOOL_WEB_SEARCH_ENGINE"):
-            WebSearch()
+            WebSearchTool()
 
 
-class TestWebSearchCall:
+class TestWebSearchToolCall:
     def test_retriever_engine_returns_dict(self, mocker):
         mock_retriever = MagicMock()
         mock_retriever.return_value = dotdict(
@@ -227,7 +227,7 @@ class TestWebSearchCall:
             return_value=mock_retriever,
         )
 
-        tool = WebSearch("retriever/wikipedia", call_params={"top_k": 3})
+        tool = WebSearchTool("retriever/wikipedia", call_params={"top_k": 3})
         result = tool("python")
 
         mock_retriever.assert_called_once_with("python", top_k=3)
@@ -257,7 +257,7 @@ class TestWebSearchCall:
             return_value=mock_model,
         )
 
-        tool = WebSearch(
+        tool = WebSearchTool(
             "model/openai/gpt-4o-search-preview",
             init_params={"web_search_options": {"search_context_size": "low"}},
         )
@@ -283,7 +283,7 @@ class TestWebSearchToolLibraryIntegration:
             return_value=mock_retriever,
         )
 
-        tool = WebSearch("retriever/wikipedia")
+        tool = WebSearchTool("retriever/wikipedia")
         library = ToolLibrary(name="search", tools=[tool])
         schemas = library.get_tool_json_schemas()
 
@@ -300,7 +300,7 @@ class TestWebSearchToolLibraryIntegration:
             return_value=mock_model,
         )
 
-        tool = WebSearch("model/openai/gpt-4o-search-preview")
+        tool = WebSearchTool("model/openai/gpt-4o-search-preview")
         library = ToolLibrary(name="search", tools=[tool])
         schemas = library.get_tool_json_schemas()
 

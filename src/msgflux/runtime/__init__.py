@@ -1,4 +1,33 @@
 from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.agent_inbox import (
+    AgentControlMessage,
+    AgentInbox,
+    AgentInboxStore,
+    AgentNotification,
+    InMemoryAgentInboxStore,
+    SQLiteAgentInboxStore,
+    ToolNotificationHandle,
+)
+from msgflux.runtime.agent_run import (
+    AgentRun,
+    agent_run_context,
+    get_agent_run,
+    get_current_agent_run,
+)
+from msgflux.runtime.approvals import (
+    ApprovalBinding,
+    ApprovalConflictError,
+    ApprovalEvent,
+    ApprovalExpiredError,
+    ApprovalRecord,
+    ApprovalStore,
+    InMemoryApprovalStore,
+    SQLiteApprovalStore,
+)
+from msgflux.runtime.approvals.agent import (
+    AgentApprovals,
+    ApprovalReconciliationRequiredError,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -12,6 +41,28 @@ from msgflux.runtime.context import (
     new_thread_id,
     thread_context,
 )
+from msgflux.runtime.context_scopes import (
+    ContextScopeCommand,
+    ContextScopeConflictError,
+    ContextScopeController,
+    ScopeTransition,
+)
+from msgflux.runtime.environment import (
+    ExecutionEnvironment,
+    ProcessExecutor,
+    ProcessRequest,
+    ProcessResult,
+)
+from msgflux.runtime.event_hub import (
+    BackgroundTaskSnapshot,
+    LiveRunSnapshot,
+    RunningToolSnapshot,
+    ThreadSnapshot,
+    ThreadWatcher,
+)
+from msgflux.runtime.events import EventType, ExecutionEvent
+from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
+from msgflux.runtime.permissions import PermissionSet, ResourcePermission
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,
@@ -21,15 +72,66 @@ from msgflux.runtime.skills import (
     default_skill_paths,
     parse_skill_file,
 )
+from msgflux.runtime.workspace import (
+    InMemoryWorkspace,
+    WorkspaceConflictError,
+    WorkspaceFilesystem,
+)
+from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
 
 __all__ = [
+    "PreparedFileChange",
+    "WorkspaceEditor",
+    "WorkspaceConflictError",
+    "ExecutionEnvironment",
+    "ProcessExecutor",
+    "ProcessRequest",
+    "ProcessResult",
+    "WorkspaceFilesystem",
+    "InMemoryWorkspace",
+    "ResourcePermission",
+    "SandboxCapabilities",
+    "SandboxRequirements",
+    "AgentApprovals",
+    "ApprovalReconciliationRequiredError",
+    "ApprovalBinding",
+    "ApprovalConflictError",
+    "ApprovalEvent",
+    "ApprovalExpiredError",
+    "ApprovalRecord",
+    "ApprovalStore",
+    "InMemoryApprovalStore",
+    "SQLiteApprovalStore",
+    "PermissionSet",
+    "AgentControlMessage",
+    "AgentRun",
+    "ContextScopeCommand",
+    "ContextScopeConflictError",
+    "ContextScopeController",
+    "AgentInbox",
+    "AgentInboxStore",
+    "AgentNotification",
     "AgentSkill",
     "AgentSkillManager",
     "AbortSignal",
+    "BackgroundTaskSnapshot",
     "ExecutionScope",
+    "ExecutionEvent",
+    "EventType",
+    "InMemoryAgentInboxStore",
+    "LiveRunSnapshot",
+    "RunningToolSnapshot",
+    "SQLiteAgentInboxStore",
     "SkillPath",
     "SkillPaths",
     "SkillsConfig",
+    "ToolNotificationHandle",
+    "ThreadSnapshot",
+    "ThreadWatcher",
+    "ScopeTransition",
+    "agent_run_context",
+    "get_agent_run",
+    "get_current_agent_run",
     "_CURRENT_NAMESPACE",
     "_CURRENT_THREAD_ID",
     "default_skill_paths",

@@ -71,11 +71,17 @@ class ModelCost:
         Returns:
             Total cost in USD
         """
+        billable_cached_tokens = min(max(cached_tokens, 0), max(input_tokens, 0))
+        uncached_input_tokens = input_tokens - billable_cached_tokens
         cost = (
-            input_tokens * self.input_per_token + output_tokens * self.output_per_token
+            uncached_input_tokens * self.input_per_token
+            + output_tokens * self.output_per_token
         )
-        if cached_tokens > 0 and self.cache_read_per_token:
-            cost += cached_tokens * self.cache_read_per_token
+        if billable_cached_tokens > 0:
+            cache_rate = self.cache_read_per_token
+            if cache_rate is None:
+                cache_rate = self.input_per_token
+            cost += billable_cached_tokens * cache_rate
         return cost
 
 

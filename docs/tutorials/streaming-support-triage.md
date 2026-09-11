@@ -225,6 +225,6 @@ The response is an async stream. In practice this lets a UI print chunks as they
 ## Further Reading
 
 - [Streaming](../learn/nn/agent/streaming.md) — consuming async stream responses
-- [Tools](../learn/nn/agent/tools.md) — function calling and tool execution loops
+- [Tools](../learn/nn/agent/tools/index.md) — function calling and tool execution loops
 - [Signatures](../learn/nn/agent/signatures.md) — typed input/output contracts
 - [Task and Context](../learn/nn/agent/task-and-context.md) — passing named inputs to agents

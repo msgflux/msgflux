@@ -1,11 +1,7 @@
 from os import getenv
 
-try:
-    import httpx
-except Exception as e:
-    raise ImportError(
-        "`httpx` is not detected, please installusing `pip install msgflux[httpx]`"
-    ) from e
+import httpx2
+
 from msgflux.envs import envs
 from msgflux.models.base import BaseModel
 from msgflux.models.profiles import ensure_profiles_loaded
@@ -13,23 +9,23 @@ from msgflux.utils.tenacity import apply_retry, default_model_retry
 
 
 class HTTPXModelClient(BaseModel):
-    """HTTPX interface for routes not supported by the OpenAI client."""
+    """HTTPX2 interface for routes not supported by the OpenAI client."""
 
     headers = {"accept": "application/json", "Content-Type": "application/json"}
 
     def _initialize(self):
-        """Initialize the HTTPX client with empty API key."""
+        """Initialize the HTTPX2 client with empty API key."""
         self.current_key_index = 0
         timeout = getenv("OPENAI_TIMEOUT", None)
-        self.client = httpx.Client(
-            limits=httpx.Limits(max_connections=2000, max_keepalive_connections=100),
+        self.client = httpx2.Client(
+            limits=httpx2.Limits(max_connections=2000, max_keepalive_connections=100),
             timeout=timeout,
-            transport=httpx.HTTPTransport(retries=envs.httpx_max_retries),
+            transport=httpx2.HTTPTransport(retries=envs.httpx_max_retries),
         )
-        self.aclient = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=2000, max_keepalive_connections=100),
+        self.aclient = httpx2.AsyncClient(
+            limits=httpx2.Limits(max_connections=2000, max_keepalive_connections=100),
             timeout=timeout,
-            transport=httpx.AsyncHTTPTransport(retries=envs.httpx_max_retries),
+            transport=httpx2.AsyncHTTPTransport(retries=envs.httpx_max_retries),
         )
 
         # Trigger lazy load of model profiles in background

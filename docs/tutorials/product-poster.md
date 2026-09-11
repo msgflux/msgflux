@@ -47,7 +47,7 @@ Product URL
 --8<-- "docs/_includes/init_chat_completion_model.md"
 
 ```bash
-pip install httpx beautifulsoup4
+pip install httpx2 beautifulsoup4
 ```
 
 ---
@@ -58,7 +58,7 @@ pip install httpx beautifulsoup4
 import base64
 from urllib.parse import urljoin
 
-import httpx
+import httpx2
 import msgflux as mf
 import msgflux.nn as nn
 
@@ -81,7 +81,7 @@ class ProductScraper:
     """Fetches a product page and downloads its main image."""
 
     def _fetch(self, url: str) -> tuple[str, bytes]:
-        r = httpx.get(url, follow_redirects=True, timeout=30)
+        r = httpx2.get(url, follow_redirects=True, timeout=30)
         r.raise_for_status()
 
         parser = mf.Parser.html("beautifulsoup", extract_images=True)
@@ -94,13 +94,13 @@ class ProductScraper:
             raise ValueError("No images found on the product page")
 
         image_url = urljoin(url, images[0]["url"])
-        img = httpx.get(image_url, follow_redirects=True, timeout=30)
+        img = httpx2.get(image_url, follow_redirects=True, timeout=30)
         img.raise_for_status()
 
         return text, img.content
 
     async def _afetch(self, url: str) -> tuple[str, bytes]:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+        async with httpx2.AsyncClient(follow_redirects=True, timeout=30) as client:
             r = await client.get(url)
             r.raise_for_status()
 
@@ -129,7 +129,7 @@ class ProductScraper:
 ```
 
 !!! tip
-    For sites that require a custom `User-Agent` or session headers, add them to the `httpx.get` calls inside `_fetch`. The parser accepts raw `bytes` — pass `r.content`, not `r.text`.
+    For sites that require a custom `User-Agent` or session headers, add them to the `httpx2.get` calls inside `_fetch`. The parser accepts raw `bytes` — pass `r.content`, not `r.text`.
 
 ---
 
@@ -315,7 +315,7 @@ def save_poster(msg: mf.Message, out_dir: str = ".") -> str:
     import base64
     from urllib.parse import urljoin
 
-    import httpx
+    import httpx2
     import msgflux as mf
     import msgflux.nn as nn
 
@@ -334,7 +334,7 @@ def save_poster(msg: mf.Message, out_dir: str = ".") -> str:
         """Fetches a product page and downloads its main image."""
 
         def _fetch(self, url: str) -> tuple[str, bytes]:
-            r = httpx.get(url, follow_redirects=True, timeout=30)
+            r = httpx2.get(url, follow_redirects=True, timeout=30)
             r.raise_for_status()
             parser = mf.Parser.html("beautifulsoup", extract_images=True)
             parsed = parser(r.content)
@@ -342,12 +342,12 @@ def save_poster(msg: mf.Message, out_dir: str = ".") -> str:
             images = parsed.data["images"]
             if not images:
                 raise ValueError("No images found on the product page")
-            img = httpx.get(urljoin(url, images[0]["url"]), follow_redirects=True, timeout=30)
+            img = httpx2.get(urljoin(url, images[0]["url"]), follow_redirects=True, timeout=30)
             img.raise_for_status()
             return text, img.content
 
         async def _afetch(self, url: str) -> tuple[str, bytes]:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            async with httpx2.AsyncClient(follow_redirects=True, timeout=30) as client:
                 r = await client.get(url)
                 r.raise_for_status()
                 parser = mf.Parser.html("beautifulsoup", extract_images=True)

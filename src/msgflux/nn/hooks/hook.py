@@ -1,8 +1,9 @@
 import asyncio
 import functools
+import inspect
 import weakref
 from collections import OrderedDict
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Literal, Optional, Tuple
 
 __all__ = ["Hook", "RemovableHandle"]
 
@@ -79,7 +80,16 @@ class Hook:
     override ``acall`` (async). By default ``acall`` runs ``__call__``
     in an executor.
 
+    A hook uses exactly one registration style:
+
+    - ``event=...`` registers a stable lifecycle hook.
+    - ``on=...`` keeps the lower-level forward/method hook behavior.
+
     Args:
+        event: Stable lifecycle event name. Lifecycle handlers receive the
+            event payload and may return a replacement payload.
+        handler: Optional callable used by lifecycle hooks. Subclasses may
+            instead override :meth:`handle` and :meth:`ahandle`.
         on: ``"pre"`` (before execution) or ``"post"`` (after execution).
         target: Submodule attribute name to register the hook on.
             ``None`` registers on the module itself.
@@ -92,15 +102,34 @@ class Hook:
     def __init__(
         self,
         *,
-        on: str,
+        event: Optional[str] = None,
+        handler: Optional[Callable[[Any], Any]] = None,
+        on: Optional[Literal["pre", "post"]] = None,
         target: Optional[str] = None,
         method: Optional[str] = None,
     ):
-        if on not in self._VALID_ON:
+        if event is not None:
+            if not isinstance(event, str) or not event.strip():
+                raise ValueError("`event` must be a non-empty string")
+            if on is not None or method is not None:
+                raise ValueError("`event` cannot be combined with `on` or `method`")
+            if handler is not None and not callable(handler):
+                raise TypeError(f"`handler` must be callable, given `{type(handler)}`")
+        elif on not in self._VALID_ON:
             raise ValueError(f"`on` must be one of {self._VALID_ON}, given `{on!r}`")
+        elif handler is not None:
+            raise ValueError("`handler` is only supported with lifecycle hooks")
+
+        self.event = event
+        self.handler = handler
         self.on = on
         self.target = target
         self.method = method
+
+    @property
+    def is_lifecycle(self) -> bool:
+        """Whether this hook targets a stable lifecycle event."""
+        return self.event is not None
 
     def __call__(self, module: Any, args: tuple, kwargs: dict, output: Any = None):
         """Sync hook — called by ``_call_impl``. Subclasses must override."""
@@ -111,17 +140,59 @@ class Hook:
 
         Default implementation runs ``__call__`` in an executor.
         """
-        loop = asyncio.get_event_loop()
         if self.on == "pre":
-            return await loop.run_in_executor(
-                None, functools.partial(self, module, args, kwargs)
+            return await asyncio.to_thread(
+                functools.partial(self, module, args, kwargs)
             )
-        return await loop.run_in_executor(
-            None, functools.partial(self, module, args, kwargs, output)
+        return await asyncio.to_thread(
+            functools.partial(self, module, args, kwargs, output)
         )
+
+    def handle(self, payload: Any) -> Any:
+        """Handle a lifecycle event synchronously.
+
+        Subclasses may override this method. When ``handler`` was supplied to
+        the constructor it is used directly.
+        """
+        if not self.is_lifecycle:
+            raise RuntimeError("`handle` is only available for lifecycle hooks")
+        if self.handler is None:
+            raise NotImplementedError
+        result = self.handler(payload)
+        if inspect.isawaitable(result):
+            if inspect.iscoroutine(result):
+                result.close()
+            raise TypeError(
+                "Lifecycle handler returned an awaitable during synchronous "
+                "execution; use `ahandle`/`acall` instead"
+            )
+        return result
+
+    async def ahandle(self, payload: Any) -> Any:
+        """Handle a lifecycle event asynchronously."""
+        if not self.is_lifecycle:
+            raise RuntimeError("`ahandle` is only available for lifecycle hooks")
+
+        if self.handler is not None:
+            if hasattr(self.handler, "acall"):
+                return await self.handler.acall(payload)
+            if inspect.iscoroutinefunction(self.handler):
+                return await self.handler(payload)
+
+        if type(self).handle is not Hook.handle:
+            return await asyncio.to_thread(self.handle, payload)
+
+        if self.handler is None:
+            raise NotImplementedError
+        result = await asyncio.to_thread(self.handle, payload)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     def register(self, module: Any) -> "RemovableHandle":
         """Register this hook on *module*."""
+        if self.is_lifecycle:
+            return module.register_lifecycle_hook(self.event, self)
         if self.method is not None:
             if self.on == "pre":
                 return module.register_method_pre_hook(self.method, self)

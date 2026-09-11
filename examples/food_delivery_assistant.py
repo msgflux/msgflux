@@ -135,14 +135,19 @@ class DishEntry(Struct):
 class DishEnricher(nn.Agent):
     """Expands a raw dish name into a full catalog entry."""
     model             = chat_model
-    system_message    = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a food catalog specialist for a food delivery platform.
-    """
-    instructions      = """
+    """,
+            """
     Generate realistic, appetizing catalog entries in English.
     Use typical US food delivery prices: sides $3-7, starters $5-10,
     mains $9-18, desserts $4-8, drinks $2-5.
-    """
+    """,
+        )
+    )
+
     generation_schema = DishEntry
     templates         = {"task": "Dish: {{ raw_name }}\nCuisine: {{ cuisine }}"}
 
@@ -280,10 +285,12 @@ def place_order(
 class FoodAssistant(nn.Agent):
     """Food delivery assistant with restaurant and dish search."""
     model           = chat_model
-    system_message  = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a food delivery assistant, similar to iFood or UberEats.
-    """
-    instructions    = """
+    """,
+            """
     Help the user find and order food through a natural conversation.
 
     Available tools:
@@ -291,8 +298,8 @@ class FoodAssistant(nn.Agent):
     - search_restaurants: search by name or cuisine type
     - get_menu: get the full menu of a specific restaurant
     - place_order: submit the order after user confirmation
-    """
-    expected_output = """
+    """,
+            """
     - When the request is vague, search both dishes and restaurants.
     - Always show dish ID, name, restaurant, price, and dietary tags.
     - Ask clarifying questions when the user has dietary restrictions.
@@ -301,7 +308,11 @@ class FoodAssistant(nn.Agent):
     - When calling place_order, use the dish_id (e.g. "D026") and
       restaurant_id (e.g. "REST005") exactly as shown in the search results.
       Never invent or paraphrase these IDs.
-    """
+    """,
+        )
+    )
+
+
     tools  = [DishSearcher, RestaurantSearcher, get_menu, place_order]
     config = {"verbose": True}
 

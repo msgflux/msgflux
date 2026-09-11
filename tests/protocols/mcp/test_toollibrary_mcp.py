@@ -4,15 +4,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from msgflux.chat_messages import ChatMessages
+from msgflux.nn.functional import wait_for as real_wait_for
 from msgflux.protocols.mcp.types import MCPTool
 
 
 class TestToolLibraryMCPIntegration:
     """Tests for ToolLibrary MCP integration."""
 
-    @patch("msgflux.nn.modules.tool.MCPClient")
-    @patch("msgflux.nn.modules.tool.filter_tools")
-    @patch("msgflux.nn.modules.tool.F")
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
     def test_initialize_stdio_mcp_clients(
         self, mock_F, mock_filter_tools, mock_mcp_client
     ):
@@ -58,9 +60,9 @@ class TestToolLibraryMCPIntegration:
         assert "fs" in library.mcp_clients
         assert library.mcp_clients["fs"]["client"] is mock_client_instance
 
-    @patch("msgflux.nn.modules.tool.MCPClient")
-    @patch("msgflux.nn.modules.tool.filter_tools")
-    @patch("msgflux.nn.modules.tool.F")
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
     def test_initialize_http_mcp_clients(
         self, mock_F, mock_filter_tools, mock_mcp_client
     ):
@@ -93,9 +95,9 @@ class TestToolLibraryMCPIntegration:
         assert call_kwargs["base_url"] == "http://localhost:8080"
         assert call_kwargs["headers"] == {"Auth": "token"}
 
-    @patch("msgflux.nn.modules.tool.MCPClient")
-    @patch("msgflux.nn.modules.tool.filter_tools")
-    @patch("msgflux.nn.modules.tool.F")
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
     def test_filter_mcp_tools(self, mock_F, mock_filter_tools, mock_mcp_client):
         """Test filtering MCP tools with include_tools."""
         from msgflux.nn.modules.tool import ToolLibrary
@@ -150,9 +152,9 @@ class TestToolLibraryMCPIntegration:
         assert len(library.mcp_clients["fs"]["tools"]) == 2
         assert library.mcp_clients["fs"]["tools"] == filtered_tools
 
-    @patch("msgflux.nn.modules.tool.MCPClient")
-    @patch("msgflux.nn.modules.tool.filter_tools")
-    @patch("msgflux.nn.modules.tool.F")
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
     def test_tool_config_storage(self, mock_F, mock_filter_tools, mock_mcp_client):
         """Test that tool_config is stored correctly."""
         from msgflux.nn.modules.tool import ToolLibrary
@@ -183,9 +185,9 @@ class TestToolLibraryMCPIntegration:
         # Verify tool_config was stored
         assert library.mcp_clients["fs"]["tool_config"] == tool_config
 
-    @patch("msgflux.nn.modules.tool.MCPClient")
-    @patch("msgflux.nn.modules.tool.filter_tools")
-    @patch("msgflux.nn.modules.tool.F")
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
     def test_get_mcp_tool_names(self, mock_F, mock_filter_tools, mock_mcp_client):
         """Test getting MCP tool names with namespace."""
         from msgflux.nn.modules.tool import ToolLibrary
@@ -213,12 +215,11 @@ class TestToolLibraryMCPIntegration:
         assert "fs__read_file" in mcp_tool_names
         assert "fs__write_file" in mcp_tool_names
 
-    @patch("msgflux.nn.modules.tool.MCPClient")
-    @patch("msgflux.nn.modules.tool.filter_tools")
-    @patch("msgflux.nn.modules.tool.F")
-    @patch("msgflux.nn.modules.tool.convert_mcp_schema_to_tool_schema")
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
     def test_get_tool_json_schemas_includes_mcp(
-        self, mock_convert_schema, mock_F, mock_filter_tools, mock_mcp_client
+        self, mock_F, mock_filter_tools, mock_mcp_client
     ):
         """Test that get_tool_json_schemas includes MCP tools."""
         from msgflux.nn.modules.tool import ToolLibrary
@@ -233,21 +234,78 @@ class TestToolLibraryMCPIntegration:
 
         mock_F.wait_for.side_effect = [None, mock_tools]
 
-        # Mock schema conversion
-        mock_convert_schema.return_value = {
-            "type": "function",
-            "function": {"name": "fs__read_file", "description": "Read"},
-        }
-
         mcp_servers = [{"name": "fs", "transport": "stdio", "command": "mcp-server-fs"}]
 
         library = ToolLibrary(name="test", tools=[], mcp_servers=mcp_servers)
 
         schemas = library.get_tool_json_schemas()
 
-        # Should include MCP tool schema
-        assert len(schemas) >= 1
-        mock_convert_schema.assert_called()
+        # The schema is compiled once during registration and projected thereafter.
+        assert len(schemas) == 1
+        assert schemas[0]["function"]["name"] == "fs__read_file"
+        assert schemas[0]["function"]["parameters"] == {}
+
+    @patch("msgflux.nn.extensions.tool_library.MCPClient")
+    @patch("msgflux.nn.extensions.tool_library.filter_tools")
+    @patch("msgflux.nn.modules.tool.library.F")
+    @patch("msgflux.nn.modules.tool.implementations.convert_mcp_schema_to_tool_schema")
+    def test_deferred_mcp_tools_are_hidden_until_loaded(
+        self, mock_convert_schema, mock_F, mock_filter_tools, mock_mcp_client
+    ):
+        """Test that deferred MCP tools are exposed only after tool_search."""
+        from msgflux.nn.modules.tool import ToolLibrary
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.connect = AsyncMock()
+        mock_client_instance.list_tools = AsyncMock()
+        mock_mcp_client.from_stdio.return_value = mock_client_instance
+
+        mock_tools = [MCPTool(name="read_file", description="Read", inputSchema={})]
+        mock_filter_tools.return_value = mock_tools
+        mock_F.wait_for.side_effect = real_wait_for
+        mock_F.scatter_gather.side_effect = lambda prepared: [
+            call() for call in prepared
+        ]
+        mock_convert_schema.return_value = {
+            "type": "function",
+            "function": {"name": "fs__read_file", "description": "Read"},
+        }
+
+        library = ToolLibrary(
+            name="test",
+            tools=[],
+            mcp_servers=[
+                {
+                    "name": "fs",
+                    "transport": "stdio",
+                    "command": "mcp-server-fs",
+                    "tool_config": {"read_file": {"defer_loading": True}},
+                }
+            ],
+        )
+        messages = ChatMessages(thread_id="mcp-thread")
+
+        initial_schema_names = [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ]
+        assert initial_schema_names == ["tool_search"]
+
+        result = (
+            library(
+                [("call_1", "tool_search", {"query": "select:fs__read_file"})],
+                messages=messages,
+            )
+            .tool_calls[0]
+            .result
+        )
+
+        loaded_schema_names = [
+            tool.name for tool in library.get_tool_catalog(messages).portable_tools()
+        ]
+        assert result["matches"] == ["fs__read_file"]
+        assert result["loaded"] == ["fs__read_file"]
+        assert "tool_search" not in loaded_schema_names
+        assert "fs__read_file" in loaded_schema_names
 
     def test_mcp_servers_none(self):
         """Test ToolLibrary with no MCP servers."""

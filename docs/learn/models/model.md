@@ -24,7 +24,7 @@ All models follow the pattern: `provider/model-id`
 ### 1.1 **Installation**
 
 ```bash
-pip install msgflux[openai]
+pip install msgflux
 ```
 
 ### 1.2 **Basic Usage**

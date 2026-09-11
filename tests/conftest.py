@@ -4,6 +4,32 @@ from typing import Any, Dict
 
 import pytest
 
+from msgflux.data.stores import Store
+
+
+@pytest.fixture(params=["in_memory", "sqlite"])
+def checkpoint_store(request, tmp_path):
+    """Shared atomic checkpoint gate; register new adapters here."""
+    options = (
+        {"path": str(tmp_path / "checkpoints.db")} if request.param == "sqlite" else {}
+    )
+    store = Store.checkpoint(request.param, **options)
+    yield store
+    if hasattr(store, "close"):
+        store.close()
+
+
+@pytest.fixture(params=["in_memory", "sqlite"])
+def approval_journal(request, tmp_path):
+    """Shared journal gate with an explicitly controlled wall clock."""
+    clock = [100.0]
+    options = (
+        {"path": str(tmp_path / "approvals.db")} if request.param == "sqlite" else {}
+    )
+    store = Store.approval(request.param, clock=lambda: clock[0], **options)
+    yield store, clock
+    store.close()
+
 
 @pytest.fixture
 def sample_state_dict() -> Dict[str, Any]:

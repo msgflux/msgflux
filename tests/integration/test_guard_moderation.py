@@ -11,10 +11,10 @@ Requires: OPENAI_API_KEY in environment.
 import pytest
 
 import msgflux as mf
-import msgflux.nn as nn
+from msgflux import nn
 from msgflux.nn.hooks import Guard
 
-chat_model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+chat_model = mf.Model.chat_completion("openai/gpt-5.6-luna", reasoning_effort="none")
 moderation_model = mf.Model.moderation("openai/omni-moderation-latest")
 
 BLOCKED_MESSAGE = "This message cannot be processed."
@@ -22,7 +22,7 @@ BLOCKED_MESSAGE = "This message cannot be processed."
 
 class Assistant(nn.Agent):
     model = chat_model
-    system_message = "You are a helpful assistant."
+    system_prompt = "You are a helpful assistant."
     message_fields = {"task": "user.text"}
     hooks = [Guard(validator=moderation_model, on="pre", message=BLOCKED_MESSAGE)]
 

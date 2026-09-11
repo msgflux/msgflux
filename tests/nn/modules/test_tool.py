@@ -1,10 +1,13 @@
 """Tests for msgflux.nn.modules.tool module."""
 
+import msgflux as mf
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Optional
 
 from msgflux.core.dotdict import dotdict
+from msgflux.chat_messages import ChatMessages
+from msgflux.nn import ContextBinding
 from msgflux.nn.modules.agent import Agent
 from msgflux.nn.modules.tool import (
     ToolCall,
@@ -14,8 +17,18 @@ from msgflux.nn.modules.tool import (
     MCPTool,
     ToolLibrary,
     _convert_module_to_nn_tool,
-    _should_copy_injected_messages,
 )
+from msgflux.runtime.context import execution_context
+from msgflux.tasks import InMemoryTaskStore, TaskActivityRecorder
+from msgflux.tools import ToolBackground, ToolBucket, ToolLibraryOperator
+from msgflux.tools.helpers import (
+    build_call_parameters_for_response,
+    should_copy_injected_messages,
+)
+
+
+def _activity_summaries(store: InMemoryTaskStore, task_id: str) -> list[str]:
+    return [activity.summary for activity in store.list_activity(task_id)]
 
 
 class TestToolCall:
@@ -420,13 +433,13 @@ class TestConvertModuleToNNTool:
         assert tool.annotations == {}
 
     def test_convert_with_spawn_config(self):
-        """Test converting with spawn configuration."""
+        """Test converting with detached configuration."""
 
         def dispatched_task(data: str) -> None:
             """Dispatch task without return."""
             pass
 
-        dispatched_task.tool_config = {"spawn": True}
+        dispatched_task.tool_config = {"detached": True}
         tool = _convert_module_to_nn_tool(dispatched_task)
 
         assert "not generate a return" in tool.description.lower()
@@ -482,6 +495,16 @@ class TestConvertModuleToNNTool:
 class TestToolLibrary:
     """Test suite for ToolLibrary."""
 
+    def test_tool_library_rejects_removed_spawn_option(self):
+        def legacy_task() -> str:
+            """Run a detached task."""
+            return "done"
+
+        legacy_task.tool_config = {"spawn": True}
+
+        with pytest.raises(ValueError, match="removed; use `detached`"):
+            ToolLibrary(name="lib", tools=[legacy_task])
+
     def test_tool_library_initialization(self):
         """Test ToolLibrary basic initialization."""
 
@@ -499,6 +522,25 @@ class TestToolLibrary:
         assert "tool1" in library.library
         assert "tool2" in library.library
 
+    def test_tool_library_runtime_helpers_are_lazy(self):
+        """Test runtime helper objects are created only when needed."""
+
+        def tool1(x: int) -> int:
+            """Tool 1."""
+            return x
+
+        library = ToolLibrary(name="my_lib", tools=[tool1])
+
+        assert library._handle is None
+        assert library._background_dispatcher is None
+        assert library._task_store is None
+        assert library._agent_inbox is None
+
+        library.get_tool_json_schemas()
+
+        assert library._handle is None
+        assert library._background_dispatcher is None
+
     def test_tool_library_add_tool(self):
         """Test adding a tool to library."""
 
@@ -511,6 +553,34 @@ class TestToolLibrary:
 
         assert "new_tool" in library.library
 
+    def test_build_call_parameters_for_response_omits_runtime_values(self):
+        parameters = build_call_parameters_for_response(
+            {
+                "query": "hello",
+                "vars": {"tenant": "acme"},
+                "messages": [{"role": "user", "content": "hello"}],
+                "handle": object(),
+                "tool_call_id": "call_1",
+                "run_in_background": True,
+            }
+        )
+
+        assert parameters == {"query": "hello"}
+        assert build_call_parameters_for_response(None) is None
+
+    def test_tool_library_skips_background_validation_for_regular_tool(self):
+        def regular_tool() -> str:
+            """Return a regular value."""
+            return "ok"
+
+        with patch.object(
+            ToolBackground, "validate_background_capabilities"
+        ) as validate:
+            library = ToolLibrary(name="test_library", tools=[regular_tool])
+
+        assert "regular_tool" in library.library
+        validate.assert_not_called()
+
     def test_tool_library_add_duplicate_raises_error(self):
         """Test that adding duplicate tool raises error."""
 
@@ -522,6 +592,24 @@ class TestToolLibrary:
 
         with pytest.raises(ValueError, match="already in tool library"):
             library.add(my_tool)
+
+    def test_background_task_tool_conflict_raises_error(self):
+        """Test that background task tools cannot overwrite user tools."""
+
+        def task_status(task_id: str) -> str:
+            """User-defined task status."""
+            return task_id
+
+        @mf.tool_config(background=True)
+        def background_tool() -> str:
+            """Run in the background."""
+            return "ok"
+
+        with pytest.raises(
+            ValueError,
+            match="background task tool `task_status` conflicts",
+        ):
+            ToolLibrary(name="lib", tools=[task_status, background_tool])
 
     def test_tool_library_add_already_tool_instance(self):
         """Test adding Tool instance directly."""
@@ -536,6 +624,18 @@ class TestToolLibrary:
 
         assert "my_func" in library.library
 
+    def test_tool_library_rejects_non_mapping_tool_params(self):
+        """Test that tool call params must be mappings."""
+
+        def my_tool(x: int) -> int:
+            """My tool."""
+            return x
+
+        library = ToolLibrary(name="lib", tools=[my_tool])
+
+        with pytest.raises(TypeError, match="parameters must be a mapping"):
+            library([("call_1", "my_tool", "not-a-mapping")])
+
     def test_tool_library_remove_tool(self):
         """Test removing a tool from library."""
 
@@ -548,8 +648,8 @@ class TestToolLibrary:
 
         assert "tool_to_remove" not in library.library
 
-    def test_tool_library_with_config(self):
-        """Test ToolLibrary stores tool configs."""
+    def test_tool_library_compiles_config_into_definition(self):
+        """Test ToolLibrary stores declarations in canonical definitions."""
 
         def my_tool(x: int) -> int:
             """Tool."""
@@ -558,8 +658,9 @@ class TestToolLibrary:
         my_tool.tool_config = {"return_direct": True}
         library = ToolLibrary(name="lib", tools=[my_tool])
 
-        assert "my_tool" in library.tool_configs
-        assert library.tool_configs["my_tool"]["return_direct"] is True
+        definition = library.get_tool_definition("my_tool")
+        assert definition.declaration["return_direct"] is True
+        assert definition.feedback.name == "direct"
 
     def test_tool_library_remove_nonexistent_raises_error(self):
         """Test that removing non-existent tool raises error."""
@@ -705,6 +806,613 @@ class TestToolLibrary:
         assert len(schemas) == 1
         assert isinstance(schemas[0], dict)
 
+    def test_tool_library_hides_deferred_tools_from_schemas(self):
+        """Test that deferred tools are hidden until loaded."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        names = library.get_tool_names()
+        schemas = library.get_tool_json_schemas()
+
+        assert "remote_lookup" in names
+        assert "tool_search" in names
+        assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
+        parameters = schemas[0]["function"]["parameters"]
+        properties = parameters["properties"]
+        assert properties["query"]["description"] == "Keywords used to find tools."
+        assert properties["select"]["description"] == (
+            "Exact tool names to load for the current thread."
+        )
+        assert parameters["required"] == [
+            "query",
+            "select",
+            "description",
+            "max_results",
+        ]
+        assert {"type": "null"} in properties["query"]["anyOf"]
+        assert {"type": "null"} in properties["max_results"]["anyOf"]
+        assert isinstance(library.library["tool_search"].impl, ToolLibraryOperator)
+        assert isinstance(library.library["tool_search"].impl, ToolBucket)
+        assert [
+            binding.source
+            for binding in library.get_tool_definition("tool_search").context.bindings
+        ] == ["handle", "messages"]
+        assert library.library["tool_search"].tool_config["tool_kind"] == "bucket"
+
+    def test_tool_search_is_not_captured_by_tool_search_bucket(self):
+        """Test tool_search stays registered even if a search bucket is added."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        class SearchBucket(ToolBucket):
+            name = "search_bucket"
+            capture = {"tool_kind": "bucket", "defer_loading": False}
+            description = "Capture search tools."
+            annotations = {"query": str, "return": str}
+
+            def __call__(self, query: str) -> str:
+                return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+        library.add(SearchBucket())
+
+        assert "tool_search" in library.library
+        assert library.library["search_bucket"].impl.tools == {}
+
+    def test_tool_bucket_captures_multiple_tool_kinds(self):
+        @mf.tool_config(tool_kind="catalog")
+        def find_product(query: str) -> str:
+            """Find a product."""
+            return query
+
+        @mf.tool_config(tool_kind="catalog")
+        def list_products() -> str:
+            """List products."""
+            return "products"
+
+        @mf.tool_config(tool_kind="orders")
+        def get_order(order_id: str) -> str:
+            """Get an order."""
+            return order_id
+
+        class CommerceBucket(ToolBucket):
+            """Group commerce tools."""
+
+            name = "commerce"
+            capture = {"tool_kind": "catalog|orders", "defer_loading": False}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "commerce"
+
+        bucket = CommerceBucket()
+        library = ToolLibrary(
+            name="lib",
+            tools=[find_product, list_products, get_order, bucket],
+        )
+
+        assert list(library.library) == ["commerce"]
+        assert set(bucket.tools) == {"find_product", "list_products", "get_order"}
+        assert library.get_tool_definition("commerce").kind == "bucket"
+        assert library.get_tool_definition("find_product").kind == "catalog"
+
+        with pytest.raises(ValueError, match="Duplicate tool name `find_product`"):
+            library.add(find_product)
+
+    def test_tool_bucket_handle_executes_captured_local_tool(self):
+        @mf.tool_config(tool_kind="catalog")
+        def find_product(query: str) -> str:
+            """Find a product."""
+            return f"match:{query}"
+
+        class CatalogBucket(ToolBucket, ToolLibraryOperator):
+            """Dispatch catalog operations."""
+
+            name = "catalog"
+            capture = {"tool_kind": "catalog", "defer_loading": False}
+            annotations = {
+                "name": str,
+                "query": str,
+                "handle": mf.Hidden,
+                "return": str,
+            }
+
+            def __call__(self, name: str, query: str, *, handle) -> str:
+                return handle(name, query=query)
+
+        library = ToolLibrary(name="lib", tools=[CatalogBucket(), find_product])
+        activity_recorder = Mock()
+
+        with execution_context(task_activity_recorder=activity_recorder):
+            response = library(
+                [
+                    (
+                        "call_1",
+                        "catalog",
+                        {"name": "find_product", "query": "SKU-1"},
+                    )
+                ]
+            )
+
+        assert response.tool_calls[0].result == "match:SKU-1"
+        activity_recorder.tool_call.assert_called_once_with(
+            "find_product",
+            {"query": "SKU-1"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_bucket_handle_async_executes_captured_tool(self):
+        async def find_product(query: str) -> str:
+            """Find a product."""
+            return f"match:{query}"
+
+        find_product.tool_config = dotdict({"tool_kind": "catalog"})
+
+        class CatalogBucket(ToolBucket, ToolLibraryOperator):
+            """Dispatch catalog operations."""
+
+            name = "catalog"
+            capture = {"tool_kind": "catalog", "defer_loading": False}
+            annotations = {
+                "name": str,
+                "query": str,
+                "handle": mf.Hidden,
+                "return": str,
+            }
+
+            async def acall(self, name: str, query: str, *, handle) -> str:
+                return await handle.acall(name, query=query)
+
+            def __call__(self, name: str, query: str, *, handle) -> str:
+                return handle(name, query=query)
+
+        library = ToolLibrary(name="lib", tools=[CatalogBucket(), find_product])
+
+        response = await library.acall(
+            [("call_1", "catalog", {"name": "find_product", "query": "SKU-1"})]
+        )
+
+        assert response.tool_calls[0].result == "match:SKU-1"
+
+    def test_tool_bucket_handle_preserves_non_agent_context_identity(self):
+        seen = {}
+
+        @mf.tool_config(
+            tool_kind="catalog",
+            runtime_inputs=["messages", "vars"],
+        )
+        def inspect_context(messages: list, vars: dict) -> str:
+            """Inspect the exact context objects received by a captured tool."""
+            seen["messages"] = messages
+            seen["vars"] = vars
+            return "ok"
+
+        class CatalogBucket(ToolBucket, ToolLibraryOperator):
+            """Dispatch catalog operations."""
+
+            name = "catalog"
+            capture = {"tool_kind": "catalog", "defer_loading": False}
+            annotations = {
+                "name": str,
+                "handle": mf.Hidden,
+                "return": str,
+            }
+
+            def __call__(self, name: str, *, handle) -> str:
+                return handle(name)
+
+        library = ToolLibrary(name="lib", tools=[CatalogBucket(), inspect_context])
+        messages = []
+        runtime_vars = {}
+
+        response = library(
+            [("call_1", "catalog", {"name": "inspect_context"})],
+            messages=messages,
+            vars=runtime_vars,
+        )
+
+        assert response.tool_calls[0].result == "ok"
+        assert seen["messages"] is messages
+        assert seen["vars"] is runtime_vars
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            "background",
+            "allow_background",
+            "detached",
+            "call_as_response",
+            "return_direct",
+            "handoff",
+        ],
+    )
+    def test_executable_tool_bucket_rejects_captured_model_loop_options(
+        self,
+        option,
+    ):
+        def catalog_tool() -> str:
+            """Run a catalog operation."""
+            return "ok"
+
+        catalog_tool.tool_config = {
+            "tool_kind": "catalog",
+            option: True,
+        }
+
+        class CatalogBucket(ToolBucket, ToolLibraryOperator):
+            """Dispatch catalog operations."""
+
+            name = "catalog"
+            capture = {"tool_kind": "catalog", "defer_loading": False}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "ok"
+
+        with pytest.raises(
+            ValueError,
+            match="Configure that behavior on the public bucket",
+        ):
+            ToolLibrary(name="lib", tools=[CatalogBucket(), catalog_tool])
+
+    def test_tool_search_keeps_deferred_tool_loop_options_as_catalog_metadata(self):
+        @mf.tool_config(defer_loading=True, return_direct=True)
+        def deferred_lookup() -> str:
+            """Run a deferred lookup."""
+            return "ok"
+
+        library = ToolLibrary(name="lib", tools=[deferred_lookup])
+
+        assert library.get_tool_names() == ["tool_search", "deferred_lookup"]
+
+    def test_tool_bucket_captures_background_tool_kinds(self):
+        @mf.tool_config(tool_kind="background")
+        def background_job() -> str:
+            """Run a background job."""
+            return "background"
+
+        @mf.tool_config(tool_kind="allow_background")
+        def optional_background_job() -> str:
+            """Run an optional background job."""
+            return "optional"
+
+        class BackgroundBucket(ToolBucket):
+            """Group background-capable tools."""
+
+            name = "background_jobs"
+            capture = {
+                "tool_kind": "background|allow_background",
+                "defer_loading": False,
+            }
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "background"
+
+        bucket = BackgroundBucket()
+        library = ToolLibrary(
+            name="lib",
+            tools=[background_job, optional_background_job, bucket],
+        )
+
+        assert list(library.library) == ["background_jobs"]
+        assert set(bucket.tools) == {"background_job", "optional_background_job"}
+
+    def test_tool_bucket_rejects_overlapping_capture_rules(self):
+        class FirstBucket(ToolBucket):
+            """Capture catalog tools."""
+
+            name = "first"
+            capture = {"tool_kind": "catalog|orders", "defer_loading": False}
+
+            def __call__(self) -> str:
+                return "first"
+
+        class SecondBucket(ToolBucket):
+            """Capture order tools."""
+
+            name = "second"
+            capture = {"tool_kind": "orders|billing", "defer_loading": False}
+
+            def __call__(self) -> str:
+                return "second"
+
+        with pytest.raises(ValueError, match=r"capture.*overlaps"):
+            ToolLibrary(name="lib", tools=[FirstBucket(), SecondBucket()])
+
+    def test_tool_bucket_rejects_empty_capture_tool_kind_segment(self):
+        class InvalidBucket(ToolBucket):
+            """Invalid bucket."""
+
+            name = "invalid"
+            capture = {"tool_kind": "catalog||orders"}
+
+            def __call__(self) -> str:
+                return "invalid"
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            ToolLibrary(name="lib", tools=[InvalidBucket()])
+
+    def test_tool_bucket_captures_generic_configuration(self):
+        class PreviewBucket(ToolBucket):
+            """Group preview tools."""
+
+            name = "preview"
+            capture = {"preview": True}
+            annotations = {"return": str}
+
+            def __call__(self) -> str:
+                return "preview"
+
+        def render_preview() -> str:
+            """Render a preview."""
+            return "preview"
+
+        render_preview.tool_config = {"preview": True}
+        bucket = PreviewBucket()
+        library = ToolLibrary(name="lib", tools=[render_preview, bucket])
+
+        assert list(library.library) == ["preview"]
+        assert set(bucket.tools) == {"render_preview"}
+
+    def test_tool_library_operator_injects_handle_by_default(self):
+        """Test operator tools inherit handle injection."""
+
+        class RuntimeEchoTool(ToolLibraryOperator):
+            name = "runtime_echo"
+            tool_kind = "diagnostic"
+            description = "List the current tool names."
+            annotations = {"handle": mf.Hidden, "return": str}
+
+            def __call__(self, handle):
+                return ",".join(handle.list_tools())
+
+        library = ToolLibrary(name="lib", tools=[RuntimeEchoTool()])
+        schema = next(
+            item
+            for item in library.get_tool_json_schemas()
+            if item["function"]["name"] == "runtime_echo"
+        )
+        result = library([("call_1", "runtime_echo", {})])
+
+        assert "handle" not in schema["function"]["parameters"].get("properties", {})
+        assert result.tool_calls[0].result == "runtime_echo"
+        assert [
+            binding.source
+            for binding in library.get_tool_definition("runtime_echo").context.bindings
+        ] == ["handle"]
+        assert library.library["runtime_echo"].tool_config["tool_kind"] == "diagnostic"
+
+    def test_tool_search_captures_deferred_operator_tools(self):
+        """Test deferred operators use the same ToolSearch bucket."""
+
+        class DeferredOperator(ToolLibraryOperator):
+            name = "deferred_operator"
+            description = "List the currently registered tools."
+            annotations = {"handle": mf.Hidden, "return": list[str]}
+            tool_config = {"inject_handle": True, "defer_loading": True}
+
+            def __call__(self, handle) -> list[str]:
+                return handle.list_tools()
+
+        library = ToolLibrary(name="lib", tools=[DeferredOperator()])
+
+        assert [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ] == ["tool_search"]
+
+        library([("call_1", "tool_search", {"select": ["deferred_operator"]})])
+        response = library([("call_2", "deferred_operator", {})])
+
+        assert "deferred_operator" in response.tool_calls[0].result
+
+    def test_tool_search_has_default_usage_guidance(self):
+        """Test tool_search exposes default guidance when deferred tools exist."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        guidance = library.get_tool_usage_guidance()
+
+        assert guidance == [
+            {
+                "name": "tool_search",
+                "display_name": "Tool Search",
+                "guidance": (
+                    "Search first; activate an exact match with `select` before "
+                    "calling it."
+                ),
+            }
+        ]
+
+    def test_tool_search_returns_matching_deferred_tools_without_loading(self):
+        """Test that keyword search describes matches without exposing them."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        result = (
+            library(
+                [
+                    (
+                        "call_1",
+                        "tool_search",
+                        {"query": "remote lookup", "description": True},
+                    )
+                ]
+            )
+            .tool_calls[0]
+            .result
+        )
+        schemas = library.get_tool_json_schemas()
+        schema_names = [schema["function"]["name"] for schema in schemas]
+
+        assert result["matches"] == ["remote_lookup"]
+        assert result["loaded"] == []
+        assert result["descriptions"][0]["name"] == "remote_lookup"
+        assert "already_loaded" not in result
+        assert "tool_search" in schema_names
+        assert "remote_lookup" not in schema_names
+
+    def test_tool_search_select_supports_explicit_and_legacy_names(self):
+        """Test that tool_search supports explicit selection and legacy syntax."""
+
+        @mf.tool_config(defer_loading=True)
+        def read_cloud_file(path: str) -> str:
+            """Read a cloud file."""
+            return path
+
+        @mf.tool_config(defer_loading=True)
+        def read_legacy_file(path: str) -> str:
+            """Read a legacy file."""
+            return path
+
+        library = ToolLibrary(
+            name="lib",
+            tools=[read_cloud_file, read_legacy_file],
+        )
+
+        explicit_result = (
+            library([("call_1", "tool_search", {"select": ["read_cloud_file"]})])
+            .tool_calls[0]
+            .result
+        )
+        legacy_result = (
+            library([("call_2", "tool_search", {"query": "select:read_legacy_file"})])
+            .tool_calls[0]
+            .result
+        )
+
+        assert explicit_result["matches"] == ["read_cloud_file"]
+        assert explicit_result["loaded"] == ["read_cloud_file"]
+        assert legacy_result["matches"] == ["read_legacy_file"]
+        assert legacy_result["loaded"] == ["read_legacy_file"]
+
+    def test_tool_search_loading_is_isolated_by_thread(self):
+        """Loading a deferred tool must not change another thread's catalog."""
+
+        @mf.tool_config(defer_loading=True)
+        def lookup(query: str) -> str:
+            """Look up a catalog item."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[lookup])
+        first = ChatMessages(thread_id="thread_a")
+        second = ChatMessages(thread_id="thread_b")
+
+        response = library(
+            [("call_1", "tool_search", {"select": ["lookup"]})],
+            messages=first,
+        )
+
+        assert response.tool_calls[0].result["loaded"] == ["lookup"]
+        assert first.get_loaded_tools(library.name) == {"lookup"}
+        assert second.get_loaded_tools(library.name) == set()
+        assert [
+            tool.name for tool in library.get_tool_catalog(first).portable_tools()
+        ] == ["lookup"]
+        assert [
+            tool.name for tool in library.get_tool_catalog(second).portable_tools()
+        ] == ["tool_search"]
+        assert "lookup" not in library.library
+
+    def test_tool_search_is_removed_when_last_deferred_tool_is_removed(self):
+        """Test runtime tool cleanup when deferred tools disappear."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        assert "tool_search" in library.get_tool_names()
+
+        library.remove("remote_lookup")
+
+        assert "tool_search" not in library.get_tool_names()
+
+    def test_tool_search_cannot_be_removed_while_deferred_tools_remain(self):
+        """Test Tool Search retains its captured deferred tools."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        library = ToolLibrary(name="lib", tools=[remote_lookup])
+
+        with pytest.raises(ValueError, match="still captures tools"):
+            library.remove("tool_search")
+
+        assert "tool_search" in library.library
+
+    def test_injected_handle_can_add_deferred_tool(self):
+        """Test that an injected handle can register deferred tools."""
+
+        @mf.tool_config(defer_loading=True)
+        def remote_lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        @mf.tool_config(runtime_inputs=["handle"])
+        def enable_remote_lookup(
+            handle: mf.Hidden,
+        ) -> list[str]:
+            """Register a deferred tool."""
+            handle.add(remote_lookup)
+            return handle.list_tools()
+
+        library = ToolLibrary(name="lib", tools=[enable_remote_lookup])
+
+        add_result = (
+            library([("call_1", "enable_remote_lookup", {})]).tool_calls[0].result
+        )
+        schema_names = [
+            schema["function"]["name"] for schema in library.get_tool_json_schemas()
+        ]
+
+        assert "remote_lookup" in add_result
+        assert "tool_search" in add_result
+        assert "tool_search" in schema_names
+        assert "remote_lookup" not in schema_names
+
+    def test_injected_handle_add_returns_normalized_tool_name(self):
+        """Test that ToolLibraryHandle.add returns the registered tool name."""
+
+        @mf.tool_config(name_override="remote_lookup")
+        def lookup(query: str) -> str:
+            """Look up external information."""
+            return query
+
+        @mf.tool_config(runtime_inputs=["handle"])
+        def enable_lookup(handle: mf.Hidden) -> str:
+            """Register a tool."""
+            return handle.add(lookup)
+
+        library = ToolLibrary(name="lib", tools=[enable_lookup])
+
+        result = library([("call_1", "enable_lookup", {})]).tool_calls[0].result
+
+        assert result == "remote_lookup"
+        assert "remote_lookup" in library.get_tool_names()
+
     def test_tool_library_forward_basic(self):
         """Test ToolLibrary forward execution."""
 
@@ -772,6 +1480,44 @@ class TestToolLibrary:
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0].result == 30
 
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_activity_recorder_uses_response_parameters(
+        self,
+    ):
+        """Test async activity recording excludes hidden parameters."""
+        task_store = InMemoryTaskStore()
+        task = task_store.create(
+            "worker",
+            task_id="task_async_activity_sanitized",
+            metadata={"task_kind": "agent"},
+        )
+
+        async def hidden_tool(name: str, secret: mf.Hidden[str] = "safe") -> str:
+            """Hide a parameter from model-facing responses."""
+            return f"{name}:{secret}"
+
+        library = ToolLibrary(name="lib", tools=[hidden_tool])
+
+        with execution_context(
+            task_activity_recorder=TaskActivityRecorder(task.task_id, task_store)
+        ):
+            result = await library.aforward(
+                [
+                    (
+                        "call_1",
+                        "hidden_tool",
+                        {"name": "lookup", "secret": "model"},
+                    )
+                ]
+            )
+
+        assert result.tool_calls[0].result == "lookup:safe"
+        assert result.tool_calls[0].parameters == {"name": "lookup"}
+        assert _activity_summaries(task_store, task.task_id) == [
+            "Task queued.",
+            "hidden_tool({'name': 'lookup'})",
+        ]
+
     def test_tool_library_with_inject_vars_list(self):
         """Test ToolLibrary with inject_vars as list."""
 
@@ -820,6 +1566,78 @@ class TestToolLibrary:
 
         with pytest.raises(ValueError, match="requires the injected parameter"):
             library(tool_callings, vars={})
+
+    def test_tool_library_activity_recorder_uses_response_parameters(self):
+        """Test activity recording excludes hidden and runtime parameters."""
+        task_store = InMemoryTaskStore()
+        task = task_store.create(
+            "worker",
+            task_id="task_activity_sanitized",
+            metadata={"task_kind": "agent"},
+        )
+
+        @mf.tool_config(allow_background=True)
+        def hidden_tool(name: str, secret: mf.Hidden[str] = "safe") -> str:
+            """Hide a parameter from model-facing responses."""
+            return f"{name}:{secret}"
+
+        library = ToolLibrary(name="lib", tools=[hidden_tool])
+
+        with execution_context(
+            task_activity_recorder=TaskActivityRecorder(task.task_id, task_store)
+        ):
+            result = library(
+                [
+                    (
+                        "call_1",
+                        "hidden_tool",
+                        {
+                            "name": "lookup",
+                            "secret": "model",
+                            "run_in_background": False,
+                        },
+                    )
+                ]
+            )
+
+        assert result.tool_calls[0].result == "lookup:safe"
+        assert result.tool_calls[0].parameters == {"name": "lookup"}
+        assert _activity_summaries(task_store, task.task_id) == [
+            "Task queued.",
+            "hidden_tool({'name': 'lookup'})",
+        ]
+
+    def test_tool_library_activity_recorder_waits_for_prepared_params(self):
+        """Test invalid prepared parameters do not create a tool-call activity."""
+        task_store = InMemoryTaskStore()
+        task = task_store.create(
+            "worker",
+            task_id="task_activity_validation_error",
+            metadata={"task_kind": "agent"},
+        )
+
+        @mf.tool_config(
+            runtime_inputs=[
+                ContextBinding(
+                    source="vars",
+                    parameter="required",
+                    options={"key": "required"},
+                )
+            ]
+        )
+        def tool_needs_var(a: int, required: str) -> str:
+            """Tool needs var."""
+            return f"{a}-{required}"
+
+        library = ToolLibrary(name="lib", tools=[tool_needs_var])
+
+        with pytest.raises(ValueError, match="requires the injected parameter"):
+            with execution_context(
+                task_activity_recorder=TaskActivityRecorder(task.task_id, task_store)
+            ):
+                library([("call_1", "tool_needs_var", {"a": 5})], vars={})
+
+        assert _activity_summaries(task_store, task.task_id) == ["Task queued."]
 
     def test_tool_library_with_return_direct(self):
         """Test ToolLibrary with return_direct config."""
@@ -901,17 +1719,16 @@ class TestToolLibrary:
             messages[0]["content"] = "changed"
             return str(len(messages))
 
-        stateful_tool.tool_config = {"inject_messages": True}
+        stateful_tool.tool_config = {
+            "inject_messages": True,
+            "tool_kind": "agent",
+        }
         library = ToolLibrary(name="lib", tools=[stateful_tool])
 
         original_messages = [{"role": "user", "content": "hello"}]
         tool_callings = [("call_1", "stateful_tool", {})]
 
-        with patch(
-            "msgflux.nn.modules.tool._should_copy_injected_messages",
-            return_value=True,
-        ):
-            result = library(tool_callings, messages=original_messages)
+        result = library(tool_callings, messages=original_messages)
 
         assert result.tool_calls[0].result == "2"
         assert original_messages == [{"role": "user", "content": "hello"}]
@@ -926,9 +1743,7 @@ class TestToolLibrary:
 
         local_tool = _convert_module_to_nn_tool(agent)
 
-        assert (
-            _should_copy_injected_messages(local_tool, local_tool.tool_config) is True
-        )
+        assert should_copy_injected_messages(local_tool, local_tool.tool_config) is True
 
     def test_tool_library_with_inject_message(self):
         """Test ToolLibrary with inject_message config."""
@@ -946,6 +1761,44 @@ class TestToolLibrary:
         result = library(tool_callings, message=message)
 
         assert result.tool_calls[0].result == "5-value"
+
+    def test_tool_library_with_inject_handle(self):
+        """Test ToolLibrary with inject_handle config."""
+
+        @mf.tool_config(runtime_inputs=["handle"])
+        def runtime_tool(handle: mf.Hidden) -> str:
+            """Tool that uses the runtime handle."""
+            return ",".join(handle.list_tools())
+
+        library = ToolLibrary(name="lib", tools=[runtime_tool])
+        schema = next(
+            item
+            for item in library.get_tool_json_schemas()
+            if item["function"]["name"] == "runtime_tool"
+        )
+
+        result = library([("call_1", "runtime_tool", {})])
+
+        assert "handle" not in schema["function"]["parameters"].get("properties", {})
+        assert "runtime_tool" in result.tool_calls[0].result
+
+    def test_tool_library_tool_library_parameter_is_not_injected(self):
+        """Test tool_library is a normal parameter, not a runtime alias."""
+
+        def echo_tool_library(tool_library: str) -> str:
+            """Echo the provided value."""
+            return tool_library
+
+        library = ToolLibrary(name="lib", tools=[echo_tool_library])
+        schemas = library.get_tool_json_schemas()
+        props = schemas[0]["function"]["parameters"].get("properties", {})
+        result = library(
+            [("call_1", "echo_tool_library", {"tool_library": "explicit"})]
+        )
+
+        assert "tool_library" in props
+        assert result.tool_calls[0].parameters == {"tool_library": "explicit"}
+        assert result.tool_calls[0].result == "explicit"
 
     def test_tool_library_with_disable_input_ignores_model_params(self):
         """Test ToolLibrary ignores model-supplied params when input is disabled."""
@@ -1053,13 +1906,13 @@ class TestToolLibrary:
 
     @pytest.mark.asyncio
     async def test_tool_library_aforward_spawn(self):
-        """Test async ToolLibrary spawn execution."""
+        """Test async ToolLibrary detached execution."""
 
         async def async_tool(x: int) -> int:
-            """Spawn async tool."""
+            """Run an async tool in detached mode."""
             return x * 2
 
-        async_tool.tool_config = {"spawn": True}
+        async_tool.tool_config = {"detached": True}
         library = ToolLibrary(name="lib", tools=[async_tool])
 
         tool_callings = [("call_1", "async_tool", {"x": 10})]
@@ -1138,17 +1991,16 @@ class TestToolLibrary:
             messages[0]["content"] = "changed"
             return str(len(messages))
 
-        async_tool.tool_config = {"inject_messages": True}
+        async_tool.tool_config = {
+            "inject_messages": True,
+            "tool_kind": "agent",
+        }
         library = ToolLibrary(name="lib", tools=[async_tool])
 
         original_messages = [{"role": "user", "content": "hello"}]
         tool_callings = [("call_1", "async_tool", {})]
 
-        with patch(
-            "msgflux.nn.modules.tool._should_copy_injected_messages",
-            return_value=True,
-        ):
-            result = await library.aforward(tool_callings, messages=original_messages)
+        result = await library.aforward(tool_callings, messages=original_messages)
 
         assert result.tool_calls[0].result == "2"
         assert original_messages == [{"role": "user", "content": "hello"}]
@@ -1168,6 +2020,22 @@ class TestToolLibrary:
         result = await library.aforward(tool_callings, message={"key": "state_value"})
 
         assert "8-state_value" in result.tool_calls[0].result
+
+    @pytest.mark.asyncio
+    async def test_tool_library_aforward_inject_handle(self):
+        """Test async ToolLibrary inject_handle."""
+
+        async def async_tool(handle: mf.Hidden) -> str:
+            """Tool with runtime handle."""
+            return ",".join(handle.list_tools())
+
+        async_tool.tool_config = {"inject_handle": True}
+        library = ToolLibrary(name="lib", tools=[async_tool])
+
+        tool_callings = [("call_1", "async_tool", {})]
+        result = await library.aforward(tool_callings)
+
+        assert "async_tool" in result.tool_calls[0].result
 
     @pytest.mark.asyncio
     async def test_tool_library_aforward_disable_input_ignores_model_params(self):
@@ -1190,13 +2058,13 @@ class TestToolLibrary:
         assert "x" not in result.tool_calls[0].parameters
 
     def test_tool_library_forward_spawn(self):
-        """Test ToolLibrary spawn execution in sync mode."""
+        """Test ToolLibrary detached execution in sync mode."""
 
         def sync_tool(x: int) -> int:
-            """Spawn sync tool."""
+            """Run a sync tool in detached mode."""
             return x * 4
 
-        sync_tool.tool_config = {"spawn": True}
+        sync_tool.tool_config = {"detached": True}
         library = ToolLibrary(name="lib", tools=[sync_tool])
 
         tool_callings = [("call_1", "sync_tool", {"x": 5})]
@@ -1218,8 +2086,10 @@ class TestToolLibrary:
         ]
 
         with (
-            patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class,
-            patch("msgflux.nn.modules.tool.F.wait_for") as mock_wait_for,
+            patch(
+                "msgflux.nn.extensions.tool_library.MCPClient"
+            ) as mock_mcp_client_class,
+            patch("msgflux.nn.extensions.tool_library.F.wait_for") as mock_wait_for,
         ):
             mock_client = Mock()
             mock_tool_info = Mock()
@@ -1248,8 +2118,10 @@ class TestToolLibrary:
         ]
 
         with (
-            patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class,
-            patch("msgflux.nn.modules.tool.F.wait_for") as mock_wait_for,
+            patch(
+                "msgflux.nn.extensions.tool_library.MCPClient"
+            ) as mock_mcp_client_class,
+            patch("msgflux.nn.extensions.tool_library.F.wait_for") as mock_wait_for,
         ):
             mock_client = Mock()
             mock_tool_info = Mock()
@@ -1275,7 +2147,7 @@ class TestToolLibrary:
             }
         ]
 
-        with patch("msgflux.nn.modules.tool.MCPClient"):
+        with patch("msgflux.nn.extensions.tool_library.MCPClient"):
             with pytest.raises(ValueError, match="Unknown transport type"):
                 ToolLibrary(name="lib", tools=[], mcp_servers=mcp_servers)
 
@@ -1303,7 +2175,9 @@ class TestToolLibrary:
             }
         ]
 
-        with patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class:
+        with patch(
+            "msgflux.nn.extensions.tool_library.MCPClient"
+        ) as mock_mcp_client_class:
             mock_client = Mock()
             mock_tool1 = Mock()
             mock_tool1.name = "tool1"
@@ -1313,7 +2187,9 @@ class TestToolLibrary:
             mock_client.list_tools = AsyncMock(return_value=[mock_tool1])
             mock_mcp_client_class.from_stdio.return_value = mock_client
 
-            with patch("msgflux.nn.modules.tool.filter_tools") as mock_filter:
+            with patch(
+                "msgflux.nn.extensions.tool_library.filter_tools"
+            ) as mock_filter:
                 mock_filter.return_value = [mock_tool1]
 
                 library = ToolLibrary(name="lib", tools=[], mcp_servers=mcp_servers)
@@ -1331,7 +2207,9 @@ class TestToolLibrary:
             }
         ]
 
-        with patch("msgflux.nn.modules.tool.MCPClient") as mock_mcp_client_class:
+        with patch(
+            "msgflux.nn.extensions.tool_library.MCPClient"
+        ) as mock_mcp_client_class:
             mock_client = Mock()
             mock_client.connect = AsyncMock(side_effect=Exception("Connection failed"))
             mock_mcp_client_class.from_stdio.return_value = mock_client
@@ -1403,6 +2281,68 @@ class TestMCPTool:
 
         assert tool.tool_config["timeout"] == 30
 
+    def test_tool_bucket_handle_preserves_mcp_proxy_execution(self):
+        class MockClient:
+            def __init__(self):
+                self.calls = []
+
+            async def call_tool(self, name, arguments):
+                self.calls.append((name, arguments))
+                return mock_result
+
+        mock_result = Mock()
+        mock_result.isError = False
+        mock_client = MockClient()
+        mock_info = Mock(
+            name="search",
+            description="Search the remote catalog.",
+            inputSchema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
+        )
+        remote_tool = MCPTool(
+            name="search",
+            mcp_client=mock_client,
+            mcp_tool_info=mock_info,
+            namespace="catalog",
+            config={"tool_kind": "catalog"},
+        )
+
+        class CatalogBucket(ToolBucket, ToolLibraryOperator):
+            """Dispatch remote catalog operations."""
+
+            name = "catalog"
+            capture = {"tool_kind": "catalog"}
+            annotations = {
+                "name": str,
+                "query": str,
+                "handle": mf.Hidden,
+                "return": str,
+            }
+
+            def __call__(self, name: str, query: str, *, handle) -> str:
+                return handle(name, query=query)
+
+        library = ToolLibrary(name="lib", tools=[CatalogBucket(), remote_tool])
+
+        with patch(
+            "msgflux.nn.modules.tool.implementations.extract_tool_result_text",
+            return_value="remote match",
+        ):
+            response = library(
+                [
+                    (
+                        "call_1",
+                        "catalog",
+                        {"name": "catalog__search", "query": "SKU-1"},
+                    )
+                ]
+            )
+
+        assert response.tool_calls[0].result == "remote match"
+        assert mock_client.calls == [("search", {"query": "SKU-1"})]
+
     def test_mcp_tool_display_name_and_usage_guidance_are_not_duplicated(self):
         """Test MCP metadata is read from library tools without duplicate entries."""
         mock_client = Mock()
@@ -1421,8 +2361,7 @@ class TestMCPTool:
                 "usage_guidance": "Use for documentation questions.",
             },
         )
-        library = ToolLibrary(name="lib", tools=[])
-        library.library[tool.name] = tool
+        library = ToolLibrary(name="lib", tools=[tool])
         library.mcp_clients["docs"] = {
             "client": mock_client,
             "tools": [mock_info],
@@ -1458,8 +2397,7 @@ class TestMCPTool:
             namespace="docs",
             config={"display_name": None},
         )
-        library = ToolLibrary(name="lib", tools=[])
-        library.library[tool.name] = tool
+        library = ToolLibrary(name="lib", tools=[tool])
 
         assert tool.display_name == "docs__edit"
         assert library.get_tool_display_names() == {"docs__edit": "docs__edit"}
@@ -1467,8 +2405,12 @@ class TestMCPTool:
     def test_mcp_tool_forward_success(self):
         """Test MCPTool forward execution with success."""
         with (
-            patch("msgflux.nn.modules.tool.F.wait_for") as mock_wait_for,
-            patch("msgflux.nn.modules.tool.extract_tool_result_text") as mock_extract,
+            patch(
+                "msgflux.nn.modules.tool.implementations.F.wait_for"
+            ) as mock_wait_for,
+            patch(
+                "msgflux.nn.modules.tool.implementations.extract_tool_result_text"
+            ) as mock_extract,
         ):
             mock_client = Mock()
             mock_info = Mock()
@@ -1495,8 +2437,12 @@ class TestMCPTool:
     def test_mcp_tool_forward_error(self):
         """Test MCPTool forward execution with error."""
         with (
-            patch("msgflux.nn.modules.tool.F.wait_for") as mock_wait_for,
-            patch("msgflux.nn.modules.tool.extract_tool_result_text") as mock_extract,
+            patch(
+                "msgflux.nn.modules.tool.implementations.F.wait_for"
+            ) as mock_wait_for,
+            patch(
+                "msgflux.nn.modules.tool.implementations.extract_tool_result_text"
+            ) as mock_extract,
         ):
             mock_client = Mock()
             mock_info = Mock()
@@ -1522,7 +2468,9 @@ class TestMCPTool:
     @pytest.mark.asyncio
     async def test_mcp_tool_aforward_success(self):
         """Test MCPTool aforward execution with success."""
-        with patch("msgflux.nn.modules.tool.extract_tool_result_text") as mock_extract:
+        with patch(
+            "msgflux.nn.modules.tool.implementations.extract_tool_result_text"
+        ) as mock_extract:
             mock_client = Mock()
             mock_info = Mock()
             mock_info.description = "Test tool"
@@ -1547,7 +2495,9 @@ class TestMCPTool:
     @pytest.mark.asyncio
     async def test_mcp_tool_aforward_error(self):
         """Test MCPTool aforward execution with error."""
-        with patch("msgflux.nn.modules.tool.extract_tool_result_text") as mock_extract:
+        with patch(
+            "msgflux.nn.modules.tool.implementations.extract_tool_result_text"
+        ) as mock_extract:
             mock_client = Mock()
             mock_info = Mock()
             mock_info.description = "Test tool"

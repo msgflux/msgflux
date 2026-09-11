@@ -595,7 +595,7 @@ class VisitAssistant(nn.Agent):
         validate_report, submit_report, get_report
     ]
     response_mode = "response"
-    config        = {"include_date": True}
+    extensions    = [nn.CurrentDateExtension()]
 ```
 
 !!! note "Template context"
@@ -1186,7 +1186,8 @@ class VisitReportAssistant(nn.Module):
         }
         tools         = [QueryEntity, activate_report, fill_fields, validate_report, submit_report, get_report]
         response_mode = "response"
-        config        = {"verbose": True, "include_date": True}
+        extensions    = [nn.CurrentDateExtension()]
+        config        = {"verbose": True}
 
 
     class VisitReportAssistant(nn.Module):

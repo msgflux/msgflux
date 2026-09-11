@@ -230,17 +230,17 @@ class TestWaitFor:
             F.wait_for("not_callable", 1)
 
 
-class TestSpawn:
-    """Test suite for spawn function."""
+class TestDetached:
+    """Test suite for detached function."""
 
-    def test_spawn_basic(self):
-        """Test basic spawn functionality."""
+    def test_detached_basic(self):
+        """Test basic detached functionality."""
         results = []
 
         def append_value(value):
             results.append(value)
 
-        F.spawn(append_value, 42)
+        F.detached(append_value, 42)
         # Give it a moment to execute
         import time
 
@@ -248,10 +248,10 @@ class TestSpawn:
 
         assert 42 in results
 
-    def test_spawn_not_callable(self):
-        """Test spawn raises TypeError for non-callable."""
+    def test_detached_not_callable(self):
+        """Test detached raises TypeError for non-callable."""
         with pytest.raises(TypeError, match="`to_send` must be a callable"):
-            F.spawn("not_callable")
+            F.detached("not_callable")
 
 
 class TestWaitForEvent:
@@ -345,24 +345,24 @@ class TestAsyncFunctions:
             await F.await_for_event("not_event")
 
     @pytest.mark.asyncio
-    async def test_aspawn_basic(self):
-        """Test basic aspawn functionality."""
+    async def test_adetached_basic(self):
+        """Test basic adetached functionality."""
         results = []
 
         async def append_value(value):
             results.append(value)
 
-        await F.aspawn(append_value, 99)
+        await F.adetached(append_value, 99)
         # Give it a moment to execute
         await asyncio.sleep(0.1)
 
         assert 99 in results
 
     @pytest.mark.asyncio
-    async def test_aspawn_not_callable(self):
-        """Test aspawn raises TypeError for non-callable."""
+    async def test_adetached_not_callable(self):
+        """Test adetached raises TypeError for non-callable."""
         with pytest.raises(TypeError, match="`to_send` must be a callable"):
-            await F.aspawn("not_callable")
+            await F.adetached("not_callable")
 
 
 class FakeModule:
@@ -384,7 +384,7 @@ class FakeModule:
 
 
 class TestAcallRouting:
-    """Verify that all async gather/spawn helpers resolve .acall when present."""
+    """Verify that async gather/detached helpers resolve .acall when present."""
 
     @pytest.mark.asyncio
     async def test_amap_gather_uses_acall(self):
@@ -464,25 +464,25 @@ class TestAcallRouting:
         assert results == (9, 27)
 
     @pytest.mark.asyncio
-    async def test_aspawn_uses_acall(self):
-        """aspawn must fire .acall when the callable has it."""
-        mod = FakeModule(return_value="spawned")
+    async def test_adetached_uses_acall(self):
+        """adetached must use .acall when the callable has it."""
+        mod = FakeModule(return_value="detached")
 
-        await F.aspawn(mod, "arg1")
+        await F.adetached(mod, "arg1")
         await asyncio.sleep(0.05)
 
         assert len(mod.acall_calls) == 1
         assert mod.acall_calls[0] == (("arg1",), {})
 
     @pytest.mark.asyncio
-    async def test_aspawn_plain_coroutine_unchanged(self):
-        """Plain async functions without acall must still work in aspawn."""
+    async def test_adetached_plain_coroutine_unchanged(self):
+        """Plain async functions without acall must still work in adetached."""
         results = []
 
         async def collect(value):
             results.append(value)
 
-        await F.aspawn(collect, "hello")
+        await F.adetached(collect, "hello")
         await asyncio.sleep(0.05)
 
         assert results == ["hello"]

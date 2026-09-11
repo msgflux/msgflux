@@ -1,6 +1,6 @@
 from os import getenv
 
-from msgflux.models.providers.openai import OpenAIChatCompletion
+from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.registry import register_model
 
 
@@ -26,5 +26,5 @@ class _BaseCerebras:
 
 
 @register_model
-class CerebrasChatCompletion(_BaseCerebras, OpenAIChatCompletion):
+class CerebrasChatCompletion(_BaseCerebras, OpenAICompatibleChatCompletion):
     """Cerebras Chat Completion."""

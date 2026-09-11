@@ -2,10 +2,7 @@ import asyncio
 from os import getenv
 from typing import Any, List, Mapping, Optional
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
+import httpx2
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
@@ -79,8 +76,6 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        self._ensure_httpx()
-
         self.engine = engine or "google"
         self.location = location
         self.gl = gl
@@ -88,13 +83,6 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         self.safe = safe
         self.tbm = tbm
         self.api_key = self._get_api_key()
-
-    def _ensure_httpx(self) -> None:
-        if httpx is None:
-            raise ImportError(
-                "The 'httpx' package is not installed. "
-                "Please install it via pip: pip install httpx"
-            )
 
     def _get_api_key(self) -> str:
         for env_name in API_KEY_ENV_NAMES:
@@ -183,7 +171,7 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         """Internal method to search SerpAPI for a single query."""
         try:
             params = self._build_search_params(query, top_k)
-            with httpx.Client() as client:
+            with httpx2.Client() as client:
                 response = client.get(SERPAPI_SEARCH_URL, params=params)
                 response.raise_for_status()
                 data = response.json()
@@ -197,7 +185,7 @@ class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         """Async internal method to search SerpAPI for a single query."""
         try:
             params = self._build_search_params(query, top_k)
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.get(SERPAPI_SEARCH_URL, params=params)
                 response.raise_for_status()
                 data = response.json()

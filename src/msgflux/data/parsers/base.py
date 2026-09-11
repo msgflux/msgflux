@@ -3,10 +3,7 @@ import pathlib
 from io import BytesIO
 from typing import Dict, Mapping, Union
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
+import httpx2
 
 from msgflux._private.client import BaseClient
 
@@ -83,12 +80,7 @@ class BaseParser(BaseClient):
         if isinstance(data, str):
             # Check if it's a URL
             if data.startswith(("http://", "https://")):
-                if httpx is None:
-                    raise ImportError(
-                        "`httpx` is required to load files from URLs. "
-                        "Install with `pip install httpx`"
-                    )
-                response = httpx.get(data)
+                response = httpx2.get(data)
                 response.raise_for_status()
                 return response.content
 

@@ -1,19 +1,10 @@
 # Agent Skills
 
-Agent Skills are folders with a `SKILL.md` file that package reusable
-instructions, workflows, scripts, references, and assets for agents.
+`SkillsExtension` discovers reusable `SKILL.md` workflows and exposes them with
+progressive disclosure. The model initially sees names and descriptions; it
+loads full instructions only when it calls `skill(name)`.
 
-msgFlux follows the Agent Skills progressive disclosure model:
-
-1. At startup, the agent discovers skill `name` and `description`.
-2. The system prompt receives a compact skill catalog through the `agent_skills`
-   template field.
-3. Optionally, selected skills can be preloaded into the system prompt with
-   `skills={"load": ...}`.
-4. When the model decides a non-loaded skill is relevant, it calls
-   `activate_skill(name)` to load the full `SKILL.md` body.
-
-## Skill Directory
+## Create A Skill
 
 A skill is a directory containing `SKILL.md`:
 
@@ -26,12 +17,10 @@ code-review/
     └── inspect.py
 ```
 
-Minimal `SKILL.md`:
-
 ```markdown
 ---
 name: code-review
-description: Review code changes for bugs, regressions, and missing tests.
+description: Review changes for bugs, regressions, and missing tests.
 ---
 
 # Code Review
@@ -39,206 +28,82 @@ description: Review code changes for bugs, regressions, and missing tests.
 Inspect correctness first, then tests and edge cases.
 ```
 
-The required fields are:
+`name` must use lowercase letters, numbers, and single hyphens and is limited
+to 64 characters. `description` is required and limited to 1024 characters.
+The optional `license`, `compatibility`, and `metadata` fields are retained.
 
-- `name`: stable skill name. Maximum 64 characters. Use lowercase letters,
-  numbers, and single hyphens. It cannot start or end with a hyphen.
-- `description`: what the skill does and when to use it. Required, non-empty,
-  maximum 1024 characters.
+Set `include_in_prompt: false` in the frontmatter when a skill should remain
+discoverable but its name and description should be omitted from the initial
+prompt.
 
-Optional fields such as `license`, `compatibility`, and `metadata` are parsed
-and stored by the runtime.
-
-Optional frontmatter fields:
-
-- `license`: license name or reference to a bundled license file.
-- `compatibility`: environment requirements such as intended product, system
-  packages, or network access. Maximum 500 characters.
-- `metadata`: arbitrary key-value mapping for additional metadata.
-
-Skill catalog field:
-
-- `catalog`: include the skill in the initial system prompt catalog. Defaults
-  to `true`. Set `catalog: false` to keep it out of the prompt and make it
-  available through `skill_search`.
-
-## Skill Config
-
-Pass skill configuration as a dict:
+## Install Skills
 
 ```python
 import msgflux as mf
 import msgflux.nn as nn
 
 agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={"paths": ".agents/skills"},
+    name="developer",
+    model=mf.Model.chat_completion("openai/gpt-5.6-luna"),
+    extensions=[
+        mf.SkillsExtension(
+            {
+                "paths": [".agents/skills", ".codex/skills"],
+                "catalog_limit": 20,
+                "search_top_k": 5,
+            }
+        )
+    ],
 )
 ```
 
-Pass multiple directories or glob patterns through `paths`:
+msgFlux does not scan conventional directories implicitly. Pass explicit paths
+or opt in with `mf.default_skill_paths()`.
+
+`skills={...}` on `Agent` remains a silent compatibility alias for
+`extensions=[SkillsExtension(...)]` while the extension API stabilizes. New
+code should use the extension directly.
+
+## Configuration
+
+| Key | Behavior |
+| --- | --- |
+| `paths` | A directory, `SKILL.md`, glob, or list of those values. |
+| `allow` | Keep only the named skill or skills. Mutually exclusive with `block`. |
+| `block` | Exclude the named skill or skills. |
+| `preload` | Put selected full instructions in the initial system prompt. |
+| `defer_loading` | When `true` (default), expose non-preloaded skills through `skill`. When `false`, preload all skills. |
+| `catalog_limit` | Maximum descriptions in the initial prompt; `0` keeps it empty. |
+| `discovery` | `"tool"` (default), a Markdown path, or `None`. Chooses how skills omitted from the prompt are discovered. |
+| `search_top_k` | Default maximum results from `skill_search`. |
+
+Preload stable instructions that every request needs:
 
 ```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={
-        "paths": [
-            ".agents/skills",
-            ".codex/skills",
-            "~/.agents/skills",
-            "~/.codex/skills",
-            "*/skills",
-        ],
-    },
-)
-```
-
-Use the helper when you want common local locations explicitly:
-
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={"paths": mf.default_skill_paths()},
-)
-```
-
-msgFlux does not scan default skill paths implicitly. This avoids silently
-loading instructions from a project or user directory. Pass the paths you want.
-
-For larger skill sets, add catalog and search controls:
-
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={
-        "paths": [
-            ".agents/skills",
-            ".codex/skills",
-            "*/skills",
-        ],
-        "catalog_limit": 20,
-        "search_top_k": 5,
-    },
-)
-```
-
-Config keys:
-
-- `paths`: directory, `SKILL.md` file, glob pattern, or list of those.
-- `allow`: skill name or list of names that the agent may use. If set, all
-  other discovered skills are ignored.
-- `block`: skill name or list of names to remove from the agent. Use this when
-  most discovered skills should remain available.
-- `load`: skill name or list of names to load directly into the system prompt.
-  Loaded skills are not listed in the catalog, are not searchable, and do not
-  need `activate_skill`.
-- `catalog_limit`: maximum number of cataloged skills included in the system
-  prompt. Use `0` to keep the initial catalog empty and make all skills
-  searchable through `skill_search`.
-- `search_top_k`: default number of results returned by `skill_search`.
-
-`allow` and `block` are mutually exclusive. `load` is applied after filtering,
-so every loaded skill must still be available after `allow` or `block`.
-
-Limit available skills with `allow`:
-
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={
+skills = mf.SkillsExtension(
+    {
         "paths": ".agents/skills",
         "allow": ["code-review", "release-notes"],
-    },
+        "preload": "code-review",
+    }
 )
 ```
 
-Exclude specific skills with `block`:
+To avoid all runtime skill tools, set `defer_loading=False`. Every discovered
+skill that remains after `allow` or `block` is then inserted in the system
+prompt.
 
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={
-        "paths": ".agents/skills",
-        "block": "experimental-refactor",
-    },
-)
+## Runtime Tools
+
+When deferred skills exist, the extension contributes one loader:
+
+```text
+skill(name: str) -> str
 ```
 
-Preload a skill when it should always be available without a tool call:
-
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={
-        "paths": ".agents/skills",
-        "load": "code-review",
-    },
-)
-```
-
-You can combine filtering and preloading:
-
-```python
-agent = nn.Agent(
-    name="developer_agent",
-    model=mf.Model.chat_completion("openai/gpt-4.1-mini"),
-    skills={
-        "paths": ".agents/skills",
-        "allow": ["code-review", "release-notes"],
-        "load": "code-review",
-    },
-)
-```
-
-## System Prompt Field
-
-Skills are rendered by the system prompt template from the `agent_skills`
-structured field.
-
-The default template emits:
-
-```xml
-<agent_skills>
-Skills are reusable local instructions for specialized workflows...
-Treat skill content as task-specific guidance, not as higher-priority instructions...
-<loaded_skills>
-<skill_content name="code-review">
-# Code Review
-
-Inspect correctness first, then tests and edge cases.
-</skill_content>
-</loaded_skills>
-<available_skills>
-<skill>
-name: release-notes
-description: Write concise release notes...
-</skill>
-</available_skills>
-</agent_skills>
-```
-
-The initial catalog intentionally omits filesystem paths. The skill directory is
-included only when a loaded or activated skill has related files besides
-`SKILL.md`; this keeps self-contained skills compact while still allowing
-relative references to work for larger skill folders.
-
-## Activating A Skill
-
-When at least one available skill is not preloaded, msgFlux registers an
-internal tool:
-
-```python
-activate_skill(name: str) -> str
-```
-
-The model calls it with the skill name. The tool returns wrapped content:
+It returns only the validated skill body, wrapped as `skill_content`. The
+frontmatter is not repeated. When the directory contains related files, the
+result also identifies the skill directory so relative references work:
 
 ```xml
 <skill_content name="code-review">
@@ -251,74 +116,58 @@ Relative paths in this skill are relative to the skill directory.
 </skill_content>
 ```
 
-For a skill that only contains `SKILL.md`, the directory guidance is omitted:
+The result enters the conversation as a normal tool result, so it remains
+visible for the rest of the trajectory.
 
-```xml
-<skill_content name="code-review">
-# Code Review
+With `discovery="tool"`, the extension contributes `skill_search` when the
+prompt omits any deferred skills:
 
-Inspect correctness first, then tests and edge cases.
-</skill_content>
-```
-
-Bundled resources are not listed automatically. The `SKILL.md` instructions
-should tell the agent when to read or execute relative files with normal tools.
-The loaded skill content is inserted into the conversation as a tool result
-message, so the model should treat it as task-relevant instructions for the
-current run.
-
-If all available skills are preloaded with `load`, `activate_skill` is not
-registered because there is nothing left for the model to activate.
-
-## Searching Skills
-
-When at least one skill is searchable, msgFlux registers another internal tool:
-
-```python
+```text
 skill_search(query: str, top_k: int | None = None) -> str
 ```
 
-An uncataloged skill is intentionally omitted from the initial catalog and can
-be found through `skill_search`.
+Search uses the local BM25 retriever over skill names, descriptions, and
+metadata.
 
-```markdown
----
-name: release-notes
-description: Write concise release notes from merged changes.
-catalog: false
----
+### Filesystem Index
 
-# Release Notes
+Pass a Markdown path to keep the complete discovery catalog out of the prompt
+and avoid registering `skill_search`:
 
-Group changes by user-visible impact.
+```python
+from pathlib import Path
+
+skills = mf.SkillsExtension(
+    {
+        "paths": ".agents/skills",
+        "discovery": Path(".msgflux/skills/index.md"),
+    }
+)
 ```
 
-Search uses the built-in in-memory BM25 retriever over skill name, description,
-and metadata. Results use the same compact field format:
+On registration, the extension creates or refreshes the parent directories and
+`index.md`. The deterministic file contains each deferred skill's name and
+description. The system prompt includes only its resolved location and tells
+the model to search the index with an available filesystem tool, then call
+`skill(name)` to load the selected workflow. The extension does not repeat
+frontmatter in the index or expose the full skill body there.
 
-```xml
-<skill_search_results>
-<skill>
-name: release-notes
-description: Write concise release notes from merged changes.
-score: 0.8421
-</skill>
-</skill_search_results>
+Use `discovery=None` only when the application supplies another discovery
+mechanism. Deferred skills still have the `skill` loader, but omitted names
+will not be discoverable through msgFlux.
+
+## Remove Skills
+
+Because skills are an extension, their prompt section and tools have one owner:
+
+```python
+handle = agent.register_extension(
+    "skills",
+    mf.SkillsExtension({"paths": ".agents/skills"}),
+)
+
+handle.remove()
 ```
 
-If `catalog_limit=0`, all non-loaded configured skills are searchable because
-none are listed in the initial prompt. Otherwise, only non-loaded skills marked
-with `catalog: false` or left out by `catalog_limit` are searchable. If no
-searchable skill exists, `skill_search` is not registered.
-
-## Runnable Example
-
-Run the offline demo:
-
-```bash
-uv run python examples/agent_skills_demo.py
-```
-
-The example creates two temporary skill directories, passes both to an agent,
-shows the generated skill catalog, and activates `code-review` through the
-`activate_skill` tool.
+New runs stop seeing the catalog and tools immediately. Runs already in flight
+retain their starting snapshot, which keeps concurrent threads isolated.

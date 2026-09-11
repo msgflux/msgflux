@@ -20,12 +20,12 @@ __all__ = [
     "abcast_gather",
     "amap_gather",
     "ascatter_gather",
-    "aspawn",
+    "adetached",
     "await_for_event",
     "bcast_gather",
     "map_gather",
     "scatter_gather",
-    "spawn",
+    "detached",
     "wait_for",
     "wait_for_event",
 ]
@@ -332,8 +332,8 @@ def wait_for_event(event: Any) -> None:
 
 
 @Spans.instrument()
-def spawn(to_send: Callable, *args: Any, **kwargs: Any) -> None:
-    """Dispatches a task without waiting for a result.
+def detached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
+    """Dispatch a detached task without waiting for a result.
     Uses the AsyncExecutorPool. The task is not tracked and no return is provided.
 
     Args:
@@ -353,19 +353,19 @@ def spawn(to_send: Callable, *args: Any, **kwargs: Any) -> None:
         def print_message(message: str):
             time.sleep(1)
             print(f"[Sync] Message: {message}")
-        F.spawn(print_message, "Hello from sync function")
+        F.detached(print_message, "Hello from sync function")
 
         # Example 2:
         import asyncio
         async def async_print_message(message: str):
             await asyncio.sleep(1)
             print(f"[Async] Message: {message}")
-        F.spawn(async_print_message, "Hello from async function")
+        F.detached(async_print_message, "Hello from async function")
 
         # Example 3 (with error):
         def failing_task():
             raise ValueError("This task failed!")
-        F.spawn(failing_task)  # Error will be logged
+        F.detached(failing_task)  # Error will be logged
     """
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")
@@ -375,7 +375,7 @@ def spawn(to_send: Callable, *args: Any, **kwargs: Any) -> None:
         try:
             future.result()
         except Exception as e:
-            logger.error(f"Spawned task error: {e!s}", exc_info=True)
+            logger.error(f"Detached task error: {e!s}", exc_info=True)
 
     executor = Executor.get_instance()
     future = executor.submit(to_send, *args, **kwargs)
@@ -383,8 +383,8 @@ def spawn(to_send: Callable, *args: Any, **kwargs: Any) -> None:
 
 
 @Spans.ainstrument()
-async def aspawn(to_send: Callable, *args, **kwargs) -> None:
-    """Dispatches an async task without waiting for a result.
+async def adetached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
+    """Dispatch an async detached task without waiting for a result.
     The task is not tracked and no return is provided.
 
     Args:
@@ -404,12 +404,12 @@ async def aspawn(to_send: Callable, *args, **kwargs) -> None:
         async def async_print_message(message: str):
             await asyncio.sleep(1)
             print(f"[Async] Message: {message}")
-        await F.aspawn(async_print_message, "Hello from async function")
+        await F.adetached(async_print_message, "Hello from async function")
 
         # Example 2 (with error):
         async def failing_task():
             raise ValueError("This task failed!")
-        await F.aspawn(failing_task)  # Error will be logged
+        await F.adetached(failing_task)  # Error will be logged
     """
     if not callable(to_send):
         raise TypeError("`to_send` must be a callable object")
@@ -426,7 +426,7 @@ async def aspawn(to_send: Callable, *args, **kwargs) -> None:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, lambda: call(*args, **kwargs))
         except Exception as e:
-            logger.error(f"Fire-and-forget task error: {e!s}", exc_info=True)
+            logger.error(f"Detached task error: {e!s}", exc_info=True)
 
     asyncio.create_task(run_task())  # noqa: RUF006
 

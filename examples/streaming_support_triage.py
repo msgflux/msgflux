@@ -37,13 +37,18 @@ class TriageResponse(mf.Signature):
 
 class SupportTriageAgent(nn.Agent):
     model = mf.Model.chat_completion("openai/gpt-4.1-mini")
-    system_message = """
+    system_prompt = "\n\n".join(
+        (
+            """
     You are a support triage assistant.
-    """
-    instructions = """
+    """,
+            """
     Use get_order_status when the user mentions an order ID.
     If the order is missing or the problem is outside the status data, escalate.
-    """
+    """,
+        )
+    )
+
     signature = TriageResponse
     tools = [get_order_status]
     config = {"stream": True, "verbose": True}
