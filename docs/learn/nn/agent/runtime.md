@@ -1237,6 +1237,108 @@ implicit path-containment grants. Use `filesystem.permission(...)` to construct
 the same resource identity used by operations. Grants are checked on each
 operation, including when an injected handle is reused under a narrower scope.
 
+### Preparing file changes for review
+
+`WorkspaceEditor` is the shared host backend for text writes, exact edits and
+deletions. It prepares an immutable `PreparedFileChange` without modifying the
+file. The proposal contains the workspace identity, canonical path, exact old and
+new text (`None` means absent), a schema version, and computed `operation`,
+`digest` and unified `diff` properties. All new contracts use `msgspec.Struct`.
+An empty file is distinct from an absent file. Review diffs preserve newline
+differences and mark missing final newlines; empty-file creation/deletion still
+has source/target headers.
+
+```python
+import time
+from uuid import uuid4
+
+import msgspec
+
+from msgflux.runtime import (
+    ExecutionEnvironment, ExecutionScope, InMemoryApprovalStore,
+    InMemoryWorkspace, PermissionSet, WorkspaceEditor, execution_context,
+)
+
+filesystem = InMemoryWorkspace("project", {"/config.txt": b"mode=old\n"})
+editor = WorkspaceEditor(filesystem)  # approval required by default
+journal = InMemoryApprovalStore()
+scope = ExecutionScope(
+    namespace="editor", thread_id="thread:1", run_id="run:1", principal="user:1",
+    environment=ExecutionEnvironment(filesystem),
+    permissions=PermissionSet(resources=[
+        filesystem.permission("/config.txt", "filesystem.read"),
+        filesystem.permission("/config.txt", "filesystem.write"),
+    ]),
+)
+
+with execution_context(scope=scope):
+    change = editor.prepare_edit("/config.txt", "mode=old", "mode=new")
+    binding = editor.approval_binding(
+        change, tool_call_id="call:1", tool_name="edit",
+        tool_revision="v1", policy_version="review:v1",
+    )
+    record = journal.request(
+        binding, request_id=uuid4().hex, expires_at=time.time() + 300,
+    )
+    checkpoint_payload = msgspec.to_builtins(change)
+    # Persist checkpoint_payload and record.request_id in host-owned state.
+    # Present change.path, change.operation and change.diff in an authenticated UI.
+
+# Later, ONLY after the authenticated reviewer actually approves that preview:
+journal.decide("editor", record.request_id, approved=True, decided_by="reviewer:1")
+with execution_context(scope=scope):
+    restored = msgspec.convert(checkpoint_payload, type=type(change))
+    editor.apply(restored, approval=record, approval_store=journal)
+```
+
+This example binds the approval to the exact proposal and execution identity,
+then consumes the journal decision before applying it. The record returned at
+request time is just an identifier/binding snapshot: `apply` consults the journal
+for the current decision, so pending, denied, expired or already consumed records
+cannot authorize a write. Modified proposals cannot use the original approval.
+The host must also enforce its current implementation/policy versions before
+resuming; this low-level API does not discover policy revisions automatically.
+
+`prepare_write(path, content)` creates or overwrites text;
+`prepare_edit(path, old, new)` requires exactly one match, including overlapping
+matches, and never guesses whitespace; `prepare_delete(path)` includes the deleted
+text in the proposal. No-op proposals and non-UTF-8 files are rejected. The async
+counterparts are `aprepare_write`, `aprepare_edit`, `aprepare_delete` and `aapply`.
+
+Preparation and application require live read and write (or delete) grants for
+the exact path. Previews expose existing contents, so read permission is required
+even when creating/overwriting. `WorkspaceEditor(..., require_approval=False)` is
+an explicit host full-access choice; it disables confirmation, not permissions
+or conflict checks. Prepared objects never restore execution authority.
+
+Application uses `WorkspaceFilesystem.compare_exchange`: comparison and mutation
+are atomic **per file**, with `None` representing expected absence. Backends must
+opt in with `supports_atomic_changes = True` and implement `_compare_exchange`
+against all concurrent writers, including path/symlink substitution. The memory
+backend uses its shared lock. Unsupported backends fail closed; there is no
+read-then-write fallback, host filesystem backend or multi-file transaction.
+The precondition checks exact contents, not whether an identical file was edited
+and restored in the meantime.
+
+!!! warning "Approval and file application are separate transactions"
+
+    A changed file raises `WorkspaceConflictError`. If another writer races after
+    approval consumption, the atomic check still prevents overwriting its work,
+    but the approval remains consumed. A crash or async cancellation may also
+    leave the application outcome uncertain. Reconcile with the live backend;
+    never automatically replay a consumed approval or regenerate a different
+    patch under the old decision. The memory backend is not persistent storage.
+
+The journal remains argument-free. The host persists proposals in its protected
+checkpoint/artifact storage and exposes them only to authorized reviewers, not
+global events. Escape terminal/HTML controls when rendering the diff, display the
+operation and exact path separately, and allow inspection of the complete change.
+This initial backend stores full old/new text; large-file artifact storage and
+preview paging are not implemented yet. Do not inject these previews into model
+context just to render a UI. Automatic Agent pause/watcher preview wiring and
+model-facing write/edit/apply_patch tools are subsequent integrations; this API
+does not implicitly register a tool or alter existing Agent approval bindings.
+
 ### Injecting a filesystem into tools
 
 Declare runtime inputs explicitly, so they remain outside the model-facing schema:

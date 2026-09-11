@@ -72,9 +72,17 @@ from msgflux.runtime.skills import (
     default_skill_paths,
     parse_skill_file,
 )
-from msgflux.runtime.workspace import InMemoryWorkspace, WorkspaceFilesystem
+from msgflux.runtime.workspace import (
+    InMemoryWorkspace,
+    WorkspaceConflictError,
+    WorkspaceFilesystem,
+)
+from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
 
 __all__ = [
+    "PreparedFileChange",
+    "WorkspaceEditor",
+    "WorkspaceConflictError",
     "ExecutionEnvironment",
     "ProcessExecutor",
     "ProcessRequest",

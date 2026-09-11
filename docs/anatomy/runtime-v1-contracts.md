@@ -255,6 +255,29 @@ and unsupported isolation requirements. Reuse capability checks, never make an
 optional policy the sole authorization boundary. Run offline pytest, Ruff and
 MkDocs. Preserve user files and do not publish this increment.
 
+### Shared workspace changes and approval previews
+
+Increment order: (1) `runtime/workspace.py` gains an opt-in atomic compare/exchange
+contract, implemented under the InMemoryWorkspace lock; (2)
+`runtime/workspace_changes.py` defines immutable msgspec prepared changes, text
+preparation and unified diff previews; (3) reuse ApprovalBinding/ApprovalStore for
+host-operated approval and single-use consumption; (4) offline tests and examples
+in the existing runtime learning guide. No new journal format or implicit grants.
+The prepared change is serializable separately from the argument-free journal;
+its exact contents are bound by digest. The host persists it with its checkpoint
+and authenticates preview readers/reviewers. Do not broadcast file contents.
+
+Risks/tests: stale files, create races, empty versus missing files, deletion,
+ambiguous text matches, changed previews, wrong workspace/principal, revoked
+permissions, expired/denied/reused approval, unsupported atomic backends,
+concurrent writers, sync/async and JSON round trips. Comparison and mutation must
+be atomic per file; approval consumption and filesystem mutation are not one
+transaction, and uncertain consumption is never automatically retried. Preserve
+unrelated user files. Validate focused tests, durability gate, full pytest, Ruff
+and MkDocs. Follow-up branches add model-facing write/edit tools and provider-owned
+V4A apply_patch transport using this backend, then Agent preview automation; this
+increment exposes the shared host API without changing Agent journal behavior.
+
 ### Provider-owned tool transport refactor
 
 Public shell schema reduction: keep command and timeout_ms only; output byte

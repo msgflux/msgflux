@@ -29,6 +29,8 @@ def workspace_path(path: str) -> str:
 class WorkspaceFilesystem(ABC):
     """Trusted backend; public operations share resolution and authorization."""
 
+    supports_atomic_changes = False
+
     def __init__(self, workspace_id: str):
         if not isinstance(workspace_id, str) or not re.fullmatch(
             r"[A-Za-z0-9_.-]+", workspace_id
@@ -132,6 +134,40 @@ class WorkspaceFilesystem(ABC):
             raise TypeError("File contents must be bytes")
         self._perform("write", path, data)
 
+    def compare_exchange(
+        self, path: str, *, expected: bytes | None, replacement: bytes | None
+    ) -> None:
+        """Atomically replace exactly the expected contents; None means absent.
+
+        Backends must override _compare_exchange with a real atomic operation,
+        including protection against concurrent writers and path substitution.
+        There is deliberately no read-then-write compatibility implementation.
+        """
+        if any(
+            value is not None and not isinstance(value, bytes)
+            for value in (expected, replacement)
+        ):
+            raise TypeError("Expected contents and replacement must be bytes or None")
+        if expected is None and replacement is None:
+            raise ValueError("Cannot delete an absent file")
+        if not self.supports_atomic_changes:
+            raise NotImplementedError(
+                "Workspace backend does not support atomic changes"
+            )
+        canonical = self._authorize("read", path)
+        self._authorize("delete" if replacement is None else "write", canonical)
+        self._compare_exchange(canonical, expected, replacement)
+
+    def _compare_exchange(self, path, expected, replacement):
+        raise NotImplementedError("Workspace backend does not support atomic changes")
+
+    async def acompare_exchange(
+        self, path: str, *, expected: bytes | None, replacement: bytes | None
+    ) -> None:
+        await asyncio.to_thread(
+            self.compare_exchange, path, expected=expected, replacement=replacement
+        )
+
     def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
         return self.read_bytes(path).decode(encoding)
 
@@ -173,6 +209,8 @@ class WorkspaceFilesystem(ABC):
 
 class InMemoryWorkspace(WorkspaceFilesystem):
     """Process-local VFS with no symlinks, mounts or host filesystem access."""
+
+    supports_atomic_changes = True
 
     def __init__(self, workspace_id: str, files: Mapping[str, bytes] | None = None):
         super().__init__(workspace_id)
@@ -217,6 +255,20 @@ class InMemoryWorkspace(WorkspaceFilesystem):
                 return None
             raise ValueError("Unsupported workspace operation")
 
+    def _compare_exchange(self, path, expected, replacement):
+        with self._lock:
+            # Recheck live authority after waiting for the backend lock.
+            self._authorize("read", path)
+            self._authorize("delete" if replacement is None else "write", path)
+            if path in self._directories:
+                raise IsADirectoryError(path)
+            if self._files.get(path) != expected:
+                raise WorkspaceConflictError("File changed since preparation")
+            if replacement is None:
+                del self._files[path]
+            else:
+                self._create("write", path, replacement)
+
     def _create(self, operation, path, data):
         if str(PurePosixPath(path).parent) not in self._directories:
             raise FileNotFoundError("Parent directory does not exist")
@@ -226,3 +278,7 @@ class InMemoryWorkspace(WorkspaceFilesystem):
             self._directories.add(path)
         else:
             self._files[path] = data
+
+
+class WorkspaceConflictError(RuntimeError):
+    """The current file no longer matches the prepared change."""
