@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 
+from msgflux.models.tool_adapters.base import ToolTransportAdapter
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -26,7 +27,7 @@ def patch_arguments(item):
     return {"operation": kinds[kind], "path": path, "diff": diff}
 
 
-class OpenAIApplyPatchAdapter:
+class OpenAIApplyPatchAdapter(ToolTransportAdapter):
     provider = "openai"
     api_mode = "responses"
     codec = "openai.responses.apply_patch"

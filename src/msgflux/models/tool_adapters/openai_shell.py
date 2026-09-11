@@ -5,6 +5,7 @@ from typing import Mapping
 
 import msgspec
 
+from msgflux.models.tool_adapters.base import ToolTransportAdapter
 from msgflux.tools.shell import ShellCommandResult, ShellResult
 from msgflux.utils.msgspec import msgspec_dumps
 
@@ -65,7 +66,7 @@ def shell_output(
     return item
 
 
-class OpenAIShellAdapter:
+class OpenAIShellAdapter(ToolTransportAdapter):
     provider = "openai"
     api_mode = "responses"
     codec = "openai.responses.shell"

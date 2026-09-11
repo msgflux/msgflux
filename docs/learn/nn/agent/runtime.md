@@ -1421,6 +1421,27 @@ audit artifact separately if long-term review history is needed.
 The provider-neutral `WorkspaceChangeTool` contract shares preparation/application
 across the tools, including the patch frontend below.
 
+### Tool transport adapter contract
+
+Provider codecs implement `ToolTransportAdapter`, exported from
+`msgflux.models.tool_adapters`. Its seven abstract methods are `declaration`,
+`supports`, `validate_metadata`, `decode`, `render`, `project_history` and
+`interrupted`. Both shell and patch inherit this contract. Implementations declare
+provider/API, codec/version, logical kind and native item types as class attributes;
+they remain stateless and never execute tools or restore authority. The codec
+registry remains explicit application code, not checkpoint-selected imports.
+
+```python
+from msgflux.models.tool_adapters import ToolTransportAdapter
+from msgflux.models.tool_adapters.openai_patch import OpenAIApplyPatchAdapter
+
+adapter: ToolTransportAdapter = OpenAIApplyPatchAdapter()
+declaration = adapter.declaration()  # {"type": "apply_patch"}; no execution
+```
+
+This inspects the protocol declaration without reading files or calling a model.
+An adapter missing any abstract method cannot be instantiated.
+
 ### Apply patch with OpenAI Responses
 
 `ApplyPatchTool(cwd="/")` creates, updates or deletes **one file per call** using

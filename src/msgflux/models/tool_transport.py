@@ -2,10 +2,14 @@
 
 from collections.abc import Mapping
 
+from msgflux.models.tool_adapters.base import ToolTransportAdapter
 from msgflux.models.tool_adapters.openai_patch import OpenAIApplyPatchAdapter
 from msgflux.models.tool_adapters.openai_shell import OpenAIShellAdapter
 
-_ADAPTERS = (OpenAIShellAdapter(), OpenAIApplyPatchAdapter())
+_ADAPTERS: tuple[ToolTransportAdapter, ...] = (
+    OpenAIShellAdapter(),
+    OpenAIApplyPatchAdapter(),
+)
 
 
 def native_item_types(*, output=False):
@@ -14,7 +18,7 @@ def native_item_types(*, output=False):
     }
 
 
-def history_adapter(item):
+def history_adapter(item) -> ToolTransportAdapter | None:
     for adapter in _ADAPTERS:
         if item.get("type") in {adapter.item_type, adapter.output_type}:
             metadata = item.get("metadata", {}).get("tool_transport")
@@ -27,7 +31,7 @@ def history_adapter(item):
     return None
 
 
-def transport_adapter(metadata):
+def transport_adapter(metadata) -> ToolTransportAdapter:
     # Deliberately closed registry: checkpoints cannot name importable code.
     if not isinstance(metadata, Mapping):
         raise ValueError("Tool transport metadata must be a mapping")
