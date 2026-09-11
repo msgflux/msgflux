@@ -13,6 +13,7 @@ from msgflux.utils.msgspec import (
     lower_msgspec_struct_for_openai,
     load,
     msgspec_dumps,
+    msgspec_loads,
     read_json,
     restore_openai_structured_output,
     restore_transport_value,
@@ -25,6 +26,19 @@ class MyStruct(msgspec.Struct):
     a: int
     b: str
     c: Optional[int] = None
+
+
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_msgspec_loads_round_trip(as_bytes):
+    value = {"text": "ação 🐍", "nested": [None, True, 3, {"x": "y"}]}
+    data = msgspec_dumps(value)
+    assert msgspec_loads(data.encode() if as_bytes else data) == value
+
+
+@pytest.mark.parametrize("data", ["{", b"{", "NaN", b"\xff"])
+def test_msgspec_loads_rejects_invalid_json(data):
+    with pytest.raises(msgspec.DecodeError):
+        msgspec_loads(data)
 
 
 class DictOutput(msgspec.Struct):
