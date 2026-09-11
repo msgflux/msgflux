@@ -31,7 +31,7 @@ from msgflux.nn.modules.tool.runtime import (
     ToolDefinition as RuntimeToolDefinition,
 )
 from msgflux.runtime.abort import await_with_abort
-from msgflux.runtime.approvals.agent import guard_approved_plan
+from msgflux.runtime.approvals.agent import approved_tool_execution, guard_approved_plan
 from msgflux.runtime.context import get_execution_context
 from msgflux.runtime.events import EventType, emit_event, event_source
 from msgflux.runtime.permissions import require_permissions
@@ -1450,11 +1450,12 @@ class ToolLibraryExecutionMixin:
             if denied is not None:
                 execution_denial = denied
                 return denied
-            result = await self._aexecute_prepared_tool(
-                current.definition.executor,
-                current.call_arguments,
-                current.visible_arguments,
-            )
+            with approved_tool_execution(current):
+                result = await self._aexecute_prepared_tool(
+                    current.definition.executor,
+                    current.call_arguments,
+                    current.visible_arguments,
+                )
             return self._completed_intent(
                 current.intent,
                 result,

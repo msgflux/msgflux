@@ -257,6 +257,21 @@ MkDocs. Preserve user files and do not publish this increment.
 
 ### Shared workspace changes and approval previews
 
+Agent integration increment (`feat/agent-workspace-edit-tools`): add a shared
+workspace-change tool contract and builtin WriteTool/EditTool with public-only
+annotations, constructor cwd and compact JSON results. Extend AgentApprovals
+preparation/binding with serialized prepared changes, preserving argument-free
+journals. Carry the approved proposal through execution-local context after the
+existing guard consumes the approval; never consume it twice. Expose host-only
+preview inspection from the Agent checkpoint; events carry identifiers, not file
+contents. Reuse existing watcher approval records to locate previews. Update
+tool exports, runtime docs and offline tests. Validate sync/async, SQLite restart,
+changed cwd/arguments/files, denial, changed permissions, empty/missing files,
+ambiguous edits, concurrent dispatch, schemas, full access and no preview leakage
+into model history. Run the durability gate, full pytest, Ruff and MkDocs.
+Approval remains host policy (`AgentApprovals`); omitted/None means no prompts,
+without removing resource authorization. Native apply_patch is the next branch.
+
 Increment order: (1) `runtime/workspace.py` gains an opt-in atomic compare/exchange
 contract, implemented under the InMemoryWorkspace lock; (2)
 `runtime/workspace_changes.py` defines immutable msgspec prepared changes, text

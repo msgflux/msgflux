@@ -7,6 +7,8 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 
+import msgspec
+
 from msgflux.chat_messages import ChatMessages
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.response import ModelResponse
@@ -21,8 +23,10 @@ from msgflux.runtime.approvals.agent import (
     approval_batch_active,
 )
 from msgflux.runtime.approvals.reconciliation import inspect_batch, reconcile_batch
+from msgflux.runtime.approvals.records import _digest
 from msgflux.runtime.context import ExecutionScope
 from msgflux.runtime.events import EventType, _hub_event_sink
+from msgflux.runtime.workspace_changes import PreparedFileChange
 from msgflux.utils.msgspec import msgspec_dumps
 
 _KEY = "pending_approvals"
@@ -30,6 +34,47 @@ _APPROVAL_POLICIES = ContextVar("msgflux_agent_approval_policies", default=None)
 
 
 class AgentApprovalMixin:
+    def inspect_approval_preview(
+        self, thread_id: str, run_id: str, request_id: str, *, approvals=_UNSET
+    ) -> PreparedFileChange | None:
+        """Read a verified file preview for an authenticated host UI.
+
+        Callers must authorize access to this thread's potentially sensitive
+        contents. Events intentionally expose only the approval identifiers.
+        """
+        policy = self._get_effective_approvals(approvals)
+        if policy is None:
+            raise ValueError("Preview inspection requires the host approval policy")
+        state = self.inspect_approval_batch(thread_id, run_id)
+        pending = state.get("runtime", {}).get("extensions", {}).get(_KEY, {})
+        record = policy.store.get(self.get_module_name(), request_id)
+        if record is None or (record.binding.thread_id, record.binding.run_id) != (
+            thread_id,
+            run_id,
+        ):
+            raise ValueError("Approval does not belong to this run")
+        call_id = record.binding.tool_call_id
+        if pending.get("requests", {}).get(call_id) != request_id:
+            raise ValueError("Approval is not in the pending batch")
+        preview = pending.get("prepared_changes", {}).get(call_id)
+        if preview is None:
+            return None
+        change = msgspec.convert(preview["change"], type=PreparedFileChange)
+        resources = {**preview["resources"], "prepared_change": change.digest}
+        intent = next(item for item in pending["intents"] if item["id"] == call_id)
+        if (
+            _digest(resources) != record.binding.resources_digest
+            or _digest(intent["arguments"]) != record.binding.arguments_digest
+            or intent["name"] != record.binding.tool_name
+        ):
+            raise ValueError("Preview does not match the approval binding")
+        return change
+
+    async def ainspect_approval_preview(self, thread_id, run_id, request_id, **kwargs):
+        return await asyncio.to_thread(
+            self.inspect_approval_preview, thread_id, run_id, request_id, **kwargs
+        )
+
     def _get_effective_approvals(self, approvals=_UNSET):
         if approvals is _UNSET:
             approvals = (_APPROVAL_POLICIES.get() or {}).get(id(self), self.approvals)

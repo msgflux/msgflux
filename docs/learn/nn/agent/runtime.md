@@ -1335,9 +1335,92 @@ global events. Escape terminal/HTML controls when rendering the diff, display th
 operation and exact path separately, and allow inspection of the complete change.
 This initial backend stores full old/new text; large-file artifact storage and
 preview paging are not implemented yet. Do not inject these previews into model
-context just to render a UI. Automatic Agent pause/watcher preview wiring and
-model-facing write/edit/apply_patch tools are subsequent integrations; this API
-does not implicitly register a tool or alter existing Agent approval bindings.
+context just to render a UI. This low-level API does not implicitly register a
+tool. The Agent integration below uses the same prepared-change and atomic-write
+contracts, with Agent-owned approval consumption.
+
+### Write and edit tools with Agent previews
+
+`WriteTool(cwd="/")` exposes only `path` and `content`; `EditTool(cwd="/")`
+exposes only `path`, `old` and `new`. Both are class-based tools with explicit
+public annotations and `Write`/`Edit` display names. The filesystem is injected
+from the live environment, and cwd is a constructor-only virtual path. Outputs
+are compact JSON objects such as `{"status":"completed"}`; previews and old
+file contents are not added to model history. No automatic retries are enabled.
+
+```python
+from msgflux.nn import Agent
+from msgflux.runtime import AgentApprovals
+from msgflux.tools.builtin import EditTool, WriteTool
+
+agent = Agent(
+    name="editor",
+    model=model,  # your configured chat-completion model
+    tools=[WriteTool(cwd="/"), EditTool(cwd="/")],
+    checkpoint_store=checkpoints,  # an atomic checkpoint store
+    approvals=AgentApprovals(
+        journal, {"write": "implementation:v1", "edit": "implementation:v1"},
+        policy_version="review:v1",
+    ),
+)
+```
+
+This registers both tools with the existing host-owned approval policy. Without
+a policy (or with explicit `approvals=None` for a new invocation), calls execute
+without confirmation but still require live workspace grants. A raw ToolLibrary
+does not independently manage Agent approvals. Configure the policy whenever
+human confirmation is required; native/function transport must not choose it.
+
+For protected calls, the runtime prepares and checkpoints the exact file change
+before emitting `tool.approval_required`. The journal binding includes both the
+visible arguments and the prepared-change digest. After approval, the guard
+revalidates the proposal and current policy and consumes the decision once; the
+tool receives the prepared object through execution-local context, then applies
+it with the same backend conflict checks. Initial invalid edits return a blocked
+tool observation without writing or requesting approval. If an existing proposal
+can no longer be reproduced, the Agent pauses for host review instead of silently
+substituting a new diff. Multiple changes to the same file are not a transaction:
+prefer a new model turn after each accepted change to that file.
+
+```python
+from msgflux.exceptions import TaskPauseRequestedError
+
+async def run_with_review(agent, scope, render_event, review_change, reviewer_id):
+    try:
+        async for event in agent.stream_events("Update the configuration", scope=scope):
+            render_event(event)
+    except TaskPauseRequestedError:
+        async with agent.watch(scope.thread_id) as watcher:
+            requests = watcher.snapshot.approvals
+        for record in requests:
+            if record.status != "pending":
+                continue
+            preview = await agent.ainspect_approval_preview(
+                record.binding.thread_id, record.binding.run_id, record.request_id,
+            )
+            if preview is None:
+                continue  # use your ordinary approval UI for non-file tools
+            # Render path/operation/diff safely and wait for an actual user choice.
+            approved = await review_change(preview.path, preview.operation, preview.diff)
+            await agent.adecide_approval(
+                record.request_id, approved=approved, decided_by=reviewer_id,
+            )
+        # Resume explicitly with the same scope and live resources when ready.
+```
+
+The host authenticates the reviewer and authorizes access to the thread **before**
+loading a preview. `inspect_approval_preview` and its async counterpart verify the
+checkpoint proposal against the journal digest; they return a detached
+`PreparedFileChange`, or `None` for a non-file approval. Events and watcher approval
+records contain identifiers, not file diffs. For runtime-only policies, pass the
+same `approvals=policy` to invocation, watch, inspection and decision methods.
+Previews survive checkpoint/journal restart but never restore live permissions.
+After the batch finishes its pending previews are cleared; retain an authorized
+audit artifact separately if long-term review history is needed.
+
+The provider-neutral `WorkspaceChangeTool` contract shares preparation/application
+across the two tools. OpenAI-native `apply_patch` and its V4A parser remain a
+separate upcoming adapter using this same contract.
 
 ### Injecting a filesystem into tools
 
