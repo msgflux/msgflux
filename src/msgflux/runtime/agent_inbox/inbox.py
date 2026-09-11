@@ -9,6 +9,7 @@ from uuid import uuid4
 from xml.sax.saxutils import escape, quoteattr
 
 from msgflux.runtime.agent_inbox.base import AgentInboxStore
+from msgflux.runtime.agent_inbox.content import normalize_content, validate_description
 from msgflux.runtime.agent_inbox.dataclasses import (
     AgentControlMessage,
     AgentNotification,
@@ -177,17 +178,36 @@ class AgentInbox:
 
     def user_message(
         self,
-        content: str,
+        content: str | List[Dict[str, Any]],
         *,
         metadata: Mapping[str, Any] | None = None,
     ) -> AgentNotification:
         payload = deepcopy(dict(metadata or {}))
-        payload["content"] = content
+        payload["content"] = normalize_content(content)
         return self.publish(
             {
                 "source": "incoming_user_message",
                 "metadata": payload,
             }
+        )
+
+    def message(
+        self,
+        content: str | List[Dict[str, Any]],
+        *,
+        description: str,
+        source: str,
+        ref: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> AgentNotification:
+        """Publish role-user content with explicit provenance, not a user claim."""
+        validate_description({"origin": source, "description": description}, ref)
+        payload = deepcopy(dict(metadata or {}))
+        payload.update(
+            content=normalize_content(content), description=description, origin=source
+        )
+        return self.publish(
+            {"source": "incoming_message", "ref": ref, "metadata": payload}
         )
 
     def publish_many(
@@ -308,7 +328,9 @@ class AgentInbox:
             rendered_messages = self.render_messages(notifications)
             self._print_verbose_event(
                 "notification_drain",
-                "\n\n".join(message["content"] for message in rendered_messages),
+                "\n\n".join(
+                    self._stringify(message["content"]) for message in rendered_messages
+                ),
                 prefix=f"{len(notifications)} notification(s)\n",
             )
         return notifications
@@ -332,7 +354,7 @@ class AgentInbox:
     def render(
         self,
         notifications: Iterable[AgentNotification | Mapping[str, Any]],
-    ) -> Dict[str, str] | List[Dict[str, str]] | None:
+    ) -> Dict[str, Any] | List[Dict[str, Any]] | None:
         rendered_messages = self.render_messages(notifications)
         if not rendered_messages:
             return None
@@ -343,7 +365,7 @@ class AgentInbox:
     def render_messages(
         self,
         notifications: Iterable[AgentNotification | Mapping[str, Any]],
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         normalized = [self._normalize(notification) for notification in notifications]
         if not normalized:
             return []
@@ -351,15 +373,15 @@ class AgentInbox:
         incoming_messages = [
             notification
             for notification in normalized
-            if notification.source == "incoming_user_message"
+            if notification.source in {"incoming_user_message", "incoming_message"}
         ]
         system_notifications = [
             notification
             for notification in normalized
-            if notification.source != "incoming_user_message"
+            if notification.source not in {"incoming_user_message", "incoming_message"}
         ]
 
-        rendered_messages: List[Dict[str, str]] = []
+        rendered_messages: List[Dict[str, Any]] = []
         if system_notifications:
             rendered_messages.append(
                 {
@@ -368,10 +390,51 @@ class AgentInbox:
                 }
             )
 
-        incoming_content = self._render_incoming_user_messages(incoming_messages)
-        if incoming_content is not None:
-            rendered_messages.append({"role": "user", "content": incoming_content})
+        if all(
+            item.source == "incoming_user_message"
+            and isinstance(item.metadata.get("content", ""), str)
+            for item in incoming_messages
+        ):
+            incoming_content = self._render_incoming_user_messages(incoming_messages)
+            if incoming_content is not None:
+                rendered_messages.append({"role": "user", "content": incoming_content})
+        else:
+            rendered_messages.extend(
+                self._render_conversation_message(item) for item in incoming_messages
+            )
         return rendered_messages
+
+    def _render_conversation_message(
+        self, notification: AgentNotification
+    ) -> Dict[str, Any]:
+        content = normalize_content(notification.metadata.get("content", ""))
+        tag = notification.source
+        opening = f"<{tag}>"
+        metadata = {}
+        if tag == "incoming_message":
+            origin = notification.metadata["origin"]
+            opening = f"<{tag} source={quoteattr(origin)}"
+            if notification.ref is not None:
+                opening += f" ref={quoteattr(notification.ref)}"
+            opening += ">\n" + self._escape_text(notification.metadata["description"])
+            metadata = {"inbox_origin": origin, "inbox_ref": notification.ref}
+        closing = f"</{tag}>"
+        if isinstance(content, str):
+            rendered = {
+                "role": "user",
+                "content": f"{opening}\n{self._escape_text(content)}\n{closing}",
+            }
+        else:
+            blocks = [{"type": "text", "text": opening}]
+            for block in content:
+                if block["type"] == "text":
+                    block["text"] = self._escape_text(block["text"])
+                blocks.append(block)
+            blocks.append({"type": "text", "text": closing})
+            rendered = {"role": "user", "content": blocks}
+        if metadata:
+            rendered["metadata"] = metadata
+        return rendered
 
     def _render_system_notifications(
         self,
@@ -429,7 +492,7 @@ class AgentInbox:
         notification: AgentNotification | AgentControlMessage | Mapping[str, Any],
     ) -> AgentNotification:
         if isinstance(notification, AgentNotification):
-            return deepcopy(notification)
+            notification = notification.to_dict()
         if isinstance(notification, AgentControlMessage):
             return notification.to_notification()
 
@@ -448,6 +511,14 @@ class AgentInbox:
                 "`AgentNotification.metadata` must be a mapping, "
                 f"given `{type(metadata)}`"
             )
+
+        if source in {"incoming_user_message", "incoming_message"}:
+            metadata = {
+                **metadata,
+                "content": normalize_content(metadata.get("content", "")),
+            }
+        if source == "incoming_message":
+            validate_description(metadata, payload.get("ref"))
 
         created_at = payload.get("created_at")
         if not isinstance(created_at, str) or not created_at:

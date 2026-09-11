@@ -29,6 +29,23 @@ class ToolNotificationHandle:
 
     # --- Notification Publishing ---
 
+    def message(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        description: str,
+    ) -> AgentNotification | None:
+        """Publish conversation content with this handle's source and call ref."""
+        if self._agent_inbox is None:
+            return None
+        return self._agent_inbox.message(
+            content,
+            description=description,
+            source=self._source,
+            ref=self._ref,
+            metadata=self._metadata,
+        )
+
     def publish(
         self,
         *,

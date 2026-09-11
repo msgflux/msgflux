@@ -21,11 +21,13 @@ class ToolLibraryHandle:
         library: ToolLibrary,
         *,
         tool_name: str | None = None,
+        tool_call_id: str | None = None,
         agent_inbox: AgentInbox | None = None,
         task_store: Any = None,
     ):
         self._library = library
         self._tool_name = tool_name
+        self._tool_call_id = tool_call_id
         self._agent_inbox = agent_inbox
         self._task_store = task_store
 
@@ -58,6 +60,7 @@ class ToolLibraryHandle:
         return ToolLibraryHandle(
             self._library,
             tool_name=tool_name,
+            tool_call_id=tool_call_id,
             agent_inbox=agent_inbox if agent_inbox is not None else self._agent_inbox,
             task_store=task_store if task_store is not None else self._task_store,
         )
@@ -138,7 +141,7 @@ class ToolLibraryHandle:
                 "`handle.get_notification()` is only available on a tool-scoped handle."
             )
         task_handle = get_execution_context().get("task_handle")
-        ref = getattr(task_handle, "task_id", None)
+        ref = getattr(task_handle, "task_id", None) or self._tool_call_id
         return self.build_notification_handle(
             tool_name=self._tool_name,
             ref=ref,

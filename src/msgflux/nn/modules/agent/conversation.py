@@ -417,7 +417,10 @@ class AgentConversationMixin:
         if notification_message is None:
             return
         if isinstance(messages, ChatMessages):
-            if messages.get_active_turn_size() <= 2:
+            is_conversation_content = "inbox_origin" in notification_message.get(
+                "metadata", {}
+            ) or isinstance(notification_message.get("content"), list)
+            if messages.get_active_turn_size() <= 2 and not is_conversation_content:
                 messages.insert_before_active_turn(notification_message)
             else:
                 messages.append(notification_message)
