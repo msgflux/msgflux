@@ -11,7 +11,7 @@ readme = "README.md"
 authors = [
     { name = "Vilson Rodrigues", email = "vilson@msgflux.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -22,7 +22,6 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Operating System :: Microsoft :: Windows",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -85,7 +84,7 @@ plot = [
 ]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py311"
 line-length = 88
 extend-exclude = ["examples"]
 
@@ -119,6 +118,12 @@ select = [
   "YTT",
 ]
 ignore = [
+  # Keep the Python 3.11 baseline change separate from code modernization.
+  "B905",   # Preserve existing zip truncation semantics during this migration.
+  "UP017",  # Allow datetime.timezone.utc instead of datetime.UTC.
+  "UP041",  # Allow existing timeout exception aliases.
+  "UP042",  # Preserve existing str/Enum classes instead of migrating to StrEnum.
+  "UP045",  # Allow Optional[X], consistent with the existing UP007 policy.
   "D100",    # Allow missing docstring in top level module
   "D101",    # Allow missing docstring in public class
   "D102",    # Allow missing docstring in public method  

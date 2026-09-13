@@ -1,5 +1,7 @@
 !!! info "Installation"
 
+    Requires Python 3.11 or newer.
+
     === "uv"
 
         ```bash

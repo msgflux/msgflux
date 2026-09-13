@@ -6,8 +6,9 @@ Guide for contributing to msgflux with automated CI/CD workflow.
 
 ### 1. Setup Local Environment
 
-This project uses [`uv`](https://docs.astral.sh/uv/) for dependency management
-and command execution. Prefer `uv sync` and `uv run ...` for all local
+This project requires Python 3.11 or newer and uses
+[`uv`](https://docs.astral.sh/uv/) for dependency management and command execution.
+Prefer `uv sync` and `uv run ...` for all local
 development commands so contributors and CI use the same environment.
 
 ```bash
@@ -189,7 +190,7 @@ gh pr create \
 GitHub Actions will automatically:
 - ✅ **Run ruff format check**
 - ✅ **Run ruff lint**
-- ✅ **Run tests** on Python 3.10, 3.11, 3.12, 3.13
+- ✅ **Run tests** on Python 3.11, 3.12, 3.13, 3.14
 - ✅ **Build package**
 
 Fix any failures:
@@ -262,7 +263,7 @@ We use an automated release script that creates a release PR with full security 
    - Verify files changed (only `version.py` and `CHANGELOG.md`)
    - Wait for CI checks to pass:
      - Ruff lint & format
-     - Tests (Python 3.10, 3.11, 3.12, 3.13)
+     - Tests (Python 3.11, 3.12, 3.13, 3.14)
      - Build distribution
      - **Security validation** (server-side file check)
 
@@ -480,7 +481,7 @@ If CI fails:
 2. **Reproduce locally**
    ```bash
    # Use same Python version as CI
-   uv python install 3.10
+   uv python install 3.11
    uv run pytest -v
    ```
 
@@ -532,7 +533,7 @@ Main branch is protected with **maximum security**:
 - ✅ **Enforce for admins** - Even repository owners must use PRs
 - ✅ **Require status checks to pass** - All CI must be green
   - CI / Ruff Lint & Format
-  - CI / Test Python 3.10, 3.11, 3.12, 3.13
+  - CI / Test Python 3.11, 3.12, 3.13, 3.14
   - CI / Build distribution
   - Validate Release / Validate Only Release Files Changed
 - ✅ **Require branches up-to-date** - Must rebase on latest main
@@ -547,6 +548,11 @@ Main branch is protected with **maximum security**:
 - All changes go through CI validation
 - Clear, linear git history
 - No bypassing security checks
+
+When upgrading the minimum Python version, maintainers must also update the
+remote required checks: remove retired matrix jobs before merging the migration
+and require the supported replacements. Updating
+`scripts/setup-branch-protection.sh` alone does not change GitHub settings.
 
 ### Testing Branch Protection
 
@@ -621,7 +627,7 @@ uv run ruff check --fix
 
 The project uses GitHub Actions for CI/CD:
 
-- **CI** (`ci.yml`) - Lint, format, test on Python 3.10-3.13
+- **CI** (`ci.yml`) - Lint, format, test on Python 3.11-3.14
 - **Validate Release** (`validate-release.yml`) - Security validation for releases
 - **Publish** (`publish.yml`) - Publishes to PyPI after validation
 - **Merge Bot** (`merge-bot.yml`) - Command-based PR merging with `/merge` and `/update`
