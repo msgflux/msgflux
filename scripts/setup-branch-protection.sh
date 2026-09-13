@@ -38,7 +38,7 @@ echo "📋 Applying branch protection rules..."
 # IMPORTANT: Using correct check names from CI workflow
 # The workflow is named "CI" and jobs are:
 # - "Ruff Lint & Format"
-# - "Test Python 3.10/3.11/3.12/3.13"
+# - "Test Python 3.11/3.12/3.13/3.14"
 # - "Build distribution"
 #
 # GitHub combines these as "CI / Job Name"
@@ -54,10 +54,10 @@ gh api \
     "strict": true,
     "checks": [
       {"context": "Ruff Lint & Format"},
-      {"context": "Test Python 3.10"},
       {"context": "Test Python 3.11"},
       {"context": "Test Python 3.12"},
       {"context": "Test Python 3.13"},
+      {"context": "Test Python 3.14"},
       {"context": "Build distribution"}
     ]
   },
@@ -85,10 +85,10 @@ echo "📋 Applied rules:"
 echo "   ✅ Require pull request before merging"
 echo "   ✅ Require status checks to pass:"
 echo "      - CI / Ruff Lint & Format"
-echo "      - CI / Test Python 3.10"
 echo "      - CI / Test Python 3.11"
 echo "      - CI / Test Python 3.12"
 echo "      - CI / Test Python 3.13"
+echo "      - CI / Test Python 3.14"
 echo "      - CI / Build distribution"
 echo "   ✅ Require branches to be up to date"
 echo "   ✅ Require linear history (no merge commits)"

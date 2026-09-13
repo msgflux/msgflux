@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["fastmcp"]
 # ///
 """Minimal FastMCP server used as a live test fixture.

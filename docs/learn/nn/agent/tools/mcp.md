@@ -96,7 +96,7 @@ Configure MCP servers using the `mcp_servers` attribute:
 
         ```python
         # /// script
-        # requires-python = ">=3.10"
+        # requires-python = ">=3.11"
         # dependencies = ["fastmcp"]
         # ///
         """MCP server — launch with: uv run my_server.py"""
