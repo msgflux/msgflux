@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from msgflux.runtime.context import thread_context
 from tests.models._chat_transport import EndpointMockTransport
 
 
@@ -149,3 +150,80 @@ def test_responses_nests_reasoning_effort(mock_opencode_client):
     request = client.return_value.responses.create.call_args.kwargs
     assert request["reasoning"] == {"effort": "low", "summary": "auto"}
     assert response.consume() == "They match."
+
+
+def _chat_completion_ok(client):
+    client.return_value.chat.completions.create.return_value = SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content="done",
+                    tool_calls=None,
+                    audio=None,
+                    annotations=None,
+                ),
+            )
+        ],
+    )
+
+
+def _responses_ok(client):
+    client.return_value.responses.create.return_value = SimpleNamespace(
+        id="resp_1",
+        status="completed",
+        incomplete_details=None,
+        usage=None,
+        output=[
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "done"}],
+            },
+        ],
+    )
+
+
+def test_session_headers_sent_from_active_thread(mock_opencode_client):
+    from msgflux.models.providers.opencode import (
+        OpenCodeChatCompletion,
+        OpenCodeGoChatCompletion,
+    )
+
+    tier, client = mock_opencode_client
+    cls = OpenCodeChatCompletion if tier == "zen" else OpenCodeGoChatCompletion
+    _chat_completion_ok(client)
+    _responses_ok(client)
+
+    with thread_context(thread_id="thread_1"):
+        cls(model_id="kimi-k3", api_mode="chat_completions")("Hello")
+        chat_headers = client.return_value.chat.completions.create.call_args.kwargs[
+            "extra_headers"
+        ]
+        cls(model_id="kimi-k3", api_mode="responses")("Hello")
+        responses_headers = client.return_value.responses.create.call_args.kwargs[
+            "extra_headers"
+        ]
+
+    expected = {"User-Agent": "msgflux", "x-opencode-session": "thread_1"}
+    assert chat_headers == expected
+    assert responses_headers == expected
+
+
+def test_no_session_header_without_active_thread(mock_opencode_client):
+    from msgflux.models.providers.opencode import (
+        OpenCodeChatCompletion,
+        OpenCodeGoChatCompletion,
+    )
+
+    tier, client = mock_opencode_client
+    cls = OpenCodeChatCompletion if tier == "zen" else OpenCodeGoChatCompletion
+    _chat_completion_ok(client)
+
+    cls(model_id="kimi-k3", api_mode="chat_completions")("Hello")
+    headers = client.return_value.chat.completions.create.call_args.kwargs[
+        "extra_headers"
+    ]
+
+    assert headers == {"User-Agent": "msgflux"}

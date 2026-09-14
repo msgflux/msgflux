@@ -1,4 +1,5 @@
 from os import getenv
+from typing import Any, Dict
 
 from msgflux.models.chat_capabilities import (
     ChatAPIModeCapabilities,
@@ -10,6 +11,7 @@ from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
 )
+from msgflux.models.providers._session import merge_session_headers
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     OpenAIResponsesReasoningCodec,
@@ -24,6 +26,8 @@ class _BaseOpenCode:
     subscription) is resolved server-side from the base URL.
     """
 
+    session_header = "x-opencode-session"
+
     def _get_api_key(self):
         """Load API keys from environment variable."""
         key = getenv("OPENCODE_API_KEY")
@@ -32,6 +36,13 @@ class _BaseOpenCode:
                 "The OpenCode API key is not available. Please set `OPENCODE_API_KEY`"
             )
         return key
+
+    def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return merge_session_headers(params, self.session_header)
+
+    def _adapt_responses_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        params = super()._adapt_responses_params(params)
+        return merge_session_headers(params, self.session_header)
 
 
 class _BaseOpenCodeZen(_BaseOpenCode):
