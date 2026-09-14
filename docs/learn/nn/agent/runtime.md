@@ -1316,7 +1316,8 @@ are atomic **per file**, with `None` representing expected absence. Backends mus
 opt in with `supports_atomic_changes = True` and implement `_compare_exchange`
 against all concurrent writers, including path/symlink substitution. The memory
 backend uses its shared lock. Unsupported backends fail closed; there is no
-read-then-write fallback, host filesystem backend or multi-file transaction.
+read-then-write fallback or multi-file transaction. The local backend below uses
+an explicitly selected weaker guarantee, never this atomic contract.
 The precondition checks exact contents, not whether an identical file was edited
 and restored in the meantime.
 
@@ -1338,6 +1339,77 @@ preview paging are not implemented yet. Do not inject these previews into model
 context just to render a UI. This low-level API does not implicitly register a
 tool. The Agent integration below uses the same prepared-change and atomic-write
 contracts, with Agent-owned approval consumption.
+
+### Local files on the host
+
+`LocalWorkspaceBackend(root)` maps virtual `/` to an existing absolute directory
+on the host. Unlike `InMemoryWorkspaceBackend`, writes modify real files; closing
+a binding does not delete or roll back them. This backend requires POSIX
+descriptor-relative operations and fails explicitly on unsupported platforms.
+It supplies no shell executor or network service. Repeated `open` calls for the
+same id share the existing files and identity, with independent binding lifecycle.
+Different ids on this backend still address the same root, not isolated copies.
+Use different directories/backends when file isolation between sessions is needed.
+
+```python
+from pathlib import Path
+from msgflux.runtime import (
+    ExecutionEnvironment, ExecutionScope, LocalWorkspaceBackend,
+    PermissionSet, WorkspaceEditor, execution_context,
+)
+
+async def update_local_file(root: Path):
+    backend = LocalWorkspaceBackend(root)
+    async with await backend.open("project") as binding:
+        fs = binding.filesystem
+        environment = ExecutionEnvironment.from_binding(binding)
+        permissions = PermissionSet(resources=[
+            fs.permission("/notes.txt", "filesystem.read"),
+            fs.permission("/notes.txt", "filesystem.write"),
+        ])
+        with execution_context(scope=ExecutionScope(
+            environment=environment, permissions=permissions,
+        )):
+            editor = WorkspaceEditor(
+                fs, require_approval=False,
+                write_guarantee="cooperative_compare",
+            )
+            change = await editor.aprepare_write("/notes.txt", "Updated locally\n")
+            print(change.diff)
+            await editor.aapply(change)
+```
+
+Call this function with an explicitly selected existing absolute directory. It
+prepares a diff and changes only `notes.txt` under that directory. This example
+disables approval prompts as a host decision, but does not bypass permissions.
+For user-reviewed writes, keep `require_approval=True` (the default) and use the
+approval request/decision/application flow described above. Review records remain
+bound to the exact resource, content and write guarantee.
+
+Local writes require explicit `cooperative_compare`: cooperating operations on
+the same filesystem/backend are serialized and recheck the expected bytes before
+replacement. The default `atomic_compare` is deliberately rejected. An editor or
+another process can still modify a file between comparison and replacement.
+Existing file tools still select the strict default; their explicit guarantee
+configuration is a separate integration step. Do not silently downgrade it.
+
+Paths remain virtual absolute POSIX paths, not arbitrary host paths. Parent
+directories must exist. Symlinks, hardlinked files and special files are rejected;
+directory traversal does not follow symlinks. Pagination uses bounded memory,
+although reaching a large line offset still requires scanning preceding bytes.
+Opening an existing local resource is not a snapshot. Reconnection verifies the
+exact identity retained by this backend instance; a new process/backend requires
+a fresh resource identity and review, even when the files remain on disk.
+
+!!! warning "Trusted local workspace, not an OS sandbox"
+    Do not use this backend to isolate hostile code or concurrent hostile host
+    processes. It cannot mediate host Python, subprocesses or network access.
+    External directory moves and same-device mounts are outside its containment
+    guarantees. A replaced root directory is rejected. File replacement changes
+    the inode; ordinary permission bits may be preserved, but ownership, ACLs,
+    extended attributes and hardlink relationships are not preserved as a general
+    contract. Atomic replacement is not a power-loss durability guarantee. See
+    [Python's file replacement semantics](https://docs.python.org/3.11/library/os.html#os.replace).
 
 ### Backend factories and live bindings
 

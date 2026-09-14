@@ -88,8 +88,11 @@ from msgflux.runtime.workspace_contracts import (
     WorkspaceWriteCapabilities,
     WriteGuarantee,
 )
+from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
 
 __all__ = [
+    "LocalWorkspace",
+    "LocalWorkspaceBackend",
     "InMemoryWorkspaceBackend",
     "WorkspaceBackend",
     "WorkspaceBinding",

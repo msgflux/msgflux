@@ -28,6 +28,23 @@ are not sources of authority.
 
 ### Workspace backend composition
 
+The local POSIX implementation (`runtime/workspace_local.py`) maps virtual paths
+to one host-selected existing directory. It reuses the filesystem authorization,
+editor proposals and backend binding lifecycle, without introducing Agent-specific
+dispatch. It advertises cooperative comparison and atomic file replacement, not
+atomic compare/exchange. The lock coordinates one backend's resources, not editors
+or other processes. Root identity is checked before mediated operations; local
+data persistence does not make live bindings or pending approvals recoverable by
+a newly constructed backend.
+
+Path traversal uses descriptor-relative operations and refuses symlinks, special
+files, hardlinked files and device crossings. These checks are defense in depth
+for a trusted host, not an OS sandbox against hostile directory renames, same-device
+mounts or arbitrary host code. Replacement uses a sibling temporary file and does
+not truncate the existing inode; cleanup is attempted on failure. Metadata and
+power-loss durability are not generally preserved. Tools' explicit write guarantee
+selection, dynamic prompt and local harness are dependent integration increments.
+
 `WorkspaceBackend` separates reusable host implementation/client ownership from
 `WorkspaceBinding`, a live connection to one resource. The memory reference
 backend retains resource identities for its process-local lifetime. Each open
