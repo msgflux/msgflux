@@ -8,8 +8,14 @@ from abc import ABC, abstractmethod
 from pathlib import PurePosixPath
 from threading import RLock
 from typing import Mapping
+from uuid import uuid4
 
 from msgflux.runtime.permissions import ResourcePermission, require_permissions
+from msgflux.runtime.workspace_contracts import (
+    WorkspaceIdentity,
+    WorkspaceWriteCapabilities,
+    WriteGuarantee,
+)
 
 
 def workspace_path(path: str) -> str:
@@ -31,12 +37,37 @@ class WorkspaceFilesystem(ABC):
 
     supports_atomic_changes = False
 
-    def __init__(self, workspace_id: str):
+    def __init__(self, workspace_id: str, *, identity: WorkspaceIdentity | None = None):
         if not isinstance(workspace_id, str) or not re.fullmatch(
             r"[A-Za-z0-9_.-]+", workspace_id
         ):
             raise ValueError("workspace_id must contain letters, digits, dots, _ or -")
         self._workspace_id = workspace_id
+        if identity is not None and not isinstance(identity, WorkspaceIdentity):
+            raise TypeError("identity must be a WorkspaceIdentity")
+        self._identity = identity or WorkspaceIdentity(
+            backend=f"{type(self).__module__}.{type(self).__qualname__}",
+            resource_id=workspace_id,
+            generation=uuid4().hex,
+        )
+
+    @property
+    def identity(self) -> WorkspaceIdentity:
+        return self._identity
+
+    @property
+    def write_capabilities(self) -> WorkspaceWriteCapabilities:
+        # Preserve the existing strict backend contract. Cooperative backends
+        # override this property; they must not claim supports_atomic_changes.
+        return WorkspaceWriteCapabilities(atomic_compare=self.supports_atomic_changes)
+
+    def require_write_guarantee(self, guarantee: WriteGuarantee) -> None:
+        capabilities = self.write_capabilities
+        if not isinstance(capabilities, WorkspaceWriteCapabilities):
+            raise TypeError("Expected WorkspaceWriteCapabilities")
+        capabilities.require(guarantee)
+        if guarantee == "atomic_compare" and not self.supports_atomic_changes:
+            raise NotImplementedError("Backend has no atomic compare implementation")
 
     @property
     def workspace_id(self) -> str:
@@ -143,6 +174,37 @@ class WorkspaceFilesystem(ABC):
         including protection against concurrent writers and path substitution.
         There is deliberately no read-then-write compatibility implementation.
         """
+        self._validate_change(expected, replacement)
+        if not self.supports_atomic_changes:
+            raise NotImplementedError(
+                "Workspace backend does not support atomic changes"
+            )
+        canonical = self._authorize_change(path, replacement)
+        self._compare_exchange(canonical, expected, replacement)
+
+    def _compare_exchange(self, path, expected, replacement):
+        raise NotImplementedError("Workspace backend does not support atomic changes")
+
+    def checked_replace(
+        self,
+        path: str,
+        *,
+        expected: bytes | None,
+        replacement: bytes | None,
+        guarantee: WriteGuarantee = "atomic_compare",
+    ) -> None:
+        """Replace under an explicit guarantee; never downgrade atomic requests."""
+        self.require_write_guarantee(guarantee)
+        if guarantee == "atomic_compare" or self.supports_atomic_changes:
+            return self.compare_exchange(
+                path, expected=expected, replacement=replacement
+            )
+        self._validate_change(expected, replacement)
+        canonical = self._authorize_change(path, replacement)
+        self._checked_replace(canonical, expected, replacement)
+
+    @staticmethod
+    def _validate_change(expected, replacement):
         if any(
             value is not None and not isinstance(value, bytes)
             for value in (expected, replacement)
@@ -150,16 +212,18 @@ class WorkspaceFilesystem(ABC):
             raise TypeError("Expected contents and replacement must be bytes or None")
         if expected is None and replacement is None:
             raise ValueError("Cannot delete an absent file")
-        if not self.supports_atomic_changes:
-            raise NotImplementedError(
-                "Workspace backend does not support atomic changes"
-            )
+
+    def _authorize_change(self, path, replacement):
         canonical = self._authorize("read", path)
         self._authorize("delete" if replacement is None else "write", canonical)
-        self._compare_exchange(canonical, expected, replacement)
+        return canonical
 
-    def _compare_exchange(self, path, expected, replacement):
-        raise NotImplementedError("Workspace backend does not support atomic changes")
+    def _checked_replace(self, path, expected, replacement):
+        """Cooperative backend hook; coordinate, recheck authority and compare."""
+        raise NotImplementedError("Backend has no cooperative compare implementation")
+
+    async def achecked_replace(self, path: str, **kwargs) -> None:
+        await asyncio.to_thread(self.checked_replace, path, **kwargs)
 
     async def acompare_exchange(
         self, path: str, *, expected: bytes | None, replacement: bytes | None

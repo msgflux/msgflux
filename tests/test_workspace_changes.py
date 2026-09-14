@@ -20,6 +20,8 @@ from msgflux.runtime import (
     SQLiteApprovalStore,
     WorkspaceConflictError,
     WorkspaceEditor,
+    WorkspaceIdentity,
+    WorkspaceWriteCapabilities,
     execution_context,
 )
 
@@ -169,6 +171,10 @@ def test_backend_without_atomic_support_fails_before_review():
     with execution_context(scope=scope(fs)):
         with pytest.raises(NotImplementedError):
             WorkspaceEditor(fs).prepare_write("/a", "new")
+        with pytest.raises(TypeError):
+            fs.compare_exchange("/a", expected="old", replacement=b"new")
+        with pytest.raises(ValueError):
+            fs.compare_exchange("/a", expected=None, replacement=None)
 
 
 def test_two_writers_only_one_wins():
@@ -280,3 +286,147 @@ async def test_async_create_delete_and_atomic_primitive():
         await editor.aapply(await editor.aprepare_delete("/a"))
         await fs.acompare_exchange("/a", expected=None, replacement=b"created")
         assert fs.read_bytes("/a") == b"created"
+
+
+def test_recreated_workspace_cannot_reuse_proposal_or_approval():
+    original = InMemoryWorkspace("files", {"/a": b"old"})
+    recreated = InMemoryWorkspace("files", {"/a": b"old"})
+    journal = InMemoryApprovalStore()
+    assert original.identity != recreated.identity
+    with execution_context(scope=scope(original)):
+        editor = WorkspaceEditor(original)
+        change = editor.prepare_write("/a", "new")
+        record = request(editor, change, journal)
+        journal.decide("editor", "request", approved=True, decided_by="reviewer")
+    with execution_context(scope=scope(recreated)):
+        editor = WorkspaceEditor(recreated)
+        with pytest.raises(PermissionError, match="resource changed"):
+            editor.apply(change, approval=record, approval_store=journal)
+        new_change = editor.prepare_write("/a", "new")
+        assert new_change.digest != change.digest
+        with pytest.raises(ApprovalConflictError):
+            editor.apply(new_change, approval=record, approval_store=journal)
+        assert recreated.read_bytes("/a") == b"old"
+    assert journal.get("editor", "request").status == "approved"
+
+
+def test_legacy_proposal_remains_readable_but_requires_new_review():
+    legacy = msgspec.json.decode(
+        b'{"workspace_id":"files","path":"/a","before":"old","after":"new"}',
+        type=PreparedFileChange,
+    )
+    assert "-old" in legacy.diff
+    fs = InMemoryWorkspace("files", {"/a": b"old"})
+    with execution_context(scope=scope(fs)):
+        with pytest.raises(PermissionError, match="new review"):
+            WorkspaceEditor(fs, require_approval=False).apply(legacy)
+        assert fs.read_bytes("/a") == b"old"
+
+
+@pytest.mark.parametrize(
+    "field", ["backend", "resource_id", "generation", "config_revision"]
+)
+def test_each_identity_component_is_bound_to_proposal(field):
+    fs = InMemoryWorkspace("files", {"/a": b"old"})
+    with execution_context(scope=scope(fs)):
+        editor = WorkspaceEditor(fs, require_approval=False)
+        change = editor.prepare_write("/a", "new")
+        altered = msgspec.structs.replace(
+            change,
+            workspace_identity=msgspec.structs.replace(fs.identity, **{field: "other"}),
+        )
+        with pytest.raises(PermissionError, match="resource changed"):
+            editor.apply(altered)
+        assert fs.read_bytes("/a") == b"old"
+
+
+class CooperativeWorkspace(InMemoryWorkspace):
+    """Contract test double, not a local filesystem or an isolation mechanism."""
+
+    supports_atomic_changes = False
+
+    @property
+    def write_capabilities(self):
+        return WorkspaceWriteCapabilities(cooperative_compare=True)
+
+    def _checked_replace(self, path, expected, replacement):
+        self._compare_exchange(path, expected, replacement)
+
+
+@pytest.mark.asyncio
+async def test_cooperative_writes_require_explicit_opt_in():
+    fs = CooperativeWorkspace("files", {"/a": b"old"})
+    with execution_context(scope=scope(fs)):
+        with pytest.raises(NotImplementedError):
+            WorkspaceEditor(fs).prepare_write("/a", "new")
+        with pytest.raises(NotImplementedError):
+            fs.checked_replace("/a", expected=b"old", replacement=b"new")
+        with pytest.raises(NotImplementedError):
+            fs.compare_exchange("/a", expected=b"old", replacement=b"new")
+        editor = WorkspaceEditor(
+            fs, require_approval=False, write_guarantee="cooperative_compare"
+        )
+        change = editor.prepare_write("/a", "new")
+        with pytest.raises(PermissionError, match="guarantee changed"):
+            WorkspaceEditor(fs, require_approval=False).apply(change)
+        await editor.aapply(change)
+        assert fs.read_bytes("/a") == b"new"
+        with pytest.raises(WorkspaceConflictError):
+            await fs.achecked_replace(
+                "/a",
+                expected=b"old",
+                replacement=b"lost",
+                guarantee="cooperative_compare",
+            )
+
+
+def test_cooperative_write_still_requires_authority_and_approval():
+    fs = CooperativeWorkspace("files", {"/a": b"old"})
+    editor = WorkspaceEditor(fs, write_guarantee="cooperative_compare")
+    with execution_context(scope=scope(fs)):
+        change = editor.prepare_write("/a", "new")
+        with pytest.raises(PermissionError, match="approval"):
+            editor.apply(change)
+    with execution_context(scope=scope(fs, ("read",))):
+        with pytest.raises(PermissionError):
+            fs.checked_replace(
+                "/a",
+                expected=b"old",
+                replacement=b"new",
+                guarantee="cooperative_compare",
+            )
+
+
+def test_identity_serialization_and_write_capability_validation():
+    identity = WorkspaceIdentity(backend="fake", resource_id="r", generation="g")
+    assert (
+        msgspec.json.decode(msgspec.json.encode(identity), type=WorkspaceIdentity)
+        == identity
+    )
+    with pytest.raises(AttributeError):
+        identity.generation = "other"
+    with pytest.raises(ValueError):
+        WorkspaceIdentity(backend="", resource_id="r", generation="g")
+    with pytest.raises(msgspec.ValidationError):
+        msgspec.json.decode(b'{"atomic_compare":1}', type=WorkspaceWriteCapabilities)
+    with pytest.raises(TypeError):
+        WorkspaceWriteCapabilities(atomic_compare=1)
+    with pytest.raises(NotImplementedError):
+        WorkspaceWriteCapabilities(atomic_replace=True).require("cooperative_compare")
+    with pytest.raises(ValueError):
+        WorkspaceWriteCapabilities().require("best_effort")
+    WorkspaceWriteCapabilities(atomic_compare=True).require("cooperative_compare")
+
+
+def test_agent_approval_resources_bind_backend_identity():
+    from types import SimpleNamespace
+
+    from msgflux.runtime import AgentApprovals
+
+    definition = SimpleNamespace(required_resources=())
+    first, second = InMemoryWorkspace("files"), InMemoryWorkspace("files")
+    old = AgentApprovals._resource_binding(definition, scope(first))
+    new = AgentApprovals._resource_binding(definition, scope(second))
+    assert old["workspace_id"] == new["workspace_id"]
+    assert old["workspace_identity"] != new["workspace_identity"]
+    assert old["workspace_identity"] == msgspec.to_builtins(first.identity)
