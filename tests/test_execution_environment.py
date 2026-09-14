@@ -52,6 +52,49 @@ def test_virtual_paths_never_resolve_on_host(path):
         workspace_path(path)
 
 
+@pytest.mark.parametrize("guarantee", [None, True, "best_effort", ""])
+def test_environment_rejects_unknown_write_guarantees(guarantee):
+    with pytest.raises(ValueError, match="write guarantee"):
+        ExecutionEnvironment(InMemoryWorkspace("files"), write_guarantee=guarantee)
+
+
+@pytest.mark.asyncio
+async def test_environment_editor_factory_preserves_policy_and_lifecycle():
+    from msgflux.runtime import InMemoryWorkspaceBackend
+
+    binding = await InMemoryWorkspaceBackend().open("files")
+    environment = ExecutionEnvironment.from_binding(
+        binding, write_guarantee="cooperative_compare"
+    )
+    editor = environment.workspace_editor()
+    assert editor.filesystem is binding.filesystem
+    assert editor.write_guarantee == "cooperative_compare"
+    assert editor.require_approval is True
+    assert (
+        environment.workspace_editor(require_approval=False).require_approval is False
+    )
+    assert (
+        ExecutionEnvironment.from_binding(binding).write_guarantee == "atomic_compare"
+    )
+    await binding.aclose()
+    with pytest.raises(PermissionError):
+        environment.workspace_editor()
+
+
+def test_nested_scope_cannot_downgrade_environment_write_guarantee():
+    environment = ExecutionEnvironment(InMemoryWorkspace("files"))
+    with execution_context(scope=ExecutionScope(environment=environment)):
+        with pytest.raises(ValueError, match="replace its environment"):
+            with execution_context(
+                scope=ExecutionScope(
+                    environment=replace(
+                        environment, write_guarantee="cooperative_compare"
+                    )
+                )
+            ):
+                pass
+
+
 def test_line_read_backend_hook_is_authorized_before_io():
     fs = InMemoryWorkspace("lines")
     fs._read_lines = Mock(return_value=b"selected\n")

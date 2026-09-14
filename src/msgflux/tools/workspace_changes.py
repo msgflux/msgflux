@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 
+from msgflux.runtime.context import get_execution_scope
 from msgflux.runtime.workspace import workspace_path
 from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
 
@@ -22,6 +23,13 @@ class WorkspaceChangeTool(ABC):
     def prepare_workspace_change(self, arguments, filesystem) -> PreparedFileChange:
         """Return a read-only preview using only authorized workspace operations."""
 
+    @staticmethod
+    def _editor(filesystem, *, require_approval=True) -> WorkspaceEditor:
+        environment = get_execution_scope().environment
+        if environment is None or environment.filesystem is not filesystem:
+            raise PermissionError("Filesystem is not bound to the live environment")
+        return environment.workspace_editor(require_approval=require_approval)
+
     def _apply(self, arguments, filesystem):
         prepared = _PREPARED_CHANGE.get()
         change = (
@@ -31,7 +39,7 @@ class WorkspaceChangeTool(ABC):
         )
         # The Agent guard already consumed the decision. Outside a protected
         # Agent invocation, confirmation is the host's policy, just as for Bash.
-        WorkspaceEditor(filesystem, require_approval=False).apply(change)
+        self._editor(filesystem, require_approval=False).apply(change)
         return {"status": "completed"}
 
 

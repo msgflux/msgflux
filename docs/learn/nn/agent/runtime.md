@@ -1355,14 +1355,16 @@ Use different directories/backends when file isolation between sessions is neede
 from pathlib import Path
 from msgflux.runtime import (
     ExecutionEnvironment, ExecutionScope, LocalWorkspaceBackend,
-    PermissionSet, WorkspaceEditor, execution_context,
+    PermissionSet, execution_context,
 )
 
 async def update_local_file(root: Path):
     backend = LocalWorkspaceBackend(root)
     async with await backend.open("project") as binding:
         fs = binding.filesystem
-        environment = ExecutionEnvironment.from_binding(binding)
+        environment = ExecutionEnvironment.from_binding(
+            binding, write_guarantee="cooperative_compare",
+        )
         permissions = PermissionSet(resources=[
             fs.permission("/notes.txt", "filesystem.read"),
             fs.permission("/notes.txt", "filesystem.write"),
@@ -1370,10 +1372,7 @@ async def update_local_file(root: Path):
         with execution_context(scope=ExecutionScope(
             environment=environment, permissions=permissions,
         )):
-            editor = WorkspaceEditor(
-                fs, require_approval=False,
-                write_guarantee="cooperative_compare",
-            )
+            editor = environment.workspace_editor(require_approval=False)
             change = await editor.aprepare_write("/notes.txt", "Updated locally\n")
             print(change.diff)
             await editor.aapply(change)
@@ -1390,8 +1389,9 @@ Local writes require explicit `cooperative_compare`: cooperating operations on
 the same filesystem/backend are serialized and recheck the expected bytes before
 replacement. The default `atomic_compare` is deliberately rejected. An editor or
 another process can still modify a file between comparison and replacement.
-Existing file tools still select the strict default; their explicit guarantee
-configuration is a separate integration step. Do not silently downgrade it.
+The host selects this policy on `ExecutionEnvironment`, and file tools use it
+for both preparation and application. It is not a model-visible argument and is
+never inferred automatically from the selected backend.
 
 Paths remain virtual absolute POSIX paths, not arbitrary host paths. Parent
 directories must exist. Symlinks, hardlinked files and special files are rejected;
@@ -1410,6 +1410,63 @@ a fresh resource identity and review, even when the files remain on disk.
     extended attributes and hardlink relationships are not preserved as a general
     contract. Atomic replacement is not a power-loss durability guarantee. See
     [Python's file replacement semantics](https://docs.python.org/3.11/library/os.html#os.replace).
+
+### One tool library, different workspace backends
+
+`WriteTool`, `EditTool` and `ApplyPatchTool` use the same environment-owned editor
+factory. `ReadFileTool` continues to use the filesystem's bounded read interface.
+Changing the backend does not change tool names, argument schemas, return values
+or provider transports. Only the host's resource binding and required guarantee
+change. The strict default also permits reading a local workspace; it rejects
+mutation when the editor is requested, rather than rejecting the whole environment.
+
+```python
+from msgflux.nn import ToolLibrary
+from msgflux.runtime import ExecutionEnvironment, ExecutionScope, PermissionSet, execution_context
+from msgflux.tools.builtin import ApplyPatchTool, EditTool, ReadFileTool, WriteTool
+
+tools = ToolLibrary("workspace", [ReadFileTool(), WriteTool(), EditTool(), ApplyPatchTool()])
+
+async def exercise_workspace(backend, *, write_guarantee="atomic_compare"):
+    async with await backend.open("project") as binding:
+        fs = binding.filesystem
+        environment = ExecutionEnvironment.from_binding(
+            binding, write_guarantee=write_guarantee,
+        )
+        scope = ExecutionScope(
+            environment=environment,
+            permissions=PermissionSet(resources=[
+                fs.permission("/notes.txt", f"filesystem.{action}")
+                for action in ("read", "write")
+            ]),
+        )
+        with execution_context(scope=scope):
+            await tools.arun("write", {"path": "notes.txt", "content": "first\nsecond\n"})
+            await tools.arun("edit", {"path": "notes.txt", "old": "second", "new": "last"})
+            return await tools.arun("read", {"path": "notes.txt", "offset": 2, "limit": 1})
+```
+
+With `InMemoryWorkspaceBackend()`, this function uses its default atomic guarantee.
+With `LocalWorkspaceBackend(root)`, pass `write_guarantee="cooperative_compare"`.
+Both return `"last\n"`; the latter modifies the selected real `notes.txt`.
+This direct `ToolLibrary` example does not request user approval. In an Agent,
+register the same tools and configure `AgentApprovals` for `write`, `edit` and
+`apply_patch` to require reviewed diffs, using the existing pause/decision/resume
+flow. Permissions remain required regardless of approval settings.
+
+`ExecutionEnvironment(..., write_guarantee=...)` also supports directly supplied,
+unmanaged filesystems. The field is immutable and keyword-only. Its
+`workspace_editor(require_approval=True)` method can also be used by host code;
+the default low-level editor still requires an approval record. Directly constructing
+`WorkspaceEditor` remains a separate explicit host API and does not inherit an
+environment's policy implicitly.
+
+Prepared changes already persist the selected guarantee, and their digest is
+bound to Agent approval. Changing the guarantee between preview and execution
+invalidates that review; it is never adopted from a saved proposal as authority.
+Supply a new environment only at a top-level invocation boundary; nested scopes
+cannot replace it. Reconcile pending work and obtain a new review when changing
+policy. No prompt or checkpoint field grants filesystem access by itself.
 
 ### Backend factories and live bindings
 
@@ -1568,8 +1625,9 @@ This is an explicit low-level host choice for a cooperative backend. Approval
 remains required, and the selected guarantee is included in the proposal and
 approval binding. Preparation rejects an unsupported guarantee; applying a
 proposal through an editor with a different guarantee also fails. The builtin
-write/edit/apply-patch tools still require atomic comparison in this increment.
-No local or remote backend is supplied by these descriptors yet.
+write/edit/apply-patch tools obtain their guarantee from the live environment;
+its default remains atomic comparison. These descriptors are independent of the
+memory and local backend implementations described above.
 
 !!! warning "Previously prepared changes need a fresh review"
 
@@ -1686,7 +1744,8 @@ An adapter missing any abstract method cannot be instantiated.
 
 `ApplyPatchTool(cwd="/")` creates, updates or deletes **one file per call** using
 a V4A diff. It inherits the same WorkspaceChangeTool contract, so approval previews,
-live filesystem grants and atomic compare/exchange work exactly as for write/edit.
+live filesystem grants and the environment-selected write guarantee work exactly
+as for write/edit.
 Creation refuses to overwrite an existing file; updates require an existing file;
 deletion requires `filesystem.delete` as well as read permission for its preview.
 Parent directories must already exist. There is no shell invocation, host-path

@@ -4,7 +4,6 @@ import asyncio
 from typing import Literal, Optional
 
 from msgflux.runtime.workspace import WorkspaceFilesystem
-from msgflux.runtime.workspace_changes import WorkspaceEditor
 from msgflux.tools.builtin.workspace import _tool_path
 from msgflux.tools.config import tool_config
 from msgflux.tools.patch import apply_diff
@@ -35,7 +34,7 @@ class ApplyPatchTool(WorkspaceChangeTool):
     def prepare_workspace_change(self, arguments, filesystem):
         operation, diff = arguments["operation"], arguments.get("diff")
         path = _tool_path(arguments["path"], self.cwd)
-        editor = WorkspaceEditor(filesystem)
+        editor = self._editor(filesystem)
         if operation == "delete":
             if diff is not None:
                 raise ValueError("Delete operations must not contain a diff")

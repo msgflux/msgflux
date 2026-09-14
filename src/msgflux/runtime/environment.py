@@ -12,9 +12,11 @@ from msgflux.runtime.abort import AbortSignal, await_with_abort
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, require_permissions
 from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
+from msgflux.runtime.workspace_contracts import WriteGuarantee
 
 if TYPE_CHECKING:
     from msgflux.runtime.workspace_backend import WorkspaceBinding
+    from msgflux.runtime.workspace_changes import WorkspaceEditor
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,7 @@ class ExecutionEnvironment:
         )
     )
     binding: WorkspaceBinding | None = field(default=None, repr=False, compare=False)
+    write_guarantee: WriteGuarantee = field(default="atomic_compare", kw_only=True)
 
     def __post_init__(self):
         if not isinstance(self.filesystem, WorkspaceFilesystem):
@@ -113,6 +116,8 @@ class ExecutionEnvironment:
             raise TypeError("process_executor must be a ProcessExecutor or None")
         if not isinstance(self.requirements, SandboxRequirements):
             raise TypeError("requirements must be SandboxRequirements")
+        if self.write_guarantee not in ("atomic_compare", "cooperative_compare"):
+            raise ValueError("Unknown workspace write guarantee")
         if self.filesystem.requires_binding and self.binding is None:
             raise ValueError("Managed filesystem requires a workspace binding")
         if self.binding is not None:
@@ -137,6 +142,7 @@ class ExecutionEnvironment:
         binding: WorkspaceBinding,
         *,
         requirements: SandboxRequirements | None = None,
+        write_guarantee: WriteGuarantee = "atomic_compare",
     ) -> ExecutionEnvironment:
         from msgflux.runtime.workspace_backend import WorkspaceBinding  # noqa: PLC0415
 
@@ -147,7 +153,24 @@ class ExecutionEnvironment:
             filesystem=binding.filesystem,
             process_executor=binding.process_executor,
             binding=binding,
+            write_guarantee=write_guarantee,
             **kwargs,
+        )
+
+    def workspace_editor(self, *, require_approval: bool = True) -> WorkspaceEditor:
+        """Build an editor with host policy; never infer policy from the backend.
+
+        Capabilities are checked here, not when constructing the environment,
+        so a strictly configured environment can still read a cooperative backend.
+        """
+        from msgflux.runtime.workspace_changes import WorkspaceEditor  # noqa: PLC0415
+
+        self.require_active()
+        self.filesystem.require_write_guarantee(self.write_guarantee)
+        return WorkspaceEditor(
+            self.filesystem,
+            require_approval=require_approval,
+            write_guarantee=self.write_guarantee,
         )
 
     def require_active(self) -> None:
