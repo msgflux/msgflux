@@ -6,11 +6,15 @@ import asyncio
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from msgflux.runtime.abort import AbortSignal, await_with_abort
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, require_permissions
 from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
+
+if TYPE_CHECKING:
+    from msgflux.runtime.workspace_backend import WorkspaceBinding
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,7 @@ class ExecutionEnvironment:
             {"filesystem", "network", "process", "resource_limits"}
         )
     )
+    binding: WorkspaceBinding | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.filesystem, WorkspaceFilesystem):
@@ -108,12 +113,51 @@ class ExecutionEnvironment:
             raise TypeError("process_executor must be a ProcessExecutor or None")
         if not isinstance(self.requirements, SandboxRequirements):
             raise TypeError("requirements must be SandboxRequirements")
+        if self.binding is not None:
+            from msgflux.runtime.workspace_backend import (  # noqa: PLC0415
+                WorkspaceBinding,
+            )
+
+            if not isinstance(self.binding, WorkspaceBinding):
+                raise TypeError("binding must be a WorkspaceBinding")
+            if (
+                self.filesystem is not self.binding.filesystem
+                or self.process_executor is not self.binding.process_executor
+            ):
+                raise ValueError("Environment services must belong to its binding")
+            self.require_active()
+            if self.process_executor is not None:
+                self.process_executor.capabilities.require(self.requirements)
+
+    @classmethod
+    def from_binding(
+        cls,
+        binding: WorkspaceBinding,
+        *,
+        requirements: SandboxRequirements | None = None,
+    ) -> ExecutionEnvironment:
+        from msgflux.runtime.workspace_backend import WorkspaceBinding  # noqa: PLC0415
+
+        if not isinstance(binding, WorkspaceBinding):
+            raise TypeError("binding must be a WorkspaceBinding")
+        kwargs = {} if requirements is None else {"requirements": requirements}
+        return cls(
+            filesystem=binding.filesystem,
+            process_executor=binding.process_executor,
+            binding=binding,
+            **kwargs,
+        )
+
+    def require_active(self) -> None:
+        if self.binding is not None:
+            self.binding.require_active()
 
     async def arun(self, request: ProcessRequest) -> ProcessResult:
         from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
 
         if not isinstance(request, ProcessRequest):
             raise TypeError("Expected ProcessRequest")
+        self.require_active()
         scope = get_execution_scope()
         if scope.environment is not self:
             raise PermissionError("Environment is not bound to the current execution")

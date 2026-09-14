@@ -26,6 +26,28 @@ are not sources of authority.
 
 ## Implementation sequence
 
+### Workspace backend composition
+
+`WorkspaceBackend` separates reusable host implementation/client ownership from
+`WorkspaceBinding`, a live connection to one resource. The memory reference
+backend retains resource identities for its process-local lifetime. Each open
+creates independent files; reconnect validates the complete identity and never
+recreates a missing resource. No grants or credentials are serialized by this API.
+
+`ExecutionEnvironment.from_binding` preserves the existing execution path while
+checking that filesystem and executor belong to the binding. Filesystem access,
+process execution and Agent approval binding reject an inactive connection.
+Successful close is idempotent. Failure or cancellation during release produces
+a fail-closed `release_failed` state and requires host reconciliation; there is
+no automatic retry of unknown effects. The host must drain active operations
+before releasing. This does not promise remote process termination, rollback,
+or protection from trusted Python code that bypasses runtime services.
+
+Release detaches only the connection, including borrowed resources. Ownership is
+descriptive, not authority to destroy a vendor sandbox. Destruction and optional
+pause/snapshot/fork behavior remain future capabilities. Scope serialization and
+nested authority rules are unchanged; bindings are never restored as grants.
+
 ### Workspace identity and write guarantees
 
 The first workspace-contract increment uses immutable `msgspec.Struct`

@@ -85,6 +85,7 @@ class WorkspaceFilesystem(ABC):
         scope = get_execution_scope()
         if scope.environment is None or scope.environment.filesystem is not self:
             raise PermissionError("Filesystem is not bound to the live environment")
+        scope.environment.require_active()
         if scope.abort_signal is not None:
             scope.abort_signal.raise_if_aborted()
         require_permissions(

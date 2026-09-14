@@ -97,6 +97,7 @@ class AgentApprovals:
                 for item in definition.required_resources
             ]
         if scope.environment is not None:
+            scope.environment.require_active()
             resources["workspace_id"] = scope.environment.filesystem.workspace_id
             resources["workspace_identity"] = msgspec.to_builtins(
                 scope.environment.filesystem.identity

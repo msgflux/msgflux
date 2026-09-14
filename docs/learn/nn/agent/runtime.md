@@ -1339,6 +1339,100 @@ context just to render a UI. This low-level API does not implicitly register a
 tool. The Agent integration below uses the same prepared-change and atomic-write
 contracts, with Agent-owned approval consumption.
 
+### Backend factories and live bindings
+
+`WorkspaceBackend` is a reusable host service. Its asynchronous `open()` creates
+a `WorkspaceBinding` for one resource; `reconnect()` opens a new binding only
+after verifying the exact resource identity. Backend instances may share client
+pools or implementations, but do not carry execution-local grants, principals
+or conversation state.
+
+`ExecutionEnvironment.from_binding()` connects the existing runtime and tools to
+the binding's filesystem and optional process executor. It validates service
+identity and requested executor capabilities. Execution still checks live grants,
+abort signals and executor compatibility on every call. Direct construction of
+`ExecutionEnvironment(filesystem, ...)` remains available without managed lifecycle.
+
+```python
+import asyncio
+
+from msgflux.runtime import (
+    ExecutionEnvironment, ExecutionScope, InMemoryWorkspaceBackend,
+    PermissionSet, execution_context,
+)
+
+async def main():
+    backend = InMemoryWorkspaceBackend({"/note.txt": b"original"})
+    binding = await backend.open("project")
+    identity = binding.identity
+
+    async with binding:
+        environment = ExecutionEnvironment.from_binding(binding)
+        fs = binding.filesystem
+        scope = ExecutionScope(
+            environment=environment,
+            permissions=PermissionSet(resources=[
+                fs.permission("/note.txt", "filesystem.read"),
+                fs.permission("/note.txt", "filesystem.write"),
+            ]),
+        )
+        with execution_context(scope=scope):
+            fs.write_text("/note.txt", "updated")
+            assert fs.read_text("/note.txt") == "updated"
+
+    # Closing detached this connection; it did not delete the resource.
+    async with await backend.reconnect("project", identity) as reconnected:
+        assert reconnected.identity == identity
+        # Create a fresh environment and grant authority explicitly to use it.
+
+asyncio.run(main())
+```
+
+This example uses only memory. Every `open()` creates independent files, even
+when passed the same workspace name. Reconnection shares the existing files, not
+the original execution scope or permissions. Resources are retained for the
+lifetime of the memory backend and its bindings; there is no cross-process
+recovery or implicit eviction. Closing one binding does not close other bindings
+to the same resource. A new backend instance cannot reconnect to resources owned
+by an earlier instance.
+
+Bindings are live, non-serializable objects. Persist only their identity, then
+have the host resolve the backend and reconnect. An expired/missing resource is
+an error, not permission to create a replacement under an old approval. Nested
+execution still cannot replace its environment; inherit the parent environment
+rather than constructing another one inside a tool.
+
+`await binding.aclose()` releases the connection through the backend's `_release`
+hook. Successful close is idempotent and also runs on async context-manager exit.
+The `ownership` label (`owned` or `borrowed`) records provenance only: neither
+mode implicitly deletes files, terminates a sandbox or authorizes destruction.
+No destroy/pause/snapshot capability is implemented in this increment.
+
+| Binding state | Access and cleanup |
+| --- | --- |
+| `open` | Mediated operations are allowed subject to live permissions |
+| `closing` | New mediated operations are rejected while release runs |
+| `closed` | Access is rejected; repeated close is harmless |
+| `release_failed` | Access is rejected; host reconciliation is required before any further cleanup |
+
+!!! warning "Connection release is not process cancellation"
+
+    Drain or cancel active operations before closing a binding. Closing gates
+    new runtime-mediated operations, but cannot roll back writes or guarantee
+    termination of already running remote processes. If release fails or is
+    cancelled, the binding becomes `release_failed` and does not automatically
+    retry unknown effects. Backend adapters must clean up partial connections
+    when open/reconnect fails or is cancelled. Use bindings within one async
+    event loop; they are not designed for concurrent use across event loops.
+
+The `WorkspaceBackend` ABC defines `open`, optional `reconnect` (unsupported by
+default) and `_release`. Vendor adapters return the same binding type, backed by
+their own filesystem and executor implementations. A remote executor must operate
+on the same files as that filesystem: mounting or synchronizing local files is a
+separate explicit integration, not inferred from matching path strings. The
+reference memory backend provides no process executor, network access or host
+filesystem access.
+
 ### Resource identity and write guarantees
 
 `workspace_id` names a logical workspace; it does not identify the underlying
