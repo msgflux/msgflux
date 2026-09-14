@@ -77,6 +77,11 @@ from msgflux.runtime.workspace import (
     WorkspaceConflictError,
     WorkspaceFilesystem,
 )
+from msgflux.runtime.workspace_backend import (
+    InMemoryWorkspaceBackend,
+    WorkspaceBackend,
+    WorkspaceBinding,
+)
 from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
 from msgflux.runtime.workspace_contracts import (
     WorkspaceIdentity,
@@ -85,6 +90,9 @@ from msgflux.runtime.workspace_contracts import (
 )
 
 __all__ = [
+    "InMemoryWorkspaceBackend",
+    "WorkspaceBackend",
+    "WorkspaceBinding",
     "WorkspaceIdentity",
     "WorkspaceWriteCapabilities",
     "WriteGuarantee",
