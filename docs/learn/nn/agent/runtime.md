@@ -1351,7 +1351,11 @@ or conversation state.
 the binding's filesystem and optional process executor. It validates service
 identity and requested executor capabilities. Execution still checks live grants,
 abort signals and executor compatibility on every call. Direct construction of
-`ExecutionEnvironment(filesystem, ...)` remains available without managed lifecycle.
+`ExecutionEnvironment(filesystem, ...)` remains available for unmanaged filesystems.
+Once a filesystem is attached to a binding, it requires an active binding for all
+runtime-mediated access. Removing `binding` from an environment or wrapping the
+same filesystem in an unmanaged environment does not restore access; preexisting
+unmanaged environments are also rejected on subsequent use of that resource.
 
 ```python
 import asyncio

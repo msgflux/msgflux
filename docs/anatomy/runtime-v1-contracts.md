@@ -37,6 +37,9 @@ recreates a missing resource. No grants or credentials are serialized by this AP
 `ExecutionEnvironment.from_binding` preserves the existing execution path while
 checking that filesystem and executor belong to the binding. Filesystem access,
 process execution and Agent approval binding reject an inactive connection.
+Managed filesystems cannot be rewrapped into an unmanaged environment to evade
+lifecycle checks; even unmanaged environments created before binding are rejected
+when accessing the now-managed resource. Reconnected bindings remain independent.
 Successful close is idempotent. Failure or cancellation during release produces
 a fail-closed `release_failed` state and requires host reconciliation; there is
 no automatic retry of unknown effects. The host must drain active operations
