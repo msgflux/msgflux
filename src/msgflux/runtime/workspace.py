@@ -43,6 +43,7 @@ class WorkspaceFilesystem(ABC):
         ):
             raise ValueError("workspace_id must contain letters, digits, dots, _ or -")
         self._workspace_id = workspace_id
+        self._requires_binding = False
         if identity is not None and not isinstance(identity, WorkspaceIdentity):
             raise TypeError("identity must be a WorkspaceIdentity")
         self._identity = identity or WorkspaceIdentity(
@@ -54,6 +55,15 @@ class WorkspaceFilesystem(ABC):
     @property
     def identity(self) -> WorkspaceIdentity:
         return self._identity
+
+    @property
+    def requires_binding(self) -> bool:
+        return self._requires_binding
+
+    def _require_binding(self) -> None:
+        # One-way promotion: shared/reconnected resources may have multiple live
+        # bindings, but must never regain unmanaged access through public APIs.
+        self._requires_binding = True
 
     @property
     def write_capabilities(self) -> WorkspaceWriteCapabilities:

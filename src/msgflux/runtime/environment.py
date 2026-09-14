@@ -113,6 +113,8 @@ class ExecutionEnvironment:
             raise TypeError("process_executor must be a ProcessExecutor or None")
         if not isinstance(self.requirements, SandboxRequirements):
             raise TypeError("requirements must be SandboxRequirements")
+        if self.filesystem.requires_binding and self.binding is None:
+            raise ValueError("Managed filesystem requires a workspace binding")
         if self.binding is not None:
             from msgflux.runtime.workspace_backend import (  # noqa: PLC0415
                 WorkspaceBinding,
@@ -149,6 +151,8 @@ class ExecutionEnvironment:
         )
 
     def require_active(self) -> None:
+        if self.filesystem.requires_binding and self.binding is None:
+            raise PermissionError("Managed filesystem requires a workspace binding")
         if self.binding is not None:
             self.binding.require_active()
 

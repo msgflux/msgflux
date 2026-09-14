@@ -74,6 +74,7 @@ class WorkspaceBinding:
         self._ownership = ownership
         self._state = "open"
         self._close_lock = asyncio.Lock()
+        filesystem._require_binding()
 
     @property
     def backend(self) -> WorkspaceBackend:

@@ -288,3 +288,29 @@ async def test_reconnected_binding_survives_other_binding_close():
     await second.aclose()
     with pytest.raises(FileNotFoundError):
         await InMemoryWorkspaceBackend().reconnect("project", first.identity)
+
+
+@pytest.mark.asyncio
+async def test_managed_filesystem_cannot_escape_binding_lifecycle():
+    from dataclasses import replace
+
+    fs = InMemoryWorkspace("project", {"/a": b"original"})
+    old_environment = ExecutionEnvironment(fs)
+    binding = WorkspaceBinding(TrackingBackend(), fs)
+    environment = ExecutionEnvironment.from_binding(binding)
+    permissions = PermissionSet(resources=[fs.permission("/a", "filesystem.read")])
+    for closed in (False, True):
+        if closed:
+            await binding.aclose()
+        with pytest.raises(ValueError, match="requires a workspace binding"):
+            ExecutionEnvironment(fs)
+        with pytest.raises(ValueError, match="requires a workspace binding"):
+            replace(environment, binding=None)
+        with execution_context(
+            scope=ExecutionScope(
+                environment=old_environment,
+                permissions=permissions,
+            )
+        ):
+            with pytest.raises(PermissionError, match="requires a workspace binding"):
+                fs.read_bytes("/a")
