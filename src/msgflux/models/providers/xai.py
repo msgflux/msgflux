@@ -1,4 +1,5 @@
 from os import getenv
+from typing import Any, Dict
 
 from msgflux.models.chat_capabilities import (
     ChatAPIModeCapabilities,
@@ -10,11 +11,13 @@ from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
 )
+from msgflux.models.providers._session import USER_AGENT, merge_session_headers
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     OpenAIResponsesReasoningCodec,
 )
 from msgflux.models.registry import register_model
+from msgflux.runtime.context import get_thread_id
 
 
 class _BaseXAI:
@@ -67,3 +70,16 @@ class XAIChatCompletion(_BaseXAI, OpenAICompatibleChatCompletion):
         ),
         default_reasoning_codec=OpenAICompatibleReasoningCodec(),
     )
+
+    def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return merge_session_headers(params, "x-grok-conv-id")
+
+    def _adapt_responses_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        params = super()._adapt_responses_params(params)
+        thread_id = get_thread_id()
+        if thread_id and params.get("prompt_cache_key") is None:
+            params["prompt_cache_key"] = thread_id
+        extra_headers = dict(params.get("extra_headers") or {})
+        extra_headers.setdefault("User-Agent", USER_AGENT)
+        params["extra_headers"] = extra_headers
+        return params
