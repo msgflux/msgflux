@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, List, Literal, Mapping
@@ -846,6 +847,300 @@ class ChatMessages:
 
     def to_items(self) -> List[dict[str, Any]]:
         return deepcopy(self._items)
+
+    def pprint(
+        self,
+        *,
+        provider: str | None = None,
+        api_mode: str | None = None,
+        show_turns: bool = False,
+        show_compaction: bool = False,
+        show_reasoning: bool = True,
+        show_system: bool = True,
+        max_content_chars: int | None = 2000,
+        max_tool_args_chars: int | None = 1000,
+        max_tool_output_chars: int | None = 2000,
+    ) -> str:
+        """Return an elegant plain-text view of the conversation.
+
+        Blocks are separated by a blank line and prefixed with a header
+        so each kind is visually distinct::
+
+            [SYSTEM] / [DEVELOPER] / [USER] / [ASSISTANT] / [REASONING]
+            [TOOL CALL <name> id=<call_id>]
+            [TOOL RESULT id=<call_id> status=<status>]
+
+        Turn and compaction bookkeeping items are skipped unless
+        ``show_turns`` / ``show_compaction`` is enabled. Multimodal and
+        binary parts are replaced by short placeholders (``[image: ...]``,
+        ``[file: ...]``) instead of dumping raw payloads.
+
+        ``provider`` / ``api_mode`` are optional and only matter when the
+        history contains a provider-only compaction view (no portable
+        ``messages`` view). By default the portable view is used, so there
+        is nothing to detect or pass.
+        """
+        blocks: List[str] = []
+        for stored_item in self._materialized_items(
+            provider=provider, api_mode=api_mode
+        ):
+            item = stored_item
+            adapter = history_adapter(item)
+            if adapter is not None:
+                item = adapter.project_history(item)
+            block = self._pprint_item(
+                item,
+                show_turns=show_turns,
+                show_compaction=show_compaction,
+                show_reasoning=show_reasoning,
+                show_system=show_system,
+                max_content_chars=max_content_chars,
+                max_tool_args_chars=max_tool_args_chars,
+                max_tool_output_chars=max_tool_output_chars,
+            )
+            if block:
+                blocks.append(block)
+        return "\n\n".join(blocks)
+
+    def _pprint_item(  # noqa: C901
+        self,
+        item: Mapping[str, Any],
+        *,
+        show_turns: bool,
+        show_compaction: bool,
+        show_reasoning: bool,
+        show_system: bool,
+        max_content_chars: int | None,
+        max_tool_args_chars: int | None,
+        max_tool_output_chars: int | None,
+    ) -> str | None:
+        item_type = item.get("type")
+
+        if item_type == "turn":
+            if not show_turns:
+                return None
+            turn_id = item.get("turn_id", "?")
+            event = item.get("event", "?")
+            return f"--- turn {turn_id} ({event}) ---"
+
+        if item_type == "compaction":
+            if not show_compaction:
+                return None
+            reason = item.get("reason", "?")
+            return f"--- compaction ({reason}) ---"
+
+        if item_type == "reasoning":
+            if not show_reasoning:
+                return None
+            text = self._extract_reasoning_content(item)
+            if text is None and isinstance(item.get("summary"), str):
+                text = item["summary"]
+            return f"[REASONING]\n{self._truncate(text or '', max_content_chars)}"
+
+        if item_type == "function_call":
+            name = item.get("name") or "unknown_tool"
+            call_id = item.get("call_id") or item.get("id") or "?"
+            args = self._pprint_jsonish(item.get("arguments"))
+            return (
+                f"[TOOL CALL {name} id={call_id}]\n"
+                f"{self._truncate(args, max_tool_args_chars)}"
+            )
+
+        if item_type == "function_call_output":
+            call_id = item.get("call_id") or "?"
+            status = item.get("status")
+            header = f"[TOOL RESULT id={call_id}"
+            if isinstance(status, str) and status:
+                header += f" status={status}"
+            header += "]"
+            output = self._pprint_tool_output(item.get("output"))
+            return f"{header}\n{self._truncate(output, max_tool_output_chars)}"
+
+        if item_type in {"tool_search_call", "tool_search_output"}:
+            return self._pprint_tool_search_item(
+                item, max_tool_args_chars, max_tool_output_chars
+            )
+
+        if item_type == "message":
+            role = item.get("role", "?")
+            if role == "system" and not show_system:
+                return None
+            header = {
+                "system": "[SYSTEM]",
+                "developer": "[DEVELOPER]",
+                "user": "[USER]",
+                "assistant": "[ASSISTANT]",
+            }.get(role, f"[{str(role).upper()}]")
+            content = self._pprint_content(item.get("content"))
+            return f"{header}\n{self._truncate(content, max_content_chars)}"
+
+        # Legacy / wire shapes (ChatML roles).
+        role = item.get("role")
+        if role == "system":
+            if not show_system:
+                return None
+            content = self._pprint_content(item.get("content"))
+            return f"[SYSTEM]\n{self._truncate(content, max_content_chars)}"
+        if role in {"user", "developer"}:
+            header = "[USER]" if role == "user" else "[DEVELOPER]"
+            content = self._pprint_content(item.get("content"))
+            return f"{header}\n{self._truncate(content, max_content_chars)}"
+        if role == "assistant":
+            return self._pprint_legacy_assistant(
+                item,
+                show_reasoning=show_reasoning,
+                max_content_chars=max_content_chars,
+                max_tool_args_chars=max_tool_args_chars,
+            )
+        if role == "tool":
+            call_id = item.get("tool_call_id") or item.get("call_id") or "?"
+            output = self._pprint_tool_output(item.get("content"))
+            header = f"[TOOL RESULT id={call_id}]"
+            return f"{header}\n{self._truncate(output, max_tool_output_chars)}"
+
+        return None
+
+    def _pprint_legacy_assistant(
+        self,
+        item: Mapping[str, Any],
+        *,
+        show_reasoning: bool,
+        max_content_chars: int | None,
+        max_tool_args_chars: int | None,
+    ) -> str | None:
+        blocks: List[str] = []
+        if show_reasoning:
+            reasoning = self._extract_reasoning_content(item)
+            if reasoning:
+                blocks.append(
+                    f"[REASONING]\n{self._truncate(reasoning, max_content_chars)}"
+                )
+        content = self._pprint_content(item.get("content"))
+        if content:
+            blocks.append(f"[ASSISTANT]\n{self._truncate(content, max_content_chars)}")
+        tool_calls = item.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for call in tool_calls:
+                if not isinstance(call, Mapping):
+                    continue
+                function = call.get("function")
+                name = call.get("id") or "?"
+                args = "{}"
+                if isinstance(function, Mapping):
+                    name = function.get("name") or name
+                    args = self._pprint_jsonish(function.get("arguments"))
+                else:
+                    args = self._pprint_jsonish(call.get("arguments"))
+                call_id = call.get("id") or "?"
+                blocks.append(
+                    f"[TOOL CALL {name} id={call_id}]\n"
+                    f"{self._truncate(args, max_tool_args_chars)}"
+                )
+        if not blocks:
+            blocks.append("[ASSISTANT]\n")
+        return "\n\n".join(blocks)
+
+    def _pprint_tool_search_item(
+        self,
+        item: Mapping[str, Any],
+        max_args_chars: int | None,
+        max_output_chars: int | None,
+    ) -> str:
+        if item.get("type") == "tool_search_call":
+            call_id = item.get("id") or item.get("call_id") or "?"
+            args = self._pprint_jsonish(item.get("arguments"))
+            return (
+                f"[TOOL CALL tool_search id={call_id}]\n"
+                f"{self._truncate(args, max_args_chars)}"
+            )
+        call_id = item.get("tool_search_call_id") or item.get("id") or "?"
+        output = self._pprint_tool_output(item.get("tools", item.get("output", "")))
+        return f"[TOOL RESULT id={call_id}]\n{self._truncate(output, max_output_chars)}"
+
+    @staticmethod
+    def _truncate(text: str, limit: int | None) -> str:
+        if limit is None or limit < 0 or len(text) <= limit:
+            return text
+        return f"{text[:limit]}… [+{len(text) - limit} chars]"
+
+    def _pprint_content(self, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, Mapping):
+            content = [content]
+        if isinstance(content, list):
+            parts: List[str] = []
+            for part in content:
+                rendered = self._pprint_content_part(part)
+                if rendered:
+                    parts.append(rendered)
+            return "\n".join(parts)
+        return str(content)
+
+    def _pprint_content_part(self, part: Any) -> str:
+        if not isinstance(part, Mapping):
+            return str(part)
+        part_type = part.get("type")
+        if part_type in {"text", "input_text", "output_text"}:
+            return str(part.get("text", ""))
+        if part_type in {"image_url", "input_image"}:
+            url = part.get("image_url")
+            if isinstance(url, Mapping):
+                url = url.get("url", "?")
+            return f"[image: {url}]"
+        if part_type in {"file", "input_file"}:
+            file_info = part.get("file", part)
+            name = (
+                file_info.get("filename", "?")
+                if isinstance(file_info, Mapping)
+                else "?"
+            )
+            return f"[file: {name}]"
+        if part_type in {"audio_url", "input_audio"}:
+            return "[audio]"
+        if part_type in {"video_url", "input_video"}:
+            url = part.get("video_url", "?")
+            return f"[video: {url}]"
+        try:
+            return msgspec_dumps(part)
+        except Exception:
+            return str(part)
+
+    def _pprint_tool_output(self, output: Any) -> str:
+        if output is None:
+            return ""
+        if isinstance(output, str):
+            return output
+        # Dict/list outputs (incl. multimodal) are JSON-encoded; binary
+        # parts would already have been replaced by placeholders above
+        # only for message content, so keep tool payloads faithful.
+        try:
+            return msgspec_dumps(output)
+        except Exception:
+            return str(output)
+
+    @staticmethod
+    def _pprint_jsonish(value: Any) -> str:
+        if value is None:
+            return "{}"
+        if isinstance(value, str):
+            text = value.strip() or "{}"
+            try:
+                parsed = json.loads(text)
+            except (ValueError, TypeError):
+                return text
+            try:
+                return json.dumps(parsed, indent=2, ensure_ascii=False)
+            except (ValueError, TypeError):
+                return text
+        if isinstance(value, Mapping):
+            try:
+                return json.dumps(dict(value), indent=2, ensure_ascii=False)
+            except (ValueError, TypeError):
+                return str(value)
+        return str(value)
 
     def to_chatml(  # noqa: C901
         self,
