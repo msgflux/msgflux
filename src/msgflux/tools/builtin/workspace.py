@@ -7,7 +7,6 @@ from typing import Optional, Union
 from msgflux.data.types import Image
 from msgflux.runtime.environment import ExecutionEnvironment, ProcessRequest
 from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
-from msgflux.runtime.workspace_changes import WorkspaceEditor
 from msgflux.tools.config import tool_config
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.shell import ShellCommandResult, ShellResult
@@ -253,7 +252,7 @@ class WriteTool(WorkspaceChangeTool):
     annotations = {"path": str, "content": str, "return": dict[str, str]}
 
     def prepare_workspace_change(self, arguments, filesystem):
-        return WorkspaceEditor(filesystem).prepare_write(
+        return self._editor(filesystem).prepare_write(
             _tool_path(arguments["path"], self.cwd), arguments["content"]
         )
 
@@ -283,7 +282,7 @@ class EditTool(WorkspaceChangeTool):
     annotations = {"path": str, "old": str, "new": str, "return": dict[str, str]}
 
     def prepare_workspace_change(self, arguments, filesystem):
-        return WorkspaceEditor(filesystem).prepare_edit(
+        return self._editor(filesystem).prepare_edit(
             _tool_path(arguments["path"], self.cwd), arguments["old"], arguments["new"]
         )
 

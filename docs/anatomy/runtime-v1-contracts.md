@@ -42,8 +42,18 @@ files, hardlinked files and device crossings. These checks are defense in depth
 for a trusted host, not an OS sandbox against hostile directory renames, same-device
 mounts or arbitrary host code. Replacement uses a sibling temporary file and does
 not truncate the existing inode; cleanup is attempted on failure. Metadata and
-power-loss durability are not generally preserved. Tools' explicit write guarantee
-selection, dynamic prompt and local harness are dependent integration increments.
+power-loss durability are not generally preserved. Dynamic prompt and local
+harness remain dependent integration increments.
+
+`ExecutionEnvironment.write_guarantee` selects the required write contract, with
+`atomic_compare` as the unchanged default. Its `workspace_editor()` factory checks
+backend capabilities only when mutation is requested, permitting read-only local
+use under the strict default. Workspace mutation tools obtain the factory through
+their shared base and live scope, not backend-specific branches or model arguments.
+Preparation and application use the same host policy. Existing prepared-change
+digests bind the guarantee to approval and checkpoint previews, so changing it
+requires a new review; no extra provider transport or approval journal schema is
+needed. Direct low-level WorkspaceEditor configuration remains explicit.
 
 `WorkspaceBackend` separates reusable host implementation/client ownership from
 `WorkspaceBinding`, a live connection to one resource. The memory reference
