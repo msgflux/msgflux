@@ -15,6 +15,7 @@ from msgflux.runtime.workspace import (
     WorkspaceFilesystem,
     workspace_path,
 )
+from msgflux.runtime.workspace_contracts import WorkspaceIdentity, WriteGuarantee
 
 
 class PreparedFileChange(
@@ -27,8 +28,16 @@ class PreparedFileChange(
     before: str | None
     after: str | None
     schema_version: int = 1
+    workspace_identity: WorkspaceIdentity | None = None
+    write_guarantee: WriteGuarantee = "atomic_compare"
 
     def __post_init__(self):
+        if self.workspace_identity is not None and not isinstance(
+            self.workspace_identity, WorkspaceIdentity
+        ):
+            raise TypeError("Expected WorkspaceIdentity")
+        if self.write_guarantee not in ("atomic_compare", "cooperative_compare"):
+            raise ValueError("Unknown workspace write guarantee")
         if type(self.schema_version) is not int or self.schema_version != 1:
             raise ValueError("Unsupported prepared change version")
         if not isinstance(self.workspace_id, str) or not self.workspace_id:
@@ -81,12 +90,17 @@ class PreparedFileChange(
 class WorkspaceEditor:
     """Shared host backend for write, exact edit and future patch frontends.
 
-    Approval is required by default. An explicitly trusted host may disable it;
-    live workspace permissions and atomic conflict checks always remain active.
+    Approval and atomic comparison are required by default. A trusted host may
+    disable approval or explicitly select cooperative comparison; live workspace
+    permissions, resource identity and the selected guarantee remain enforced.
     """
 
     def __init__(
-        self, filesystem: WorkspaceFilesystem, *, require_approval: bool = True
+        self,
+        filesystem: WorkspaceFilesystem,
+        *,
+        require_approval: bool = True,
+        write_guarantee: WriteGuarantee = "atomic_compare",
     ):
         if not isinstance(filesystem, WorkspaceFilesystem):
             raise TypeError("WorkspaceEditor requires a WorkspaceFilesystem")
@@ -94,6 +108,9 @@ class WorkspaceEditor:
             raise TypeError("require_approval must be a boolean")
         self.filesystem = filesystem
         self.require_approval = require_approval
+        if write_guarantee not in ("atomic_compare", "cooperative_compare"):
+            raise ValueError("Unknown workspace write guarantee")
+        self.write_guarantee = write_guarantee
 
     def _read(self, path):
         try:
@@ -104,6 +121,8 @@ class WorkspaceEditor:
     def _prepare(self, path, before, after):
         change = PreparedFileChange(
             workspace_id=self.filesystem.workspace_id,
+            workspace_identity=self.filesystem.identity,
+            write_guarantee=self.write_guarantee,
             path=path,
             before=before,
             after=after,
@@ -166,14 +185,17 @@ class WorkspaceEditor:
             raise TypeError("Expected a PreparedFileChange")
         if change.workspace_id != self.filesystem.workspace_id:
             raise PermissionError("Prepared change belongs to another workspace")
+        if change.workspace_identity != self.filesystem.identity:
+            raise PermissionError(
+                "Prepared change resource changed; prepare a new review"
+            )
+        if change.write_guarantee != self.write_guarantee:
+            raise PermissionError("Prepared change write guarantee changed")
         self.filesystem._authorize("read", change.path)
         self.filesystem._authorize(
             "delete" if change.after is None else "write", change.path
         )
-        if not self.filesystem.supports_atomic_changes:
-            raise NotImplementedError(
-                "Workspace backend does not support atomic changes"
-            )
+        self.filesystem.require_write_guarantee(self.write_guarantee)
 
     def approval_binding(
         self,
@@ -199,6 +221,8 @@ class WorkspaceEditor:
             arguments={"prepared_change": change.digest},
             resources={
                 "workspace_id": change.workspace_id,
+                "workspace_identity": msgspec.to_builtins(self.filesystem.identity),
+                "write_guarantee": self.write_guarantee,
                 "path": change.path,
                 "operation": change.operation,
                 "isolation": sorted(scope.environment.requirements.mechanisms),
@@ -232,10 +256,11 @@ class WorkspaceEditor:
             approval_store.consume(approval.request_id, binding=binding)
         elif self.require_approval or approval_store is not None:
             raise PermissionError("A reviewed approval is required for this change")
-        self.filesystem.compare_exchange(
+        self.filesystem.checked_replace(
             change.path,
             expected=None if change.before is None else change.before.encode("utf-8"),
             replacement=None if change.after is None else change.after.encode("utf-8"),
+            guarantee=self.write_guarantee,
         )
 
     async def aprepare_write(self, path: str, content: str) -> PreparedFileChange:

@@ -78,8 +78,16 @@ from msgflux.runtime.workspace import (
     WorkspaceFilesystem,
 )
 from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
+from msgflux.runtime.workspace_contracts import (
+    WorkspaceIdentity,
+    WorkspaceWriteCapabilities,
+    WriteGuarantee,
+)
 
 __all__ = [
+    "WorkspaceIdentity",
+    "WorkspaceWriteCapabilities",
+    "WriteGuarantee",
     "PreparedFileChange",
     "WorkspaceEditor",
     "WorkspaceConflictError",

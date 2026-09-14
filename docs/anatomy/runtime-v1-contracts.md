@@ -26,6 +26,34 @@ are not sources of authority.
 
 ## Implementation sequence
 
+### Workspace identity and write guarantees
+
+The first workspace-contract increment uses immutable `msgspec.Struct`
+descriptors (`runtime/workspace_contracts.py`). `WorkspaceIdentity` binds a
+backend resource, generation and configuration revision independently of the
+logical workspace name. The host verifies these values when opening/reconnecting;
+they carry neither credentials nor grants. Default filesystem identities have
+instance-local generations. Persistent backends must supply verified identities
+to retain approval compatibility across reconnection, never across replacement.
+
+Both `PreparedFileChange` and Agent approval resource bindings include this
+identity. Legacy proposals remain decodable but execution without a matching
+identity fails closed. Their old approvals must not be silently migrated.
+
+The strict compare/exchange operation remains unchanged in its guarantee.
+`checked_replace` exposes a separately selected cooperative contract for future
+local backends. Capabilities distinguish replacement from comparison and are
+declarations by trusted adapters, not proof of enforcement. WorkspaceEditor
+defaults to atomic comparison and binds the chosen guarantee into the proposal
+and approval. Permissions and cancellation checks still run at the filesystem
+boundary; adapter implementations recheck them after acquiring their locks.
+
+This increment does not introduce a vendor factory/session lifecycle, OS
+sandbox, network mediation, local filesystem or overlay. It also does not make
+approval consumption and filesystem changes one transaction. Tests cover
+replacement under the same workspace name, identity serialization, legacy
+proposal rejection, cooperative opt-in and unchanged atomic behavior.
+
 1. `docs/runtime-v1-contracts`: this RFC and review boundaries.
 2. `feat/runtime-permissions`: immutable PermissionSet and ExecutionScope live
    authority, restrictive nested inheritance, identity-only serialization.

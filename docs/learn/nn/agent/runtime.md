@@ -1311,7 +1311,7 @@ even when creating/overwriting. `WorkspaceEditor(..., require_approval=False)` i
 an explicit host full-access choice; it disables confirmation, not permissions
 or conflict checks. Prepared objects never restore execution authority.
 
-Application uses `WorkspaceFilesystem.compare_exchange`: comparison and mutation
+By default application uses `WorkspaceFilesystem.compare_exchange`: comparison and mutation
 are atomic **per file**, with `None` representing expected absence. Backends must
 opt in with `supports_atomic_changes = True` and implement `_compare_exchange`
 against all concurrent writers, including path/symlink substitution. The memory
@@ -1338,6 +1338,76 @@ preview paging are not implemented yet. Do not inject these previews into model
 context just to render a UI. This low-level API does not implicitly register a
 tool. The Agent integration below uses the same prepared-change and atomic-write
 contracts, with Agent-owned approval consumption.
+
+### Resource identity and write guarantees
+
+`workspace_id` names a logical workspace; it does not identify the underlying
+files. Every filesystem also exposes an immutable `WorkspaceIdentity` containing
+`backend`, `resource_id`, `generation` and `config_revision`. Prepared changes and
+Agent approval bindings include this identity. Replacing a resource, recreating
+an in-memory filesystem, or changing the configuration revision invalidates the
+old review even if the workspace name and file contents are identical.
+
+```python
+import msgspec
+from msgflux.runtime import InMemoryWorkspace, WorkspaceIdentity
+
+first = InMemoryWorkspace("project")
+replacement = InMemoryWorkspace("project")
+assert first.identity != replacement.identity
+
+encoded = msgspec.json.encode(first.identity)
+descriptor = msgspec.json.decode(encoded, type=WorkspaceIdentity)
+assert descriptor == first.identity
+```
+
+The example serializes a descriptor, not the files or a capability to access them.
+A persistent adapter may pass a host-verified `identity=` to the
+`WorkspaceFilesystem` constructor when reconnecting to the **same** resource.
+It must change `generation` when that resource is replaced and `config_revision`
+when its mount/security configuration changes. Never accept identity or
+credentials from model arguments; the descriptor does not create a sandbox or
+restore permissions. Existing adapters that omit identity receive a fresh
+generation per instance and therefore require new approval after reconstruction.
+
+`WorkspaceWriteCapabilities` keeps three declarations separate:
+
+| Declaration | Meaning |
+| --- | --- |
+| `atomic_replace` | Single-file replacement without a partially visible replacement; no comparison guarantee |
+| `cooperative_compare` | Comparison and mutation coordinated among backend participants; external writers can still race |
+| `atomic_compare` | Comparison and mutation indivisible for all writers in the backend's resource model |
+
+Atomic comparison satisfies a cooperative request, never the reverse.
+`compare_exchange` retains its strict contract. The new `checked_replace` and
+`achecked_replace` APIs select a guarantee explicitly and have no implicit
+read-then-write fallback. A cooperative adapter declares its capabilities and
+implements `_checked_replace`; it must recheck live authority after waiting for
+its lock and coordinate all participating adapters sharing the same resource.
+These declarations do not establish OS isolation, crash durability or a
+multi-file transaction.
+
+```python
+from msgflux.runtime import WorkspaceEditor
+
+# `filesystem` is a host-provided backend; this does not weaken its capabilities.
+editor = WorkspaceEditor(filesystem, write_guarantee="cooperative_compare")
+```
+
+This is an explicit low-level host choice for a cooperative backend. Approval
+remains required, and the selected guarantee is included in the proposal and
+approval binding. Preparation rejects an unsupported guarantee; applying a
+proposal through an editor with a different guarantee also fails. The builtin
+write/edit/apply-patch tools still require atomic comparison in this increment.
+No local or remote backend is supplied by these descriptors yet.
+
+!!! warning "Previously prepared changes need a fresh review"
+
+    Old serialized proposals without `workspace_identity` remain readable for
+    audit and diff display, but cannot be applied. Prepare a new proposal and
+    obtain a new approval. Never add the current identity to an old approved
+    proposal to bypass this check. Existing approval bindings also change, so
+    pending Agent reviews may require host intervention after upgrading.
 
 ### Write and edit tools with Agent previews
 

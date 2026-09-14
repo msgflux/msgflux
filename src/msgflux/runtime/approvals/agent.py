@@ -98,6 +98,9 @@ class AgentApprovals:
             ]
         if scope.environment is not None:
             resources["workspace_id"] = scope.environment.filesystem.workspace_id
+            resources["workspace_identity"] = msgspec.to_builtins(
+                scope.environment.filesystem.identity
+            )
             resources["isolation"] = sorted(scope.environment.requirements.mechanisms)
         return resources
 
