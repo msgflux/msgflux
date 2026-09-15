@@ -75,3 +75,38 @@ def test_secret_value_never_serialized(key_envs):
 
     assert model._get_api_key() == "openai-acme-key"
     assert "openai-acme-key" not in str(model.serialize())
+
+
+def test_provider_base_urls_from_class_vars(monkeypatch):
+    from msgflux.models.providers.brave import BraveChatCompletion
+    from msgflux.models.providers.cerebras import CerebrasChatCompletion
+    from msgflux.models.providers.groq import GroqChatCompletion
+
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "k")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+
+    assert (
+        GroqChatCompletion(model_id="x")._get_base_url()
+        == "https://api.groq.com/openai/v1"
+    )
+    assert (
+        BraveChatCompletion(model_id="x")._get_base_url()
+        == "https://api.search.brave.com/res/v1"
+    )
+    assert (
+        CerebrasChatCompletion(model_id="x")._get_base_url()
+        == "https://api.cerebras.ai/v1"
+    )
+
+
+def test_cerebras_uses_corrected_env_name(monkeypatch):
+    from msgflux.models.providers.cerebras import CerebrasChatCompletion
+
+    monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+    monkeypatch.setenv("CEREBRAS_BASE_URL", "https://custom/v1")
+    monkeypatch.setenv("CEBEBRAS_BASE_URL", "https://typo/v1")
+
+    model = CerebrasChatCompletion(model_id="x")
+
+    assert model._get_base_url() == "https://custom/v1"
