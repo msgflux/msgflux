@@ -74,6 +74,70 @@ def test_unknown_extension_profile_fails_before_running(harness):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("image", [False, True])
+async def test_inbox_delivery_survives_checkpoint_outage(harness, image):
+    from msgflux.utils.chat import ChatBlock
+
+    class UnavailableStore(harness.InMemoryCheckpointStore):
+        unavailable = True
+        rejected = 0
+
+        def commit_state(self, namespace, thread_id, run_id, state, **kwargs):
+            if self.unavailable and state["messages"]["metadata"].get("inbox_receipts"):
+                self.rejected += 1
+                raise OSError("checkpoint outage after inbox delivery")
+            return super().commit_state(namespace, thread_id, run_id, state, **kwargs)
+
+    store = UnavailableStore()
+    inbox = harness.AgentInbox(store=harness.InMemoryAgentInboxStore())
+    model = harness.ScriptedModel(
+        [
+            harness._text("uncommitted", streamed=True),
+            harness._text("delivered", streamed=True),
+        ]
+    )
+    agent = harness.Agent(
+        name="offline-demo",
+        model=model,
+        agent_inbox=inbox,
+        checkpoint_store=store,
+        extensions=[harness.WorkspacePromptExtension()],
+        config={"stream": True},
+    )
+    fs = harness.InMemoryWorkspace("inbox", {})
+    scope = harness._scope(fs, thread="t", run="r")
+    scoped = agent._get_scoped_agent_inbox(scope)
+    content = (
+        [ChatBlock.image("data:image/png;base64,AA==")] if image else "retained message"
+    )
+    notification = scoped.user_message(content)
+    with pytest.raises(OSError, match="checkpoint outage"):
+        async for _ in agent.stream_events("receive", scope=scope):
+            pass
+    assert store.rejected > 0
+    assert [item.notification_id for item in scoped.peek()] == [
+        notification.notification_id
+    ]
+    store.unavailable = False
+    events = [event async for event in agent.stream_events("receive", scope=scope)]
+    state = store.load_state(scope.namespace, "t", "r")
+    assert state["status"] == "completed"
+    delivered = [
+        item
+        for item in state["messages"]["items"]
+        if notification.notification_id
+        in item.get("metadata", {}).get("inbox_receipts", [])
+    ]
+    assert len(delivered) == 1
+    assert ("image_url" in str(delivered[0])) == image
+    assert scoped.peek() == []
+    assert model.calls == 2
+    assert "uncommitted" not in str(state["messages"])
+    assert "delivered" in str(state["messages"])
+    assert sum(event.type == "run.end" for event in events) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["permissions", "principal", "inbox", "file"])
 async def test_approved_write_cannot_bypass_changed_scope_on_resume(harness, change):
     from msgflux.exceptions import TaskInterruptRequestedError, TaskPauseRequestedError
@@ -330,6 +394,106 @@ def test_matrix_cli_reports_each_profile_and_decision():
         for decision in ("approve", "deny")
     }
     assert all(r["summary"]["image_provenance"] for r in results)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["model", "tool"])
+async def test_closing_event_consumer_cleans_active_operation(harness, phase):
+    from msgflux.runtime import AbortSignal
+
+    started, cleaned = asyncio.Event(), asyncio.Event()
+
+    async def waiting() -> str:
+        """Wait until the consumer closes."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            return "unexpected completion"
+        finally:
+            cleaned.set()
+
+    class WaitingModel(harness.ScriptedModel):
+        async def acall(self, **kwargs):
+            if phase == "model":
+                return await waiting()
+            return await super().acall(**kwargs)
+
+    store = harness.InMemoryCheckpointStore()
+    signal = AbortSignal()
+    scope = replace(
+        harness._scope(harness.InMemoryWorkspace("close", {}), thread="t", run="r"),
+        abort_signal=signal,
+    )
+    agent = harness.Agent(
+        name="offline-demo",
+        model=WaitingModel([harness._tool("waiting", {})]),
+        tools=[waiting],
+        checkpoint_store=store,
+        extensions=[harness.WorkspacePromptExtension()],
+        config={"stream": True},
+    )
+    stream = agent.stream_events("start", scope=scope)
+    try:
+        await asyncio.wait_for(anext(stream), timeout=5)
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.wait_for(stream.aclose(), timeout=5)
+        assert cleaned.is_set()
+        assert signal.aborted
+        assert store.load_state(scope.namespace, "t", "r")["status"] == "interrupted"
+        # Repeated closure is harmless and cannot restart the operation.
+        await stream.aclose()
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+    finally:
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_paused_event_consumer_receives_all_buffered_deltas_in_order(harness):
+    committed = asyncio.Event()
+
+    class ObservedStore(harness.InMemoryCheckpointStore):
+        def commit_state(self, namespace, thread_id, run_id, state, **kwargs):
+            result = super().commit_state(namespace, thread_id, run_id, state, **kwargs)
+            if state["status"] == "completed":
+                committed.set()
+            return result
+
+    chunks = [f"{index}:ação 🐍\n" for index in range(32)]
+    response = harness.ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    for chunk in chunks:
+        response.add(chunk)
+    response.finish()
+    store = ObservedStore()
+    agent = harness.Agent(
+        name="offline-demo",
+        model=harness.ScriptedModel([response]),
+        checkpoint_store=store,
+        extensions=[harness.WorkspacePromptExtension()],
+        config={"stream": True},
+    )
+    scope = harness._scope(harness.InMemoryWorkspace("slow", {}), thread="t", run="r")
+    stream = agent.stream_events("generate", scope=scope)
+    try:
+        first = await asyncio.wait_for(anext(stream), timeout=5)
+        # Do not read further events until the producer has committed its result.
+        await asyncio.wait_for(committed.wait(), timeout=5)
+        events = [first, *[event async for event in stream]]
+        assert [e.data["delta"] for e in events if e.type == "message.delta"] == chunks
+        types = [e.type for e in events]
+        assert types.index("message.start") < types.index("message.delta")
+        assert max(
+            i for i, kind in enumerate(types) if kind == "message.delta"
+        ) < types.index("message.end")
+        assert types.count("run.end") == 1 and types[-1] == "run.end"
+        state = store.load_state(scope.namespace, "t", "r")
+        assert any(
+            item.get("content") == "".join(chunks)
+            for item in state["messages"]["items"]
+        )
+    finally:
+        await stream.aclose()
 
 
 @pytest.mark.parametrize("args", [["--matrix", "--live"], ["--repeat", "0"]])
