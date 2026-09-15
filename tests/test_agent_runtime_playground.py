@@ -213,6 +213,73 @@ async def test_terminal_budget_survives_approval_resume(harness, tmp_path, deny,
             await binding.aclose()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["model", "tool"])
+async def test_external_abort_cleans_pending_operation_and_checkpoints(harness, phase):
+    from msgflux.exceptions import TaskInterruptRequestedError
+    from msgflux.runtime import AbortSignal
+
+    started, cleaned = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    async def pending() -> str:
+        """Wait for an external operation."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            effects.append("completed")
+            return "done"
+        finally:
+            cleaned.set()
+
+    class BlockingModel(harness.ScriptedModel):
+        async def acall(self, **kwargs):
+            if phase == "model":
+                self.calls += 1
+                return await pending()
+            return await super().acall(**kwargs)
+
+    model = BlockingModel([harness._tool("pending", {})])
+    checkpoints = harness.InMemoryCheckpointStore()
+    signal = AbortSignal()
+    fs = harness.InMemoryWorkspace("abort", {})
+    scope = replace(harness._scope(fs, thread="t", run="r"), abort_signal=signal)
+    agent = harness.Agent(
+        name="offline-demo",
+        model=model,
+        tools=[pending],
+        extensions=[
+            harness.WorkspacePromptExtension(),
+            harness.ToolTurnLimitExtension(1),
+        ],
+        checkpoint_store=checkpoints,
+        config={"stream": True},
+    )
+    events = []
+
+    async def consume():
+        async for event in agent.stream_events("start", scope=scope):
+            events.append(event)
+
+    task = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        signal.abort("operator stopped run")
+        with pytest.raises(TaskInterruptRequestedError, match="operator stopped run"):
+            await asyncio.wait_for(task, timeout=5)
+        assert cleaned.is_set()
+        assert effects == []
+        assert model.calls == 1
+        state = checkpoints.load_state(scope.namespace, "t", "r")
+        assert state["status"] == "interrupted"
+        assert not any(event.type == "run.end" for event in events)
+        assert any(event.type == "tool.start" for event in events) == (phase == "tool")
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def test_matrix_cli_reports_each_profile_and_decision():
     completed = subprocess.run(  # noqa: S603
         [sys.executable, str(SCRIPT), "--matrix"],
