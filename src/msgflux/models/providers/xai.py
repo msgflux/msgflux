@@ -11,12 +11,12 @@ from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
 )
-from msgflux.models.providers._session import USER_AGENT, merge_session_headers
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     OpenAIResponsesReasoningCodec,
 )
 from msgflux.models.registry import register_model
+from msgflux.models.session import USER_AGENT, merge_session_headers
 from msgflux.runtime.context import get_thread_id
 
 
