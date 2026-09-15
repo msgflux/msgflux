@@ -1,4 +1,3 @@
-from os import getenv
 from typing import Any, Dict
 
 from msgflux.models.chat_capabilities import (
@@ -21,22 +20,10 @@ class _BaseGroq:
     """Configurations to use Groq models."""
 
     provider: str = "groq"
+    display_name: str = "Grok"
     api_key_env: str = "GROQ_API_KEY"
-
-    def _get_base_url(self):
-        base_url = getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-        if base_url is None:
-            raise ValueError("Please set `GROQ_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv(self.api_key_env)
-        if not key:
-            raise ValueError(
-                f"The Grok API key is not available. Please set `{self.api_key_env}`"
-            )
-        return key
+    base_url_env: str = "GROQ_BASE_URL"
+    base_url: str = "https://api.groq.com/openai/v1"
 
 
 @register_model

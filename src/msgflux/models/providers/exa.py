@@ -1,4 +1,3 @@
-from os import getenv
 from typing import Any, Dict
 
 from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
@@ -9,22 +8,10 @@ class _BaseExa:
     """Configurations to use Exa models via OpenAI-compatible API."""
 
     provider: str = "exa"
+    display_name: str = "Exa"
     api_key_env: str = "EXA_API_KEY"
-
-    def _get_base_url(self):
-        base_url = getenv("EXA_BASE_URL", "https://api.exa.ai")
-        if base_url is None:
-            raise ValueError("Please set `EXA_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv(self.api_key_env)
-        if not key:
-            raise ValueError(
-                f"The Exa API key is not available. Please set `{self.api_key_env}`"
-            )
-        return key
+    base_url_env: str = "EXA_BASE_URL"
+    base_url: str = "https://api.exa.ai"
 
 
 @register_model

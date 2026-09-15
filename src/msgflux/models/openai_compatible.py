@@ -164,6 +164,11 @@ class OpenAIResponsesAPI(ChatAPIAdapter):
 
 class OpenAICompatibleModel(BaseModel):
     provider: str = "openai"
+    display_name: str = "OpenAI"
+    api_key_env: str = "OPENAI_API_KEY"
+    api_key_default: Optional[str] = None
+    base_url_env: Optional[str] = None
+    base_url: Optional[str] = None
     credential_resolver: ModelCredentialResolver = BearerTokenCredentialResolver()
 
     @staticmethod
@@ -193,16 +198,21 @@ class OpenAICompatibleModel(BaseModel):
         self.acall = apply_retry(self.acall, retry_config, default=default_model_retry)
 
     def _get_base_url(self):
-        return None
-
-    api_key_env: str = "OPENAI_API_KEY"
+        """Load base URL from environment variable."""
+        if self.base_url_env is None:
+            return self.base_url
+        base_url = getenv(self.base_url_env, self.base_url)
+        if base_url is None:
+            raise ValueError(f"Please set `{self.base_url_env}`")
+        return base_url
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv(self.api_key_env)
+        key = getenv(self.api_key_env, self.api_key_default)
         if not key:
             raise ValueError(
-                f"The OpenAI key is not available. Please set `{self.api_key_env}`"
+                f"The {self.display_name} key is not available. "
+                f"Please set `{self.api_key_env}`"
             )
         return key
 
