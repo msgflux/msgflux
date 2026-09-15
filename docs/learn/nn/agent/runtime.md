@@ -2525,3 +2525,10 @@ file effects, streamed events, checkpoint history and image inbox provenance.
 The matrix emits a JSON array identifying each profile and decision. It is
 offline only; Bash remains simulated and files remain in memory. This is not
 yet coverage of every extension, cancellation or a real local workspace.
+
+The pytest harness regressions additionally cross a one-round terminal budget
+with approval/denial on memory and local backends. Local tests use pytest-created
+temporary directories, never the repository workspace. They verify the diff,
+pause/resume, completed checkpoint and actual disk effects, with no extra model
+request after the final tool round. This coverage does not enable a local CLI
+mode or a host process executor.
