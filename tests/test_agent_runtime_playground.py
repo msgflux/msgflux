@@ -74,6 +74,77 @@ def test_unknown_extension_profile_fails_before_running(harness):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deny", [False, True])
+@pytest.mark.parametrize("width", [1, 7])
+async def test_artifact_projection_after_approval_preserves_next_turn(
+    harness, deny, width
+):
+    from msgflux.nn import ArtifactExtension, ArtifactRegistry
+
+    registry = ArtifactRegistry()
+    registry.register("Expanded report 🐍", artifact_id="report")
+    canonical = (
+        r"Result: {{artifact:report}} / {{artifact:missing}} / \{{artifact:report}}"
+    )
+    expected = "Result: Expanded report 🐍 / {{artifact:missing}} / {{artifact:report}}"
+    response = harness.ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    for offset in range(0, len(canonical), width):
+        response.add(canonical[offset : offset + width])
+    response.finish()
+    model = harness.ScriptedModel(
+        [
+            harness._tool("write", {"path": "/note.txt", "content": "changed"}),
+            response,
+            harness._text("next turn", streamed=True),
+        ]
+    )
+    store = harness.InMemoryCheckpointStore()
+    journal = harness.InMemoryApprovalStore()
+    fs = harness.InMemoryWorkspace("artifacts", {"/note.txt": b"original"})
+    scope = harness._scope(fs, thread="t", run="r")
+    agent = harness.Agent(
+        name="offline-demo",
+        model=model,
+        tools=[harness.WriteTool()],
+        extensions=[ArtifactExtension(registry), harness.WorkspacePromptExtension()],
+        approvals=harness.AgentApprovals(journal, {"write": "v1"}, "artifact-v1"),
+        checkpoint_store=store,
+        config={"stream": True},
+    )
+    events = await harness.drive_agent(agent, scope, decider=lambda *_: not deny)
+    assert sum(e.type == "tool.approval_required" for e in events) == 1
+    assert (
+        "".join(e.data["delta"] for e in events if e.type == "message.delta")
+        == expected
+    )
+    assert (
+        next(e for e in events if e.type == "message.end").data["content"] == expected
+    )
+    state = store.load_state(scope.namespace, "t", "r")
+    assert any(item.get("content") == canonical for item in state["messages"]["items"])
+    assert "Expanded report" not in str(state["messages"])
+    with harness.execution_context(scope=scope):
+        assert fs.read_text("/note.txt") == ("original" if deny else "changed")
+    following = [
+        event
+        async for event in agent.stream_events(
+            "continue",
+            scope=replace(scope, run_id="next"),
+            messages=harness.ChatMessages(),
+        )
+    ]
+    assert model.calls == 3
+    assert any(item.get("content") == canonical for item in model.inputs[-1])
+    assert "Expanded report" not in str(model.inputs[-1])
+    assert (
+        "".join(e.data["delta"] for e in following if e.type == "message.delta")
+        == "next turn"
+    )
+    assert model.prompts[-1].count("<workspace_context>") == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("image", [False, True])
 async def test_inbox_delivery_survives_checkpoint_outage(harness, image):
     from msgflux.utils.chat import ChatBlock
