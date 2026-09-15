@@ -161,6 +161,10 @@ class HTTPTransport:
                             self._retry_delay(attempt, response.headers),
                         )
                         continue
+                    if not 200 <= response.status_code < 300:
+                        # Streaming responses have not buffered their body yet.
+                        # Read errors only; successful SSE/audio must stay lazy.
+                        response.read()
                     _raise_for_status(response, owner)
                     for item in iterate(response):
                         owner._raise_if_aborted()
@@ -211,6 +215,8 @@ class HTTPTransport:
                             self._retry_delay(attempt, response.headers),
                         )
                         continue
+                    if not 200 <= response.status_code < 300:
+                        await response.aread()
                     _raise_for_status(response, owner)
                     async for item in iterate(response):
                         owner._raise_if_aborted()
