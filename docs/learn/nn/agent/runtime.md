@@ -2552,3 +2552,19 @@ signal, both in the original thread and in a different thread. The new run must
 complete one tool call with a fresh tool budget, without duplicating workspace
 guidance or modifying the interrupted run's checkpoint. This is a new execution,
 not replay or reconciliation of the interrupted operation's external effects.
+
+Inbox outage tests inject a checkpoint failure after a queued text or image has
+been incorporated into the conversation. The notification remains available;
+after storage recovers, retry produces one committed delivery and excludes the
+uncommitted assistant response. The model request is repeated in this scenario:
+delivery deduplication does not mean exactly-once provider requests.
+
+Consumer lifecycle tests explicitly close `stream_events()` while a model or
+async tool is waiting. Closure must cancel and clean up the operation, leave an
+interrupted checkpoint, and be safe to repeat. These tests do not establish a
+bounded event queue or memory guarantees for slow consumers.
+
+A separate finite slow-consumer case pauses reads until the producer commits,
+then drains the buffered events. It verifies all 32 Unicode text deltas arrive
+in order and match the checkpoint, followed by one terminal event. This checks
+lossless delivery for that workload, not backpressure or an unlimited-load bound.
