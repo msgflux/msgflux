@@ -2539,3 +2539,10 @@ before resuming the event stream. They check that no tool starts, no additional
 model request occurs, the approval stays unconsumed and the current file survives.
 Changed authority or content requires host reconciliation; an inbox interruption
 records an interrupted checkpoint instead of a completed run.
+
+External cancellation tests trigger an `AbortSignal` while the model or an async
+tool is waiting. The Agent event stream raises `TaskInterruptRequestedError`,
+the pending coroutine runs its cleanup, and the checkpoint is interrupted rather
+than completed. Tests synchronize with events instead of timing sleeps. These
+checks cover cooperative async cancellation, not rollback of completed external
+effects or termination of an uncooperative host process.
