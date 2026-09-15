@@ -34,6 +34,7 @@ class _BaseOllama:
     """Configurations to use Ollama models."""
 
     provider: str = "ollama"
+    api_key_env: str = "OLLAMA_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -43,7 +44,7 @@ class _BaseOllama:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("OLLAMA_API_KEY", "ollama")
+        key = getenv(self.api_key_env, "ollama")
         return key
 
     @property

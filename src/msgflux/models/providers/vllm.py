@@ -30,6 +30,7 @@ class _BaseVLLM:
     """Configurations to use vLLM models."""
 
     provider: str = "vllm"
+    api_key_env: str = "VLLM_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
@@ -39,7 +40,7 @@ class _BaseVLLM:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("VLLM_API_KEY", "vllm")
+        key = getenv(self.api_key_env, "vllm")
         return key
 
     @property

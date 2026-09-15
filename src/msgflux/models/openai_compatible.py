@@ -195,12 +195,14 @@ class OpenAICompatibleModel(BaseModel):
     def _get_base_url(self):
         return None
 
+    api_key_env: str = "OPENAI_API_KEY"
+
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("OPENAI_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The OpenAI key is not available. Please set `OPENAI_API_KEY`"
+                f"The OpenAI key is not available. Please set `{self.api_key_env}`"
             )
         return key
 
@@ -626,6 +628,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         chat_transport: Optional[Union[ChatTransport, type[ChatTransport]]] = None,
         chat_extensions: Optional[Sequence[ChatModelExtension]] = None,
         credential_resolver: Optional[ModelCredentialResolver] = None,
+        api_key_env: Optional[str] = None,
         **extra_body_kwargs: Any,
     ):
         """Args:
@@ -740,6 +743,10 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         credential_resolver:
             Request-time authentication resolver. The default resolves the
             provider API key as a Bearer token.
+        api_key_env:
+            Environment variable holding the provider API key. Takes
+            precedence over the provider default; only the variable name
+            is stored, never the secret itself.
         """
         super().__init__()
         if not isinstance(self.capabilities, ChatProviderCapabilities):
@@ -796,6 +803,16 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     f"{joined} cannot be represented by `api_mode='responses'`."
                 )
         self.model_id = model_id
+        if api_key_env is not None:
+            if not isinstance(api_key_env, str):
+                raise TypeError(
+                    "`api_key_env` must be an environment variable name string"
+                )
+            if not api_key_env.strip():
+                raise ValueError(
+                    "`api_key_env` must be a non-empty environment variable name"
+                )
+            self.api_key_env = api_key_env.strip()
         self.context_length = context_length
         self.reasoning_max_tokens = reasoning_max_tokens
         self.enable_cache = enable_cache

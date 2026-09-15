@@ -8,6 +8,7 @@ class _BaseCerebras:
     """Configurations to use Cerebras models."""
 
     provider: str = "cerebras"
+    api_key_env: str = "CEREBRAS_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("CEBEBRAS_BASE_URL", "https://api.cerebras.ai/v1")
@@ -17,10 +18,11 @@ class _BaseCerebras:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("CEREBRAS_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The Cerebras API key is not available. Please set `Cerebras_API_KEY`"
+                "The Cerebras API key is not available. "
+                f"Please set `{self.api_key_env}`"
             )
         return key
 

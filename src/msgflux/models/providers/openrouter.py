@@ -13,6 +13,7 @@ class _BaseOpenRouter:
     """Configurations to use OpenRouter models."""
 
     provider: str = "openrouter"
+    api_key_env: str = "OPENROUTER_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -22,11 +23,11 @@ class _BaseOpenRouter:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("OPENROUTER_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
                 "The OpenRouter API key is not available."
-                "Please set `OPENROUTER_API_KEY`"
+                f"Please set `{self.api_key_env}`"
             )
         return key
 

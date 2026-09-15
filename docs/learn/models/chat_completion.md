@@ -2661,6 +2661,23 @@ model = MyProviderChatCompletion(
 )
 ```
 
+For the common case of reading the key from a different environment variable,
+pass `api_key_env` instead of writing a resolver. It takes precedence over the
+provider default, and only the variable name is stored — never the secret:
+
+```python
+import msgflux as mf
+
+# mf.set_envs(OPENAI_API_KEY="...", OPENAI_ACME_KEY="...")
+
+default = mf.Model.chat_completion("openai/gpt-4.1-mini")
+acme = mf.Model.chat_completion("openai/gpt-4.1-mini", api_key_env="OPENAI_ACME_KEY")
+```
+
+This example creates two instances of the same provider reading different keys,
+which is useful for multiple accounts or OpenAI-compatible endpoints. A missing
+variable fails fast at construction, naming the expected variable.
+
 Override `aresolve()` when token refresh requires asynchronous I/O. The async
 transport calls it directly; the default implementation delegates to
 `resolve()`. Resolvers and resolved request material are excluded from model
