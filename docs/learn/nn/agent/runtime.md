@@ -2414,3 +2414,191 @@ their full snapshot in `ChatMessages.metadata` for recovery and inspection.
 The metadata records lineage, active head, and scope revisions while the message
 events remain append-only. Checkpoints therefore restore the active branch without
 allocating a new `ExecutionScope`, thread, run, or budget.
+
+## Iterative runtime validation
+
+The repository includes `scripts/validate_agent_runtime.py` to exercise the
+Agent runtime without application scaffolding. Its offline mode uses a scripted
+model with the real event stream, tool dispatch, permission checks, approval
+journal, checkpoints and AgentInbox. It requires no API credentials.
+
+```bash
+uv run python scripts/validate_agent_runtime.py
+uv run python scripts/validate_agent_runtime.py --deny
+uv run python scripts/validate_agent_runtime.py --interactive --events --repeat 2
+```
+
+The first command approves the scripted proposals automatically in a disposable
+in-memory workspace. The second exercises rejection. The third prompts for
+decisions and repeats the scenario with fresh state, making it easy to compare
+different choices without modifying repository files.
+The final JSON summary counts approved/denied file changes; shell decisions are
+not file changes. `--events` prints event types and text deltas to stderr without
+dumping image payloads. Interactive decisions show the prepared diff and default
+to denial on a blank answer or EOF. A separate permission probe attempts a write
+through Agent with `approvals=None` and no resource grants, verifying that the
+file remains unchanged; its permission-denied log is expected.
+
+Run the harness regressions with
+`uv run pytest -q tests/test_agent_runtime_playground.py`. For the full offline
+suite, use `uv run pytest -q --ignore=tests/integration`, matching CI. Some existing
+integration tests load `.env` and contact live providers; bare `pytest` is not an
+offline-only command.
+
+The scenario reads a bounded range of text, proposes workspace changes through
+write/edit/apply-patch tools, and reads an image with vision support enabled. The
+image is delivered as a subsequent user-role message associated with the tool
+call, not embedded in the tool's text output. Approval pauses let the host inspect
+the prepared diff, record a decision and resume execution.
+
+!!! warning "What this validates"
+    An offline image check validates delivery and provenance, not visual
+    understanding. The demonstration shell is simulated: it never executes host
+    commands and does not establish OS sandbox guarantees. Workspace, journal and
+    checkpoints are in memory; rerunning the scenario is not crash recovery.
+    Removing approval prompts does not grant missing filesystem permissions.
+
+### Try a real vision model
+
+```bash
+uv run python scripts/validate_agent_runtime.py --live \
+  --model YOUR_OPENAI_MODEL_ID --image /absolute/path/to/image.png --interactive
+```
+
+Set `OPENAI_API_KEY` in your environment using your usual secret-management
+workflow. The script does not load `.env` automatically. Choose a model that
+supports vision and native apply-patch tools. `--live` explicitly opts into paid
+Responses requests and transmission of the selected image and conversation.
+Responses supports image inputs including base64 data URLs; see the
+[official image-input guide](https://developers.openai.com/api/docs/guides/images-vision).
+
+`--model` accepts either the bare model ID or `openai/MODEL`; the provider prefix
+is not duplicated. For models without native shell/apply-patch support, select
+function-tool transport explicitly:
+
+```bash
+uv run python scripts/validate_agent_runtime.py --live \
+  --model openai/gpt-4.1-mini --image ./msgFlow.ai.png \
+  --no-native-tools --interactive
+```
+
+This keeps the same local tools, permissions and approval previews, changing only
+their provider representation. There is no automatic retry with a different model
+or transport. A non-success HTTP streaming response is read before extracting its
+structured provider error, so API errors remain visible rather than being masked
+by an unread-response exception.
+
+The host imports at most 1 MB from the selected image into `/image.png` in the
+virtual workspace. The Agent is asked to read it through `ReadFileTool`; that
+tool publishes the image through AgentInbox for the next model request. File
+changes still require approval. Bash is not exposed in live mode because this
+harness has no process executor. Its simulated dispatch is covered offline;
+adding a real executor is a separate host integration, not an approval override.
+
+After the first answer, enter follow-up messages or `/quit`. Each turn uses a new
+run in the same thread and continues from its in-memory checkpoint. Native patch
+transport, image serialization and next-turn history are covered by offline
+mocked-transport tests. Actual provider availability, visual interpretation and
+model tool choices require manual live validation. There is no automatic vision
+fallback or guarantee that a live model will choose every tool in the scenario.
+
+For persistent recovery coverage, use the durability conformance gate described
+in `CONTRIBUTING.md`. The separate
+`scripts/validate_openai_event_streaming.py` also exercises provider-specific
+streaming with paid API requests; it is not part of offline validation.
+
+### Offline extension matrix
+
+Run the same tool trajectory with fresh agents and stores for each combination:
+
+```bash
+uv run python scripts/validate_agent_runtime.py --matrix
+uv run python scripts/validate_agent_runtime.py --profile combined --interactive --events
+```
+
+The matrix crosses approval and denial with three profiles: `baseline` (Agent
+defaults), `workspace` (dynamic workspace guidance), and `combined` (workspace,
+fixed fixture date, few-shot guidance and a seven-round tool budget). The budget
+allows the six tool rounds to complete; terminal exhaustion is not covered by
+this scenario. Each profile checks prompt sections do not accumulate on resume,
+file effects, streamed events, checkpoint history and image inbox provenance.
+The matrix emits a JSON array identifying each profile and decision. It is
+offline only; Bash remains simulated and files remain in memory. This is not
+yet coverage of every extension, cancellation or a real local workspace.
+
+The pytest harness regressions additionally cross a one-round terminal budget
+with approval/denial on memory and local backends. Local tests use pytest-created
+temporary directories, never the repository workspace. They verify the diff,
+pause/resume, completed checkpoint and actual disk effects, with no extra model
+request after the final tool round. This coverage does not enable a local CLI
+mode or a host process executor.
+
+Resume regressions also approve a proposed write and then revoke permissions,
+change the principal, edit the file from the host, or interrupt through AgentInbox
+before resuming the event stream. They check that no tool starts, no additional
+model request occurs, the approval stays unconsumed and the current file survives.
+Changed authority or content requires host reconciliation; an inbox interruption
+records an interrupted checkpoint instead of a completed run.
+
+External cancellation tests trigger an `AbortSignal` while the model or an async
+tool is waiting. The Agent event stream raises `TaskInterruptRequestedError`,
+the pending coroutine runs its cleanup, and the checkpoint is interrupted rather
+than completed. Tests synchronize with events instead of timing sleeps. These
+checks cover cooperative async cancellation, not rollback of completed external
+effects or termination of an uncooperative host process.
+
+The cancellation scenario then reuses the same Agent with a fresh run and abort
+signal, both in the original thread and in a different thread. The new run must
+complete one tool call with a fresh tool budget, without duplicating workspace
+guidance or modifying the interrupted run's checkpoint. This is a new execution,
+not replay or reconciliation of the interrupted operation's external effects.
+
+Inbox outage tests inject a checkpoint failure after a queued text or image has
+been incorporated into the conversation. The notification remains available;
+after storage recovers, retry produces one committed delivery and excludes the
+uncommitted assistant response. The model request is repeated in this scenario:
+delivery deduplication does not mean exactly-once provider requests.
+
+Consumer lifecycle tests explicitly close `stream_events()` while a model or
+async tool is waiting. Closure must cancel and clean up the operation, leave an
+interrupted checkpoint, and be safe to repeat. These tests do not establish a
+bounded event queue or memory guarantees for slow consumers.
+
+A separate finite slow-consumer case pauses reads until the producer commits,
+then drains the buffered events. It verifies all 32 Unicode text deltas arrive
+in order and match the checkpoint, followed by one terminal event. This checks
+lossless delivery for that workload, not backpressure or an unlimited-load bound.
+
+Artifact integration tests combine a protected write, approval or denial,
+workspace guidance and an artifact response split into one- or seven-character
+chunks. Event deltas and the final event contain the expanded report, while the
+checkpoint and the next run's model input retain the original reference.
+Unknown references remain literal and escaped references are not expanded.
+The subsequent turn also checks that renderer state and prompt sections do not
+leak across runs. Artifact registration is host-owned in these tests; this is
+not automatic file loading or durable storage of artifact contents.
+
+Compaction integration tests begin with a completed turn, compact that prefix,
+open a work scope, pause for a write approval, then close the scope after approval
+or denial. The three-round budget must survive the pause and scope transitions.
+They verify one compaction, no pending tool calls in the compactor input, retained
+original history, a closed child branch and the expected filesystem effect.
+Compaction here precedes the protected call; the scenario does not authorize
+rewriting a pending approval or compacting an unfinished tool batch.
+
+Concurrency tests run two threads through the same Agent and tool library,
+sharing the approval journal and checkpoint store. A barrier overlaps model
+requests; each scope has its own workspace, principal and resource grants.
+The runs deliberately reuse run and tool-call IDs while one write is approved
+and the other denied. Tests verify separate approval IDs and previews, scoped
+prompt permissions, independent budgets, file effects and checkpoint histories.
+This is in-process concurrency over separate memory workspaces, not a guarantee
+of transaction isolation for writers sharing the same physical file.
+
+The process durability suite also runs a three-process approval scenario: pause
+through the event stream, persist approval or denial and abruptly exit, then
+reconstruct the Agent with SQLite stores in another process. Resume must settle
+the terminal tool round without another model request or approval prompt. The
+external effects database contains one entry after approval and none after
+denial. This covers process death before dispatch, not a universal exactly-once
+claim; separate reconciliation tests cover death after an external effect.
