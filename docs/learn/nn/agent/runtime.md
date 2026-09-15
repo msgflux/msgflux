@@ -2594,3 +2594,11 @@ and the other denied. Tests verify separate approval IDs and previews, scoped
 prompt permissions, independent budgets, file effects and checkpoint histories.
 This is in-process concurrency over separate memory workspaces, not a guarantee
 of transaction isolation for writers sharing the same physical file.
+
+The process durability suite also runs a three-process approval scenario: pause
+through the event stream, persist approval or denial and abruptly exit, then
+reconstruct the Agent with SQLite stores in another process. Resume must settle
+the terminal tool round without another model request or approval prompt. The
+external effects database contains one entry after approval and none after
+denial. This covers process death before dispatch, not a universal exactly-once
+claim; separate reconciliation tests cover death after an external effect.
