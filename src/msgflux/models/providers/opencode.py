@@ -27,13 +27,15 @@ class _BaseOpenCode:
     """
 
     session_header = "x-opencode-session"
+    api_key_env: str = "OPENCODE_API_KEY"
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("OPENCODE_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The OpenCode API key is not available. Please set `OPENCODE_API_KEY`"
+                "The OpenCode API key is not available. "
+                f"Please set `{self.api_key_env}`"
             )
         return key
 

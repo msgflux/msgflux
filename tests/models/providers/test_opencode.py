@@ -79,6 +79,22 @@ def test_zen_and_go_models_registered():
     assert "opencode-go" in model_registry.get("chat_completion", {})
 
 
+def test_api_key_env_override(monkeypatch):
+    from msgflux.models.providers.opencode import (
+        OpenCodeChatCompletion,
+        OpenCodeGoChatCompletion,
+    )
+
+    monkeypatch.setenv("OPENCODE_ACME_KEY", "opencode-acme-key")
+    zen = OpenCodeChatCompletion(
+        model_id="muse-spark-1.3-contributor-free", api_key_env="OPENCODE_ACME_KEY"
+    )
+    go = OpenCodeGoChatCompletion(model_id="kimi-k3", api_key_env="OPENCODE_ACME_KEY")
+
+    assert zen._get_api_key() == "opencode-acme-key"
+    assert go._get_api_key() == "opencode-acme-key"
+
+
 def test_gateways_resolve_through_model_factory():
     import msgflux as mf
 
