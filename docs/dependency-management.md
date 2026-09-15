@@ -17,6 +17,8 @@ hide:
 | Groq        | `msgflux`  | `GROQ_API_KEY`         |
 | Ollama      | `msgflux`  |                        |
 | OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
+| OpenCode    | `msgflux`  | `OPENCODE_API_KEY`     |
+| OpenCode Go | `msgflux`  | `OPENCODE_API_KEY`     |
 | OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
 | SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
 | Together    | `msgflux`  | `TOGETHER_API_KEY`     |
