@@ -2532,3 +2532,10 @@ temporary directories, never the repository workspace. They verify the diff,
 pause/resume, completed checkpoint and actual disk effects, with no extra model
 request after the final tool round. This coverage does not enable a local CLI
 mode or a host process executor.
+
+Resume regressions also approve a proposed write and then revoke permissions,
+change the principal, edit the file from the host, or interrupt through AgentInbox
+before resuming the event stream. They check that no tool starts, no additional
+model request occurs, the approval stays unconsumed and the current file survives.
+Changed authority or content requires host reconciliation; an inbox interruption
+records an interrupted checkpoint instead of a completed run.
