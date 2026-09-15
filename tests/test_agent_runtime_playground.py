@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -70,6 +71,66 @@ def test_extension_profiles_resume_without_prompt_accumulation(harness, profile,
 def test_unknown_extension_profile_fails_before_running(harness):
     with pytest.raises(ValueError, match="Unknown extension profile"):
         asyncio.run(harness.run_demo(profile="typo"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["permissions", "principal", "inbox", "file"])
+async def test_approved_write_cannot_bypass_changed_scope_on_resume(harness, change):
+    from msgflux.exceptions import TaskInterruptRequestedError, TaskPauseRequestedError
+
+    fs = harness.InMemoryWorkspace("resume", {"/note.txt": b"original"})
+    journal = harness.InMemoryApprovalStore()
+    checkpoints = harness.InMemoryCheckpointStore()
+    model = harness.ScriptedModel(
+        [
+            harness._tool("write", {"path": "/note.txt", "content": "changed"}),
+        ]
+    )
+    agent = harness.Agent(
+        name="offline-demo",
+        model=model,
+        tools=[harness.WriteTool()],
+        extensions=[
+            harness.WorkspacePromptExtension(),
+            harness.ToolTurnLimitExtension(1),
+        ],
+        approvals=harness.AgentApprovals(journal, {"write": "v1"}, "resume-v1"),
+        checkpoint_store=checkpoints,
+        config={"stream": True},
+    )
+    scope = harness._scope(fs, thread="t", run="r")
+    events = []
+    with pytest.raises(TaskPauseRequestedError):
+        async for event in agent.stream_events("write", scope=scope):
+            events.append(event)
+    (record,) = journal.pending(scope.namespace, "t", "r")
+    agent.decide_approval(record.request_id, approved=True, decided_by="host")
+    resumed = scope
+    if change == "permissions":
+        resumed = replace(scope, permissions=harness.PermissionSet())
+    elif change == "principal":
+        resumed = replace(scope, principal="another-user")
+    elif change == "file":
+        with harness.execution_context(scope=scope):
+            fs.write_text("/note.txt", "host edit")
+    else:
+        agent._get_scoped_agent_inbox(scope).interrupt(reason="operator cancelled")
+    expected = (
+        TaskInterruptRequestedError if change == "inbox" else TaskPauseRequestedError
+    )
+    with pytest.raises(expected):
+        async for event in agent.stream_events(None, scope=resumed):
+            events.append(event)
+    assert model.calls == 1
+    assert journal.get(scope.namespace, record.request_id).status == "approved"
+    with harness.execution_context(scope=scope):
+        assert fs.read_text("/note.txt") == (
+            "host edit" if change == "file" else "original"
+        )
+    assert not any(event.type == "tool.start" for event in events)
+    assert not any(event.type == "run.end" for event in events)
+    state = checkpoints.load_state(scope.namespace, "t", "r")
+    assert state["status"] == ("interrupted" if change == "inbox" else "paused")
 
 
 @pytest.mark.asyncio
