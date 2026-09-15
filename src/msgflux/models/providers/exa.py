@@ -9,6 +9,7 @@ class _BaseExa:
     """Configurations to use Exa models via OpenAI-compatible API."""
 
     provider: str = "exa"
+    api_key_env: str = "EXA_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("EXA_BASE_URL", "https://api.exa.ai")
@@ -18,10 +19,10 @@ class _BaseExa:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("EXA_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The Exa API key is not available. Please set `EXA_API_KEY`"
+                f"The Exa API key is not available. Please set `{self.api_key_env}`"
             )
         return key
 

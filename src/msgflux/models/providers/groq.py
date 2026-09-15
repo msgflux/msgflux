@@ -21,6 +21,7 @@ class _BaseGroq:
     """Configurations to use Groq models."""
 
     provider: str = "groq"
+    api_key_env: str = "GROQ_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
@@ -30,10 +31,10 @@ class _BaseGroq:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("GROQ_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The Grok API key is not available. Please set `GROQ_API_KEY`"
+                f"The Grok API key is not available. Please set `{self.api_key_env}`"
             )
         return key
 
