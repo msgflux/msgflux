@@ -1,10 +1,13 @@
 from typing import Any, Dict
 
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
+)
 from msgflux.models.registry import register_model
 
 
-class _BaseSambaNova:
+class _BaseSambaNova(ProviderEnvBase):
     """Configurations to use SambaNova models."""
 
     provider: str = "sambanova"

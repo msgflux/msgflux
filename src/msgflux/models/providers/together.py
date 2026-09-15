@@ -1,6 +1,9 @@
 from typing import Any, Dict
 
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
+)
 from msgflux.models.providers.openai import (
     OpenAITextEmbedder,
     OpenAITextToSpeech,
@@ -8,7 +11,7 @@ from msgflux.models.providers.openai import (
 from msgflux.models.registry import register_model
 
 
-class _BaseTogether:
+class _BaseTogether(ProviderEnvBase):
     """Configurations to use Together models."""
 
     provider: str = "together"

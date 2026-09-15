@@ -1,8 +1,11 @@
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
+)
 from msgflux.models.registry import register_model
 
 
-class _BaseBrave:
+class _BaseBrave(ProviderEnvBase):
     """Configurations to use Brave models."""
 
     provider: str = "brave"

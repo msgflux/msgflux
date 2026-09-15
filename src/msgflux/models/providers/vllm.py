@@ -1,4 +1,3 @@
-from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
 from msgflux.models.chat_capabilities import (
@@ -10,6 +9,7 @@ from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
+    ProviderEnvBase,
 )
 from msgflux.models.profiles import get_model_profile
 from msgflux.models.providers.jinaai import JinaAITextReranker
@@ -26,22 +26,15 @@ from msgflux.models.response import ModelResponse
 from msgflux.models.types import TextClassifierModel
 
 
-class _BaseVLLM:
+class _BaseVLLM(ProviderEnvBase):
     """Configurations to use vLLM models."""
 
     provider: str = "vllm"
+    display_name: str = "vLLM"
     api_key_env: str = "VLLM_API_KEY"
-
-    def _get_base_url(self):
-        base_url = getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
-        if base_url is None:
-            raise ValueError("Please set `VLLM_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv(self.api_key_env, "vllm")
-        return key
+    api_key_default: str = "vllm"
+    base_url_env: str = "VLLM_BASE_URL"
+    base_url: str = "http://localhost:8000/v1"
 
     @property
     def profile(self):

@@ -3,12 +3,15 @@ from typing import Any, Dict
 import msgspec
 
 from msgflux.models.chat_extensions import ChatRequestContext, ChatSpeedExtension
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
+)
 from msgflux.models.reasoning import OpenRouterReasoningCodec
 from msgflux.models.registry import register_model
 
 
-class _BaseOpenRouter:
+class _BaseOpenRouter(ProviderEnvBase):
     """Configurations to use OpenRouter models."""
 
     provider: str = "openrouter"

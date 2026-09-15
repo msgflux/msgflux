@@ -1,8 +1,11 @@
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
+)
 from msgflux.models.registry import register_model
 
 
-class _BaseCerebras:
+class _BaseCerebras(ProviderEnvBase):
     """Configurations to use Cerebras models."""
 
     provider: str = "cerebras"

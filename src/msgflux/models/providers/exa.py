@@ -1,10 +1,13 @@
 from typing import Any, Dict
 
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
+)
 from msgflux.models.registry import register_model
 
 
-class _BaseExa:
+class _BaseExa(ProviderEnvBase):
     """Configurations to use Exa models via OpenAI-compatible API."""
 
     provider: str = "exa"

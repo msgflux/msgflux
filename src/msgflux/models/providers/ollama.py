@@ -17,6 +17,7 @@ from msgflux.models.chat_capabilities import (
 from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
     OpenAICompatibleChatCompletion,
+    ProviderEnvBase,
 )
 from msgflux.models.profiles import get_model_profile
 from msgflux.models.providers.openai import (
@@ -30,7 +31,7 @@ from msgflux.models.registry import register_model
 from msgflux.utils.tenacity import apply_retry, default_model_retry
 
 
-class _BaseOllama:
+class _BaseOllama(ProviderEnvBase):
     """Configurations to use Ollama models."""
 
     provider: str = "ollama"

@@ -8,6 +8,7 @@ from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
+    ProviderEnvBase,
 )
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
@@ -16,7 +17,7 @@ from msgflux.models.reasoning import (
 from msgflux.models.registry import register_model
 
 
-class _BaseGroq:
+class _BaseGroq(ProviderEnvBase):
     """Configurations to use Groq models."""
 
     provider: str = "groq"

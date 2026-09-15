@@ -2299,11 +2299,14 @@ When the target API is fully OpenAI-compatible and only requires a different bas
 ???+ example "Custom provider — minimal setup"
 
     ```python
-    from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+    from msgflux.models.openai_compatible import (
+        OpenAICompatibleChatCompletion,
+        ProviderEnvBase,
+    )
     from msgflux.models.registry import register_model
 
 
-    class _BaseMyProvider:
+    class _BaseMyProvider(ProviderEnvBase):
         """Configuration mixin for MyProvider."""
 
         provider: str = "myprovider"  # used in "myprovider/model-name"
@@ -2351,11 +2354,14 @@ The built-in OpenRouter provider is a real-world example:
     ```python
     from typing import Any, Dict
 
-    from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+    from msgflux.models.openai_compatible import (
+        OpenAICompatibleChatCompletion,
+        ProviderEnvBase,
+    )
     from msgflux.models.registry import register_model
 
 
-    class _BaseMyProvider:
+    class _BaseMyProvider(ProviderEnvBase):
         provider: str = "myprovider"
         display_name: str = "MyProvider"
         api_key_env: str = "MYPROVIDER_API_KEY"
