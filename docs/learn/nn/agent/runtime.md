@@ -2585,3 +2585,12 @@ They verify one compaction, no pending tool calls in the compactor input, retain
 original history, a closed child branch and the expected filesystem effect.
 Compaction here precedes the protected call; the scenario does not authorize
 rewriting a pending approval or compacting an unfinished tool batch.
+
+Concurrency tests run two threads through the same Agent and tool library,
+sharing the approval journal and checkpoint store. A barrier overlaps model
+requests; each scope has its own workspace, principal and resource grants.
+The runs deliberately reuse run and tool-call IDs while one write is approved
+and the other denied. Tests verify separate approval IDs and previews, scoped
+prompt permissions, independent budgets, file effects and checkpoint histories.
+This is in-process concurrency over separate memory workspaces, not a guarantee
+of transaction isolation for writers sharing the same physical file.

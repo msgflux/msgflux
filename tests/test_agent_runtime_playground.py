@@ -74,6 +74,102 @@ def test_unknown_extension_profile_fails_before_running(harness):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("approved_thread", ["left", "right"])
+async def test_concurrent_workspace_runs_isolate_approvals_and_effects(
+    harness, approved_thread
+):
+    from msgflux.runtime import get_execution_scope
+
+    barrier = asyncio.Barrier(2)
+
+    class ConcurrentModel:
+        model_type = "chat_completion"
+
+        def __init__(self):
+            self.prompts = {}
+
+        async def acall(self, **kwargs):
+            thread = get_execution_scope().thread_id
+            assert thread not in self.prompts  # One round per independent budget.
+            self.prompts[thread] = kwargs["system_prompt"]
+            await barrier.wait()
+            return harness._tool(
+                "write",
+                {"path": "/note.txt", "content": f"updated-{thread}"},
+                "shared-call-id",
+            )
+
+    model = ConcurrentModel()
+    store, journal = harness.InMemoryCheckpointStore(), harness.InMemoryApprovalStore()
+    agent = harness.Agent(
+        name="offline-demo",
+        model=model,
+        tools=[harness.WriteTool()],
+        checkpoint_store=store,
+        approvals=harness.AgentApprovals(journal, {"write": "v1"}, "concurrent-v1"),
+        extensions=[
+            harness.WorkspacePromptExtension(),
+            harness.ToolTurnLimitExtension(1),
+        ],
+        config={"stream": True},
+    )
+    scopes, filesystems, previews = {}, {}, {}
+    for thread in ("left", "right"):
+        fs = harness.InMemoryWorkspace(
+            thread, {"/note.txt": f"original-{thread}".encode()}
+        )
+        filesystems[thread] = fs
+        scopes[thread] = replace(
+            harness._scope(fs, thread=thread, run="shared-run"),
+            principal=thread,
+            permissions=harness.PermissionSet(
+                resources=[
+                    fs.permission("/note.txt", "filesystem.read"),
+                    fs.permission("/note.txt", "filesystem.write"),
+                    fs.permission(f"/{thread}-only", "filesystem.read"),
+                ]
+            ),
+        )
+
+    async def run(thread):
+        def decide(record, preview):
+            assert record.binding.thread_id == thread
+            assert record.binding.principal == thread
+            assert preview.before == f"original-{thread}"
+            assert preview.after == f"updated-{thread}"
+            previews[thread] = record.request_id
+            return thread == approved_thread
+
+        return await harness.drive_agent(agent, scopes[thread], decider=decide)
+
+    tasks = [asyncio.create_task(run(thread)) for thread in ("left", "right")]
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+        assert len(set(previews.values())) == 2
+        for thread, events in zip(("left", "right"), results, strict=True):
+            other = "right" if thread == "left" else "left"
+            assert f"/{thread}-only" in model.prompts[thread]
+            assert f"/{other}-only" not in model.prompts[thread]
+            assert sum(e.type == "tool.approval_required" for e in events) == 1
+            assert sum(e.type == "run.end" for e in events) == 1
+            with harness.execution_context(scope=scopes[thread]):
+                expected = (
+                    f"updated-{thread}"
+                    if thread == approved_thread
+                    else f"original-{thread}"
+                )
+                assert filesystems[thread].read_text("/note.txt") == expected
+            state = store.load_state("offline-demo", thread, "shared-run")
+            assert state["status"] == "completed"
+            assert f"updated-{other}" not in str(state["messages"])
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("deny", [False, True])
 async def test_compaction_scope_and_approval_preserve_budget(harness, deny):
     from msgflux.models.compaction import ContextTokenEstimate, ModelCompaction
