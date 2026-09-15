@@ -72,6 +72,86 @@ def test_unknown_extension_profile_fails_before_running(harness):
         asyncio.run(harness.run_demo(profile="typo"))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deny", [False, True])
+@pytest.mark.parametrize("local", [False, True])
+async def test_terminal_budget_survives_approval_resume(harness, tmp_path, deny, local):
+    from msgflux.runtime import LocalWorkspaceBackend
+
+    binding = None
+    if local:
+        (tmp_path / "note.txt").write_text("original")
+        binding = await LocalWorkspaceBackend(tmp_path).open("terminal")
+        fs = binding.filesystem
+        environment = harness.ExecutionEnvironment.from_binding(
+            binding, write_guarantee="cooperative_compare"
+        )
+    else:
+        fs = harness.InMemoryWorkspace("terminal", {"/note.txt": b"original"})
+        environment = harness.ExecutionEnvironment(fs)
+    try:
+        journal = harness.InMemoryApprovalStore()
+        checkpoints = harness.InMemoryCheckpointStore()
+        model = harness.ScriptedModel(
+            [
+                harness._tool("write", {"path": "/note.txt", "content": "changed"}),
+            ]
+        )
+        agent = harness.Agent(
+            name="terminal",
+            model=model,
+            tools=[harness.WriteTool()],
+            extensions=[
+                harness.WorkspacePromptExtension(),
+                harness.ToolTurnLimitExtension(1),
+            ],
+            approvals=harness.AgentApprovals(journal, {"write": "v1"}, "terminal-v1"),
+            checkpoint_store=checkpoints,
+            config={"stream": True},
+        )
+        scope = harness.ExecutionScope(
+            namespace="terminal",
+            thread_id="t",
+            run_id="r",
+            principal="host",
+            environment=environment,
+            permissions=harness.PermissionSet(
+                resources=[
+                    fs.permission("/note.txt", action)
+                    for action in ("filesystem.read", "filesystem.write")
+                ]
+            ),
+        )
+        previews = []
+
+        def decide(record, preview):
+            previews.append(preview)
+            assert preview.before == "original" and preview.after == "changed"
+            assert "-original" in preview.diff and "+changed" in preview.diff
+            return not deny
+
+        events = await harness.drive_agent(agent, scope, decider=decide)
+        assert len(previews) == 1
+        assert model.calls == 1  # Resume must not issue a final model request.
+        assert "Tool budget: 1 round(s) remaining" in model.prompts[0]
+        assert model.prompts[0].count("<workspace_context>") == 1
+        types = [event.type for event in events]
+        assert types.count("tool.approval_required") == 1
+        assert types.count("run.end") == 1
+        assert "run.paused" in types
+        state = checkpoints.load_state("terminal", "t", "r")
+        assert state["status"] == "completed"
+        with harness.execution_context(scope=scope):
+            assert fs.read_text("/note.txt") == ("original" if deny else "changed")
+        if local:
+            assert (tmp_path / "note.txt").read_text() == (
+                "original" if deny else "changed"
+            )
+    finally:
+        if binding is not None:
+            await binding.aclose()
+
+
 def test_matrix_cli_reports_each_profile_and_decision():
     completed = subprocess.run(  # noqa: S603
         [sys.executable, str(SCRIPT), "--matrix"],
