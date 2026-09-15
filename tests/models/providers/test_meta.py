@@ -144,3 +144,13 @@ def test_meta_rejects_audio_modalities():
         model._adapt_params({"model": "muse-spark-1.3", "modalities": ["text"]})
     with pytest.raises(ValueError, match="`audio`"):
         model._adapt_params({"model": "muse-spark-1.3", "audio": {"voice": "x"}})
+
+
+def test_api_key_env_override(monkeypatch):
+    from msgflux.models.providers.meta import MetaChatCompletion
+
+    monkeypatch.setenv("META_ACME_KEY", "meta-acme-key")
+    model = MetaChatCompletion(model_id="muse-spark-1.3", api_key_env="META_ACME_KEY")
+
+    assert model.api_key_env == "META_ACME_KEY"
+    assert model._get_api_key() == "meta-acme-key"

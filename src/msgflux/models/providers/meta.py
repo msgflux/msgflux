@@ -22,6 +22,7 @@ class _BaseMeta:
     """Configurations to use Meta Model API models."""
 
     provider: str = "meta"
+    api_key_env: str = "META_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("META_BASE_URL", "https://api.meta.ai/v1")
@@ -31,10 +32,10 @@ class _BaseMeta:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("META_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The Meta API key is not available. Please set `META_API_KEY`"
+                f"The Meta API key is not available. Please set `{self.api_key_env}`"
             )
         return key
 
