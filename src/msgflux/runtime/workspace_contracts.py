@@ -7,6 +7,25 @@ import msgspec
 WriteGuarantee = Literal["cooperative_compare", "atomic_compare"]
 
 
+class WorkspacePromptInfo(
+    msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
+    """Trusted model-facing description, never authority or discovered file data.
+
+    Backends may override the default. Do not include credentials, private host
+    paths or claims of isolation not enforced by the implementation.
+    """
+
+    storage: str = "unspecified"
+    guidance: str = ""
+
+    def __post_init__(self):
+        if not isinstance(self.storage, str) or not self.storage.strip():
+            raise ValueError("storage must be non-empty text")
+        if not isinstance(self.guidance, str):
+            raise TypeError("guidance must be text")
+
+
 class WorkspaceIdentity(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
 ):

@@ -85,12 +85,14 @@ from msgflux.runtime.workspace_backend import (
 from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
 from msgflux.runtime.workspace_contracts import (
     WorkspaceIdentity,
+    WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
     WriteGuarantee,
 )
 from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
 
 __all__ = [
+    "WorkspacePromptInfo",
     "LocalWorkspace",
     "LocalWorkspaceBackend",
     "InMemoryWorkspaceBackend",
