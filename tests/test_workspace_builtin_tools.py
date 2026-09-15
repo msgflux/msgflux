@@ -89,6 +89,7 @@ def test_reader_is_single_public_tool_and_concatenates_guidance():
     visual = ConfiguredReader(supports_vision=True)
     assert visual.tool_config["usage_guidance"].startswith("Existing instruction.\n\n")
     assert "user-role message" in visual.tool_config["usage_guidance"]
+    assert "set offset and limit to null" in visual.tool_config["usage_guidance"]
     assert plain.tool_config["usage_guidance"] == "Existing instruction."
     assert ReadFileTool().tool_config["usage_guidance"] is None
 
