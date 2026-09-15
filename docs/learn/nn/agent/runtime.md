@@ -2546,3 +2546,9 @@ the pending coroutine runs its cleanup, and the checkpoint is interrupted rather
 than completed. Tests synchronize with events instead of timing sleeps. These
 checks cover cooperative async cancellation, not rollback of completed external
 effects or termination of an uncooperative host process.
+
+The cancellation scenario then reuses the same Agent with a fresh run and abort
+signal, both in the original thread and in a different thread. The new run must
+complete one tool call with a fresh tool budget, without duplicating workspace
+guidance or modifying the interrupted run's checkpoint. This is a new execution,
+not replay or reconciliation of the interrupted operation's external effects.
