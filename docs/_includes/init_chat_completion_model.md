@@ -75,6 +75,17 @@
         )
         ```
 
+    === "xAI"
+
+        Authenticate by setting the `XAI_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(XAI_API_KEY="...")
+        model = mf.Model.chat_completion("xai/grok-4.6")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
