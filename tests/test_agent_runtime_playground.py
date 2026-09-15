@@ -215,15 +215,22 @@ async def test_terminal_budget_survives_approval_resume(harness, tmp_path, deny,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["model", "tool"])
-async def test_external_abort_cleans_pending_operation_and_checkpoints(harness, phase):
+@pytest.mark.parametrize("same_thread", [False, True])
+async def test_external_abort_cleans_pending_operation_and_checkpoints(
+    harness, phase, same_thread
+):
     from msgflux.exceptions import TaskInterruptRequestedError
     from msgflux.runtime import AbortSignal
 
     started, cleaned = asyncio.Event(), asyncio.Event()
     effects = []
+    recovering = False
 
     async def pending() -> str:
         """Wait for an external operation."""
+        if recovering:
+            effects.append("completed")
+            return "done"
         started.set()
         try:
             await asyncio.Event().wait()
@@ -234,7 +241,7 @@ async def test_external_abort_cleans_pending_operation_and_checkpoints(harness, 
 
     class BlockingModel(harness.ScriptedModel):
         async def acall(self, **kwargs):
-            if phase == "model":
+            if phase == "model" and not recovering:
                 self.calls += 1
                 return await pending()
             return await super().acall(**kwargs)
@@ -274,6 +281,34 @@ async def test_external_abort_cleans_pending_operation_and_checkpoints(harness, 
         assert state["status"] == "interrupted"
         assert not any(event.type == "run.end" for event in events)
         assert any(event.type == "tool.start" for event in events) == (phase == "tool")
+
+        # A fresh run is not a replay of the interrupted operation.
+        recovering = True
+        if phase == "tool":
+            model.responses.append(harness._tool("pending", {}, "recovery-call"))
+        fresh = replace(
+            scope,
+            run_id="recovery",
+            thread_id="t" if same_thread else "new-thread",
+            abort_signal=AbortSignal(),
+        )
+        recovered = [
+            event async for event in agent.stream_events("try again", scope=fresh)
+        ]
+        assert effects == ["completed"]
+        assert model.calls == 2
+        assert "Tool budget: 1 round(s) remaining" in model.prompts[-1]
+        assert model.prompts[-1].count("<workspace_context>") == 1
+        assert signal.aborted and not fresh.abort_signal.aborted
+        assert sum(event.type == "tool.start" for event in recovered) == 1
+        assert sum(event.type == "run.end" for event in recovered) == 1
+        assert checkpoints.load_state(scope.namespace, "t", "r") == state
+        assert (
+            checkpoints.load_state(fresh.namespace, fresh.thread_id, fresh.run_id)[
+                "status"
+            ]
+            == "completed"
+        )
     finally:
         if not task.done():
             task.cancel()
