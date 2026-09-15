@@ -17,6 +17,7 @@ from msgflux.runtime.workspace import WorkspaceConflictError, WorkspaceFilesyste
 from msgflux.runtime.workspace_backend import WorkspaceBackend, WorkspaceBinding
 from msgflux.runtime.workspace_contracts import (
     WorkspaceIdentity,
+    WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
 )
 
@@ -56,6 +57,16 @@ def _root_directory(parts):
 
 class LocalWorkspace(WorkspaceFilesystem):
     """A virtual workspace rooted at an existing absolute host directory."""
+
+    prompt_info = WorkspacePromptInfo(
+        storage="host files; changes persist after binding close",
+        guidance=(
+            "Changes affect real files. Parents must exist. Symlinks, hardlinked "
+            "files, special files and cross-device traversal are rejected. "
+            "External writers can race cooperative comparison. "
+            "This backend is not an OS sandbox."
+        ),
+    )
 
     def __init__(
         self,

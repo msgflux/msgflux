@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         ToolLibraryExtensionHandle,
         ToolSearchExtension,
     )
+    from msgflux.nn.extensions.workspace import WorkspacePromptExtension
     from msgflux.nn.modules.tool_runtime import (
         ToolContextProvider,
         ToolDispatch,
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "WorkspacePromptExtension",
     "AgentExtension",
     "AgentExtensionHandle",
     "Artifact",
@@ -63,6 +65,10 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "WorkspacePromptExtension": (
+        "msgflux.nn.extensions.workspace",
+        "WorkspacePromptExtension",
+    ),
     "ToolTurnLimitExtension": (
         "msgflux.nn.extensions.limits",
         "ToolTurnLimitExtension",
