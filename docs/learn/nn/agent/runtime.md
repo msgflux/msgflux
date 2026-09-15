@@ -2414,3 +2414,114 @@ their full snapshot in `ChatMessages.metadata` for recovery and inspection.
 The metadata records lineage, active head, and scope revisions while the message
 events remain append-only. Checkpoints therefore restore the active branch without
 allocating a new `ExecutionScope`, thread, run, or budget.
+
+## Iterative runtime validation
+
+The repository includes `scripts/validate_agent_runtime.py` to exercise the
+Agent runtime without application scaffolding. Its offline mode uses a scripted
+model with the real event stream, tool dispatch, permission checks, approval
+journal, checkpoints and AgentInbox. It requires no API credentials.
+
+```bash
+uv run python scripts/validate_agent_runtime.py
+uv run python scripts/validate_agent_runtime.py --deny
+uv run python scripts/validate_agent_runtime.py --interactive --events --repeat 2
+```
+
+The first command approves the scripted proposals automatically in a disposable
+in-memory workspace. The second exercises rejection. The third prompts for
+decisions and repeats the scenario with fresh state, making it easy to compare
+different choices without modifying repository files.
+The final JSON summary counts approved/denied file changes; shell decisions are
+not file changes. `--events` prints event types and text deltas to stderr without
+dumping image payloads. Interactive decisions show the prepared diff and default
+to denial on a blank answer or EOF. A separate permission probe attempts a write
+through Agent with `approvals=None` and no resource grants, verifying that the
+file remains unchanged; its permission-denied log is expected.
+
+Run the harness regressions with
+`uv run pytest -q tests/test_agent_runtime_playground.py`. For the full offline
+suite, use `uv run pytest -q --ignore=tests/integration`, matching CI. Some existing
+integration tests load `.env` and contact live providers; bare `pytest` is not an
+offline-only command.
+
+The scenario reads a bounded range of text, proposes workspace changes through
+write/edit/apply-patch tools, and reads an image with vision support enabled. The
+image is delivered as a subsequent user-role message associated with the tool
+call, not embedded in the tool's text output. Approval pauses let the host inspect
+the prepared diff, record a decision and resume execution.
+
+!!! warning "What this validates"
+    An offline image check validates delivery and provenance, not visual
+    understanding. The demonstration shell is simulated: it never executes host
+    commands and does not establish OS sandbox guarantees. Workspace, journal and
+    checkpoints are in memory; rerunning the scenario is not crash recovery.
+    Removing approval prompts does not grant missing filesystem permissions.
+
+### Try a real vision model
+
+```bash
+uv run python scripts/validate_agent_runtime.py --live \
+  --model YOUR_OPENAI_MODEL_ID --image /absolute/path/to/image.png --interactive
+```
+
+Set `OPENAI_API_KEY` in your environment using your usual secret-management
+workflow. The script does not load `.env` automatically. Choose a model that
+supports vision and native apply-patch tools. `--live` explicitly opts into paid
+Responses requests and transmission of the selected image and conversation.
+Responses supports image inputs including base64 data URLs; see the
+[official image-input guide](https://developers.openai.com/api/docs/guides/images-vision).
+
+`--model` accepts either the bare model ID or `openai/MODEL`; the provider prefix
+is not duplicated. For models without native shell/apply-patch support, select
+function-tool transport explicitly:
+
+```bash
+uv run python scripts/validate_agent_runtime.py --live \
+  --model openai/gpt-4.1-mini --image ./msgFlow.ai.png \
+  --no-native-tools --interactive
+```
+
+This keeps the same local tools, permissions and approval previews, changing only
+their provider representation. There is no automatic retry with a different model
+or transport. A non-success HTTP streaming response is read before extracting its
+structured provider error, so API errors remain visible rather than being masked
+by an unread-response exception.
+
+The host imports at most 1 MB from the selected image into `/image.png` in the
+virtual workspace. The Agent is asked to read it through `ReadFileTool`; that
+tool publishes the image through AgentInbox for the next model request. File
+changes still require approval. Bash is not exposed in live mode because this
+harness has no process executor. Its simulated dispatch is covered offline;
+adding a real executor is a separate host integration, not an approval override.
+
+After the first answer, enter follow-up messages or `/quit`. Each turn uses a new
+run in the same thread and continues from its in-memory checkpoint. Native patch
+transport, image serialization and next-turn history are covered by offline
+mocked-transport tests. Actual provider availability, visual interpretation and
+model tool choices require manual live validation. There is no automatic vision
+fallback or guarantee that a live model will choose every tool in the scenario.
+
+For persistent recovery coverage, use the durability conformance gate described
+in `CONTRIBUTING.md`. The separate
+`scripts/validate_openai_event_streaming.py` also exercises provider-specific
+streaming with paid API requests; it is not part of offline validation.
+
+### Offline extension matrix
+
+Run the same tool trajectory with fresh agents and stores for each combination:
+
+```bash
+uv run python scripts/validate_agent_runtime.py --matrix
+uv run python scripts/validate_agent_runtime.py --profile combined --interactive --events
+```
+
+The matrix crosses approval and denial with three profiles: `baseline` (Agent
+defaults), `workspace` (dynamic workspace guidance), and `combined` (workspace,
+fixed fixture date, few-shot guidance and a seven-round tool budget). The budget
+allows the six tool rounds to complete; terminal exhaustion is not covered by
+this scenario. Each profile checks prompt sections do not accumulate on resume,
+file effects, streamed events, checkpoint history and image inbox provenance.
+The matrix emits a JSON array identifying each profile and decision. It is
+offline only; Bash remains simulated and files remain in memory. This is not
+yet coverage of every extension, cancellation or a real local workspace.
