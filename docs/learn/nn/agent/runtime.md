@@ -2568,3 +2568,12 @@ A separate finite slow-consumer case pauses reads until the producer commits,
 then drains the buffered events. It verifies all 32 Unicode text deltas arrive
 in order and match the checkpoint, followed by one terminal event. This checks
 lossless delivery for that workload, not backpressure or an unlimited-load bound.
+
+Artifact integration tests combine a protected write, approval or denial,
+workspace guidance and an artifact response split into one- or seven-character
+chunks. Event deltas and the final event contain the expanded report, while the
+checkpoint and the next run's model input retain the original reference.
+Unknown references remain literal and escaped references are not expanded.
+The subsequent turn also checks that renderer state and prompt sections do not
+leak across runs. Artifact registration is host-owned in these tests; this is
+not automatic file loading or durable storage of artifact contents.
