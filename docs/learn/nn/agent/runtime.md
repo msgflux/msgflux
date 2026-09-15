@@ -2577,3 +2577,11 @@ Unknown references remain literal and escaped references are not expanded.
 The subsequent turn also checks that renderer state and prompt sections do not
 leak across runs. Artifact registration is host-owned in these tests; this is
 not automatic file loading or durable storage of artifact contents.
+
+Compaction integration tests begin with a completed turn, compact that prefix,
+open a work scope, pause for a write approval, then close the scope after approval
+or denial. The three-round budget must survive the pause and scope transitions.
+They verify one compaction, no pending tool calls in the compactor input, retained
+original history, a closed child branch and the expected filesystem effect.
+Compaction here precedes the protected call; the scenario does not authorize
+rewriting a pending approval or compacting an unfinished tool batch.
