@@ -24,6 +24,7 @@ class _BaseXAI:
     """Configurations to use xAI Grok models."""
 
     provider: str = "xai"
+    api_key_env: str = "XAI_API_KEY"
 
     def _get_base_url(self):
         base_url = getenv("XAI_BASE_URL", "https://api.x.ai/v1")
@@ -33,10 +34,10 @@ class _BaseXAI:
 
     def _get_api_key(self):
         """Load API keys from environment variable."""
-        key = getenv("XAI_API_KEY")
+        key = getenv(self.api_key_env)
         if not key:
             raise ValueError(
-                "The xAI API key is not available. Please set `XAI_API_KEY`"
+                f"The xAI API key is not available. Please set `{self.api_key_env}`"
             )
         return key
 

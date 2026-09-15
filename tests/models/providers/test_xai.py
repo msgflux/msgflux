@@ -194,6 +194,16 @@ def test_responses_sends_cache_key_from_active_thread(mock_xai_client):
     assert request["extra_headers"] == {"User-Agent": "msgflux"}
 
 
+def test_api_key_env_override(monkeypatch):
+    from msgflux.models.providers.xai import XAIChatCompletion
+
+    monkeypatch.setenv("XAI_ACME_KEY", "xai-acme-key")
+    model = XAIChatCompletion(model_id="grok-4.6", api_key_env="XAI_ACME_KEY")
+
+    assert model.api_key_env == "XAI_ACME_KEY"
+    assert model._get_api_key() == "xai-acme-key"
+
+
 def test_no_conv_id_without_active_thread(mock_xai_client):
     from msgflux.models.providers.xai import XAIChatCompletion
 
