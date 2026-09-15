@@ -75,6 +75,88 @@ def test_unknown_extension_profile_fails_before_running(harness):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deny", [False, True])
+async def test_compaction_scope_and_approval_preserve_budget(harness, deny):
+    from msgflux.models.compaction import ContextTokenEstimate, ModelCompaction
+    from msgflux.nn.extensions import CompactionExtension, CompactionPolicy
+    from msgflux.tools.builtin import close_context_scope, open_context_scope
+
+    class CompactingModel(harness.ScriptedModel):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.compacted = []
+
+        async def acount_context_tokens(self, **kwargs):
+            return ContextTokenEstimate(input_tokens=100, source="heuristic")
+
+        async def acompact_context(self, messages, **kwargs):
+            self.compacted.append(deepcopy(messages))
+            return ModelCompaction(
+                format="messages",
+                items=[{"role": "user", "content": "Summary of prior work"}],
+            )
+
+    model = CompactingModel(
+        [
+            harness._tool(
+                "open_context_scope", {"name": "work", "summary": "Start work"}
+            ),
+            harness._tool("write", {"path": "/note.txt", "content": "changed"}),
+            harness._tool("close_context_scope", {"summary": "Work finished"}),
+        ]
+    )
+    store = harness.InMemoryCheckpointStore()
+    journal = harness.InMemoryApprovalStore()
+    fs = harness.InMemoryWorkspace("compact", {"/note.txt": b"original"})
+    scope = harness._scope(fs, thread="t", run="r")
+    agent = harness.Agent(
+        name="offline-demo",
+        model=model,
+        tools=[open_context_scope, harness.WriteTool(), close_context_scope],
+        extensions=[
+            harness.WorkspacePromptExtension(),
+            harness.ToolTurnLimitExtension(3),
+            CompactionExtension(
+                CompactionPolicy(
+                    context_capacity=100,
+                    reserved_output_tokens=0,
+                    safety_margin_tokens=0,
+                )
+            ),
+        ],
+        approvals=harness.AgentApprovals(journal, {"write": "v1"}, "compact-v1"),
+        checkpoint_store=store,
+        config={"stream": True},
+    )
+    messages = harness.ChatMessages()
+    messages.begin_turn(turn_id="prior")
+    messages.add_user("Prior work details")
+    messages.add_assistant("Prior answer")
+    messages.end_turn()
+    events = await harness.drive_agent(
+        agent, scope, decider=lambda *_: not deny, messages=messages
+    )
+    assert model.calls == 3
+    assert len(model.compacted) == 1
+    assert all("function_call" not in str(context) for context in model.compacted)
+    types = [event.type for event in events]
+    assert types.count("compaction.start") == types.count("compaction.end") == 1
+    assert types.index("compaction.end") < types.index("tool.approval_required")
+    assert types.count("tool.approval_required") == 1
+    assert types.count("run.end") == 1
+    state = store.load_state(scope.namespace, "t", "r")
+    assert state["status"] == "completed"
+    assert state["runtime"]["branch_id"] == "root"
+    branches = state["messages"]["metadata"]["runtime"]["context_scopes"]["branches"]
+    assert branches["work"]["closed"]
+    assert "Work finished" in str(state["messages"]["items"])
+    assert "Prior work details" in str(state["messages"])
+    assert "Tool budget: 1 round(s) remaining" in model.prompts[-1]
+    with harness.execution_context(scope=scope):
+        assert fs.read_text("/note.txt") == ("original" if deny else "changed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deny", [False, True])
 @pytest.mark.parametrize("width", [1, 7])
 async def test_artifact_projection_after_approval_preserves_next_turn(
     harness, deny, width
