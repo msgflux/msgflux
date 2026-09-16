@@ -75,6 +75,17 @@
         )
         ```
 
+    === "Novita"
+
+        Authenticate by setting the `NOVITA_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(NOVITA_API_KEY="...")
+        model = mf.Model.chat_completion("novita/zai-org/glm-5.3-flash")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
