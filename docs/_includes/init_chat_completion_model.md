@@ -75,6 +75,17 @@
         )
         ```
 
+    === "GMI Cloud"
+
+        Authenticate by setting the `GMICLOUD_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(GMICLOUD_API_KEY="...")
+        model = mf.Model.chat_completion("gmicloud/MiniMaxAI/MiniMax-M2.7")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
