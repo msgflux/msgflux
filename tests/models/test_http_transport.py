@@ -7,6 +7,7 @@ import msgspec
 import pytest
 
 from msgflux.models.http_transport import HTTPTransport
+from msgflux.exceptions import ModelProviderHTTPError
 from msgflux.models.model_credentials import (
     ModelCredentialResolver,
     ResolvedModelCredentials,
@@ -46,6 +47,89 @@ class _Owner:
 
     def _raise_if_aborted(self):
         self.abort_checks += 1
+
+
+class _LazyBody(httpx2.SyncByteStream, httpx2.AsyncByteStream):
+    def __init__(self, content):
+        self.content = content
+        self.closed = False
+
+    def __iter__(self):
+        yield self.content[:5]
+        yield self.content[5:]
+
+    async def __aiter__(self):
+        for chunk in self:
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("status", [200, 400, 503])
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.asyncio
+async def test_lazy_stream_http_errors_preserve_provider_error(
+    asynchronous, status, structured
+):
+    content = (
+        b'{"error":{"message":"Invalid model","code":"bad_model","param":"model"}}'
+        if structured
+        else b"upstream failed"
+    )
+    body = _LazyBody(content)
+    responses = []
+
+    def handler(request):
+        response = httpx2.Response(
+            status, stream=body, headers={"x-request-id": "req-test"}
+        )
+        responses.append(response)
+        return response
+
+    def iterate(response):
+        assert not response.is_stream_consumed  # Success is never eagerly buffered.
+        return response.iter_bytes()
+
+    async def aiterate(response):
+        assert not response.is_stream_consumed
+        async for chunk in response.aiter_bytes():
+            yield chunk
+
+    async def invoke():
+        if asynchronous:
+            async with httpx2.AsyncClient(
+                transport=httpx2.MockTransport(handler)
+            ) as client:
+                transport = HTTPTransport(async_client=client, max_retries=0)
+                return b"".join(
+                    [
+                        chunk
+                        async for chunk in transport.astream(
+                            _Owner(), "/responses", iterate=aiterate
+                        )
+                    ]
+                )
+        with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+            transport = HTTPTransport(client=client, max_retries=0)
+            return b"".join(transport.stream(_Owner(), "/responses", iterate=iterate))
+
+    if status == 200:
+        assert await invoke() == content
+    else:
+        with pytest.raises(ModelProviderHTTPError) as exc:
+            await invoke()
+        assert exc.value.status_code == status
+        assert exc.value.request_id == "req-test"
+        assert exc.value.description == (
+            "Invalid model" if structured else responses[0].reason_phrase
+        )
+        assert exc.value.code == ("bad_model" if structured else None)
+    assert body.closed and responses[0].is_closed
 
 
 def test_http_transport_sends_json_with_request_time_credentials():
