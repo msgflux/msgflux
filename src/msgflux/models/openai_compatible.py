@@ -5,7 +5,6 @@ import warnings
 from copy import copy, deepcopy
 from functools import partial
 from inspect import isawaitable
-from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Union
 
 import msgspec
@@ -40,6 +39,7 @@ from msgflux.models.model_credentials import (
     ModelCredentialResolver,
 )
 from msgflux.models.profiles import get_model_profile
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     ReasoningCodec,
@@ -162,8 +162,10 @@ class OpenAIResponsesAPI(ChatAPIAdapter):
         return await owner._astream_responses_generate(**kwargs)
 
 
-class OpenAICompatibleModel(BaseModel):
+class OpenAICompatibleModel(ProviderEnvBase, BaseModel):
     provider: str = "openai"
+    display_name: str = "OpenAI"
+    api_key_env: str = "OPENAI_API_KEY"
     credential_resolver: ModelCredentialResolver = BearerTokenCredentialResolver()
 
     @staticmethod
@@ -191,20 +193,6 @@ class OpenAICompatibleModel(BaseModel):
             self.__call__, retry_config, default=default_model_retry
         )
         self.acall = apply_retry(self.acall, retry_config, default=default_model_retry)
-
-    def _get_base_url(self):
-        return None
-
-    api_key_env: str = "OPENAI_API_KEY"
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv(self.api_key_env)
-        if not key:
-            raise ValueError(
-                f"The OpenAI key is not available. Please set `{self.api_key_env}`"
-            )
-        return key
 
     def _set_credential_resolver(
         self,

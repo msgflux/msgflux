@@ -2299,24 +2299,19 @@ When the target API is fully OpenAI-compatible and only requires a different bas
 ???+ example "Custom provider — minimal setup"
 
     ```python
-    from os import getenv
     from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+    from msgflux.models.provider_env import ProviderEnvBase
     from msgflux.models.registry import register_model
 
 
-    class _BaseMyProvider:
+    class _BaseMyProvider(ProviderEnvBase):
         """Configuration mixin for MyProvider."""
 
         provider: str = "myprovider"  # used in "myprovider/model-name"
-
-        def _get_base_url(self):
-            return getenv("MYPROVIDER_BASE_URL", "https://api.myprovider.com/v1")
-
-        def _get_api_key(self):
-            key = getenv("MYPROVIDER_API_KEY")
-            if not key:
-                raise ValueError("Please set `MYPROVIDER_API_KEY`")
-            return key
+        display_name: str = "MyProvider"  # used in missing-key errors
+        api_key_env: str = "MYPROVIDER_API_KEY"
+        base_url_env: str = "MYPROVIDER_BASE_URL"
+        base_url: str = "https://api.myprovider.com/v1"
 
 
     @register_model
@@ -2326,6 +2321,11 @@ When the target API is fully OpenAI-compatible and only requires a different bas
     ):
         """MyProvider Chat Completion."""
     ```
+
+    The shared base implements `_get_base_url()` and `_get_api_key()` from
+    those class variables, so the mixin stays configuration-only. Per-instance
+    `api_key_env=` and `base_url=` constructor arguments override the class
+    defaults without changing them.
 
 After registering, the model is available through the standard factory. The string before the `/` must match the `provider` class attribute:
 
@@ -2350,24 +2350,19 @@ The built-in OpenRouter provider is a real-world example:
 ???+ example "Custom provider — with parameter adaptation"
 
     ```python
-    from os import getenv
     from typing import Any, Dict
 
     from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+    from msgflux.models.provider_env import ProviderEnvBase
     from msgflux.models.registry import register_model
 
 
-    class _BaseMyProvider:
+    class _BaseMyProvider(ProviderEnvBase):
         provider: str = "myprovider"
-
-        def _get_base_url(self):
-            return getenv("MYPROVIDER_BASE_URL", "https://api.myprovider.com/v1")
-
-        def _get_api_key(self):
-            key = getenv("MYPROVIDER_API_KEY")
-            if not key:
-                raise ValueError("Please set `MYPROVIDER_API_KEY`")
-            return key
+        display_name: str = "MyProvider"
+        api_key_env: str = "MYPROVIDER_API_KEY"
+        base_url_env: str = "MYPROVIDER_BASE_URL"
+        base_url: str = "https://api.myprovider.com/v1"
 
 
     @register_model

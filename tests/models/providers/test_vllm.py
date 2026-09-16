@@ -331,3 +331,23 @@ class TestVLLMBaseURL:
         model = VLLMChatCompletion(model_id="llama-3")
 
         assert model.sampling_params["base_url"] == custom_url
+
+
+class TestVLLMEnvBase:
+    """Non-chat models must resolve env config through the shared mixin."""
+
+    def test_reranker_and_classifier_init_without_api_key(self, monkeypatch):
+        """JinaAI/HTTPX chains must not shadow the vLLM key default."""
+        monkeypatch.delenv("VLLM_API_KEY", raising=False)
+        monkeypatch.delenv("JINAAI_API_KEY", raising=False)
+
+        from msgflux.models.providers.vllm import (
+            VLLMTextClassifier,
+            VLLMTextReranker,
+        )
+
+        reranker = VLLMTextReranker(model_id="rerank")
+        classifier = VLLMTextClassifier(model_id="classify")
+
+        assert reranker._get_api_key() == "vllm"
+        assert classifier._get_base_url() == "http://localhost:8000/v1"
