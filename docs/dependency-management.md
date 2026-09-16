@@ -16,6 +16,7 @@ hide:
 | Cerebras    | `msgflux`  | `CEREBRAS_API_KEY`     |
 | Groq        | `msgflux`  | `GROQ_API_KEY`         |
 | Ollama      | `msgflux`  |                        |
+| NVIDIA      | `msgflux`  | `NVIDIA_API_KEY`       |
 | OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
 | OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
 | SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
