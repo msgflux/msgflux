@@ -75,6 +75,17 @@
         )
         ```
 
+    === "Morph"
+
+        Authenticate by setting the `MORPH_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(MORPH_API_KEY="...")
+        model = mf.Model.chat_completion("morph/morph-kimik3")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
