@@ -751,6 +751,45 @@ def test_agent_abort_signal_saves_interrupted_checkpoint():
     assert restored.turns[-1]["status"] == "interrupted"
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_final_stream_after_tools_checkpoints_on_completion(asynchronous):
+    def lookup(query: str) -> str:
+        return f"Found {query}"
+
+    store = InMemoryCheckpointStore()
+    agent = _make_agent(checkpoint_store=store, tools=[lookup], config={"stream": True})
+    stream = ModelStreamResponse(mode="async" if asynchronous else "sync")
+    stream.set_response_type("text_generation")
+    agent.generator.forward = Mock(side_effect=[_tool_call_response(), stream])
+    agent.generator.aforward = AsyncMock(side_effect=[_tool_call_response(), stream])
+    scope = ExecutionScope(namespace="test_agent", thread_id="t", run_id="r")
+    result = (
+        await agent.acall("Lookup", scope=scope)
+        if asynchronous
+        else agent("Lookup", scope=scope)
+    )
+    assert result is stream
+    assert store.load_state("test_agent", "t", "r")["status"] == "streaming"
+    stream.add("Final answer after tools")
+    stream.finish()
+    # Consumption selects async iteration while this test's event loop is active,
+    # even when Agent.forward itself used the synchronous execution path.
+    assert [chunk async for chunk in stream.consume()] == ["Final answer after tools"]
+    state = store.load_state("test_agent", "t", "r")
+    assert state["status"] == "completed"
+    items = state["messages"]["items"]
+    assert (
+        sum(
+            item.get("role") == "assistant"
+            and item.get("content") == "Final answer after tools"
+            for item in items
+        )
+        == 1
+    )
+    assert any(item.get("type") == "function_call_output" for item in items)
+
+
 def test_agent_stream_checkpoint_completes_when_stream_finishes():
     store = InMemoryCheckpointStore()
     agent = _make_agent(checkpoint_store=store, config={"stream": True})
