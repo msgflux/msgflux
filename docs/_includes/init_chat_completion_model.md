@@ -75,6 +75,19 @@
         )
         ```
 
+    === "Parasail"
+
+        Authenticate by setting the `PARASAIL_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(PARASAIL_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "parasail/deepseek-ai/DeepSeek-V4-Flash-0731"
+        )
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
