@@ -75,7 +75,7 @@
         )
         ```
 
-    === "Inference"
+    === "Inference Net"
 
         Authenticate by setting the `INFERENCE_API_KEY` env variable.
 
@@ -83,7 +83,7 @@
         import msgflux as mf
 
         mf.set_envs(INFERENCE_API_KEY="...")
-        model = mf.Model.chat_completion("inference/glm-5.2")
+        model = mf.Model.chat_completion("inference-net/glm-5.2")
         ```
 
     === "Other providers"
