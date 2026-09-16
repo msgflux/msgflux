@@ -34,7 +34,10 @@ class ParasailChatCompletion(_BaseParasail, OpenAICompatibleChatCompletion):
     errors otherwise) and there is no server-side state
     (`previous_response_id` unsupported, full history is always sent).
     No reasoning codec is declared: responses reasoning shapes are
-    unverified.
+    unverified. No top-level `reasoning_effort` either: reasoning controls
+    are model-specific (`chat_template_kwargs.thinking` for DeepSeek,
+    `enable_thinking` for Qwen, `thinking_budget`/`reasoning_effort` for
+    GPT-OSS) and belong in `extra_body` per the model notes.
     """
 
     capabilities = ChatProviderCapabilities(
@@ -43,12 +46,10 @@ class ParasailChatCompletion(_BaseParasail, OpenAICompatibleChatCompletion):
             ChatAPIModeCapabilities(
                 name="chat_completions",
                 adapter=OpenAIChatCompletionsAPI(),
-                request_reasoning_effort=True,
             ),
             ChatAPIModeCapabilities(
                 name="responses",
                 adapter=OpenAIResponsesAPI(),
-                request_reasoning_effort=True,
             ),
         ),
         default_reasoning_codec=OpenAICompatibleReasoningCodec(),
