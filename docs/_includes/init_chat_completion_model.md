@@ -75,6 +75,18 @@
         )
         ```
 
+    === "Tencent Cloud"
+
+        Authenticate by setting the `TENCENTCLOUD_API_KEY` env variable.
+        Inference is bound to console service entitlements per key.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(TENCENTCLOUD_API_KEY="...")
+        model = mf.Model.chat_completion("tencentcloud/glm-5.3-flash")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
