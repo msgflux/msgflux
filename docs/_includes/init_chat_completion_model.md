@@ -75,6 +75,18 @@
         )
         ```
 
+    === "W&B"
+
+        Authenticate by setting the `WANDB_API_KEY` env variable (create one
+        at wandb.ai/settings).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(WANDB_API_KEY="...")
+        model = mf.Model.chat_completion("wandb/openai/gpt-oss-120b")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
