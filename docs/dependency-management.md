@@ -14,6 +14,7 @@ hide:
 |-------------|------------|------------------------|
 | Brave       | `msgflux`  | `BRAVE_SEARCH_API_KEY` |
 | Cerebras    | `msgflux`  | `CEREBRAS_API_KEY`     |
+| DeepInfra   | `msgflux`  | `DEEPINFRA_API_KEY`    |
 | Groq        | `msgflux`  | `GROQ_API_KEY`         |
 | Ollama      | `msgflux`  |                        |
 | OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
