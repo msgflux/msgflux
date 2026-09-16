@@ -8,8 +8,8 @@ from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
-    ProviderEnvBase,
 )
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     TextResponsesReasoningCodec,

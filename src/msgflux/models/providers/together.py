@@ -2,8 +2,8 @@ from typing import Any, Dict
 
 from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
-    ProviderEnvBase,
 )
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.providers.openai import (
     OpenAITextEmbedder,
     OpenAITextToSpeech,

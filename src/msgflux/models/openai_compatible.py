@@ -5,7 +5,6 @@ import warnings
 from copy import copy, deepcopy
 from functools import partial
 from inspect import isawaitable
-from os import getenv
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Union
 
 import msgspec
@@ -40,6 +39,7 @@ from msgflux.models.model_credentials import (
     ModelCredentialResolver,
 )
 from msgflux.models.profiles import get_model_profile
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     ReasoningCodec,
@@ -160,41 +160,6 @@ class OpenAIResponsesAPI(ChatAPIAdapter):
 
     async def astream(self, owner, **kwargs):
         return await owner._astream_responses_generate(**kwargs)
-
-
-class ProviderEnvBase:
-    """Environment-driven endpoint configuration for model providers.
-
-    Subclasses declare class variables only; the shared `_get_*` methods
-    resolve them. Providers that work without a real key (local servers)
-    set `api_key_default` instead of requiring the variable.
-    """
-
-    provider: str = ""
-    display_name: str = ""
-    api_key_env: str = ""
-    api_key_default: Optional[str] = None
-    base_url_env: Optional[str] = None
-    base_url: Optional[str] = None
-
-    def _get_base_url(self):
-        """Load base URL from environment variable."""
-        if self.base_url_env is None:
-            return self.base_url
-        base_url = getenv(self.base_url_env, self.base_url)
-        if base_url is None:
-            raise ValueError(f"Please set `{self.base_url_env}`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv(self.api_key_env, self.api_key_default)
-        if not key:
-            raise ValueError(
-                f"The {self.display_name} key is not available. "
-                f"Please set `{self.api_key_env}`"
-            )
-        return key
 
 
 class OpenAICompatibleModel(ProviderEnvBase, BaseModel):

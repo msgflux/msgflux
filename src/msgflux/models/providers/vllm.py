@@ -9,9 +9,9 @@ from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
-    ProviderEnvBase,
 )
 from msgflux.models.profiles import get_model_profile
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.providers.jinaai import JinaAITextReranker
 from msgflux.models.providers.openai import (
     OpenAISpeechToText,

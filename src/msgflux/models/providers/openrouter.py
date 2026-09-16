@@ -5,8 +5,8 @@ import msgspec
 from msgflux.models.chat_extensions import ChatRequestContext, ChatSpeedExtension
 from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
-    ProviderEnvBase,
 )
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import OpenRouterReasoningCodec
 from msgflux.models.registry import register_model
 
