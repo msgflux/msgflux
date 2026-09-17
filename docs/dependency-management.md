@@ -18,6 +18,7 @@ hide:
 | Ollama      | `msgflux`  |                        |
 | OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
 | OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
+| RunInfra    | `msgflux`  | `RUNINFRA_API_KEY`     |
 | SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
 | Together    | `msgflux`  | `TOGETHER_API_KEY`     |
 | vLLM        | `msgflux`  |                        |
