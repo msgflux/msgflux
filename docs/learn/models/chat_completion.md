@@ -2294,7 +2294,23 @@ is.
 
 ### 18.1 **Stage 1 — URL and API key only**
 
-When the target API is fully OpenAI-compatible and only requires a different base URL and authentication key, the entire subclass is a small configuration mixin plus the `@register_model` decorator.
+When the target API is fully OpenAI-compatible and only requires a different base URL and authentication key, register it with one function call — no subclass needed. Write a provider class only when you must adapt parameters, codecs, or transports.
+
+???+ example "Custom provider — function registration"
+
+    ```python
+    import msgflux as mf
+
+    mf.register_chat_provider(
+        "myprovider",  # used in "myprovider/model-name"
+        base_url="https://api.myprovider.com/v1",
+        api_key_env="MYPROVIDER_API_KEY",
+    )
+
+    model = mf.Model.chat_completion("myprovider/my-model-name")
+    ```
+
+    This example registers an OpenAI-compatible chat provider and resolves a model from it. Registration is in-memory: call it again after every restart, before first use. The equivalent class-based form follows.
 
 ???+ example "Custom provider — minimal setup"
 
