@@ -94,6 +94,15 @@
         code_model = mf.Model.chat_completion("zai-code/glm-5.3")
         ```
 
+        The domestic BigModel operation mirrors it on `open.bigmodel.cn`
+        (separate keys again):
+
+        ```python
+        mf.set_envs(ZHIPU_API_KEY="...", ZHIPU_CODE_API_KEY="...")
+        cn_model = mf.Model.chat_completion("zhipu/glm-5.2")
+        cn_code = mf.Model.chat_completion("zhipu-code/glm-5.2")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:

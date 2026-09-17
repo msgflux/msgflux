@@ -1,4 +1,4 @@
-"""Tests for the Z.AI pay-as-you-go and coding-plan providers."""
+"""Tests for the Z.AI and ZhipuAI BigModel providers."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -122,3 +122,40 @@ def test_zai_chat_round_trip(mock_zai_client):
 
     assert response.consume() == "OK"
     assert response.reasoning == "Checking the request."
+
+
+def test_zhipu_gateways_use_bigmodel_bases(monkeypatch):
+    from msgflux.models.providers.zai import (
+        ZhipuChatCompletion,
+        ZhipuCodeChatCompletion,
+    )
+
+    monkeypatch.setenv("ZHIPU_API_KEY", "test-key")
+    monkeypatch.setenv("ZHIPU_CODE_API_KEY", "test-code-key")
+
+    paygo = ZhipuChatCompletion(model_id="glm-5.2")
+    code = ZhipuCodeChatCompletion(model_id="glm-5.2")
+
+    assert (paygo.provider, paygo.api_mode) == ("zhipu", "chat_completions")
+    assert (code.provider, code.api_mode) == ("zhipu-code", "chat_completions")
+    assert paygo._get_base_url() == "https://open.bigmodel.cn/api/paas/v4"
+    assert code._get_base_url() == "https://open.bigmodel.cn/api/coding/paas/v4"
+    assert paygo._get_api_key() == "test-key"
+    assert code._get_api_key() == "test-code-key"
+
+
+def test_zhipu_models_registered_and_resolvable(monkeypatch):
+    import msgflux as mf
+    from msgflux.models.registry import model_registry
+
+    monkeypatch.setenv("ZHIPU_API_KEY", "test-key")
+    monkeypatch.setenv("ZHIPU_CODE_API_KEY", "test-code-key")
+
+    assert "zhipu" in model_registry.get("chat_completion", {})
+    assert "zhipu-code" in model_registry.get("chat_completion", {})
+
+    paygo = mf.Model.chat_completion("zhipu/glm-5.2")
+    code = mf.Model.chat_completion("zhipu-code/glm-5.2")
+
+    assert paygo.model_id == "glm-5.2"
+    assert code.model_id == "glm-5.2"
