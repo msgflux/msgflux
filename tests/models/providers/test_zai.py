@@ -13,7 +13,7 @@ def zai_env(monkeypatch):
     monkeypatch.setenv("ZAI_API_KEY", "test-key")
     monkeypatch.setenv("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4")
     monkeypatch.setenv("ZAI_CODE_API_KEY", "test-code-key")
-    monkeypatch.setenv("ZAI_CODE_BASE_URL", "https://api.z.ai/api/v1")
+    monkeypatch.setenv("ZAI_CODE_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
 
 
 @pytest.fixture(params=["zai", "zai-code"])
@@ -54,7 +54,7 @@ def test_zai_providers_use_gateway_base_urls_and_own_keys():
     code = ZAICodeChatCompletion(model_id="glm-5.3")
 
     assert paygo._get_base_url() == "https://api.z.ai/api/paas/v4"
-    assert code._get_base_url() == "https://api.z.ai/api/v1"
+    assert code._get_base_url() == "https://api.z.ai/api/coding/paas/v4"
     assert paygo._get_api_key() == "test-key"
     assert code._get_api_key() == "test-code-key"
 

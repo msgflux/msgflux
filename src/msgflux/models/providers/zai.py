@@ -29,7 +29,10 @@ class _BaseZAICode(ProviderEnvBase):
     display_name: str = "Z.AI Code"
     api_key_env: str = "ZAI_CODE_API_KEY"
     base_url_env: str = "ZAI_CODE_BASE_URL"
-    base_url: str = "https://api.z.ai/api/v1"
+    # Chat completions live on the coding path; the Responses protocol
+    # lives on https://api.z.ai/api/v1 instead (pass base_url=... to
+    # reach it: per-protocol bases are not modeled yet).
+    base_url: str = "https://api.z.ai/api/coding/paas/v4"
 
 
 @register_model
@@ -45,11 +48,13 @@ class ZAIChatCompletion(_BaseZAI, OpenAICompatibleChatCompletion):
 class ZAICodeChatCompletion(_BaseZAICode, OpenAICompatibleChatCompletion):
     """Z.AI coding-plan chat completion.
 
-    `POST /chat/completions` (default, keeps reasoning visible) and
-    `POST /responses` (required by codex-cli) on
-    `https://api.z.ai/api/v1`. No reasoning codec is declared: responses
-    reasoning shapes are unverified. Coding-plan keys are not
-    interchangeable with pay-as-you-go keys.
+    `POST /chat/completions` (default, keeps reasoning visible) on the
+    coding path. `POST /responses` (required by codex-cli) is served from
+    `https://api.z.ai/api/v1` instead: pass
+    `base_url="https://api.z.ai/api/v1"` with `api_mode="responses"` to
+    reach it. No reasoning codec is declared: responses reasoning shapes
+    are unverified. Coding-plan keys are not interchangeable with
+    pay-as-you-go keys.
     """
 
     capabilities = ChatProviderCapabilities(

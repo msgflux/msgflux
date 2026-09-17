@@ -78,7 +78,9 @@
     === "Z.AI"
 
         Pay-as-you-go uses `ZAI_API_KEY`; the coding plan uses a separate,
-        non-interchangeable `ZAI_CODE_API_KEY`.
+        non-interchangeable `ZAI_CODE_API_KEY`. Coding-plan chat lives on
+        a different base path than its Responses endpoint: for responses,
+        pass `base_url="https://api.z.ai/api/v1"`.
 
         ```python
         import msgflux as mf
@@ -86,6 +88,11 @@
         mf.set_envs(ZAI_API_KEY="...", ZAI_CODE_API_KEY="...")
         model = mf.Model.chat_completion("zai/glm-5.3")
         code_model = mf.Model.chat_completion("zai-code/glm-5.3")
+        code_responses = mf.Model.chat_completion(
+            "zai-code/glm-5.3",
+            api_mode="responses",
+            base_url="https://api.z.ai/api/v1",
+        )
         ```
 
     === "Other providers"
