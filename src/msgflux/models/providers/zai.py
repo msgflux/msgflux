@@ -1,14 +1,5 @@
-from msgflux.models.chat_capabilities import (
-    ChatAPIModeCapabilities,
-    ChatProviderCapabilities,
-)
-from msgflux.models.openai_compatible import (
-    OpenAIChatCompletionsAPI,
-    OpenAICompatibleChatCompletion,
-    OpenAIResponsesAPI,
-)
+from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.provider_env import ProviderEnvBase
-from msgflux.models.reasoning import OpenAICompatibleReasoningCodec
 from msgflux.models.registry import register_model
 
 
@@ -29,9 +20,6 @@ class _BaseZAICode(ProviderEnvBase):
     display_name: str = "Z.AI Code"
     api_key_env: str = "ZAI_CODE_API_KEY"
     base_url_env: str = "ZAI_CODE_BASE_URL"
-    # Chat completions live on the coding path; the Responses protocol
-    # lives on https://api.z.ai/api/v1 instead (pass base_url=... to
-    # reach it: per-protocol bases are not modeled yet).
     base_url: str = "https://api.z.ai/api/coding/paas/v4"
 
 
@@ -48,28 +36,9 @@ class ZAIChatCompletion(_BaseZAI, OpenAICompatibleChatCompletion):
 class ZAICodeChatCompletion(_BaseZAICode, OpenAICompatibleChatCompletion):
     """Z.AI coding-plan chat completion.
 
-    `POST /chat/completions` (default, keeps reasoning visible) on the
-    coding path. `POST /responses` (required by codex-cli) is served from
-    `https://api.z.ai/api/v1` instead: pass
-    `base_url="https://api.z.ai/api/v1"` with `api_mode="responses"` to
-    reach it. No reasoning codec is declared: responses reasoning shapes
-    are unverified. Coding-plan keys are not interchangeable with
+    OpenAI-compatible `POST /chat/completions` on the coding path.
+    Only `chat_completions` is declared: the Responses protocol lives on
+    a different base (`https://api.z.ai/api/v1`), and per-protocol bases
+    are not modeled. Coding-plan keys are not interchangeable with
     pay-as-you-go keys.
     """
-
-    capabilities = ChatProviderCapabilities(
-        default_api_mode="chat_completions",
-        api_modes=(
-            ChatAPIModeCapabilities(
-                name="chat_completions",
-                adapter=OpenAIChatCompletionsAPI(),
-                request_reasoning_effort=True,
-            ),
-            ChatAPIModeCapabilities(
-                name="responses",
-                adapter=OpenAIResponsesAPI(),
-                request_reasoning_effort=True,
-            ),
-        ),
-        default_reasoning_codec=OpenAICompatibleReasoningCodec(),
-    )
