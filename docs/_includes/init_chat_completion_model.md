@@ -75,6 +75,17 @@
         )
         ```
 
+    === "RunInfra"
+
+        Authenticate by setting the `RUNINFRA_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(RUNINFRA_API_KEY="...")
+        model = mf.Model.chat_completion("runinfra/glm-5-3-flash")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
