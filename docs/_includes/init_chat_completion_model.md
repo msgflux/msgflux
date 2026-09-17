@@ -75,6 +75,17 @@
         )
         ```
 
+    === "Baseten"
+
+        Authenticate by setting the `BASETEN_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BASETEN_API_KEY="...")
+        model = mf.Model.chat_completion("baseten/zai-org/GLM-5.2")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
