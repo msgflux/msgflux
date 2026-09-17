@@ -75,6 +75,20 @@
         )
         ```
 
+    === "Tinker"
+
+        Authenticate by setting the `TINKER_API_KEY` env variable. Model
+        IDs are sampler checkpoint paths (`tinker://...`).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(TINKER_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "tinker/tinker://0034d8c9-0a88-52a9-b2b7-bce7cb1e6fef:train:0/sampler_weights/000080"
+        )
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
