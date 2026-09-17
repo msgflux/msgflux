@@ -82,6 +82,11 @@
         a different base path than its Responses endpoint: for responses,
         pass `base_url="https://api.z.ai/api/v1"`.
 
+        !!! warning
+            Z.AI restricts the coding plan to officially supported tools;
+            access via unsupported SDKs/integrations may restrict plan
+            benefits. Prefer pay-as-you-go keys for third-party harnesses.
+
         ```python
         import msgflux as mf
 
