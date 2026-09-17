@@ -1,28 +1,18 @@
-from os import getenv
-
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+)
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.registry import register_model
 
 
-class _BaseCerebras:
+class _BaseCerebras(ProviderEnvBase):
     """Configurations to use Cerebras models."""
 
     provider: str = "cerebras"
-
-    def _get_base_url(self):
-        base_url = getenv("CEBEBRAS_BASE_URL", "https://api.cerebras.ai/v1")
-        if base_url is None:
-            raise ValueError("Please set `CEBEBRAS_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv("CEREBRAS_API_KEY")
-        if not key:
-            raise ValueError(
-                "The Cerebras API key is not available. Please set `Cerebras_API_KEY`"
-            )
-        return key
+    display_name: str = "Cerebras"
+    api_key_env: str = "CEREBRAS_API_KEY"
+    base_url_env: str = "CEREBRAS_BASE_URL"
+    base_url: str = "https://api.cerebras.ai/v1"
 
 
 @register_model

@@ -1468,6 +1468,85 @@ Supply a new environment only at a top-level invocation boundary; nested scopes
 cannot replace it. Reconcile pending work and obtain a new review when changing
 policy. No prompt or checkpoint field grants filesystem access by itself.
 
+### Dynamic workspace guidance
+
+`WorkspacePromptExtension` is an opt-in system-prompt extension. It reads the
+live execution scope each time the Agent composes a model request, including
+sync/async calls and prompt warmup. It appends one bounded `<workspace_context>`
+section to the existing prompt; it does not modify the Agent's base prompt or
+store permissions in extension state. A run without an environment adds nothing.
+
+```python
+from msgflux.nn import Agent
+from msgflux.nn.extensions import WorkspacePromptExtension
+from msgflux.runtime import ExecutionEnvironment, ExecutionScope, LocalWorkspaceBackend, PermissionSet
+from msgflux.tools.builtin import EditTool, ReadFileTool
+
+# `model` is your configured chat model; `root` is your selected absolute directory.
+agent = Agent(
+    name="workspace_assistant", model=model,
+    system_prompt="Help maintain this project.",
+    tools=[ReadFileTool(), EditTool()],
+    extensions=[WorkspacePromptExtension(max_resources=20, max_chars=6000)],
+)
+
+async def ask_about_file(root):
+    backend = LocalWorkspaceBackend(root)
+    async with await backend.open("project") as binding:
+        fs = binding.filesystem
+        scope = ExecutionScope(
+            environment=ExecutionEnvironment.from_binding(
+                binding, write_guarantee="cooperative_compare",
+            ),
+            permissions=PermissionSet(resources=[
+                fs.permission("/notes.txt", "filesystem.read"),
+            ]),
+        )
+        return await agent.acall("Summarize notes.txt", scope=scope)
+```
+
+This example allows only reading `notes.txt`. The prompt reports that local writes
+would affect real files, but does not grant them: `EditTool` still fails without
+a write grant. Approvals are configured separately using `AgentApprovals`; the
+extension does not claim that approval is enabled or replace the approval flow.
+With memory or another backend, the same extension uses that backend's description.
+
+The section contains backend-declared storage behavior and guidance, virtual path
+rules, the required write guarantee and declared write capabilities, and a bounded
+list of exact filesystem grants for the current workspace. Relative paths use
+each tool's configured `cwd`; there is no invented global working directory.
+When a process executor exists, its declared isolation mechanisms and the live
+`process.execute` grant are reported separately from required isolation. This is
+not proof of sandboxing or a description of network policy, including host traffic
+to the model. Tool availability still depends on the current tool catalog.
+
+`max_resources` limits the number of paths shown (default 20); zero hides all path
+entries. `max_chars` bounds the entire added section (default 6000), not the base
+system prompt. Entries are removed whole to fit, with an `omitted_resources` count.
+An omitted path is not necessarily denied. If even the description without path
+entries exceeds the budget, rendering fails explicitly rather than truncating
+instructions or presenting an incomplete path as an exact grant.
+
+Backends declare a `WorkspacePromptInfo(storage=..., guidance=...)` on their
+`prompt_info` attribute/property. It is an immutable `msgspec.Struct`, separate
+from resource identity, capabilities and credentials. Memory and local backends
+provide defaults; unknown backends report unspecified storage. Custom descriptions
+must be trusted host-owned text: never populate them from file contents, tool
+outputs or model messages, and do not include private host paths or credentials.
+Changing a description does not change backend enforcement.
+
+No files are opened or discovered to build the prompt. Default descriptions omit
+physical roots, backend connection identifiers and unrelated resource grants.
+Workspace path grants are model-visible when this extension is enabled; use
+`max_resources=0` when even virtual filenames should be withheld. A closed binding
+is rejected. On resume or a new invocation the section is recalculated from live
+dependencies; prior prompt text is not used to recover authority or resource state.
+
+The separate **local harness** is an end-to-end validation script configured with
+a real directory. It exercises Agent calls, events, file tools, approvals and
+resume behavior; it is not another runtime or a sandbox. Adapting the existing
+validation script to that mode is a later increment, not part of this extension.
+
 ### Backend factories and live bindings
 
 `WorkspaceBackend` is a reusable host service. Its asynchronous `open()` creates

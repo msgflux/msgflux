@@ -641,21 +641,6 @@ class AgentModelRuntimeMixin:
         if isinstance(model_response, ModelStreamResponse):
             wait_for_event(model_response._response_type_event)
             self._ensure_stream_response_ready(model_response)
-            if model_response.response_type != "tool_call":
-                self._checkpoint_save(messages, vars, status="streaming")
-                self._attach_stream_checkpoint_finalizer(
-                    model_response,
-                    messages,
-                    vars,
-                )
-                return self._prepare_response(
-                    model_response,
-                    model_response.response_type,
-                    messages,
-                    message,
-                    vars,
-                    model_response.reasoning,
-                )
 
         if "tool_call" in model_response.response_type:
             model_response, messages = self._process_tool_call_response(
@@ -666,9 +651,9 @@ class AgentModelRuntimeMixin:
                 model_preference,
                 tool_filter,
             )
-        elif not isinstance(model_response, _TerminalResponse) and is_subclass_of(
-            self.generation_schema, ToolFlowControl
-        ):
+        elif not isinstance(
+            model_response, (_TerminalResponse, ModelStreamResponse)
+        ) and is_subclass_of(self.generation_schema, ToolFlowControl):
             model_response, messages = self._process_tool_flow_control_response(
                 message,
                 model_response,
@@ -676,6 +661,22 @@ class AgentModelRuntimeMixin:
                 vars,
                 model_preference,
                 tool_filter,
+            )
+
+        if isinstance(model_response, ModelStreamResponse):
+            # The tool loop can also return a final text stream. Commit its
+            # history only when consumed, just as for a tool-free stream.
+            wait_for_event(model_response._response_type_event)
+            self._ensure_stream_response_ready(model_response)
+            self._checkpoint_save(messages, vars, status="streaming")
+            self._attach_stream_checkpoint_finalizer(model_response, messages, vars)
+            return self._prepare_response(
+                model_response,
+                model_response.response_type,
+                messages,
+                message,
+                vars,
+                model_response.reasoning,
             )
 
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):
@@ -741,22 +742,6 @@ class AgentModelRuntimeMixin:
         if isinstance(model_response, ModelStreamResponse):
             await await_for_event(model_response._response_type_event)
             self._ensure_stream_response_ready(model_response)
-            if model_response.response_type != "tool_call":
-                await self._acheckpoint_save(messages, vars, status="streaming")
-                self._attach_stream_checkpoint_finalizer(
-                    model_response,
-                    messages,
-                    vars,
-                    async_mode=True,
-                )
-                return self._prepare_response(
-                    model_response,
-                    model_response.response_type,
-                    messages,
-                    message,
-                    vars,
-                    model_response.reasoning,
-                )
 
         if "tool_call" in model_response.response_type:
             model_response, messages = await self._aprocess_tool_call_response(
@@ -767,9 +752,9 @@ class AgentModelRuntimeMixin:
                 model_preference,
                 tool_filter,
             )
-        elif not isinstance(model_response, _TerminalResponse) and is_subclass_of(
-            self.generation_schema, ToolFlowControl
-        ):
+        elif not isinstance(
+            model_response, (_TerminalResponse, ModelStreamResponse)
+        ) and is_subclass_of(self.generation_schema, ToolFlowControl):
             (
                 model_response,
                 messages,
@@ -780,6 +765,25 @@ class AgentModelRuntimeMixin:
                 vars,
                 model_preference,
                 tool_filter,
+            )
+
+        if isinstance(model_response, ModelStreamResponse):
+            await await_for_event(model_response._response_type_event)
+            self._ensure_stream_response_ready(model_response)
+            await self._acheckpoint_save(messages, vars, status="streaming")
+            self._attach_stream_checkpoint_finalizer(
+                model_response,
+                messages,
+                vars,
+                async_mode=True,
+            )
+            return self._prepare_response(
+                model_response,
+                model_response.response_type,
+                messages,
+                message,
+                vars,
+                model_response.reasoning,
             )
 
         if isinstance(model_response, (ModelResponse, ModelStreamResponse)):

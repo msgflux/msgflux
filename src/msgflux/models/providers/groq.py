@@ -1,4 +1,3 @@
-from os import getenv
 from typing import Any, Dict
 
 from msgflux.models.chat_capabilities import (
@@ -10,6 +9,7 @@ from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
     OpenAIResponsesAPI,
 )
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
     TextResponsesReasoningCodec,
@@ -17,25 +17,14 @@ from msgflux.models.reasoning import (
 from msgflux.models.registry import register_model
 
 
-class _BaseGroq:
+class _BaseGroq(ProviderEnvBase):
     """Configurations to use Groq models."""
 
     provider: str = "groq"
-
-    def _get_base_url(self):
-        base_url = getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-        if base_url is None:
-            raise ValueError("Please set `GROQ_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv("GROQ_API_KEY")
-        if not key:
-            raise ValueError(
-                "The Grok API key is not available. Please set `GROQ_API_KEY`"
-            )
-        return key
+    display_name: str = "Grok"
+    api_key_env: str = "GROQ_API_KEY"
+    base_url_env: str = "GROQ_BASE_URL"
+    base_url: str = "https://api.groq.com/openai/v1"
 
 
 @register_model

@@ -13,6 +13,7 @@ from uuid import uuid4
 from msgflux.runtime.permissions import ResourcePermission, require_permissions
 from msgflux.runtime.workspace_contracts import (
     WorkspaceIdentity,
+    WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
     WriteGuarantee,
 )
@@ -36,6 +37,7 @@ class WorkspaceFilesystem(ABC):
     """Trusted backend; public operations share resolution and authorization."""
 
     supports_atomic_changes = False
+    prompt_info = WorkspacePromptInfo()
 
     def __init__(self, workspace_id: str, *, identity: WorkspaceIdentity | None = None):
         if not isinstance(workspace_id, str) or not re.fullmatch(
@@ -286,6 +288,13 @@ class InMemoryWorkspace(WorkspaceFilesystem):
     """Process-local VFS with no symlinks, mounts or host filesystem access."""
 
     supports_atomic_changes = True
+    prompt_info = WorkspacePromptInfo(
+        storage="process-local memory",
+        guidance=(
+            "Files do not modify the host filesystem and are not durable across "
+            "process restarts. No symlinks or mounts."
+        ),
+    )
 
     def __init__(self, workspace_id: str, files: Mapping[str, bytes] | None = None):
         super().__init__(workspace_id)

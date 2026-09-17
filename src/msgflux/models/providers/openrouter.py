@@ -1,34 +1,24 @@
-from os import getenv
 from typing import Any, Dict
 
 import msgspec
 
 from msgflux.models.chat_extensions import ChatRequestContext, ChatSpeedExtension
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+)
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import OpenRouterReasoningCodec
 from msgflux.models.registry import register_model
 
 
-class _BaseOpenRouter:
+class _BaseOpenRouter(ProviderEnvBase):
     """Configurations to use OpenRouter models."""
 
     provider: str = "openrouter"
-
-    def _get_base_url(self):
-        base_url = getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        if base_url is None:
-            raise ValueError("Please set `OPENROUTER_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv("OPENROUTER_API_KEY")
-        if not key:
-            raise ValueError(
-                "The OpenRouter API key is not available."
-                "Please set `OPENROUTER_API_KEY`"
-            )
-        return key
+    display_name: str = "OpenRouter"
+    api_key_env: str = "OPENROUTER_API_KEY"
+    base_url_env: str = "OPENROUTER_BASE_URL"
+    base_url: str = "https://openrouter.ai/api/v1"
 
 
 class OpenRouterSpeedExtension(ChatSpeedExtension):

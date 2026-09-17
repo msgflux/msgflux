@@ -1,29 +1,20 @@
-from os import getenv
 from typing import Any, Dict
 
-from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
+from msgflux.models.openai_compatible import (
+    OpenAICompatibleChatCompletion,
+)
+from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.registry import register_model
 
 
-class _BaseSambaNova:
+class _BaseSambaNova(ProviderEnvBase):
     """Configurations to use SambaNova models."""
 
     provider: str = "sambanova"
-
-    def _get_base_url(self):
-        base_url = getenv("SAMBANOVA_BASE_URL", "https://api.sambanova.ai/v1")
-        if base_url is None:
-            raise ValueError("Please set `SAMBANOVA_BASE_URL`")
-        return base_url
-
-    def _get_api_key(self):
-        """Load API keys from environment variable."""
-        key = getenv("SAMBANOVA_API_KEY")
-        if not key:
-            raise ValueError(
-                "The SambaNova API key is not available.Please set `SAMBANOVA_API_KEY`"
-            )
-        return key
+    display_name: str = "SambaNova"
+    api_key_env: str = "SAMBANOVA_API_KEY"
+    base_url_env: str = "SAMBANOVA_BASE_URL"
+    base_url: str = "https://api.sambanova.ai/v1"
 
 
 @register_model

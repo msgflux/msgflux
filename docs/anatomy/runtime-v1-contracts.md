@@ -42,8 +42,19 @@ files, hardlinked files and device crossings. These checks are defense in depth
 for a trusted host, not an OS sandbox against hostile directory renames, same-device
 mounts or arbitrary host code. Replacement uses a sibling temporary file and does
 not truncate the existing inode; cleanup is attempted on failure. Metadata and
-power-loss durability are not generally preserved. Dynamic prompt and local
-harness remain dependent integration increments.
+power-loss durability are not generally preserved. A local harness remains a
+dependent integration increment.
+
+`WorkspacePromptExtension` composes request-local guidance through the existing
+`transform_system_prompt` hook. Backends declare `WorkspacePromptInfo` rather
+than requiring Agent-side backend type checks. Rendering uses the live scope and
+binding, filters grants to canonical paths of the current workspace, and bounds
+the output without inventing subtree permissions. It performs no filesystem I/O
+and stores no prompt/grants in extension state. The base prompt and message
+history are not mutated. Custom descriptors are trusted host metadata, never
+read from workspace contents; prompt text is not a security boundary. Required
+and declared executor isolation remain separate and cannot establish network
+policy for either model traffic or workspace processes.
 
 `ExecutionEnvironment.write_guarantee` selects the required write contract, with
 `atomic_compare` as the unchanged default. Its `workspace_editor()` factory checks
