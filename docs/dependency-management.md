@@ -21,6 +21,8 @@ hide:
 | SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
 | Together    | `msgflux`  | `TOGETHER_API_KEY`     |
 | vLLM        | `msgflux`  |                        |
+| Z.AI        | `msgflux`  | `ZAI_API_KEY`          |
+| Z.AI Code   | `msgflux`  | `ZAI_CODE_API_KEY`     |
 
 ### Image Embedder
 

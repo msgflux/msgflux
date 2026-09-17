@@ -75,6 +75,19 @@
         )
         ```
 
+    === "Z.AI"
+
+        Pay-as-you-go uses `ZAI_API_KEY`; the coding plan uses a separate,
+        non-interchangeable `ZAI_CODE_API_KEY`.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(ZAI_API_KEY="...", ZAI_CODE_API_KEY="...")
+        model = mf.Model.chat_completion("zai/glm-5.3")
+        code_model = mf.Model.chat_completion("zai-code/glm-5.3")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
