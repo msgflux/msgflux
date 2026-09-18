@@ -8,7 +8,10 @@ from msgflux.models.openai_compatible import (
     OpenAIResponsesAPI,
 )
 from msgflux.models.provider_env import ProviderEnvBase
-from msgflux.models.reasoning import OpenAICompatibleReasoningCodec
+from msgflux.models.reasoning import (
+    OpenAICompatibleReasoningCodec,
+    OpenAIResponsesReasoningCodec,
+)
 from msgflux.models.registry import register_model
 
 
@@ -29,9 +32,11 @@ class MoonshotChatCompletion(_BaseMoonshot, OpenAICompatibleChatCompletion):
     `POST /v1/chat/completions` (default) and `POST /v1/responses` on
     `https://api.moonshot.ai/v1`. Keys are region-scoped: a global key
     does not work on the China base (`api.moonshot.cn`) and vice versa.
-    No reasoning codec is declared: responses reasoning shapes are
-    unverified. Kimi Code subscription gateways and the Anthropic
-    endpoint are out of scope.
+    Responses reasoning is clear-text `summary` (never encrypted) with
+    `low`/`high`/`max` effort, plus `prompt_cache_key` support and
+    server-enforced statelessness (`store: false`, no
+    `previous_response_id`). Kimi Code subscription gateways and the
+    Anthropic endpoint are out of scope.
     """
 
     capabilities = ChatProviderCapabilities(
@@ -45,6 +50,7 @@ class MoonshotChatCompletion(_BaseMoonshot, OpenAICompatibleChatCompletion):
             ChatAPIModeCapabilities(
                 name="responses",
                 adapter=OpenAIResponsesAPI(),
+                reasoning_codec=OpenAIResponsesReasoningCodec(),
                 request_reasoning_effort=True,
             ),
         ),

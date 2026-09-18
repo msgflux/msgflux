@@ -94,6 +94,36 @@ def test_moonshot_chat_round_trip(mock_moonshot_client):
     assert response.reasoning == "Checking the request."
 
 
+def test_moonshot_responses_reasoning_summary_shape(mock_moonshot_client):
+    from msgflux.models.providers.moonshot import MoonshotChatCompletion
+
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "rs_1",
+        "status": "completed",
+        "summary": [{"type": "summary_text", "text": "Checking the request."}],
+    }
+    mock_moonshot_client.return_value.responses.create.return_value = SimpleNamespace(
+        id="resp_1",
+        status="completed",
+        incomplete_details=None,
+        usage=None,
+        output=[
+            reasoning_item,
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "OK"}],
+            },
+        ],
+    )
+    model = MoonshotChatCompletion(model_id="kimi-k3", api_mode="responses")
+    response = model("Reply with exactly: OK")
+
+    assert response.consume() == "OK"
+    assert response.reasoning_summary == "Checking the request."
+
+
 def test_moonshot_api_key_env_override(monkeypatch):
     from msgflux.models.providers.moonshot import MoonshotChatCompletion
 
