@@ -25,13 +25,13 @@ def mock_moonshot_client():
         yield client
 
 
-def test_moonshot_defaults_to_chat_completions():
+def test_moonshot_defaults_to_responses():
     from msgflux.models.providers.moonshot import MoonshotChatCompletion
 
     model = MoonshotChatCompletion(model_id="kimi-k2.6")
 
     assert model.provider == "moonshot"
-    assert model.api_mode == "chat_completions"
+    assert model.api_mode == "responses"
 
 
 def test_moonshot_reads_base_url_and_api_key():
@@ -87,7 +87,9 @@ def test_moonshot_chat_round_trip(mock_moonshot_client):
             ],
         )
     )
-    model = MoonshotChatCompletion(model_id="kimi-k2.6")
+    model = MoonshotChatCompletion(
+        model_id="kimi-k2.6", api_mode="chat_completions"
+    )
     response = model("Reply with exactly: OK")
 
     assert response.consume() == "OK"

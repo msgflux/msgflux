@@ -29,18 +29,19 @@ class _BaseMoonshot(ProviderEnvBase):
 class MoonshotChatCompletion(_BaseMoonshot, OpenAICompatibleChatCompletion):
     """Moonshot Kimi global pay-as-you-go chat completion.
 
-    `POST /v1/chat/completions` (default) and `POST /v1/responses` on
-    `https://api.moonshot.ai/v1`. Keys are region-scoped: a global key
-    does not work on the China base (`api.moonshot.cn`) and vice versa.
-    Responses reasoning is clear-text `summary` (never encrypted) with
-    `low`/`high`/`max` effort, plus `prompt_cache_key` support and
-    server-enforced statelessness (`store: false`, no
-    `previous_response_id`). Kimi Code subscription gateways and the
-    Anthropic endpoint are out of scope.
+    `POST /v1/responses` (default: dynamic tool loading via
+    `additional_tools`, `namespace`/`custom` tools) and
+    `POST /v1/chat/completions` on `https://api.moonshot.ai/v1`. Keys are
+    region-scoped: a global key does not work on the China base
+    (`api.moonshot.cn`) and vice versa. Responses reasoning is
+    clear-text `summary` (never encrypted) with `low`/`high`/`max`
+    effort, plus `prompt_cache_key` support and server-enforced
+    statelessness (`store: false`, no `previous_response_id`). Kimi Code
+    subscription gateways and the Anthropic endpoint are out of scope.
     """
 
     capabilities = ChatProviderCapabilities(
-        default_api_mode="chat_completions",
+        default_api_mode="responses",
         api_modes=(
             ChatAPIModeCapabilities(
                 name="chat_completions",
