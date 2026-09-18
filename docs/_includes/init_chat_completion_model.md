@@ -75,6 +75,19 @@
         )
         ```
 
+    === "Moonshot"
+
+        Authenticate by setting the `MOONSHOT_API_KEY` env variable. Keys
+        are region-scoped: global keys do not work on the China base URL
+        and vice versa.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(MOONSHOT_API_KEY="...")
+        model = mf.Model.chat_completion("moonshot/kimi-k2.6")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
