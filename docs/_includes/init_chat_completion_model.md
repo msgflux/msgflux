@@ -75,6 +75,34 @@
         )
         ```
 
+    === "Z.AI"
+
+        Pay-as-you-go uses `ZAI_API_KEY`; the coding plan uses a separate,
+        non-interchangeable `ZAI_CODE_API_KEY`. Only chat completions is
+        declared: the Responses protocol lives on another base URL.
+
+        !!! warning
+            Z.AI restricts the coding plan to officially supported tools;
+            access via unsupported SDKs/integrations may restrict plan
+            benefits. Prefer pay-as-you-go keys for third-party harnesses.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(ZAI_API_KEY="...", ZAI_CODE_API_KEY="...")
+        model = mf.Model.chat_completion("zai/glm-5.3")
+        code_model = mf.Model.chat_completion("zai-code/glm-5.3")
+        ```
+
+        The domestic BigModel operation mirrors it on `open.bigmodel.cn`
+        (separate keys again):
+
+        ```python
+        mf.set_envs(ZHIPU_API_KEY="...", ZHIPU_CODE_API_KEY="...")
+        cn_model = mf.Model.chat_completion("zhipu/glm-5.2")
+        cn_code = mf.Model.chat_completion("zhipu-code/glm-5.2")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
