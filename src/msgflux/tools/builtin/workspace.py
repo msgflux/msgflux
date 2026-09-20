@@ -43,7 +43,7 @@ class ReadFileTool:
     _VISION_GUIDANCE = (
         "Images read by this tool are attached in a subsequent user-role message "
         "linked to the tool call. Inspect that attachment; the tool result only "
-        "confirms publication."
+        "confirms publication. For images, set offset and limit to null."
     )
 
     def __init__(self, *, supports_vision: bool = False, cwd: str = "/"):

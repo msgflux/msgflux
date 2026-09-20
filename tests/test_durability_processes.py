@@ -1,5 +1,6 @@
 """Crash/restart gates using spawn: no inherited stores or runtime contexts."""
 
+import asyncio
 import multiprocessing
 import os
 import sqlite3
@@ -12,7 +13,7 @@ from msgflux.data.stores import CheckpointConflictError, SQLiteCheckpointStore
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
-from msgflux.nn import Agent
+from msgflux.nn import Agent, ToolTurnLimitExtension
 from msgflux.runtime import AgentApprovals, ExecutionScope, SQLiteApprovalStore
 
 
@@ -144,7 +145,7 @@ def _response(call=False):
     return response
 
 
-def _agent(paths, *, crash=False, entered=None, release=None):
+def _agent(paths, *, crash=False, entered=None, release=None, terminal=False):
     checkpoint, journal = SQLiteCheckpointStore(paths[0]), SQLiteApprovalStore(paths[1])
 
     def publish(value: str) -> str:
@@ -166,6 +167,7 @@ def _agent(paths, *, crash=False, entered=None, release=None):
         tools=[publish],
         checkpoint_store=checkpoint,
         approvals=AgentApprovals(journal, {"publish": "v1"}, "p1"),
+        extensions=[ToolTurnLimitExtension(1)] if terminal else [],
     )
     return agent, checkpoint, journal
 
@@ -196,6 +198,96 @@ def _approve(paths):
     finally:
         checkpoint.close()
         journal.close()
+
+
+def _pause_terminal_stream(paths):
+    agent, checkpoint, journal = _agent(paths, terminal=True)
+    model_calls = []
+
+    async def generate(**kwargs):
+        model_calls.append(kwargs)
+        return _response(call=True)
+
+    agent.generator.aforward = generate
+
+    async def consume():
+        events = []
+        with pytest.raises(TaskPauseRequestedError):
+            async for event in agent.stream_events("publish", scope=_scope()):
+                events.append(event.type)
+        assert events.count("tool.approval_required") == 1
+        assert "run.paused" in events and "run.end" not in events
+
+    try:
+        asyncio.run(consume())
+        assert len(model_calls) == 1
+    finally:
+        checkpoint.close()
+        journal.close()
+
+
+def _decide_then_exit(paths, approved):
+    agent, _checkpoint, journal = _agent(paths, terminal=True)
+    (record,) = journal.pending("publisher", "t", "r")
+    agent.decide_approval(record.request_id, approved=approved, decided_by="operator")
+    # Simulate host death after the decision transaction and before dispatch.
+    os._exit(75)
+
+
+def _resume_terminal_stream(paths):
+    agent, checkpoint, journal = _agent(paths, terminal=True)
+
+    async def unexpected(**kwargs):
+        raise AssertionError("resume must not ask the model for another tool batch")
+
+    agent.generator.aforward = unexpected
+
+    async def consume():
+        events = [
+            event.type async for event in agent.stream_events(None, scope=_scope())
+        ]
+        assert events.count("run.end") == 1
+        assert "tool.approval_required" not in events
+        assert "model.request" not in events
+
+    try:
+        asyncio.run(consume())
+        assert checkpoint.load_state("publisher", "t", "r")["status"] == "completed"
+    finally:
+        checkpoint.close()
+        journal.close()
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_decision_survives_process_death_before_terminal_stream_resume(
+    tmp_path, approved
+):
+    paths = tuple(
+        str(tmp_path / name) for name in ("cp.db", "approvals.db", "effects.db")
+    )
+    with sqlite3.connect(paths[2]) as effects:
+        effects.execute("CREATE TABLE effects(value TEXT)")
+    run_worker(_pause_terminal_stream, paths)
+    journal = SQLiteApprovalStore(paths[1])
+    try:
+        (request,) = journal.pending("publisher", "t", "r")
+    finally:
+        journal.close()
+    run_worker(_decide_then_exit, paths, approved, expected=75)
+    journal = SQLiteApprovalStore(paths[1])
+    try:
+        assert journal.get("publisher", request.request_id).status == (
+            "approved" if approved else "denied"
+        )
+    finally:
+        journal.close()
+    with sqlite3.connect(paths[2]) as effects:
+        assert effects.execute("SELECT value FROM effects").fetchall() == []
+    run_worker(_resume_terminal_stream, paths)
+    with sqlite3.connect(paths[2]) as effects:
+        assert effects.execute("SELECT value FROM effects").fetchall() == (
+            [("entry",)] if approved else []
+        )
 
 
 def _execute_and_die(paths):
