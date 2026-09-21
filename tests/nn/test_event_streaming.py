@@ -5,6 +5,7 @@ import threading
 from dataclasses import replace
 
 import pytest
+from msgflux.exceptions import EventBufferOverflowError
 from unittest.mock import AsyncMock, Mock
 
 from msgflux.chat_messages import ChatMessages
@@ -31,6 +32,36 @@ class EchoModule(Module):
 
     async def aforward(self, value):
         return value.upper()
+
+
+@pytest.mark.asyncio
+async def test_direct_stream_overflow_cancels_and_awaits_pending_execution():
+    cleaned = asyncio.Event()
+
+    class BurstingModule(Module):
+        async def aforward(self):
+            try:
+                for index in range(20):
+                    emit_event(EventType.TOOL_UPDATE, {"index": index})
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+    with pytest.raises(EventBufferOverflowError):
+        async for _ in BurstingModule().stream_events(event_buffer_limit=4):
+            pass
+    assert cleaned.is_set()
+
+
+@pytest.mark.asyncio
+async def test_bounded_stream_under_capacity_matches_default_and_hides_control_kwarg():
+    events = [
+        e async for e in EchoModule().stream_events("hello", event_buffer_limit=20)
+    ]
+    assert (
+        next(e for e in events if e.type == EventType.MESSAGE_END).data["content"]
+        == "HELLO"
+    )
 
 
 class StreamingModule(Module):

@@ -74,6 +74,57 @@ def test_unknown_extension_profile_fails_before_running(harness):
 
 
 @pytest.mark.asyncio
+async def test_slow_bounded_watcher_does_not_abort_agent_and_can_reconnect(harness):
+    from msgflux.exceptions import EventBufferOverflowError
+
+    store = harness.InMemoryCheckpointStore()
+    agent = harness.Agent(
+        name="bounded",
+        model=harness.ScriptedModel([harness._text("done", streamed=True)]),
+        checkpoint_store=store,
+        config={"stream": True},
+    )
+    scope = harness.ExecutionScope(namespace="bounded", thread_id="t", run_id="r")
+    async with agent.watch("t", event_buffer_limit=1) as slow:
+        events = [event async for event in agent.stream_events("go", scope=scope)]
+        assert events[-1].type == "run.end"
+        with pytest.raises(EventBufferOverflowError):
+            await anext(slow)
+    assert store.load_state("bounded", "t", "r")["status"] == "completed"
+    async with agent.watch("t", event_buffer_limit=10) as fresh:
+        assert fresh.snapshot.messages.to_chatml()[-1]["content"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_direct_buffer_overflow_interrupts_agent_and_settles_checkpoint(harness):
+    from msgflux.exceptions import EventBufferOverflowError
+    from msgflux.runtime.events import emit_event, EventType
+
+    cleaned = asyncio.Event()
+
+    class BurstingModel(harness.ScriptedModel):
+        async def acall(self, **kwargs):
+            try:
+                for index in range(50):
+                    emit_event(EventType.TOOL_UPDATE, {"index": index})
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+    store = harness.InMemoryCheckpointStore()
+    agent = harness.Agent(
+        name="bounded", model=BurstingModel([]), checkpoint_store=store
+    )
+    scope = harness.ExecutionScope(namespace="bounded", thread_id="t", run_id="r")
+    with pytest.raises(EventBufferOverflowError):
+        async with asyncio.timeout(5):
+            async for _ in agent.stream_events("go", scope=scope, event_buffer_limit=8):
+                pass
+    assert cleaned.is_set()
+    assert store.load_state("bounded", "t", "r")["status"] == "interrupted"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("approved_thread", ["left", "right"])
 async def test_concurrent_workspace_runs_isolate_approvals_and_effects(
     harness, approved_thread
