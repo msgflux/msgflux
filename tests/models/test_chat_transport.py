@@ -65,6 +65,49 @@ class _Owner:
         self.abort_checks += 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_decode", [False, True])
+async def test_async_transport_closes_http_stream_on_decode_failure_or_early_close(
+    fail_decode,
+):
+    closed = []
+
+    class Body(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"value":1}\n\n'
+            yield b'data: {"value":2}\n\n'
+
+        async def aclose(self):
+            closed.append(True)
+
+    owner = _Owner()
+
+    if fail_decode:
+
+        def decode(_payload):
+            raise ValueError("invalid provider frame")
+
+        owner.api_adapter.decode_stream_event = decode
+
+    client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(
+            lambda request: httpx2.Response(200, stream=Body()),
+        )
+    )
+    transport = HTTPChatTransport(async_client=client, max_retries=0)
+    try:
+        stream = await transport.acreate(owner, _request(stream=True))
+        if fail_decode:
+            with pytest.raises(ValueError, match="invalid provider frame"):
+                await anext(stream)
+        else:
+            await anext(stream)
+            await stream.aclose()
+        assert closed == [True]
+    finally:
+        await client.aclose()
+
+
 def _request(*, stream=False):
     return PreparedChatRequest(
         api="responses",
