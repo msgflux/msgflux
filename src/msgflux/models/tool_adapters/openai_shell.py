@@ -5,6 +5,7 @@ from typing import Mapping
 
 import msgspec
 
+from msgflux._private.tool_result_reference import ToolResultRef
 from msgflux.models.tool_adapters.base import ToolTransportAdapter
 from msgflux.tools.shell import ShellCommandResult, ShellResult
 from msgflux.utils.msgspec import msgspec_dumps
@@ -61,6 +62,15 @@ def shell_output(
         if command_count is not None and len(output) != command_count:
             raise ValueError("Shell output must include every command")
     item = {"type": "shell_call_output", "call_id": call_id, "output": output}
+    if error is None and result.output_reference is not None:
+        reference = result.output_reference.to_dict()
+        item["metadata"] = {"tool_result_reference": reference}
+        # Native stdout is a string, not an extensible JSON object. Keep a JSON
+        # notice for the model; UI/history readers use metadata, never parse it.
+        notice = msgspec_dumps(
+            {"type": "tool_result_reference", "reference": reference}
+        )
+        output[0]["stdout"] = output[0]["stdout"] + "\n" + notice
     if max_output_length is not None:
         item["max_output_length"] = max_output_length
     return item
@@ -141,10 +151,15 @@ class OpenAIShellAdapter(ToolTransportAdapter):
                     stderr=part["stderr"],
                 )
             )
+        reference = item.get("metadata", {}).get("tool_result_reference")
+        if reference is not None:
+            reference = msgspec.convert(reference, type=ToolResultRef, strict=True)
         return {
             "type": "function_call_output",
             "call_id": item["call_id"],
-            "output": msgspec.to_builtins(ShellResult(results=tuple(results))),
+            "output": msgspec.to_builtins(
+                ShellResult(results=tuple(results), output_reference=reference)
+            ),
         }
 
     def interrupted(self, item, reason):

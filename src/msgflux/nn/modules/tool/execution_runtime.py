@@ -771,6 +771,7 @@ class ToolLibraryExecutionMixin:
                 result=result,
             )
         outcome = self._run_after_tool_hook(outcome)
+        outcome = self._transform_tool_output(outcome)
         emit_event(
             EventType.TOOL_END,
             {
@@ -826,6 +827,7 @@ class ToolLibraryExecutionMixin:
                 result=result,
             )
         outcome = await self._arun_after_tool_hook(outcome)
+        outcome = await self._atransform_tool_output(outcome)
         emit_event(
             EventType.TOOL_END,
             {
@@ -839,6 +841,57 @@ class ToolLibraryExecutionMixin:
                 raise outcome.error
             raise RuntimeError(str(outcome.error))
         return outcome.result
+
+    @staticmethod
+    def _tool_output_failure(outcome: AfterTool, error: Exception) -> AfterTool:
+        message = (
+            f"Tool output processing failed ({type(error).__name__}). "
+            "Tool execution may already have completed; do not retry automatically."
+        )
+        emit_event(
+            EventType.HANDLER_ERROR, {"hook": "transform_tool_output", "error": message}
+        )
+        return replace(outcome, result=None, error=message)
+
+    def _transform_tool_output(self, outcome: AfterTool) -> AfterTool:
+        try:
+            current = outcome
+            for module in (self, self._get_lifecycle_owner()):
+                if module is not None and module.has_lifecycle_hooks(
+                    "transform_tool_output"
+                ):
+                    current = module._run_lifecycle_hooks(
+                        "transform_tool_output", current
+                    )
+                    if not isinstance(current, AfterTool):
+                        raise TypeError(
+                            "transform_tool_output must return AfterTool or None"
+                        )
+            return current
+        except (AbortRequestedError, TaskInterruptRequestedError):
+            raise
+        except Exception as error:
+            return self._tool_output_failure(outcome, error)
+
+    async def _atransform_tool_output(self, outcome: AfterTool) -> AfterTool:
+        try:
+            current = outcome
+            for module in (self, self._get_lifecycle_owner()):
+                if module is not None and module.has_lifecycle_hooks(
+                    "transform_tool_output"
+                ):
+                    current = await module._arun_lifecycle_hooks(
+                        "transform_tool_output", current
+                    )
+                    if not isinstance(current, AfterTool):
+                        raise TypeError(
+                            "transform_tool_output must return AfterTool or None"
+                        )
+            return current
+        except (AbortRequestedError, TaskInterruptRequestedError):
+            raise
+        except Exception as error:
+            return self._tool_output_failure(outcome, error)
 
     def _run_after_tool_hook(self, outcome: AfterTool) -> AfterTool:
         try:
