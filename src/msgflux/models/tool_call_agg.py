@@ -132,6 +132,7 @@ class ToolCallAggregator:
                     "type": "function_call_output",
                     "call_id": call["id"],
                     "output": output,
+                    **self._output_metadata(self._outcome_output(outcome)),
                 }
                 rendered.append(item)
             return rendered
@@ -152,6 +153,22 @@ class ToolCallAggregator:
             for call in self.tool_calls.values():
                 if call["id"] == tool_id:
                     call["result"] = result
+                    call["result_metadata"] = self._output_metadata(result)
+
+    @staticmethod
+    def _output_metadata(result):
+        # Delay the storage module import until execution, avoiding model/runtime
+        # initialization cycles. Never read storage or parse model-facing text.
+        from msgflux.runtime.tool_results import (  # noqa: PLC0415
+            get_tool_result_reference,
+        )
+
+        reference = get_tool_result_reference(result)
+        return (
+            {"metadata": {"tool_result_reference": reference.to_dict()}}
+            if reference is not None
+            else {}
+        )
 
     def get_messages(self) -> List[Dict[str, Any]]:
         """Generates a list of messages to send to the model:
@@ -171,6 +188,8 @@ class ToolCallAggregator:
             if call["result"] is not None:
                 if not isinstance(call["result"], str):  # convert to str
                     call["result"] = msgspec_dumps(call["result"])
-                messages.append(ChatBlock.tool(call["id"], call["result"]))
+                item = ChatBlock.tool(call["id"], call["result"])
+                item.update(call.get("result_metadata", {}))
+                messages.append(item)
 
         return messages
