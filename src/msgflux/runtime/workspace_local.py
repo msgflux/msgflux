@@ -6,6 +6,7 @@ is deliberately not an OS sandbox: writers outside this backend can race it.
 
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import stat
@@ -32,7 +33,8 @@ def _check_posix() -> None:
             not hasattr(os, flag)
             for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
         )
-        or not {os.open, os.stat, os.mkdir, os.unlink, os.rename} <= os.supports_dir_fd
+        or not {os.open, os.stat, os.mkdir, os.rmdir, os.unlink, os.rename}
+        <= os.supports_dir_fd
         or os.stat not in os.supports_follow_symlinks
         or os.listdir not in os.supports_fd
     ):
@@ -312,6 +314,59 @@ class LocalWorkspace(WorkspaceFilesystem):
                 if parent != root:
                     os.close(parent)
                 os.close(root)
+
+    def _directory_deletion(self, path, expected=None):
+        with self._lock:
+            self._authorize("delete", path)
+            root = self._open_root()
+            parent = root
+            directory = None
+            try:
+                parent, name = self._parent(root, path)
+                st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode):
+                    self._regular(st, path)
+                    if expected is not None:
+                        raise WorkspaceConflictError("Directory replaced by a file")
+                    return None
+                self._authorize("list", path)
+                if not stat.S_ISDIR(st.st_mode):
+                    raise PermissionError("Deletion target is not a safe directory")
+                directory = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
+                )
+                opened = os.fstat(directory)
+                if opened.st_dev != self._root_stat.st_dev:
+                    raise PermissionError("Workspace mount crossing")
+                token = f"{opened.st_dev}:{opened.st_ino}:{opened.st_ctime_ns}"
+                with os.scandir(directory) as entries:
+                    if next(entries, None) is not None:
+                        raise OSError(errno.ENOTEMPTY, "Directory is not empty", path)
+                if expected is not None:
+                    current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    current_token = (
+                        f"{current.st_dev}:{current.st_ino}:{current.st_ctime_ns}"
+                    )
+                    if token != expected or current_token != expected:
+                        raise WorkspaceConflictError(
+                            "Directory changed since preparation"
+                        )
+                    # POSIX rmdir refuses newly added contents. As with file
+                    # writes, unrelated external writers can race comparison.
+                    os.rmdir(name, dir_fd=parent)
+                return token
+            finally:
+                if directory is not None:
+                    os.close(directory)
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
+    def _deletion_directory_token(self, path):
+        return self._directory_deletion(path)
+
+    def _checked_rmdir(self, path, expected):
+        self._directory_deletion(path, expected)
 
     def _scandir(self, path, max_entries):  # noqa: C901
         with self._lock:

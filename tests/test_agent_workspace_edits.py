@@ -23,6 +23,59 @@ from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
 from msgflux.utils.msgspec import msgspec_dumps
 
 
+@pytest.mark.parametrize("mutate", [False, True])
+def test_empty_directory_approval_survives_checkpoint_restart(tmp_path, mutate):
+    cp_path, ap_path = (
+        str(tmp_path / "directory-cp.db"),
+        str(tmp_path / "directory-ap.db"),
+    )
+    checkpoints, journal = SQLiteCheckpointStore(cp_path), SQLiteApprovalStore(ap_path)
+    fs = InMemoryWorkspace("directories")
+    current_scope = replace(
+        scope(fs),
+        permissions=PermissionSet(
+            resources=[
+                fs.permission(path, f"filesystem.{action}")
+                for path in ("/", "/a", "/a/new")
+                for action in ("list", "mkdir", "delete", "write", "read")
+            ]
+        ),
+    )
+    with execution_context(scope=current_scope):
+        fs.mkdir("/a")
+    current = agent(checkpoints, journal)
+    current.generator.forward = Mock(return_value=response("delete", {"path": "/a"}))
+    with pytest.raises(TaskPauseRequestedError):
+        current("remove empty directory", scope=current_scope)
+    request = journal.pending("editor", "t", "r")[0]
+    preview = current.inspect_approval_preview("t", "r", request.request_id)
+    assert preview.target_kind == "empty_directory"
+    assert preview.directory_token and "/a/" in preview.diff
+    checkpoints.close()
+    journal.close()
+    checkpoints, journal = SQLiteCheckpointStore(cp_path), SQLiteApprovalStore(ap_path)
+    try:
+        current = agent(checkpoints, journal)
+        assert current.inspect_approval_preview("t", "r", request.request_id) == preview
+        current.decide_approval(request.request_id, approved=True, decided_by="host")
+        if mutate:
+            with execution_context(scope=current_scope):
+                fs.write_text("/a/new", "keep")
+        current.generator.forward = Mock(return_value=response())
+        if mutate:
+            with pytest.raises(TaskPauseRequestedError):
+                current("continue", scope=current_scope)
+            with execution_context(scope=current_scope):
+                assert fs.read_text("/a/new") == "keep"
+        else:
+            assert current("continue", scope=current_scope) == "done"
+            with execution_context(scope=current_scope):
+                assert fs.listdir("/") == ()
+    finally:
+        checkpoints.close()
+        journal.close()
+
+
 def scope(fs):
     return ExecutionScope(
         namespace="editor",

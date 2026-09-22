@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import itertools
 import re
 from abc import ABC, abstractmethod
@@ -291,6 +292,36 @@ class WorkspaceFilesystem(ABC):
     def mkdir(self, path: str) -> None:
         self._perform("mkdir", path)
 
+    def deletion_directory_token(self, path: str) -> str | None:
+        """Inspect an authorized deletion target; None denotes a regular file.
+
+        Directories additionally require list permission and must be empty.
+        The opaque token binds a later deletion to this directory incarnation.
+        """
+        canonical = self._authorize("delete", path)
+        if canonical == "/":
+            raise PermissionError("Cannot delete the workspace root")
+        return self._deletion_directory_token(canonical)
+
+    def _deletion_directory_token(self, path: str) -> str | None:
+        raise NotImplementedError("Backend does not support directory deletion")
+
+    def checked_rmdir(
+        self, path: str, *, expected: str, guarantee: WriteGuarantee = "atomic_compare"
+    ) -> None:
+        """Delete only the reviewed empty directory, never recursively."""
+        canonical = self._authorize("delete", path)
+        self._authorize("list", canonical)
+        if canonical == "/":
+            raise PermissionError("Cannot delete the workspace root")
+        if not isinstance(expected, str) or not expected:
+            raise ValueError("Expected a directory identity token")
+        self.require_write_guarantee(guarantee)
+        self._checked_rmdir(canonical, expected)
+
+    def _checked_rmdir(self, path: str, expected: str) -> None:
+        raise NotImplementedError("Backend does not support directory deletion")
+
     def unlink(self, path: str) -> None:
         self._perform("delete", path)
 
@@ -355,6 +386,30 @@ class InMemoryWorkspace(WorkspaceFilesystem):
             )
         if self._directories & self._files.keys():
             raise ValueError("A workspace path cannot be both a file and a directory")
+        self._directory_tokens = {path: uuid4().hex for path in self._directories}
+
+    def _deletion_directory_token(self, path):
+        with self._lock:
+            self._authorize("delete", path)
+            if path in self._files:
+                return None
+            self._authorize("list", path)
+            if path not in self._directories:
+                raise FileNotFoundError(path)
+            if any(
+                item != path and item.startswith(path.rstrip("/") + "/")
+                for item in itertools.chain(self._files, self._directories)
+            ):
+                raise OSError(errno.ENOTEMPTY, "Directory is not empty", path)
+            return self._directory_tokens[path]
+
+    def _checked_rmdir(self, path, expected):
+        with self._lock:
+            self._authorize("list", path)
+            if self.deletion_directory_token(path) != expected:
+                raise WorkspaceConflictError("Directory changed since preparation")
+            self._directories.remove(path)
+            del self._directory_tokens[path]
 
     def _operate(self, operation, path, data):
         with self._lock:
@@ -430,6 +485,7 @@ class InMemoryWorkspace(WorkspaceFilesystem):
             if path in self._files:
                 raise FileExistsError(path)
             self._directories.add(path)
+            self._directory_tokens[path] = uuid4().hex
         else:
             self._files[path] = data
 

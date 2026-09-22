@@ -6,8 +6,10 @@ msgFlux provides built-in tools that work out of the box:
 
 `ReadFileTool`, `WriteTool`, `EditTool`, `DeleteTool` and `ApplyPatchTool`
 operate through the live workspace binding, not directly on host paths.
-`DeleteTool` removes one UTF-8 file and uses the same exact-content review
-and approval mechanism as write/edit. It does not implement recursive `rm`.
+`DeleteTool` removes one UTF-8 file or one empty directory and uses the same
+review and approval mechanism as write/edit. It does not implement recursive
+`rm`, follow symlinks or remove the workspace root. A directory review records
+its identity and requires it to remain the same empty directory at execution.
 
 ```python
 from msgflux.tools.builtin import DeleteTool, EditTool, ReadFileTool, WriteTool
@@ -22,6 +24,13 @@ to an Agent with an execution environment and exact resource grants. Configure
 does not create a confirmation UI. See the
 [runtime guide](../runtime.md#write-edit-and-delete-tools-with-agent-previews)
 for configuration, review previews and checkpoint recovery.
+
+For example, a model call `delete(path="build-empty")` with `cwd="/project"`
+removes virtual `/project/build-empty` only if it is empty. Grant
+`filesystem.list` and `filesystem.delete` on that directory; no file-read grant
+is needed. If content appears after approval, deletion fails and the content is
+preserved. A local backend uses cooperative comparison, not a transaction
+against unrelated host processes.
 
 ### List, glob and grep
 

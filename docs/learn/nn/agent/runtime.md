@@ -1733,9 +1733,14 @@ to traverse. These checks do not turn the local backend into an OS sandbox.
 `WriteTool(cwd="/")` exposes only `path` and `content`; `EditTool(cwd="/")`
 exposes only `path`, `old` and `new`. Both are class-based tools with explicit
 public annotations and `Write`/`Edit` display names. `DeleteTool(cwd="/")`
-exposes only `path`, with display name `Delete`. It deletes one UTF-8 file;
-binary files and recursive directory deletion are not supported. The removed
-text is included in the approval diff and compared again before deletion.
+exposes only `path`, with display name `Delete`. It deletes one UTF-8 file or
+one empty directory; binary files and recursive directory deletion are not
+supported. The workspace root and symlinks are always rejected. Removed text
+is included in the approval diff and compared again before deletion.
+Directory previews have `target_kind="empty_directory"`, an opaque
+`directory_token`, `before=None`, `after=None`, and a human-readable `diff`.
+The token is checkpointed with the proposal and binds approval to that directory
+incarnation. Replacement or newly added contents prevent deletion.
 The filesystem is injected
 from the live environment, and cwd is a constructor-only virtual path. Outputs
 are compact JSON objects such as `{"status":"completed"}`; previews and old
@@ -1761,8 +1766,16 @@ agent = Agent(
 ```
 
 This registers all three tools with the existing host-owned approval policy.
-Deletion requires both `filesystem.read` and `filesystem.delete` on the exact
-file, not a write grant. Without
+File deletion requires both `filesystem.read` and `filesystem.delete` on the exact
+file, not a write grant. Empty directories require `filesystem.list` and
+`filesystem.delete` instead. `WorkspaceEditor.prepare_delete_target()` selects
+the applicable proposal; `prepare_delete()` and `ApplyPatchTool` remain file-only.
+Backends implement `deletion_directory_token()` and `checked_rmdir()` through
+their protected hooks. In-memory comparison/removal is locked; the POSIX backend
+uses descriptor-relative `rmdir` and the environment's cooperative guarantee.
+It cannot promise atomic identity comparison against unrelated external writers.
+These new proposal fields change digests; pending approvals created before this
+change require a fresh review. Without
 a policy (or with explicit `approvals=None` for a new invocation), calls execute
 without confirmation but still require live workspace grants. A raw ToolLibrary
 does not independently manage Agent approvals. Configure the policy whenever

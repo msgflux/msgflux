@@ -309,10 +309,10 @@ class EditTool(WorkspaceChangeTool):
 
 @tool_config(runtime_inputs=["filesystem"], retry=False)
 class DeleteTool(WorkspaceChangeTool):
-    """Delete one UTF-8 file using the workspace change-review policy.
+    """Delete one UTF-8 file or empty directory using the workspace review policy.
 
-    Does not delete directories or binary files. The complete removed text is
-    available in the host approval preview.
+    Does not delete non-empty directories, binary files or the workspace root.
+    The removed text or empty-directory description is in the approval preview.
 
     Args:
         path: File path, absolute or relative to the configured workspace cwd.
@@ -323,7 +323,7 @@ class DeleteTool(WorkspaceChangeTool):
     annotations = {"path": str, "return": dict[str, str]}
 
     def prepare_workspace_change(self, arguments, filesystem):
-        return self._editor(filesystem).prepare_delete(
+        return self._editor(filesystem).prepare_delete_target(
             _tool_path(arguments["path"], self.cwd)
         )
 
