@@ -87,6 +87,19 @@
         model = mf.Model.chat_completion("nvidia/z-ai/glm-5.3")
         ```
 
+    === "Fireworks"
+
+        Authenticate by setting the `FIREWORKS_API_KEY` env variable.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(FIREWORKS_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "fireworks/accounts/fireworks/models/gpt-oss-120b"
+        )
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
