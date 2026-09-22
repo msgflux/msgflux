@@ -10,6 +10,7 @@ from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
 from msgflux.tools.config import tool_config
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.shell import ShellCommandResult, ShellResult
+from msgflux.tools.specs import ContextBinding
 from msgflux.tools.types import Hidden
 from msgflux.tools.workspace_changes import WorkspaceChangeTool
 from msgflux.utils.inspect import get_mime_type
@@ -43,7 +44,7 @@ class ReadFileTool:
     _VISION_GUIDANCE = (
         "Images read by this tool are attached in a subsequent user-role message "
         "linked to the tool call. Inspect that attachment; the tool result only "
-        "confirms publication."
+        "confirms publication. For images, set offset and limit to null."
     )
 
     def __init__(self, *, supports_vision: bool = False, cwd: str = "/"):
@@ -128,7 +129,10 @@ class ReadFileTool:
 
 @tool_config(
     tool_kind="shell",
-    runtime_inputs=["environment"],
+    runtime_inputs=[
+        "environment",
+        ContextBinding(source="shell_capture", required=False),
+    ],
     required_permissions=["process.execute"],
     retry=False,
 )
@@ -136,7 +140,8 @@ class BashTool:
     """Run Bash in the configured isolated executor, never on the host directly.
 
     Use an absolute virtual workspace cwd. Execution is limited to 30 seconds
-    and 1,000,000 combined stdout/stderr bytes. Requires a configured executor
+    and, by default, 1,000,000 combined stdout/stderr bytes. The host may override
+    the capture budget. Requires a configured executor
     with Bash and authorization for every resource accessed by the command.
 
     Args:
@@ -162,6 +167,7 @@ class BashTool:
         timeout_ms: Optional[int] = None,
         *,
         environment: Hidden[ExecutionEnvironment],
+        shell_capture: Hidden[object] = None,
     ) -> ShellResult:
         from msgflux.nn.functional import wait_for  # noqa: PLC0415
 
@@ -170,6 +176,7 @@ class BashTool:
             command=command,
             timeout_ms=timeout_ms,
             environment=environment,
+            shell_capture=shell_capture,
         )
 
     async def acall(
@@ -178,6 +185,7 @@ class BashTool:
         timeout_ms: Optional[int] = None,
         *,
         environment: Hidden[ExecutionEnvironment],
+        shell_capture: Hidden[object] = None,
     ) -> ShellResult:
         commands = [command] if isinstance(command, str) else command
         if (
@@ -204,6 +212,8 @@ class BashTool:
             )
             for item in commands
         ]
+        if shell_capture is not None:
+            return await shell_capture.run(environment, requests)
         for prepared_request in requests:
             if remaining <= 0:
                 outputs.append(

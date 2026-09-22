@@ -50,6 +50,7 @@ from msgflux.runtime.context_scopes import (
 from msgflux.runtime.environment import (
     ExecutionEnvironment,
     ProcessExecutor,
+    ProcessOutputCallback,
     ProcessRequest,
     ProcessResult,
 )
@@ -63,6 +64,8 @@ from msgflux.runtime.event_hub import (
 from msgflux.runtime.events import EventType, ExecutionEvent
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
+from msgflux.runtime.process_capture import ProcessOutputLimitError, drain_subprocess
+from msgflux.runtime.resources import RuntimeResources
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,
@@ -71,6 +74,14 @@ from msgflux.runtime.skills import (
     SkillsConfig,
     default_skill_paths,
     parse_skill_file,
+)
+from msgflux.runtime.tool_results import (
+    LocalToolResultStore,
+    ToolResultIntegrityError,
+    ToolResultRef,
+    ToolResultStore,
+    ToolResultTooLargeError,
+    get_tool_result_reference,
 )
 from msgflux.runtime.workspace import (
     InMemoryWorkspace,
@@ -92,6 +103,16 @@ from msgflux.runtime.workspace_contracts import (
 from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
 
 __all__ = [
+    "ProcessOutputCallback",
+    "ProcessOutputLimitError",
+    "drain_subprocess",
+    "RuntimeResources",
+    "LocalToolResultStore",
+    "ToolResultIntegrityError",
+    "ToolResultRef",
+    "ToolResultStore",
+    "ToolResultTooLargeError",
+    "get_tool_result_reference",
     "WorkspacePromptInfo",
     "LocalWorkspace",
     "LocalWorkspaceBackend",

@@ -1017,17 +1017,21 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         if stream_response.response_type is None:
             stream_response.set_response_type("tool_call")
         for tool_call in delta.tool_calls:
+            function = getattr(tool_call, "function", None)
+            call_id = getattr(tool_call, "id", None)
+            name = getattr(function, "name", None)
+            arguments = getattr(function, "arguments", None) or ""
             aggregator.process(
                 tool_call.index,
-                tool_call.id,
-                tool_call.function.name,
-                tool_call.function.arguments,
+                call_id,
+                name,
+                arguments,
             )
             stream_response.chat_accumulator.add_tool_call_delta(
                 tool_call.index,
-                call_id=tool_call.id,
-                name=tool_call.function.name,
-                arguments=tool_call.function.arguments,
+                call_id=call_id,
+                name=name,
+                arguments=arguments,
             )
 
     @staticmethod
@@ -1801,6 +1805,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         reasoning_accumulated = ""
         reasoning_stream_started = False
         final_status = "completed"
+        model_output = None
 
         try:
             aggregator = ToolCallAggregator()
@@ -1901,6 +1906,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             )
             stream_response.set_error(e)
         finally:
+            if not await self._aclose_model_stream(model_output, stream_response):
+                final_status = "failed"
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
@@ -1908,6 +1915,20 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             metadata.timing = request_timer.finish()
             stream_response.set_metadata(metadata)
             stream_response.finish(status=final_status)
+
+    @staticmethod
+    async def _aclose_model_stream(model_output, stream_response):
+        close = getattr(model_output, "aclose", None)
+        if callable(close):
+            try:
+                await close()
+            except Exception as error:
+                if stream_response.error is None:
+                    stream_response.set_error(error)
+                else:
+                    stream_response.error.add_note(f"Stream cleanup failed: {error}")
+                return False
+        return True
 
     def _handle_responses_stream_event(  # noqa: C901
         self,
@@ -2250,6 +2271,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         state = self._new_responses_stream_state(request_timer)
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
+        model_output = None
         try:
             model_output = await self._aexecute_model(**kwargs)
             self._raise_if_aborted()
@@ -2271,6 +2293,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             )
             stream_response.set_error(error)
         finally:
+            if not await self._aclose_model_stream(model_output, stream_response):
+                final_status = "failed"
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():

@@ -1951,10 +1951,13 @@ class Module:
     async def stream_events(
         self,
         *args,
+        event_buffer_limit: int | None = None,
         **kwargs,
     ) -> AsyncGenerator[ExecutionEvent, None]:
         """Run the module and asynchronously yield execution events."""
-        channel = _AsyncEventChannel(root_module=self)
+        channel = _AsyncEventChannel(
+            root_module=self, event_buffer_limit=event_buffer_limit
+        )
         error: BaseException | None = None
         stream_kwargs = self._prepare_event_stream_kwargs(dict(kwargs))
         scope = stream_kwargs.get("scope")

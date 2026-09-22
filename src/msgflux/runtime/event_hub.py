@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Mapping
+
+from msgflux.exceptions import EventBufferOverflowError
+from msgflux.runtime.event_buffer import _EventBuffer, validate_event_buffer_limit
 
 if TYPE_CHECKING:
     from msgflux.runtime.approvals.records import ApprovalRecord
@@ -85,11 +87,19 @@ class _LiveRun:
     def _combine(chunks: list[Any], settled: Any) -> Any:
         if not chunks:
             return settled
+        if len(chunks) == 1:
+            return chunks[0]
         if all(isinstance(chunk, str) for chunk in chunks):
-            return "".join(chunks)
-        if all(isinstance(chunk, bytes) for chunk in chunks):
-            return b"".join(chunks)
-        return chunks[-1]
+            combined = "".join(chunks)
+        elif all(isinstance(chunk, bytes) for chunk in chunks):
+            combined = b"".join(chunks)
+        else:
+            return chunks[-1]
+        # Snapshots are built under the hub lock. Keep the joined immutable value
+        # instead of retaining both it and all original fragments; reconnects
+        # without new deltas can reuse it. Other consumers may still own chunks.
+        chunks[:] = [combined]
+        return combined
 
     def snapshot(self) -> LiveRunSnapshot:
         return LiveRunSnapshot(
@@ -134,14 +144,16 @@ class ThreadWatcher:
         namespace: str | None,
         load_messages: Callable[[], Any] | None,
         load_approvals: Callable[[], tuple[Any, ...]] | None = None,
+        event_buffer_limit: int | None = None,
     ) -> None:
+        validate_event_buffer_limit(event_buffer_limit)
         self._hub = hub
         self.thread_id = thread_id
         self.namespace = namespace
         self._load_messages = load_messages
         self._load_approvals = load_approvals
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._queue: asyncio.Queue[ExecutionEvent | object] | None = None
+        self._buffer: _EventBuffer | None = None
+        self._event_buffer_limit = event_buffer_limit
         self._closed = False
         self._snapshot: ThreadSnapshot | None = None
 
@@ -152,10 +164,9 @@ class ThreadWatcher:
         return self._snapshot
 
     async def __aenter__(self) -> ThreadWatcher:
-        if self._queue is not None:
+        if self._buffer is not None or self._closed:
             raise RuntimeError("A ThreadWatcher cannot be entered more than once.")
-        self._loop = asyncio.get_running_loop()
-        self._queue = asyncio.Queue()
+        self._buffer = _EventBuffer(self._event_buffer_limit)
         self._snapshot = self._hub._subscribe(self)
         return self
 
@@ -163,15 +174,19 @@ class ThreadWatcher:
         await self.aclose()
 
     def __aiter__(self) -> ThreadWatcher:
-        if self._queue is None:
+        if self._buffer is None:
             raise RuntimeError("Enter the watcher context before iterating it.")
         return self
 
     async def __anext__(self) -> ExecutionEvent:
-        if self._queue is None:
+        if self._buffer is None:
             raise RuntimeError("Enter the watcher context before iterating it.")
-        item = await self._queue.get()
-        if item is _WATCHER_CLOSED:
+        try:
+            item = await self._buffer.get()
+        except EventBufferOverflowError:
+            await self.aclose()
+            raise
+        if item is None:
             raise StopAsyncIteration
         return item
 
@@ -180,14 +195,15 @@ class ThreadWatcher:
             return
         self._closed = True
         self._hub._unsubscribe(self)
-        queue = self._queue
-        if queue is not None:
-            queue.put_nowait(_WATCHER_CLOSED)
+        if self._buffer is not None:
+            self._buffer.close()
 
     def _enqueue(self, event: ExecutionEvent) -> None:
-        if self._closed or self._loop is None or self._queue is None:
+        if self._closed or self._buffer is None:
             return
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+        if not self._buffer.put(event):
+            self._closed = True
+            self._hub._unsubscribe(self)
 
 
 class EventHub:
@@ -205,6 +221,7 @@ class EventHub:
         namespace: str | None = None,
         load_messages: Callable[[], Any] | None = None,
         load_approvals: Callable[[], tuple[Any, ...]] | None = None,
+        event_buffer_limit: int | None = None,
     ) -> ThreadWatcher:
         if not isinstance(thread_id, str) or not thread_id:
             raise ValueError("`thread_id` must be a non-empty string.")
@@ -214,6 +231,7 @@ class EventHub:
             namespace=namespace,
             load_messages=load_messages,
             load_approvals=load_approvals,
+            event_buffer_limit=event_buffer_limit,
         )
 
     def publish(self, thread_id: str | None, event: ExecutionEvent) -> None:
@@ -381,16 +399,10 @@ class EventHub:
             self._watchers.clear()
         for watcher in watchers:
             watcher._closed = True
-            if watcher._queue is not None:
-                loop = watcher._loop
-                if loop is not None and not loop.is_closed():
-                    loop.call_soon_threadsafe(
-                        watcher._queue.put_nowait,
-                        _WATCHER_CLOSED,
-                    )
+            if watcher._buffer is not None:
+                watcher._buffer.close()
 
 
-_WATCHER_CLOSED = object()
 _EVENT_HUB = EventHub()
 
 

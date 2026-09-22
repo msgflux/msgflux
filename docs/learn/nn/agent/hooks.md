@@ -48,6 +48,7 @@ The Agent currently exposes these lifecycle boundaries:
 | `before_tool` | `BeforeTool` | May replace model-visible arguments or block local execution. |
 | `before_dispatch` | `BeforeToolDispatch` | May block a validated call or reduce background/detached dispatch to foreground. |
 | `after_tool` | `AfterTool` | May replace the result or error before it becomes a tool result. |
+| `transform_tool_output` | `AfterTool` | Transform the final tool payload after ordinary `after_tool` hooks, before `tool.end`. Failures clear the result and report a processing error. |
 | `resolve_tool_feedback` | `ToolFeedbackContext` | May continue the model loop or return an Agent result after a batch of tool outcomes. The first return decision stops this hook chain. |
 | `before_run_end` | `RunEndContext` | May inspect or replace the terminal outcome immediately before the final checkpoint. |
 | `after_run_end` | `RunEndContext` | Runs after the final checkpoint is committed. |
@@ -97,6 +98,14 @@ call and are not exposed to or removed by the hook. If a `before_tool` handler
 raises or returns an invalid payload, execution fails closed and the tool is not
 called. An `after_tool` handler failure leaves the original outcome unchanged
 and emits a `handler.error` execution event.
+
+`transform_tool_output` is the strict output-processing boundary used by
+`ToolOutputOffloadExtension`. Library handlers run before owning-Agent handlers,
+in registration order. It uses `AfterTool` and supports sync/async hooks. If a
+handler raises or returns an invalid payload, the runtime clears the result,
+emits a bounded `handler.error`, and returns a tool processing error instead of
+falling back to the original output. Cancellation still propagates. The tool may
+already have executed; this failure is not rollback or permission to retry.
 
 Handlers are sequential for each call. When a `before_tool` or
 `before_dispatch` handler sets `block`, later handlers for that event and that

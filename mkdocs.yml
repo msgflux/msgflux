@@ -177,6 +177,7 @@ nav:
         - learn/nn/agent/generation-schemas.md
         - learn/nn/agent/task-and-context.md
         - learn/nn/agent/runtime.md
+        - learn/nn/agent/resources.md
         - learn/nn/agent/compaction.md
         - learn/nn/agent/vars.md
         - Tools:
