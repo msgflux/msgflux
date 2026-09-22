@@ -456,6 +456,7 @@ def test_model_factory_uses_openai_wire_adapter_when_provider_is_unregistered(
     from msgflux.models import Model
     from msgflux.models.providers.openai import OpenAIChatCompletion
 
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
     monkeypatch.setattr(
         Model,
         "providers",
