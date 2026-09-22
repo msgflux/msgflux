@@ -307,4 +307,35 @@ class EditTool(WorkspaceChangeTool):
         return await asyncio.to_thread(self, path, old, new, filesystem=filesystem)
 
 
-__all__ = ["ReadFileTool", "BashTool", "WriteTool", "EditTool"]
+@tool_config(runtime_inputs=["filesystem"], retry=False)
+class DeleteTool(WorkspaceChangeTool):
+    """Delete one UTF-8 file using the workspace change-review policy.
+
+    Does not delete directories or binary files. The complete removed text is
+    available in the host approval preview.
+
+    Args:
+        path: File path, absolute or relative to the configured workspace cwd.
+    """
+
+    name = "delete"
+    display_name = "Delete"
+    annotations = {"path": str, "return": dict[str, str]}
+
+    def prepare_workspace_change(self, arguments, filesystem):
+        return self._editor(filesystem).prepare_delete(
+            _tool_path(arguments["path"], self.cwd)
+        )
+
+    def __call__(
+        self, path: str, *, filesystem: Hidden[WorkspaceFilesystem]
+    ) -> dict[str, str]:
+        return self._apply({"path": path}, filesystem)
+
+    async def acall(
+        self, path: str, *, filesystem: Hidden[WorkspaceFilesystem]
+    ) -> dict[str, str]:
+        return await asyncio.to_thread(self, path, filesystem=filesystem)
+
+
+__all__ = ["ReadFileTool", "BashTool", "WriteTool", "EditTool", "DeleteTool"]

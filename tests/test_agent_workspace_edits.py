@@ -19,7 +19,7 @@ from msgflux.runtime import (
     SQLiteApprovalStore,
     execution_context,
 )
-from msgflux.tools.builtin import EditTool, WriteTool
+from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -34,6 +34,7 @@ def scope(fs):
             resources=[
                 fs.permission("/a", "filesystem.read"),
                 fs.permission("/a", "filesystem.write"),
+                fs.permission("/a", "filesystem.delete"),
             ]
         ),
     )
@@ -56,9 +57,11 @@ def agent(checkpoints, journal):
     return Agent(
         name="editor",
         model=Mock(model_type="chat_completion"),
-        tools=[WriteTool(), EditTool()],
+        tools=[WriteTool(), EditTool(), DeleteTool()],
         checkpoint_store=checkpoints,
-        approvals=AgentApprovals(journal, {"write": "v1", "edit": "v1"}, "p1"),
+        approvals=AgentApprovals(
+            journal, {"write": "v1", "edit": "v1", "delete": "v1"}, "p1"
+        ),
     )
 
 
@@ -67,6 +70,7 @@ def agent(checkpoints, journal):
     [
         ("write", {"path": "a", "content": "new"}),
         ("edit", {"path": "a", "old": "old", "new": "new"}),
+        ("delete", {"path": "a"}),
     ],
 )
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -96,8 +100,10 @@ async def test_pause_preview_restart_and_single_consumption(
         assert fs.read_text("/a") == "old"
     record = journal.pending("editor", "t", "r")[0]
     preview = await current.ainspect_approval_preview("t", "r", record.request_id)
-    assert preview.before == "old" and preview.after == "new"
-    assert "-old" in preview.diff and "+new" in preview.diff
+    assert preview.before == "old"
+    assert preview.after == (None if name == "delete" else "new")
+    assert "-old" in preview.diff
+    assert ("+++ /dev/null" if name == "delete" else "+new") in preview.diff
     async with current.watch("t") as watcher:
         assert watcher.snapshot.approvals[0].request_id == record.request_id
     state = checkpoints.load_state("editor", "t", "r")
@@ -117,7 +123,11 @@ async def test_pause_preview_restart_and_single_consumption(
     current.generator.aforward = AsyncMock(return_value=response())
     assert await invoke() == "done"
     with execution_context(scope=scope(fs)):
-        assert fs.read_text("/a") == "new"
+        if name == "delete":
+            with pytest.raises(FileNotFoundError):
+                fs.read_text("/a")
+        else:
+            assert fs.read_text("/a") == "new"
     assert [event.status for event in journal.events("editor", record.request_id)] == [
         "pending",
         "approved",

@@ -1716,11 +1716,27 @@ memory and local backend implementations described above.
     proposal to bypass this check. Existing approval bindings also change, so
     pending Agent reviews may require host intervention after upgrading.
 
-### Write and edit tools with Agent previews
+### Write, edit and delete tools with Agent previews
+
+Backend authors must implement bounded `_scandir(path, max_entries)` and
+`_read_prefix(path, max_bytes)` hooks. The public `scandir`/`ascandir` methods
+return sorted `WorkspaceEntry` values (`name`, `kind`), where `kind` is `file`,
+`directory` or `other`. Exceeding the entry limit raises instead of silently
+returning an incomplete directory. `read_prefix`/`aread_prefix` read at most the
+requested bytes. Both APIs enforce live resource grants. There is no fallback
+that reads the complete file or directory and slices it afterward.
+
+Local enumeration never follows symbolic links. Links, multiply-linked files,
+special files and cross-mount entries are classified as `other`, not safe files
+to traverse. These checks do not turn the local backend into an OS sandbox.
 
 `WriteTool(cwd="/")` exposes only `path` and `content`; `EditTool(cwd="/")`
 exposes only `path`, `old` and `new`. Both are class-based tools with explicit
-public annotations and `Write`/`Edit` display names. The filesystem is injected
+public annotations and `Write`/`Edit` display names. `DeleteTool(cwd="/")`
+exposes only `path`, with display name `Delete`. It deletes one UTF-8 file;
+binary files and recursive directory deletion are not supported. The removed
+text is included in the approval diff and compared again before deletion.
+The filesystem is injected
 from the live environment, and cwd is a constructor-only virtual path. Outputs
 are compact JSON objects such as `{"status":"completed"}`; previews and old
 file contents are not added to model history. No automatic retries are enabled.
@@ -1728,21 +1744,25 @@ file contents are not added to model history. No automatic retries are enabled.
 ```python
 from msgflux.nn import Agent
 from msgflux.runtime import AgentApprovals
-from msgflux.tools.builtin import EditTool, WriteTool
+from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
 
 agent = Agent(
     name="editor",
     model=model,  # your configured chat-completion model
-    tools=[WriteTool(cwd="/"), EditTool(cwd="/")],
+    tools=[WriteTool(cwd="/"), EditTool(cwd="/"), DeleteTool(cwd="/")],
     checkpoint_store=checkpoints,  # an atomic checkpoint store
     approvals=AgentApprovals(
-        journal, {"write": "implementation:v1", "edit": "implementation:v1"},
+        journal,
+        {"write": "implementation:v1", "edit": "implementation:v1",
+         "delete": "implementation:v1"},
         policy_version="review:v1",
     ),
 )
 ```
 
-This registers both tools with the existing host-owned approval policy. Without
+This registers all three tools with the existing host-owned approval policy.
+Deletion requires both `filesystem.read` and `filesystem.delete` on the exact
+file, not a write grant. Without
 a policy (or with explicit `approvals=None` for a new invocation), calls execute
 without confirmation but still require live workspace grants. A raw ToolLibrary
 does not independently manage Agent approvals. Configure the policy whenever
