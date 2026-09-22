@@ -47,6 +47,11 @@ from msgflux.runtime.context_scopes import (
     ContextScopeController,
     ScopeTransition,
 )
+from msgflux.runtime.docker_executor import (
+    DockerLimits,
+    DockerProcessExecutor,
+    DockerWorkspaceBackend,
+)
 from msgflux.runtime.environment import (
     ExecutionEnvironment,
     ProcessExecutor,
@@ -78,9 +83,11 @@ from msgflux.runtime.skills import (
 from msgflux.runtime.tool_results import (
     LocalToolResultStore,
     ToolResultIntegrityError,
+    ToolResultQuotaError,
     ToolResultRef,
     ToolResultStore,
     ToolResultTooLargeError,
+    ToolResultUsage,
     get_tool_result_reference,
 )
 from msgflux.runtime.workspace import (
@@ -104,6 +111,11 @@ from msgflux.runtime.workspace_contracts import (
 from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
 
 __all__ = [
+    "DockerLimits",
+    "DockerProcessExecutor",
+    "DockerWorkspaceBackend",
+    "ToolResultQuotaError",
+    "ToolResultUsage",
     "WorkspaceEntry",
     "ProcessOutputCallback",
     "ProcessOutputLimitError",

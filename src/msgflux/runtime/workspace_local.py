@@ -475,7 +475,7 @@ class LocalWorkspaceBackend(WorkspaceBackend):
                 filesystem._lock = self._filesystem_lock
                 self._resources[workspace_id] = filesystem
             os.close(filesystem._open_root())
-            return WorkspaceBinding(self, filesystem, ownership="borrowed")
+            return self._bind(filesystem)
 
     async def reconnect(self, workspace_id, identity, *, abort_signal=None):
         if abort_signal is not None:
@@ -489,7 +489,10 @@ class LocalWorkspaceBackend(WorkspaceBackend):
                     "Workspace resource is unavailable or identity changed"
                 )
             os.close(filesystem._open_root())
-            return WorkspaceBinding(self, filesystem)
+            return self._bind(filesystem)
+
+    def _bind(self, filesystem):
+        return WorkspaceBinding(self, filesystem, ownership="borrowed")
 
     async def _release(self, binding):
         if binding.backend is not self:
