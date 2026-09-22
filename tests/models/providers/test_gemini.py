@@ -317,6 +317,33 @@ def test_gemini_stream_signature_delta_passes_through():
     assert model._split_gemini_chunk(chunk, {"in_thought": False}) == [chunk]
 
 
+def test_gemini_surfaces_provider_cache_hits(mock_gemini_client):
+    from msgflux.models.providers.gemini import GeminiChatCompletion
+
+    mock_gemini_client.return_value.chat.completions.create.return_value = (
+        SimpleNamespace(
+            usage={
+                "prompt_tokens": 2000,
+                "completion_tokens": 5,
+                "total_tokens": 2005,
+                "prompt_tokens_details": {"cached_tokens": 1500},
+            },
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=_message(content="OK", signature="sig-1"),
+                )
+            ],
+        )
+    )
+    model = GeminiChatCompletion(model_id="gemini-3.6-flash")
+    response = model("Reply with exactly: OK")
+
+    assert response.consume() == "OK"
+    assert response.metadata.usage.input_tokens_details.cached_tokens == 1500
+    assert response.metadata.usage.cache_hit_percentage == pytest.approx(75.0)
+
+
 def test_gemini_api_key_env_override(monkeypatch):
     from msgflux.models.providers.gemini import GeminiChatCompletion
 
