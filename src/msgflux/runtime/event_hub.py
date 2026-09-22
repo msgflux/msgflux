@@ -346,7 +346,17 @@ class EventHub:
             return
 
         run = state.runs.get(run_key)
-        if run is None and event_type not in {"run.end", "run.error", "run.paused"}:
+        if (
+            run is None
+            and event_type
+            not in {
+                "run.end",
+                "run.error",
+                "run.interrupted",
+                "run.paused",
+            }
+            and not event_type.startswith("tool.")
+        ):
             run = _LiveRun(run_id=event.run_id, source_path=event.source_path)
             state.runs[run_key] = run
 
@@ -382,9 +392,24 @@ class EventHub:
             tool_call_id = event.data.get("tool_call_id")
             state.tools.pop((event.run_id, event.source_path, tool_call_id), None)
         elif event_type in {"run.end", "run.error", "run.interrupted", "run.paused"}:
-            state.runs.pop(run_key, None)
+            # A run can emit events while nested modules/tools extend its
+            # source_path. Its terminal event is emitted after those nested
+            # contexts unwind, so remove the whole descendant projection too.
+            # Otherwise one stale _LiveRun survives per completed thread.
+            source_prefix = event.source_path
+            for candidate in tuple(state.runs):
+                candidate_run_id, candidate_source = candidate
+                if (
+                    candidate_run_id == event.run_id
+                    and candidate_source[: len(source_prefix)] == source_prefix
+                ):
+                    state.runs.pop(candidate, None)
             for tool_key in tuple(state.tools):
-                if tool_key[:2] == run_key:
+                tool_run_id, tool_source, _tool_call_id = tool_key
+                if (
+                    tool_run_id == event.run_id
+                    and tool_source[: len(source_prefix)] == source_prefix
+                ):
                     state.tools.pop(tool_key, None)
 
     def _reset(self) -> None:
