@@ -36,8 +36,9 @@ class StreamingExecutor(ProcessExecutor):
     def supports_workspace(self, filesystem):
         return True
 
-    async def execute(self, request, **kwargs):
-        return ProcessResult(0, b"buffered", b"")
+    async def execute_stream(self, request, **kwargs):
+        await kwargs["on_output"]("stdout", b"buffered")
+        return ProcessResult(0)
 
 
 class DuplicateStreamingExecutor(StreamingExecutor):
@@ -46,8 +47,27 @@ class DuplicateStreamingExecutor(StreamingExecutor):
         return ProcessResult(0, b"duplicate", b"")
 
 
+class ViolatingExecutor(StreamingExecutor):
+    def __init__(self, violation):
+        self.violation = violation
+
+    async def execute_stream(self, request, **kwargs):
+        callback = kwargs["on_output"]
+        if self.violation == "channel":
+            await callback("other", b"x")
+        elif self.violation == "type":
+            await callback("stdout", bytearray(b"x"))
+        elif self.violation == "chunk":
+            await callback("stdout", b"x" * 65537)
+        else:
+            await callback("stdout", b"x" * request.max_output_bytes)
+            await callback("stdout", b"x")
+        return ProcessResult(0)
+
+
 @pytest.mark.asyncio
-async def test_environment_streaming_compatibility_fallback_delivers_chunks():
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_execute_adapter_collects_streaming_chunks(streaming):
     environment = ExecutionEnvironment(InMemoryWorkspace("stream"), StreamingExecutor())
     seen = []
     scope = ExecutionScope(
@@ -61,10 +81,22 @@ async def test_environment_streaming_compatibility_fallback_delivers_chunks():
     with execution_context(scope=scope):
         result = await environment.arun(
             ProcessRequest(("ignored",)),
-            on_output=collect,
+            on_output=collect if streaming else None,
         )
-    assert seen == [("stdout", b"buffered")]
-    assert result == ProcessResult(0)
+    assert seen == ([("stdout", b"buffered")] if streaming else [])
+    assert result == (ProcessResult(0) if streaming else ProcessResult(0, b"buffered"))
+
+
+def test_execute_only_backend_is_no_longer_supported():
+    class BufferedOnly(ProcessExecutor):
+        capabilities = StreamingExecutor.capabilities
+        supports_workspace = StreamingExecutor.supports_workspace
+
+        async def execute(self, request, **kwargs):
+            return ProcessResult(0)
+
+    with pytest.raises(TypeError, match="execute_stream"):
+        BufferedOnly()
 
 
 @pytest.mark.asyncio
@@ -84,6 +116,31 @@ async def test_environment_rejects_duplicate_streamed_buffers():
         await environment.arun(
             ProcessRequest(("ignored",)),
             on_output=ignore,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("violation", "match"),
+    [
+        ("channel", "channel"),
+        ("type", "bytes"),
+        ("chunk", "65536"),
+        ("budget", "output limit"),
+    ],
+)
+async def test_execute_collector_rejects_invalid_stream_chunks(violation, match):
+    executor = ViolatingExecutor(violation)
+    fs = InMemoryWorkspace("collector")
+    request = ProcessRequest(("ignored",), max_output_bytes=32)
+    environment = ExecutionEnvironment(fs, executor)
+    with pytest.raises((ValueError, TypeError, RuntimeError), match=match):
+        await executor.execute(
+            request,
+            filesystem=fs,
+            permissions=PermissionSet(),
+            requirements=environment.requirements,
+            abort_signal=None,
         )
 
 

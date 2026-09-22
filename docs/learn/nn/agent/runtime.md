@@ -1716,11 +1716,51 @@ memory and local backend implementations described above.
     proposal to bypass this check. Existing approval bindings also change, so
     pending Agent reviews may require host intervention after upgrading.
 
-### Write and edit tools with Agent previews
+### Write, edit and delete tools with Agent previews
+
+The environment's host-only `max_edit_bytes` defaults to 1,000,000 bytes per
+old/new file. Editors read at most that budget plus one byte before decoding,
+and reject oversized contents before preparing or applying changes. This also
+applies to restored approval proposals. It bounds individual inputs, not the
+aggregate memory of concurrent calls or all retained checkpoints.
+
+```python
+environment = ExecutionEnvironment(
+    filesystem=filesystem,
+    write_guarantee="cooperative_compare",  # for LocalWorkspace
+    max_edit_bytes=256 * 1024,
+)
+reader = ReadFileTool(supports_vision=True, max_image_bytes=1_000_000)
+```
+
+This permits edits up to 256 KiB and images up to 1 MB without reading an
+arbitrarily large file first. `ReadFileTool` rejects disabled vision before file
+I/O. These host settings do not add parameters to the model-facing tool schemas.
+
+Backend authors must implement bounded `_scandir(path, max_entries)` and
+`_read_prefix(path, max_bytes)` hooks. The public `scandir`/`ascandir` methods
+return sorted `WorkspaceEntry` values (`name`, `kind`), where `kind` is `file`,
+`directory` or `other`. Exceeding the entry limit raises instead of silently
+returning an incomplete directory. `read_prefix`/`aread_prefix` read at most the
+requested bytes. Both APIs enforce live resource grants. There is no fallback
+that reads the complete file or directory and slices it afterward.
+
+Local enumeration never follows symbolic links. Links, multiply-linked files,
+special files and cross-mount entries are classified as `other`, not safe files
+to traverse. These checks do not turn the local backend into an OS sandbox.
 
 `WriteTool(cwd="/")` exposes only `path` and `content`; `EditTool(cwd="/")`
 exposes only `path`, `old` and `new`. Both are class-based tools with explicit
-public annotations and `Write`/`Edit` display names. The filesystem is injected
+public annotations and `Write`/`Edit` display names. `DeleteTool(cwd="/")`
+exposes only `path`, with display name `Delete`. It deletes one UTF-8 file or
+one empty directory; binary files and recursive directory deletion are not
+supported. The workspace root and symlinks are always rejected. Removed text
+is included in the approval diff and compared again before deletion.
+Directory previews have `target_kind="empty_directory"`, an opaque
+`directory_token`, `before=None`, `after=None`, and a human-readable `diff`.
+The token is checkpointed with the proposal and binds approval to that directory
+incarnation. Replacement or newly added contents prevent deletion.
+The filesystem is injected
 from the live environment, and cwd is a constructor-only virtual path. Outputs
 are compact JSON objects such as `{"status":"completed"}`; previews and old
 file contents are not added to model history. No automatic retries are enabled.
@@ -1728,21 +1768,33 @@ file contents are not added to model history. No automatic retries are enabled.
 ```python
 from msgflux.nn import Agent
 from msgflux.runtime import AgentApprovals
-from msgflux.tools.builtin import EditTool, WriteTool
+from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
 
 agent = Agent(
     name="editor",
     model=model,  # your configured chat-completion model
-    tools=[WriteTool(cwd="/"), EditTool(cwd="/")],
+    tools=[WriteTool(cwd="/"), EditTool(cwd="/"), DeleteTool(cwd="/")],
     checkpoint_store=checkpoints,  # an atomic checkpoint store
     approvals=AgentApprovals(
-        journal, {"write": "implementation:v1", "edit": "implementation:v1"},
+        journal,
+        {"write": "implementation:v1", "edit": "implementation:v1",
+         "delete": "implementation:v1"},
         policy_version="review:v1",
     ),
 )
 ```
 
-This registers both tools with the existing host-owned approval policy. Without
+This registers all three tools with the existing host-owned approval policy.
+File deletion requires both `filesystem.read` and `filesystem.delete` on the exact
+file, not a write grant. Empty directories require `filesystem.list` and
+`filesystem.delete` instead. `WorkspaceEditor.prepare_delete_target()` selects
+the applicable proposal; `prepare_delete()` and `ApplyPatchTool` remain file-only.
+Backends implement `deletion_directory_token()` and `checked_rmdir()` through
+their protected hooks. In-memory comparison/removal is locked; the POSIX backend
+uses descriptor-relative `rmdir` and the environment's cooperative guarantee.
+It cannot promise atomic identity comparison against unrelated external writers.
+These new proposal fields change digests; pending approvals created before this
+change require a fresh review. Without
 a policy (or with explicit `approvals=None` for a new invocation), calls execute
 without confirmation but still require live workspace grants. A raw ToolLibrary
 does not independently manage Agent approvals. Configure the policy whenever
@@ -2602,3 +2654,81 @@ the terminal tool round without another model request or approval prompt. The
 external effects database contains one entry after approval and none after
 denial. This covers process death before dispatch, not a universal exactly-once
 claim; separate reconciliation tests cover death after an external effect.
+
+## Real isolated Bash with Docker
+
+`DockerWorkspaceBackend` combines existing local workspace tools with
+`DockerProcessExecutor`. Install a local Linux Docker daemon/CLI and provision a
+trusted image containing Bash (and other programs you intend to expose). The
+adapter never pulls images automatically. Prefer an immutable image ID/digest.
+
+```python
+from msgflux.runtime import (
+    DockerLimits, DockerWorkspaceBackend, ExecutionEnvironment, ExecutionScope,
+    PermissionSet, execution_context,
+)
+from msgflux.tools.builtin import BashTool
+
+backend = DockerWorkspaceBackend(
+    "/absolute/project/path", image=trusted_image_id,
+    limits=DockerLimits(memory_bytes=256 * 1024 * 1024, pids=64, cpus=1),
+)
+async with await backend.open("project") as binding:
+    environment = ExecutionEnvironment.from_binding(
+        binding, write_guarantee="cooperative_compare",
+    )
+    scope = ExecutionScope(
+        environment=environment,
+        permissions=PermissionSet(
+            ["process.execute"],
+            [binding.filesystem.permission("/", "process.workspace")],
+        ),
+    )
+    with execution_context(scope=scope):
+        result = await BashTool().acall("printf 'hello'", environment=environment)
+```
+
+This runs an actual process in an ephemeral container and returns the same
+`ShellResult` as other executors. Pass `scope` to an Agent to use its event stream,
+approval policy and `ToolOutputOffloadExtension` normally. File tools still need
+their own exact filesystem grants.
+
+`process.workspace` is an explicit **whole-workspace read/write/delete grant**
+for shell processes, not an alias for `filesystem.read`. The adapter refuses a
+mount when only individual file permissions are provided. Relative Bash paths
+start at the configured virtual cwd, mapped into `/workspace`; shell absolute
+paths refer to the container, while file-tool paths remain virtual workspace
+paths. The daemon mount path must refer to this same local machine.
+
+Each command has a private container with network disabled, a read-only image
+root, capabilities dropped, no-new-privileges, a non-root host UID/GID, PID and
+memory limits, CPU quota and a limited `/tmp`. Only the selected workspace is
+bind-mounted; recursive submounts are disabled. Image defaults are host-trusted;
+application environment variables and credentials are not copied. This uses
+[Docker run/create controls](https://docs.docker.com/reference/cli/docker/container/run/)
+and [resource limits](https://docs.docker.com/engine/containers/resource_constraints/).
+
+Output is drained incrementally with backpressure. Timeout, cancellation and
+sink failures reap the CLI and explicitly remove the named container (including
+children). Cancellation waits for cleanup. Daemon failures may require host
+reconciliation; the exception notes identify the container. Abrupt host process
+death cannot run Python cleanup: the host must reconcile containers carrying
+`msgflux.executor=ephemeral`. There is no distributed lease/reaper in this adapter.
+Closing a binding requires the host to drain active calls first.
+
+This is not protection against a compromised daemon/kernel, hostile local
+administrators or concurrent replacement of the host mount path. Workspace
+filesystem writes are real and are not rolled back. Memory/CPU/PID limits do not
+provide a disk quota for arbitrary shell writes. `socket_path` may select another
+trusted local Unix socket; remote daemon contexts are not supported. Do not
+expose daemon access itself to the model.
+
+To run deterministic real-container validation after provisioning
+`python:3.12-slim` locally:
+
+```bash
+MSGFLUX_TEST_DOCKER=1 uv run pytest -q tests/test_docker_executor.py
+```
+
+These tests create temporary workspaces and owned containers; they never mount
+the project source or the application's existing result store.

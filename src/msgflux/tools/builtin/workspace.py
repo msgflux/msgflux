@@ -47,10 +47,19 @@ class ReadFileTool:
         "confirms publication. For images, set offset and limit to null."
     )
 
-    def __init__(self, *, supports_vision: bool = False, cwd: str = "/"):
+    def __init__(
+        self,
+        *,
+        supports_vision: bool = False,
+        cwd: str = "/",
+        max_image_bytes: int = 1_000_000,
+    ):
         if not isinstance(supports_vision, bool):
             raise TypeError("supports_vision must be a boolean")
         self.supports_vision = supports_vision
+        if type(max_image_bytes) is not int or max_image_bytes <= 0:
+            raise ValueError("max_image_bytes must be a positive integer")
+        self.max_image_bytes = max_image_bytes
         self.cwd = workspace_path(cwd)
         self.tool_config = deepcopy(self.tool_config)
         guidance = self.tool_config.get("usage_guidance")
@@ -72,7 +81,7 @@ class ReadFileTool:
         path = _tool_path(path, self.cwd)
         first, count, is_image = self._read_options(path, offset, limit)
         data = (
-            filesystem.read_bytes(path)
+            filesystem.read_prefix(path, max_bytes=self.max_image_bytes + 1)
             if is_image
             else filesystem.read_lines(path, offset=first, limit=count)
         )
@@ -90,7 +99,7 @@ class ReadFileTool:
         path = _tool_path(path, self.cwd)
         first, count, is_image = self._read_options(path, offset, limit)
         data = (
-            await filesystem.aread_bytes(path)
+            await filesystem.aread_prefix(path, max_bytes=self.max_image_bytes + 1)
             if is_image
             else await filesystem.aread_lines(path, offset=first, limit=count)
         )
@@ -103,14 +112,17 @@ class ReadFileTool:
         ):
             raise ValueError("offset and limit must be positive integers")
         is_image = get_mime_type(path).startswith("image/")
+        if is_image and not self.supports_vision:
+            raise ValueError("Image reading is disabled for this tool")
         if is_image and (offset is not None or limit is not None):
             raise ValueError("offset and limit are only supported for text files")
         return offset or 1, min(limit or 2000, 2000), is_image
 
     def _result(self, path: str, data: bytes, handle: ToolLibraryHandle | None) -> str:
-        if len(data) > 1_000_000:
-            raise ValueError("File exceeds read_file's 1,000,000-byte limit")
         mime_type = get_mime_type(path)
+        ceiling = self.max_image_bytes if mime_type.startswith("image/") else 1_000_000
+        if len(data) > ceiling:
+            raise ValueError("File exceeds the configured read byte limit")
         if mime_type.startswith("image/"):
             if not self.supports_vision:
                 raise ValueError("Image reading is disabled for this tool")
@@ -307,4 +319,35 @@ class EditTool(WorkspaceChangeTool):
         return await asyncio.to_thread(self, path, old, new, filesystem=filesystem)
 
 
-__all__ = ["ReadFileTool", "BashTool", "WriteTool", "EditTool"]
+@tool_config(runtime_inputs=["filesystem"], retry=False)
+class DeleteTool(WorkspaceChangeTool):
+    """Delete one UTF-8 file or empty directory using the workspace review policy.
+
+    Does not delete non-empty directories, binary files or the workspace root.
+    The removed text or empty-directory description is in the approval preview.
+
+    Args:
+        path: File path, absolute or relative to the configured workspace cwd.
+    """
+
+    name = "delete"
+    display_name = "Delete"
+    annotations = {"path": str, "return": dict[str, str]}
+
+    def prepare_workspace_change(self, arguments, filesystem):
+        return self._editor(filesystem).prepare_delete_target(
+            _tool_path(arguments["path"], self.cwd)
+        )
+
+    def __call__(
+        self, path: str, *, filesystem: Hidden[WorkspaceFilesystem]
+    ) -> dict[str, str]:
+        return self._apply({"path": path}, filesystem)
+
+    async def acall(
+        self, path: str, *, filesystem: Hidden[WorkspaceFilesystem]
+    ) -> dict[str, str]:
+        return await asyncio.to_thread(self, path, filesystem=filesystem)
+
+
+__all__ = ["ReadFileTool", "BashTool", "WriteTool", "EditTool", "DeleteTool"]

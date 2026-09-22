@@ -111,7 +111,7 @@ class FakeProcessExecutor(ProcessExecutor):
     def supports_workspace(self, filesystem: WorkspaceFilesystem) -> bool:
         return isinstance(filesystem, InMemoryWorkspace)
 
-    async def execute(
+    async def execute_stream(
         self,
         request,
         *,
@@ -119,10 +119,12 @@ class FakeProcessExecutor(ProcessExecutor):
         permissions,
         requirements: SandboxRequirements,
         abort_signal,
+        on_output,
     ) -> ProcessResult:
         del filesystem, permissions, requirements, abort_signal
         command = request.argv[-1]
-        return ProcessResult(0, f"simulated:{command}".encode(), b"")
+        await on_output("stdout", f"simulated:{command}".encode())
+        return ProcessResult(0)
 
 
 def _text(text: str, *, streamed: bool = False):
