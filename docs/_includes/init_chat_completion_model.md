@@ -77,7 +77,9 @@
 
     === "Baseten"
 
-        Authenticate by setting the `BASETEN_API_KEY` env variable.
+        Authenticate with `BASETEN_API_KEY`. The default OpenAI-compatible base
+        URL is `https://inference.baseten.co/v1`; set `BASETEN_BASE_URL` to
+        override it.
 
         ```python
         import msgflux as mf

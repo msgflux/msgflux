@@ -62,6 +62,16 @@ def test_baseten_reads_base_url_and_api_key():
     assert model._get_api_key() == "test-key"
 
 
+def test_baseten_defaults_to_inference_base_url(monkeypatch):
+    from msgflux.models.providers.baseten import BasetenChatCompletion
+
+    monkeypatch.delenv("BASETEN_BASE_URL")
+    model = BasetenChatCompletion(model_id="zai-org/GLM-5.2")
+
+    assert model._get_base_url() == "https://inference.baseten.co/v1"
+    assert model.sampling_params["base_url"] == "https://inference.baseten.co/v1"
+
+
 def test_baseten_missing_api_key_raises(monkeypatch):
     from msgflux.models.providers.baseten import BasetenChatCompletion
 
