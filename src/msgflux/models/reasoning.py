@@ -240,6 +240,84 @@ class TextResponsesReasoningCodec(ReasoningCodec):
         return response_item
 
 
+class GeminiReasoningCodec(OpenAICompatibleReasoningCodec):
+    """Gemini thought summaries and signatures in Chat Completions.
+
+    The OpenAI-compatible Gemini endpoint returns no clear-text thinking
+    by default, only an opaque ``extra_content.google.thought_signature``
+    on the assistant message. With ``include_thoughts`` enabled (via
+    ``extra_body`` thinking config) the summary streams inline inside
+    ``<thought>...</thought>`` tags, marked by
+    ``extra_content.google.thought=true`` on streaming deltas.
+    Signatures are required for multi-turn continuity and mandatory for
+    tool calls, so the codec stores them as state and replays them back
+    into ``extra_content`` on history conversion.
+    """
+
+    name = "gemini_thought_signature"
+
+    @staticmethod
+    def thought_signature(payload: Any) -> str | None:
+        extra = ReasoningCodec._get(payload, "extra_content")
+        google = ReasoningCodec._get(extra, "google")
+        signature = ReasoningCodec._get(google, "thought_signature")
+        return signature if isinstance(signature, str) and signature else None
+
+    @staticmethod
+    def is_thought_delta(payload: Any) -> bool:
+        extra = ReasoningCodec._get(payload, "extra_content")
+        google = ReasoningCodec._get(extra, "google")
+        return ReasoningCodec._get(google, "thought") is True
+
+    @staticmethod
+    def split_thought_content(content: Any) -> tuple[str | None, Any]:
+        """Split ``<thought>summary</thought>answer`` into its parts."""
+        if not isinstance(content, str):
+            return None, content
+        start = content.find("<thought>")
+        end = content.find("</thought>")
+        if start == -1 or end == -1 or end < start:
+            return None, content
+        summary = content[start + len("<thought>") : end]
+        answer = content[:start] + content[end + len("</thought>") :]
+        return (summary or None), answer
+
+    def extract_text(self, payload: Any) -> str | None:
+        if self.is_thought_delta(payload):
+            summary, _ = self.split_thought_content(self._get(payload, "content"))
+            return summary
+        content = self._get(payload, "content")
+        if isinstance(content, str) and "<thought>" in content:
+            summary, _ = self.split_thought_content(content)
+            return summary
+        return super().extract_text(payload)
+
+    def extract_state(
+        self,
+        payload: Any,
+        *,
+        serialize: Callable[[Any], Any],
+    ) -> Any:
+        del serialize
+        return self.thought_signature(payload)
+
+    def encode_chat_message(
+        self,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        provider: str,
+        api_mode: str,
+    ) -> dict[str, Any]:
+        for item in items:
+            state = item.get("provider_state")
+            if not self.matches_state(state, provider=provider, api_mode=api_mode):
+                continue
+            signature = state.get("data")
+            if isinstance(signature, str) and signature:
+                return {"extra_content": {"google": {"thought_signature": signature}}}
+        return {}
+
+
 class OpenRouterReasoningCodec(OpenAICompatibleReasoningCodec):
     """OpenRouter reasoning text plus its ordered opaque detail blocks."""
 
