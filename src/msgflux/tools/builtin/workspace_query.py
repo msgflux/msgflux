@@ -183,7 +183,7 @@ class LsTool(_WorkspaceQuery):
     """
 
     name = "ls"
-    display_name = "List workspace"
+    display_name = "List"
     annotations = {"path": str, "return": dict[str, Any]}
 
     def __init__(self, *, cwd: str = "/", max_entries: int = 10_000):
@@ -213,7 +213,7 @@ class GlobTool(_WorkspaceQuery):
     """
 
     name = "glob"
-    display_name = "Find workspace paths"
+    display_name = "Find"
     annotations = {"pattern": str, "path": str, "return": dict[str, Any]}
 
     def __init__(
@@ -284,7 +284,7 @@ class GrepTool(_WorkspaceQuery):
     """
 
     name = "grep"
-    display_name = "Search workspace text"
+    display_name = "Search"
     annotations = {"pattern": str, "path": str, "return": dict[str, Any]}
 
     def __init__(
