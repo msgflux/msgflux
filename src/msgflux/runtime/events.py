@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from msgflux.runtime.context import ExecutionScope, get_execution_scope
+from msgflux.runtime.event_buffer import _EventBuffer
 from msgflux.runtime.event_hub import get_event_hub
 from msgflux.utils.time import utc_now_isoformat
 
@@ -185,21 +186,18 @@ def _is_capturing_events() -> bool:
     return _CURRENT_EVENT_SINK.get() is not None
 
 
-_CLOSED = object()
-
-
 class _AsyncEventChannel:
-    def __init__(self, *, root_module: Any = None) -> None:
-        self._loop = asyncio.get_running_loop()
-        self._queue: asyncio.Queue[ExecutionEvent | object] = asyncio.Queue()
+    def __init__(
+        self, *, root_module: Any = None, event_buffer_limit: int | None = None
+    ) -> None:
+        self._buffer = _EventBuffer(event_buffer_limit)
         self.sink = _EventSink(self._publish, root_module=root_module)
 
     def _publish(self, event: ExecutionEvent) -> None:
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+        self._buffer.put(event)
 
     def close(self) -> None:
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, _CLOSED)
+        self._buffer.close()
 
     async def get(self) -> ExecutionEvent | None:
-        item = await self._queue.get()
-        return None if item is _CLOSED else item
+        return await self._buffer.get()

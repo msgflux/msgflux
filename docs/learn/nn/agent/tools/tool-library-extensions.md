@@ -1,5 +1,11 @@
 # ToolLibrary Extensions
 
+Optional `ContextBinding(required=False)` inputs may omit an unregistered context
+source and use the callable's default. Required bindings still fail closed.
+For example, `BashTool` binds the hidden optional `shell_capture` source supplied
+by `ToolOutputOffloadExtension`; removing that extension does not expose this
+parameter to the model or disable process permissions.
+
 `ToolLibraryExtension` packages tools, lifecycle hooks, setup, and cleanup under
 one removable owner. Use it for a capability that belongs to tool registration
 or execution rather than to the surrounding Agent.
@@ -78,6 +84,12 @@ executor attribute. It may reduce background/detached execution to foreground
 or block the call; it cannot promote a foreground call into detached execution.
 
 ## Runtime Policies
+
+For pluggable large-output handling, use
+[`ToolOutputOffloadExtension`](../resources.md#opt-in-tool-output-offload). It
+stores text/JSON results through a configurable result store and replaces large
+outputs with bounded previews and durable references. The policy lives in the
+extension, not in individual tools or model-visible arguments.
 
 `ToolPolicy` is the typed extension boundary for rules that must apply to every
 canonical tool intent, including calls redirected through buckets and handles.

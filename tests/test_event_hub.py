@@ -7,6 +7,47 @@ import pytest
 
 from msgflux.runtime.event_hub import BackgroundTaskSnapshot, EventHub
 from msgflux.runtime.events import EventType, ExecutionEvent
+from msgflux.exceptions import EventBufferOverflowError
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parts", [("olá ", "🌍", "!"), (b"hello ", b"world", b"!")])
+@pytest.mark.parametrize(
+    "kind,field,chunks_field",
+    [
+        ("message.delta", "streaming_message", "message_chunks"),
+        ("reasoning.delta", "reasoning", "reasoning_chunks"),
+        ("reasoning_summary.delta", "reasoning_summary", "reasoning_summary_chunks"),
+    ],
+)
+async def test_reconnect_consolidates_text_without_mutating_old_snapshots(
+    parts, kind, field, chunks_field
+):
+    hub = EventHub()
+    for part in parts[:2]:
+        hub.publish("thread", make_event(kind, {"delta": part}))
+    async with hub.watch("thread") as first:
+        initial = getattr(first.snapshot.active_run, field)
+        assert initial == parts[0] + parts[1]
+    run = next(iter(hub._threads["thread"].runs.values()))
+    assert getattr(run, chunks_field) == [initial]
+    async with hub.watch("thread") as second:
+        assert getattr(second.snapshot.active_run, field) is initial
+    hub.publish("thread", make_event(kind, {"delta": parts[2]}))
+    async with hub.watch("thread") as third:
+        assert getattr(third.snapshot.active_run, field) == initial + parts[2]
+    assert getattr(first.snapshot.active_run, field) == parts[0] + parts[1]
+    hub.publish("thread", make_event("run.end"))
+    assert not hub._threads
+
+
+@pytest.mark.asyncio
+async def test_mixed_projection_payloads_keep_existing_last_value_semantics():
+    hub = EventHub()
+    for part in ("text", b"bytes", {"structured": True}):
+        hub.publish("thread", make_event("message.delta", {"delta": part}))
+    async with hub.watch("thread") as watcher:
+        assert watcher.snapshot.streaming_message == {"structured": True}
 
 
 def make_event(
@@ -135,3 +176,38 @@ async def test_watch_is_isolated_by_thread_id():
         hub.publish("thread_b", make_event(EventType.RUN_START, run_id="run_b"))
         hub.publish("thread_a", expected)
         assert await asyncio.wait_for(watcher.__anext__(), timeout=1) == expected
+
+
+@pytest.mark.asyncio
+async def test_overflow_detaches_only_slow_watcher_and_allows_reconnect():
+    hub = EventHub()
+    events = [make_event(EventType.MESSAGE_DELTA, {"delta": str(i)}) for i in range(4)]
+    async with (
+        hub.watch("t", event_buffer_limit=2) as slow,
+        hub.watch("t") as fast,
+    ):
+        for event in events:
+            hub.publish("t", event)
+        assert slow not in hub._watchers["t"]
+        assert [await anext(fast) for _ in events] == events
+        with pytest.raises(EventBufferOverflowError):
+            await anext(slow)
+        with pytest.raises(StopAsyncIteration):
+            await anext(slow)
+        async with hub.watch("t", event_buffer_limit=2) as reconnected:
+            assert reconnected.snapshot.streaming_message == "0123"
+            hub.publish("t", make_event(EventType.RUN_END))
+            assert (await anext(reconnected)).type == EventType.RUN_END
+
+
+@pytest.mark.asyncio
+async def test_full_watcher_closes_without_queuefull_or_hanging():
+    hub = EventHub()
+    async with hub.watch("t", event_buffer_limit=1) as watcher:
+        hub.publish("t", make_event(EventType.RUN_START))
+        await watcher.aclose()
+        assert (await anext(watcher)).type == EventType.RUN_START
+        with pytest.raises(StopAsyncIteration):
+            await anext(watcher)
+        with pytest.raises(StopAsyncIteration):
+            await anext(watcher)

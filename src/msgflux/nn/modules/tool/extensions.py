@@ -473,6 +473,8 @@ class ToolExtensionRegistry(Module):
     ) -> dict[str, Any]:
         resolved = {}
         for binding in definition.context.bindings:
+            if not binding.required and binding.source not in self._context_sources:
+                continue
             provider = self.get_context_provider(binding.source)
             value = await provider.resolve(
                 ContextRequest(
