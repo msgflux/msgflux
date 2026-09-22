@@ -95,6 +95,7 @@ from msgflux.runtime.workspace_backend import (
 )
 from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
 from msgflux.runtime.workspace_contracts import (
+    WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
@@ -103,6 +104,7 @@ from msgflux.runtime.workspace_contracts import (
 from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
 
 __all__ = [
+    "WorkspaceEntry",
     "ProcessOutputCallback",
     "ProcessOutputLimitError",
     "drain_subprocess",

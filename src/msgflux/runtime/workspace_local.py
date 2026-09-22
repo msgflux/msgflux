@@ -16,6 +16,7 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.workspace import WorkspaceConflictError, WorkspaceFilesystem
 from msgflux.runtime.workspace_backend import WorkspaceBackend, WorkspaceBinding
 from msgflux.runtime.workspace_contracts import (
+    WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
@@ -294,6 +295,72 @@ class LocalWorkspace(WorkspaceFilesystem):
             finally:
                 if fd is not None and fd >= 0:
                     os.close(fd)
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
+    def _read_prefix(self, path, max_bytes):
+        with self._lock:
+            self._authorize("read", path)
+            root = self._open_root()
+            parent = root
+            try:
+                parent, name = self._parent(root, path)
+                self._stat_at(parent, name, path)
+                return self._read_fd_at(parent, name, max_bytes)
+            finally:
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
+    def _scandir(self, path, max_entries):  # noqa: C901
+        with self._lock:
+            self._authorize("list", path)
+            root = self._open_root()
+            parent = root
+            directory = root
+            try:
+                if path != "/":
+                    parent, name = self._parent(root, path)
+                    st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                        raise NotADirectoryError(path)
+                    if st.st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                    directory = os.open(
+                        name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=parent,
+                    )
+                    if os.fstat(directory).st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                entries = []
+                with os.scandir(directory) as iterator:
+                    for item in iterator:
+                        st = item.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(st.st_mode):
+                            kind = "other"
+                        elif stat.S_ISDIR(st.st_mode):
+                            kind = (
+                                "directory"
+                                if st.st_dev == self._root_stat.st_dev
+                                else "other"
+                            )
+                        elif (
+                            stat.S_ISREG(st.st_mode)
+                            and st.st_nlink == 1
+                            and st.st_dev == self._root_stat.st_dev
+                        ):
+                            kind = "file"
+                        else:
+                            kind = "other"
+                        entries.append(WorkspaceEntry(name=item.name, kind=kind))
+                        if len(entries) > max_entries:
+                            raise ValueError("Workspace directory exceeds max_entries")
+                return tuple(sorted(entries, key=lambda entry: entry.name))
+            finally:
+                if directory != root:
+                    os.close(directory)
                 if parent != root:
                     os.close(parent)
                 os.close(root)

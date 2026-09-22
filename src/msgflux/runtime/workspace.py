@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import re
 from abc import ABC, abstractmethod
 from pathlib import PurePosixPath
@@ -12,6 +13,7 @@ from uuid import uuid4
 
 from msgflux.runtime.permissions import ResourcePermission, require_permissions
 from msgflux.runtime.workspace_contracts import (
+    WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
@@ -115,6 +117,20 @@ class WorkspaceFilesystem(ABC):
 
     def read_bytes(self, path: str) -> bytes:
         return self._perform("read", path)
+
+    def read_prefix(self, path: str, *, max_bytes: int) -> bytes:
+        """Read at most ``max_bytes`` from one authorized regular file."""
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+        canonical = self._authorize("read", path)
+        data = self._read_prefix(canonical, max_bytes)
+        if not isinstance(data, bytes) or len(data) > max_bytes:
+            raise ValueError("Backend exceeded the requested read byte limit")
+        return data
+
+    @abstractmethod
+    def _read_prefix(self, path: str, max_bytes: int) -> bytes:
+        raise NotImplementedError
 
     def read_lines(
         self,
@@ -254,6 +270,24 @@ class WorkspaceFilesystem(ABC):
     def listdir(self, path: str) -> tuple[str, ...]:
         return self._perform("list", path)
 
+    def scandir(
+        self, path: str, *, max_entries: int = 10_000
+    ) -> tuple[WorkspaceEntry, ...]:
+        """Return a bounded, sorted description of one authorized directory."""
+        if type(max_entries) is not int or max_entries <= 0:
+            raise ValueError("max_entries must be a positive integer")
+        canonical = self._authorize("list", path)
+        entries = self._scandir(canonical, max_entries)
+        if not isinstance(entries, tuple) or len(entries) > max_entries:
+            raise ValueError("Backend exceeded the requested directory entry limit")
+        if not all(isinstance(entry, WorkspaceEntry) for entry in entries):
+            raise TypeError("Backend returned an invalid workspace entry")
+        return entries
+
+    @abstractmethod
+    def _scandir(self, path: str, max_entries: int) -> tuple[WorkspaceEntry, ...]:
+        raise NotImplementedError
+
     def mkdir(self, path: str) -> None:
         self._perform("mkdir", path)
 
@@ -262,6 +296,9 @@ class WorkspaceFilesystem(ABC):
 
     async def aread_bytes(self, path: str) -> bytes:
         return await asyncio.to_thread(self.read_bytes, path)
+
+    async def aread_prefix(self, path: str, *, max_bytes: int) -> bytes:
+        return await asyncio.to_thread(self.read_prefix, path, max_bytes=max_bytes)
 
     async def awrite_bytes(self, path: str, data: bytes) -> None:
         await asyncio.to_thread(self.write_bytes, path, data)
@@ -276,6 +313,11 @@ class WorkspaceFilesystem(ABC):
 
     async def alistdir(self, path: str) -> tuple[str, ...]:
         return await asyncio.to_thread(self.listdir, path)
+
+    async def ascandir(
+        self, path: str, *, max_entries: int = 10_000
+    ) -> tuple[WorkspaceEntry, ...]:
+        return await asyncio.to_thread(self.scandir, path, max_entries=max_entries)
 
     async def amkdir(self, path: str) -> None:
         await asyncio.to_thread(self.mkdir, path)
@@ -338,6 +380,34 @@ class InMemoryWorkspace(WorkspaceFilesystem):
                 del self._files[path]
                 return None
             raise ValueError("Unsupported workspace operation")
+
+    def _read_prefix(self, path, max_bytes):
+        with self._lock:
+            self._authorize("read", path)
+            if path in self._directories:
+                raise IsADirectoryError(path)
+            if path not in self._files:
+                raise FileNotFoundError(path)
+            return self._files[path][:max_bytes]
+
+    def _scandir(self, path, max_entries):
+        with self._lock:
+            self._authorize("list", path)
+            if path not in self._directories:
+                raise NotADirectoryError(path)
+            entries = []
+            for item in itertools.chain(self._files, self._directories):
+                if item == path or str(PurePosixPath(item).parent) != path:
+                    continue
+                entries.append(
+                    WorkspaceEntry(
+                        name=PurePosixPath(item).name,
+                        kind="file" if item in self._files else "directory",
+                    )
+                )
+                if len(entries) > max_entries:
+                    raise ValueError("Workspace directory exceeds max_entries")
+            return tuple(sorted(entries, key=lambda entry: entry.name))
 
     def _compare_exchange(self, path, expected, replacement):
         with self._lock:
