@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
+from contextlib import aclosing, closing
 from typing import Any
 
 from msgflux.models.chat_api import ChatTransport, PreparedChatRequest
@@ -61,30 +62,36 @@ class HTTPChatTransport(ChatTransport):
         await self.http.aclose()
 
     def _stream(self, owner: Any, request: PreparedChatRequest) -> Iterator[Any]:
-        for payload in self.http.stream(
-            owner,
-            request.endpoint,
-            method=request.method,
-            headers=self._headers(request),
-            json=request.json,
-            iterate=lambda response: iter_sse_json(response.iter_lines()),
-        ):
-            yield owner.api_adapter.decode_stream_event(payload)
+        with closing(
+            self.http.stream(
+                owner,
+                request.endpoint,
+                method=request.method,
+                headers=self._headers(request),
+                json=request.json,
+                iterate=lambda response: iter_sse_json(response.iter_lines()),
+            )
+        ) as stream:
+            for payload in stream:
+                yield owner.api_adapter.decode_stream_event(payload)
 
     async def _astream(
         self,
         owner: Any,
         request: PreparedChatRequest,
     ) -> AsyncIterator[Any]:
-        async for payload in self.http.astream(
-            owner,
-            request.endpoint,
-            method=request.method,
-            headers=self._headers(request),
-            json=request.json,
-            iterate=lambda response: aiter_sse_json(response.aiter_lines()),
-        ):
-            yield owner.api_adapter.decode_stream_event(payload)
+        async with aclosing(
+            self.http.astream(
+                owner,
+                request.endpoint,
+                method=request.method,
+                headers=self._headers(request),
+                json=request.json,
+                iterate=lambda response: aiter_sse_json(response.aiter_lines()),
+            )
+        ) as stream:
+            async for payload in stream:
+                yield owner.api_adapter.decode_stream_event(payload)
 
     @staticmethod
     def _headers(request: PreparedChatRequest) -> dict[str, str]:

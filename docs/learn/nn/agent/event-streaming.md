@@ -365,7 +365,101 @@ while `message.delta` events expose the registered content after the marker is
 complete. Unknown or incomplete markers remain literal. Registry IDs are
 logical immutable IDs, and inserted content is not scanned recursively.
 
+## Optional Pending-Event Limits
+
+Direct streams and thread watchers accept an independent `event_buffer_limit`.
+The default `None` preserves unlimited delivery; a positive integer limits the
+number of pending events, including events published by worker threads before
+the event loop can process wakeups. This is a delivery limit, not a tool/model
+argument, checkpoint setting or permission.
+
+```python
+from msgflux.exceptions import EventBufferOverflowError
+
+try:
+    async for event in agent.stream_events(
+        "Inspect the workspace", scope=scope, event_buffer_limit=1024,
+    ):
+        render_event(event)
+except EventBufferOverflowError as error:
+    show_delivery_incomplete(error.limit)
+```
+
+Here `render_event` and `show_delivery_incomplete` are application callbacks.
+On overflow the buffer closes and discards its incomplete queued tail; iteration
+raises explicitly instead of silently presenting a truncated response as complete.
+The producer is not blocked. Once the direct consumer observes the error, stream
+cleanup cancels and awaits an execution that is still active. Work may already
+have completed: this is not rollback, and the checkpoint can already be terminal.
+An idle consumer does not automatically cancel its producer at the instant of
+overflow. Always close abandoned iterators; inspect durable state before retrying
+anything with external effects.
+
+```python
+try:
+    async with agent.watch(thread_id, event_buffer_limit=512) as watcher:
+        render_snapshot(watcher.snapshot)
+        async for event in watcher:
+            render_event(event)
+except EventBufferOverflowError:
+    show_reconnect_required()
+```
+
+In this example an overflowing watcher unsubscribes without cancelling the Agent
+or other observers. Open a new watcher to obtain a fresh snapshot and future
+events; this does not replay every missed live delta. The exception is emitted
+once, then that watcher is exhausted. Limits must be positive integers (not bool);
+zero is rejected rather than interpreted as unlimited.
+
+Wakeups are coalesced so a burst does not schedule one callback per event. The
+limit does **not** bound bytes per event, provider buffers, live projection text,
+artifact expansion, checkpoints or total process memory. A single event can be
+large. Use payload/resource policies separately; these limits are not backpressure
+and do not establish any sandbox guarantee.
+
+### Measuring Retention Before Choosing Limits
+
+The repository includes an offline synthetic benchmark:
+
+```bash
+uv run python scripts/benchmark_event_memory.py --events 20000 --payload-bytes 1024 --limit 256
+```
+
+It reports JSON measurements for unlimited and bounded delivery queues, one
+oversized tool-result event, live text projection, and a reconnect snapshot.
+Each scenario emits the same total ASCII payload volume. Payloads are allocated
+inside measurement, and queues/projections are cleaned up between scenarios.
+Increase `--events` or `--payload-bytes` carefully: unlimited cases intentionally
+retain their complete payloads.
+
+`retained_python_bytes` measures Python allocations still alive after publishing;
+`peak_python_bytes` includes temporary allocations, and
+`after_cleanup_python_bytes` samples after draining delivery and releasing the
+snapshot. These are `tracemalloc` measurements, not process RSS, serialized
+network traffic, model tokens or a total Agent memory budget. Timing includes
+tracing overhead. The synthetic burst intentionally prevents consumer drainage
+during publication; it is not a representative UI latency benchmark.
+
+Use the oversized-event and live-projection cases to check why a pending-event
+count alone cannot establish a byte budget. This script does not introduce output
+truncation, file spooling or new default limits.
+
+When a reconnect snapshot joins homogeneous text or byte deltas, the live
+projection consolidates its fragments into that immutable value. Reconnects
+without new deltas reuse it; previously returned snapshots remain unchanged.
+This avoids retaining both the joined text and its fragments in the projection,
+but queued events or snapshots held by the application can still retain older
+values. It is an allocation optimization, not a maximum response size.
+
 ## Event Isolation
+
+For tools using `ToolOutputOffloadExtension`, a large final output is represented
+by a structured reference and limited preview, including Shell stdout/stderr.
+Use `get_tool_result_reference(event.data.get("result"))` on `tool.end` to find
+the full result without parsing text. See
+[complete-output retrieval](resources.md#retrieve-complete-output-from-an-event)
+for authorized, chunked delivery to a UI. This does not automatically expand
+events or intercept custom progress events emitted inside a tool.
 
 Each direct `stream_events()` call owns an independent delivery channel.
 Concurrent calls therefore do not receive each other's events through those

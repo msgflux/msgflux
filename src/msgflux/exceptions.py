@@ -34,6 +34,16 @@ class _GuardInterrupt(Exception):  # noqa: N818
         self.response = response
 
 
+class EventBufferOverflowError(RuntimeError):
+    """Live event delivery exceeded its configured pending-event limit."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        super().__init__(
+            f"Event buffer exceeded {limit} pending events; delivery is incomplete"
+        )
+
+
 class AbortRequestedError(Exception):
     """Raised when a local runtime abort signal is observed."""
 

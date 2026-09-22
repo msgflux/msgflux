@@ -599,7 +599,9 @@ class AgentLifecycleMixin:
             )
         return scope
 
-    def watch(self, thread_id: str, *, approvals=_UNSET) -> ThreadWatcher:
+    def watch(
+        self, thread_id: str, *, approvals=_UNSET, event_buffer_limit: int | None = None
+    ) -> ThreadWatcher:
         """Observe a thread snapshot and its future process-local events."""
         policy = self._get_effective_approvals(approvals)
 
@@ -623,6 +625,7 @@ class AgentLifecycleMixin:
         return get_event_hub().watch(
             thread_id,
             namespace=self.get_module_name(),
+            event_buffer_limit=event_buffer_limit,
             load_messages=load_messages,
             load_approvals=lambda: self._load_approval_snapshot(
                 thread_id, approvals=policy

@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from msgflux.runtime.abort import AbortSignal, await_with_abort
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, require_permissions
 from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
 from msgflux.runtime.workspace_contracts import WriteGuarantee
+
+ProcessOutputCallback = Callable[[Literal["stdout", "stderr"], bytes], Awaitable[None]]
+MAX_PROCESS_OUTPUT_CHUNK = 65_536
 
 if TYPE_CHECKING:
     from msgflux.runtime.workspace_backend import WorkspaceBinding
@@ -93,6 +98,41 @@ class ProcessExecutor(ABC):
     ) -> ProcessResult:
         """Use this workspace, never silently substitute the host filesystem."""
         raise NotImplementedError
+
+    async def execute_stream(
+        self,
+        request: ProcessRequest,
+        *,
+        filesystem: WorkspaceFilesystem,
+        permissions: PermissionSet,
+        requirements: SandboxRequirements,
+        abort_signal: AbortSignal | None,
+        on_output: ProcessOutputCallback,
+    ) -> ProcessResult:
+        """Execute while delivering bounded output chunks to ``on_output``.
+
+        The compatibility implementation deliberately delegates to the legacy
+        buffered method.  Concrete executors that can drain pipes incrementally
+        should override this method; the security and workspace contract is the
+        same as :meth:`execute`.
+        """
+        result = await self.execute(
+            request,
+            filesystem=filesystem,
+            permissions=permissions,
+            requirements=requirements,
+            abort_signal=abort_signal,
+        )
+        if not isinstance(result, ProcessResult):
+            raise TypeError("Process executor must return ProcessResult")
+        if len(result.stdout) + len(result.stderr) > request.max_output_bytes:
+            raise RuntimeError("Process executor violated its output limit")
+        for channel, data in (("stdout", result.stdout), ("stderr", result.stderr)):
+            for offset in range(0, len(data), MAX_PROCESS_OUTPUT_CHUNK):
+                await on_output(
+                    channel, data[offset : offset + MAX_PROCESS_OUTPUT_CHUNK]
+                )
+        return ProcessResult(result.returncode)
 
 
 @dataclass(frozen=True)
@@ -179,7 +219,12 @@ class ExecutionEnvironment:
         if self.binding is not None:
             self.binding.require_active()
 
-    async def arun(self, request: ProcessRequest) -> ProcessResult:
+    async def arun(  # noqa: C901
+        self,
+        request: ProcessRequest,
+        *,
+        on_output: ProcessOutputCallback | None = None,
+    ) -> ProcessResult:
         from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
 
         if not isinstance(request, ProcessRequest):
@@ -197,21 +242,60 @@ class ExecutionEnvironment:
             raise PermissionError("Process executor cannot use this workspace")
         if scope.abort_signal is not None:
             scope.abort_signal.raise_if_aborted()
+        if on_output is not None and not callable(on_output):
+            raise TypeError("on_output must be callable")
+        streamed_bytes = 0
+        output_lock = asyncio.Lock()
+
+        async def deliver(channel, data):
+            nonlocal streamed_bytes
+            async with output_lock:
+                if channel not in ("stdout", "stderr"):
+                    raise ValueError("Output channel must be stdout or stderr")
+                if not isinstance(data, bytes):
+                    raise TypeError("Output chunks must be bytes")
+                if len(data) > MAX_PROCESS_OUTPUT_CHUNK:
+                    raise ValueError("Output chunks may not exceed 65536 bytes")
+                streamed_bytes += len(data)
+                if streamed_bytes > request.max_output_bytes:
+                    raise RuntimeError("Process executor exceeded its output limit")
+                result = on_output
+                if result is not None:
+                    value = result(channel, data)
+                    if not inspect.isawaitable(value):
+                        raise TypeError("on_output must return an awaitable")
+                    await value
+
+        operation = (
+            executor.execute_stream(
+                request,
+                filesystem=self.filesystem,
+                permissions=scope.permissions,
+                requirements=self.requirements,
+                abort_signal=scope.abort_signal,
+                on_output=deliver,
+            )
+            if on_output is not None
+            else executor.execute(
+                request,
+                filesystem=self.filesystem,
+                permissions=scope.permissions,
+                requirements=self.requirements,
+                abort_signal=scope.abort_signal,
+            )
+        )
         result = await asyncio.wait_for(
-            await_with_abort(
-                executor.execute(
-                    request,
-                    filesystem=self.filesystem,
-                    permissions=scope.permissions,
-                    requirements=self.requirements,
-                    abort_signal=scope.abort_signal,
-                ),
-                scope.abort_signal,
-            ),
+            await_with_abort(operation, scope.abort_signal),
             timeout=request.timeout_seconds,
         )
         if not isinstance(result, ProcessResult):
             raise TypeError("Process executor must return ProcessResult")
+        if on_output is not None and (result.stdout or result.stderr):
+            raise RuntimeError(
+                "Streaming process executor returned duplicate buffered output"
+            )
         if len(result.stdout) + len(result.stderr) > request.max_output_bytes:
+            raise RuntimeError("Process executor violated its output limit")
+        if on_output is not None and streamed_bytes > request.max_output_bytes:
             raise RuntimeError("Process executor violated its output limit")
         return result
