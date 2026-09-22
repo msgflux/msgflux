@@ -39,10 +39,15 @@ class RuntimeResources:
         return self
 
     def tool_result_store(
-        self, *, max_result_bytes: int = 64 * 1024 * 1024
+        self,
+        *,
+        max_result_bytes: int = 64 * 1024 * 1024,
+        max_store_bytes: int = 1024 * 1024 * 1024,
     ) -> LocalToolResultStore:
         return LocalToolResultStore(
-            self.root / "tool-results", max_result_bytes=max_result_bytes
+            self.root / "tool-results",
+            max_result_bytes=max_result_bytes,
+            max_store_bytes=max_store_bytes,
         )
 
     def checkpoint_store(self, thread_id: str):
