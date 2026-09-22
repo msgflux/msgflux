@@ -75,6 +75,20 @@
         )
         ```
 
+    === "OpenCode Zen"
+
+        Authenticate by setting the `OPENCODE_API_KEY` env variable.
+        For the Go subscription gateway, use `opencode-go/` model prefixes
+        with the same key.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(OPENCODE_API_KEY="...")
+        model = mf.Model.chat_completion("opencode/muse-spark-1.3-contributor-free")
+        go_model = mf.Model.chat_completion("opencode-go/kimi-k3")
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
