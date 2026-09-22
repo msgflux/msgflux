@@ -90,8 +90,11 @@ The implementation requires POSIX filesystem APIs. Filesystem/device durability
 guarantees still apply; this is not an OS sandbox against hostile local writers.
 
 `max_result_bytes` defaults to 64 MiB **per stored result** and is host-configurable.
-It is not a model-token limit, UI preview size or aggregate disk quota. Exceeding
-it raises `ToolResultTooLargeError`; producer failures propagate without returning
+`max_store_bytes` additionally defaults to 1 GiB for the entire local store.
+It counts content and metadata bytes, including interrupted staging writes,
+not filesystem blocks, inode overhead or shell-capture temporary files.
+The per-result ceiling is not a model-token limit or UI preview size. Exceeding
+that ceiling raises `ToolResultTooLargeError`; producer failures propagate without returning
 a partial reference. A process crash may leave a `.pending-*` directory, but it
 is not a published result. Storage failures are not retried automatically.
 
@@ -144,11 +147,51 @@ For a quiescent application, copy the closed checkpoint databases and their
 referenced result directories to the new root. Reopen `RuntimeResources` there;
 reference IDs and checksums remain unchanged. Copying a live SQLite file without
 coordinating its WAL is not a supported backup procedure. Automated export/import,
-reference-closure discovery, garbage collection and shared-plan permissions are
-not implemented by this layout. Never delete results merely because one thread
+reference-closure discovery and shared-plan permissions are
+not implemented by this layout. Explicit offline garbage collection is described
+below. Never delete results merely because one thread
 was removed: other trajectories may still reference them.
 
 ## Opt-in Tool Output Offload
+
+### Aggregate quota and offline maintenance
+
+```python
+results = resources.tool_result_store(
+    max_result_bytes=64 * 1024 * 1024,
+    max_store_bytes=1024 * 1024 * 1024,
+)
+usage = results.usage()  # size_bytes, results, pending
+```
+
+This bounds stored content/metadata across successful results and abandoned
+staging directories. `put()` raises `ToolResultQuotaError` before crossing the
+budget and removes its own incomplete write. It never evicts previous results.
+Writers using this API serialize through a local POSIX advisory directory lock,
+including independent processes. Configure the same quota for all writers;
+unmediated filesystem writes and remote/distributed filesystems are outside this
+guarantee. A slow producer holds the lock until its write completes or fails.
+
+```python
+# Stop ALL checkpoint/result writers and readers sharing this store first.
+# Supply every live ToolResultRef from ALL threads, forks, historical records,
+# exported checkpoints and other consumers, not only each latest state.
+retained = application_reference_inventory
+preview = results.collect_garbage(retained, quiescent=True)  # dry-run default
+
+# After reviewing preview, while the application is still stopped:
+removed = results.collect_garbage(retained, quiescent=True, dry_run=False)
+```
+
+The host owns the complete inventory and quiescence assertion; this API cannot
+discover external checkpoints or stop application writers. Do not run it with
+an incomplete inventory. It verifies retained references before deleting any
+unreferenced results or interrupted staging directories. Missing/corrupt retained
+references and unexpected store entries fail closed. Deletions are permanent
+and not transactional as a batch; a maintenance interruption may remove only
+some candidates. Normal Agent execution never invokes maintenance automatically.
+
+### Configure offload
 
 ```python
 from msgflux.nn import ToolLibrary
