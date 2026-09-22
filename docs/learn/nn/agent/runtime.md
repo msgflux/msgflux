@@ -2559,6 +2559,23 @@ in `CONTRIBUTING.md`. The separate
 `scripts/validate_openai_event_streaming.py` also exercises provider-specific
 streaming with paid API requests; it is not part of offline validation.
 
+To check whether repeated Agent runs retain process-local event state, run the
+offline memory benchmark in both thread modes:
+
+```bash
+uv run python scripts/benchmark_agent_memory_retention.py \
+  --batches 16 --iterations-per-batch 5 --thread-mode fresh
+uv run python scripts/benchmark_agent_memory_retention.py \
+  --batches 16 --iterations-per-batch 5 --thread-mode shared
+```
+
+The script runs a scripted model and local tool, closes SQLite and releases the
+Agent between batches, then reports Python allocations after garbage collection.
+It reports checkpoint size separately: durable SQLite growth is expected, while
+completed runs should leave no live EventHub thread or watcher state. Compare
+the retained-memory samples and late slope on the same host; `tracemalloc` does
+not measure process RSS or memory held by external model providers.
+
 ### Offline extension matrix
 
 Run the same tool trajectory with fresh agents and stores for each combination:
