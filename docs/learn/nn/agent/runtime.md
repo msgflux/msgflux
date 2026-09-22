@@ -2559,6 +2559,83 @@ in `CONTRIBUTING.md`. The separate
 `scripts/validate_openai_event_streaming.py` also exercises provider-specific
 streaming with paid API requests; it is not part of offline validation.
 
+### Live provider matrix and release stress gate
+
+The opt-in `tests/integration/test_live_agent_provider_matrix.py` exercises a
+real Agent with OpenAI, OpenRouter, Groq, Baseten, Fireworks and NVIDIA. For
+each configured provider it streams a tool call and its result, checks the
+terminal event and SQLite checkpoint, reconstructs the Agent and continues the
+thread. The test uses a small completion limit and a per-run timeout, but every
+request can consume provider quota or incur charges. Default `pytest` skips
+these tests; it never loads `.env` automatically.
+
+```bash
+# Export the provider API keys using your secret manager, then opt in:
+MSGFLUX_LIVE_AGENT_PROVIDER_MATRIX=1 \
+  uv run pytest -q tests/integration/test_live_agent_provider_matrix.py
+
+# Run just one provider with an explicit model or endpoint override:
+MSGFLUX_LIVE_AGENT_PROVIDER_MATRIX=1 \
+MSGFLUX_LIVE_AGENT_PROVIDERS=baseten \
+MSGFLUX_LIVE_BASETEN_MODEL=zai-org/GLM-5.2 \
+MSGFLUX_LIVE_BASETEN_BASE_URL=https://inference.baseten.co/v1 \
+  uv run pytest -q tests/integration/test_live_agent_provider_matrix.py
+
+# Require all six credentials and run the heavier offload/event-buffer case:
+MSGFLUX_LIVE_AGENT_PROVIDER_MATRIX=1 \
+MSGFLUX_LIVE_AGENT_STRESS=1 \
+MSGFLUX_LIVE_AGENT_REQUIRE_ALL=1 \
+  uv run pytest -q tests/integration/test_live_agent_provider_matrix.py
+```
+
+The first command tests each selected provider with an available key; missing
+ones appear as skips, not passes. An explicit provider filter or
+`MSGFLUX_LIVE_AGENT_REQUIRE_ALL=1` fails collection if a selected key/model is
+missing. The stress case runs an additional 512 KiB synthetic tool result,
+checks its offloaded reference and hash, and measures event and checkpoint
+sizes without printing the payload. Use `--junitxml=/trusted/path/report.xml`
+with `-o junit_family=xunit1` to retain its per-provider timing and size
+properties. Set `MSGFLUX_LIVE_<PROVIDER>_KEY_ENV` when the key has a
+nonstandard variable name and `..._MAX_TOKENS` (1–4096) when the model needs a
+different output cap. Model IDs and endpoints are defaults for validation, not
+stable library promises; override them if your account uses another model or
+deployment. The NVIDIA default is `openai/gpt-oss-20b`: both
+`z-ai/glm-5.3` and `z-ai/glm-5.3-flash` ended their streamed tool run without
+producing a response type in live validation, so they are not reliable gate
+defaults yet. `deepseek-ai/deepseek-v4.1-flash` answered without calling the
+required tool; `nvidia/nemotron-3-super-120b-a12b` completed the stress case
+but intermittently returned an overloaded-service error. They remain available
+as explicit model overrides for diagnosis. The default also showed one
+intermittent malformed tool call and one unexpected argument during repeated
+validation, so keep per-run failures visible rather than treating a single
+passing run as proof of provider reliability.
+
+The test prefers each registered provider class. When a requested provider is
+not yet registered in the checkout, it uses an explicit OpenAI-compatible Chat
+Completions adapter **inside the test only**. That fallback validates the wire
+transport and Agent integration, not provider-specific behavior in a PR that
+is not installed. Review the selected adapter when interpreting results.
+
+For a repeatable local performance baseline, run the offline benchmark before
+each release on the same hardware and Python version:
+
+```bash
+uv run python scripts/benchmark_agent_release.py \
+  --iterations 500 --payload-bytes 512
+uv run python scripts/benchmark_agent_release.py \
+  --iterations 500 --payload-bytes 512 \
+  --baseline /trusted/path/agent-baseline.json --max-regression 0.25
+```
+
+The first command emits JSON to stdout; save a reviewed result outside the
+repository for the second command. The gate exits nonzero when a comparable
+latency or peak-memory measurement exceeds the configured tolerance. It
+exercises event delivery, scripted Agent tool turns and SQLite checkpoints
+without making paid requests. Its numbers are machine-specific, so use a
+consistent host and investigate failures rather than assuming a wall-time
+change alone is a runtime regression. Live provider tests are a separate
+functional gate; their timing is influenced by remote capacity and rate limits.
+
 ### Offline extension matrix
 
 Run the same tool trajectory with fresh agents and stores for each combination:
