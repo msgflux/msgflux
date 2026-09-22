@@ -299,8 +299,9 @@ For bounded executor memory, implement
 larger than 64 KiB, then return `ProcessResult(returncode)` with empty buffers.
 The environment retains its permission, binding, isolation, abort and deadline
 checks. The callback applies backpressure: adapters must not enqueue unbounded
-pending callbacks. Executors implementing only `execute()` use a compatible
-buffered fallback, **without** the incremental memory guarantee.
+pending callbacks. `execute_stream` is the required backend method; the base
+`execute()` method is only a bounded collecting adapter for callers that need a
+buffered `ProcessResult`.
 
 Disk operations are awaited in workers. Cancellation joins an in-flight operation
 before closing its files; it can wait for storage and leave a complete orphaned

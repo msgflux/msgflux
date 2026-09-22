@@ -86,7 +86,6 @@ class ProcessExecutor(ABC):
     def supports_workspace(self, filesystem: WorkspaceFilesystem) -> bool:
         raise NotImplementedError
 
-    @abstractmethod
     async def execute(
         self,
         request: ProcessRequest,
@@ -96,9 +95,39 @@ class ProcessExecutor(ABC):
         requirements: SandboxRequirements,
         abort_signal: AbortSignal | None,
     ) -> ProcessResult:
-        """Use this workspace, never silently substitute the host filesystem."""
-        raise NotImplementedError
+        """Collect a streaming execution into a bounded ``ProcessResult``."""
+        stdout = bytearray()
+        stderr = bytearray()
 
+        async def collect(channel, data):
+            if channel not in ("stdout", "stderr"):
+                raise ValueError("Output channel must be stdout or stderr")
+            if not isinstance(data, bytes):
+                raise TypeError("Output chunks must be bytes")
+            if len(data) > MAX_PROCESS_OUTPUT_CHUNK:
+                raise ValueError("Output chunks may not exceed 65536 bytes")
+            if len(stdout) + len(stderr) + len(data) > request.max_output_bytes:
+                raise RuntimeError("Process executor exceeded its output limit")
+            target = stdout if channel == "stdout" else stderr
+            target.extend(data)
+
+        result = await self.execute_stream(
+            request,
+            filesystem=filesystem,
+            permissions=permissions,
+            requirements=requirements,
+            abort_signal=abort_signal,
+            on_output=collect,
+        )
+        if not isinstance(result, ProcessResult):
+            raise TypeError("Process executor must return ProcessResult")
+        if result.stdout or result.stderr:
+            raise RuntimeError(
+                "Streaming process executor returned duplicate buffered output"
+            )
+        return ProcessResult(result.returncode, bytes(stdout), bytes(stderr))
+
+    @abstractmethod
     async def execute_stream(
         self,
         request: ProcessRequest,
@@ -109,30 +138,8 @@ class ProcessExecutor(ABC):
         abort_signal: AbortSignal | None,
         on_output: ProcessOutputCallback,
     ) -> ProcessResult:
-        """Execute while delivering bounded output chunks to ``on_output``.
-
-        The compatibility implementation deliberately delegates to the legacy
-        buffered method.  Concrete executors that can drain pipes incrementally
-        should override this method; the security and workspace contract is the
-        same as :meth:`execute`.
-        """
-        result = await self.execute(
-            request,
-            filesystem=filesystem,
-            permissions=permissions,
-            requirements=requirements,
-            abort_signal=abort_signal,
-        )
-        if not isinstance(result, ProcessResult):
-            raise TypeError("Process executor must return ProcessResult")
-        if len(result.stdout) + len(result.stderr) > request.max_output_bytes:
-            raise RuntimeError("Process executor violated its output limit")
-        for channel, data in (("stdout", result.stdout), ("stderr", result.stderr)):
-            for offset in range(0, len(data), MAX_PROCESS_OUTPUT_CHUNK):
-                await on_output(
-                    channel, data[offset : offset + MAX_PROCESS_OUTPUT_CHUNK]
-                )
-        return ProcessResult(result.returncode)
+        """Use this workspace and deliver bounded output chunks incrementally."""
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
