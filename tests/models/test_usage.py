@@ -111,11 +111,30 @@ def test_usage_codec_normalizes_anthropic_and_google_aliases():
     assert google.output_tokens_details.reasoning_tokens == 6
 
 
+def test_usage_codec_keeps_missing_detail_counters_unknown():
+    usage = UsageCodec().normalize({"input_tokens": 100, "output_tokens": 10})
+
+    assert usage.input_tokens_details.cached_tokens is None
+    assert usage.input_tokens_details.cache_write_tokens is None
+    assert usage.input_tokens_details.audio_tokens is None
+    assert usage.input_tokens_details.video_tokens is None
+    assert usage.input_tokens_details.image_tokens is None
+    assert usage.input_tokens_details.text_tokens is None
+    assert usage.output_tokens_details.reasoning_tokens is None
+    assert usage.output_tokens_details.audio_tokens is None
+    assert usage.output_tokens_details.image_tokens is None
+    assert usage.output_tokens_details.text_tokens is None
+    assert usage.output_tokens_details.accepted_prediction_tokens is None
+    assert usage.output_tokens_details.rejected_prediction_tokens is None
+    assert usage.cache_hit_percentage is None
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ({"input_tokens": 100}, 0.0),
+        ({"input_tokens": 100}, None),
         ({"output_tokens": 10}, None),
+        ({"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}}, 0.0),
         ({"input_tokens": 0, "input_tokens_details": {"cached_tokens": 0}}, None),
         (
             {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 11}},
