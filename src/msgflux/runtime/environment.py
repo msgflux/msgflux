@@ -153,8 +153,11 @@ class ExecutionEnvironment:
     )
     binding: WorkspaceBinding | None = field(default=None, repr=False, compare=False)
     write_guarantee: WriteGuarantee = field(default="atomic_compare", kw_only=True)
+    max_edit_bytes: int = field(default=1_000_000, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self):  # noqa: C901
+        if type(self.max_edit_bytes) is not int or self.max_edit_bytes <= 0:
+            raise ValueError("max_edit_bytes must be a positive integer")
         if not isinstance(self.filesystem, WorkspaceFilesystem):
             raise TypeError("filesystem must be a WorkspaceFilesystem")
         if self.process_executor is not None and not isinstance(
@@ -190,6 +193,7 @@ class ExecutionEnvironment:
         *,
         requirements: SandboxRequirements | None = None,
         write_guarantee: WriteGuarantee = "atomic_compare",
+        max_edit_bytes: int = 1_000_000,
     ) -> ExecutionEnvironment:
         from msgflux.runtime.workspace_backend import WorkspaceBinding  # noqa: PLC0415
 
@@ -201,6 +205,7 @@ class ExecutionEnvironment:
             process_executor=binding.process_executor,
             binding=binding,
             write_guarantee=write_guarantee,
+            max_edit_bytes=max_edit_bytes,
             **kwargs,
         )
 
@@ -218,6 +223,7 @@ class ExecutionEnvironment:
             self.filesystem,
             require_approval=require_approval,
             write_guarantee=self.write_guarantee,
+            max_edit_bytes=self.max_edit_bytes,
         )
 
     def require_active(self) -> None:

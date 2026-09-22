@@ -124,6 +124,7 @@ class WorkspaceEditor:
         *,
         require_approval: bool = True,
         write_guarantee: WriteGuarantee = "atomic_compare",
+        max_edit_bytes: int = 1_000_000,
     ):
         if not isinstance(filesystem, WorkspaceFilesystem):
             raise TypeError("WorkspaceEditor requires a WorkspaceFilesystem")
@@ -134,14 +135,35 @@ class WorkspaceEditor:
         if write_guarantee not in ("atomic_compare", "cooperative_compare"):
             raise ValueError("Unknown workspace write guarantee")
         self.write_guarantee = write_guarantee
+        if type(max_edit_bytes) is not int or max_edit_bytes <= 0:
+            raise ValueError("max_edit_bytes must be a positive integer")
+        self.max_edit_bytes = max_edit_bytes
+
+    def _check_text(self, text):
+        if text is None:
+            return
+        if not isinstance(text, str):
+            raise TypeError("File contents must be text")
+        if len(text) > self.max_edit_bytes:
+            raise ValueError("File exceeds max_edit_bytes")
+        size = 0
+        for offset in range(0, len(text), 65536):
+            size += len(text[offset : offset + 65536].encode("utf-8"))
+            if size > self.max_edit_bytes:
+                raise ValueError("File exceeds max_edit_bytes")
 
     def _read(self, path):
         try:
-            return self.filesystem.read_text(path)
+            data = self.filesystem.read_prefix(path, max_bytes=self.max_edit_bytes + 1)
+            if len(data) > self.max_edit_bytes:
+                raise ValueError("File exceeds max_edit_bytes")
+            return data.decode("utf-8")
         except FileNotFoundError:
             return None
 
     def _prepare(self, path, before, after):
+        self._check_text(before)
+        self._check_text(after)
         change = PreparedFileChange(
             workspace_id=self.filesystem.workspace_id,
             workspace_identity=self.filesystem.identity,
@@ -157,6 +179,7 @@ class WorkspaceEditor:
         """Create or overwrite text; preserve the exact old bytes for review."""
         if not isinstance(content, str):
             raise TypeError("content must be text")
+        self._check_text(content)
         path = workspace_path(path)
         return self._prepare(path, self._read(path), content)
 
@@ -164,6 +187,8 @@ class WorkspaceEditor:
         """Replace one unambiguous exact match, with no whitespace guessing."""
         if not isinstance(old, str) or not old or not isinstance(new, str):
             raise ValueError("old must be non-empty text and new must be text")
+        self._check_text(old)
+        self._check_text(new)
         path = workspace_path(path)
         before = self._read(path)
         if before is None:
@@ -171,6 +196,8 @@ class WorkspaceEditor:
         start = before.find(old)
         if start < 0 or before.find(old, start + 1) >= 0:
             raise ValueError("old must match exactly once")
+        if len(before) - len(old) + len(new) > self.max_edit_bytes:
+            raise ValueError("File exceeds max_edit_bytes")
         return self._prepare(
             path, before, before[:start] + new + before[start + len(old) :]
         )
@@ -225,6 +252,8 @@ class WorkspaceEditor:
     def _authorize(self, change):
         if not isinstance(change, PreparedFileChange):
             raise TypeError("Expected a PreparedFileChange")
+        self._check_text(change.before)
+        self._check_text(change.after)
         if change.workspace_id != self.filesystem.workspace_id:
             raise PermissionError("Prepared change belongs to another workspace")
         if change.workspace_identity != self.filesystem.identity:
