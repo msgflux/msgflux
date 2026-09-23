@@ -3,8 +3,10 @@ from __future__ import annotations
 import time
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Collection, Dict, Optional
+from uuid import uuid4
 
 from msgflux.core.registry import Registry
+from msgflux.tasks.handle import TaskHandle
 from msgflux.tools.helpers import (
     BACKGROUND_ACTIVITY_TOOL_KIND,
     BACKGROUND_MESSAGE_TOOL_KIND,
@@ -245,6 +247,20 @@ class TaskMessageTool(ToolBackground):
         "return": Dict[str, Any],
     }
 
+    @staticmethod
+    def _running_inbox(handle: Any, task_id: str) -> tuple[Any, Dict[str, Any] | None]:
+        future = handle.get_task_future(task_id)
+        if future is None or future.done():
+            return None, None
+        inbox = handle.get_task_inbox(task_id)
+        if inbox is None:
+            return None, {
+                "task_id": task_id,
+                "status": "unsupported",
+                "error": "The running task does not expose a message inbox.",
+            }
+        return inbox, None
+
     def __call__(
         self,
         task_id: str,
@@ -266,35 +282,17 @@ class TaskMessageTool(ToolBackground):
                 "error": "task_message requires the task message capability.",
             }
 
-        if task.status == "running":
-            future = handle.get_task_future(task_id)
-            if future is None or future.done():
-                return {
-                    "task_id": task_id,
-                    "status": "recovery_required",
-                    "error": (
-                        "Task is marked running but has no active worker in "
-                        "this process."
-                    ),
-                }
-            task_inbox = handle.get_task_inbox(task_id)
-            if task_inbox is None:
-                return {
-                    "task_id": task_id,
-                    "status": "unsupported",
-                    "error": "The running task does not expose a message inbox.",
-                }
-            task_inbox.publish(
-                {
-                    "source": "task_message",
-                    "ref": task_id,
-                    "status": "message",
-                    "metadata": {
-                        "direction": "root_to_task",
-                        "message": message.strip(),
-                    },
-                }
-            )
+        if task.status in {"running", "queued"}:
+            task_inbox = None
+            if task.status == "running":
+                task_inbox, error = self._running_inbox(handle, task_id)
+                if error is not None:
+                    return error
+            message_id = uuid4().hex
+            if not task_store.enqueue_message(task_id, message_id, message.strip()):
+                return {"task_id": task_id, "status": "not_found"}
+            if task_inbox is not None:
+                TaskHandle(task_id, task_store).forward_messages(task_inbox)
             task_store.add_activity(
                 task_id,
                 kind="message",
@@ -303,8 +301,14 @@ class TaskMessageTool(ToolBackground):
             )
             return {
                 "task_id": task_id,
-                "status": "delivered",
-                "message": "Message delivered to the running background agent.",
+                "status": "queued",
+                "message_id": message_id,
+                "inbox_published": task_inbox is not None,
+                "message": (
+                    "Message persisted and published to the local worker inbox."
+                    if task_inbox is not None
+                    else "Message persisted; worker availability is not confirmed here."
+                ),
             }
 
         if task.metadata.get("task_kind") != "agent":

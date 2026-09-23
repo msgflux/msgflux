@@ -22,6 +22,29 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
         self._lock = RLock()
         self._tasks: Dict[str, TaskRecord] = {}
         self._activities: Dict[str, List[TaskActivity]] = {}
+        self._messages: Dict[str, Dict[str, str]] = {}
+
+    def enqueue_message(self, task_id: str, message_id: str, message: str) -> bool:
+        """Persist a message against the task, independent of its current run."""
+        with self._lock:
+            if task_id not in self._tasks:
+                return False
+            self._messages.setdefault(task_id, {}).setdefault(message_id, message)
+            return True
+
+    def pending_messages(self, task_id: str) -> List[tuple[str, str]]:
+        with self._lock:
+            return list(self._messages.get(task_id, {}).items())
+
+    def ack_messages(self, task_id: str, message_ids: List[str]) -> None:
+        with self._lock:
+            pending = self._messages.get(task_id)
+            if pending is None:
+                return
+            for message_id in message_ids:
+                pending.pop(message_id, None)
+            if not pending:
+                self._messages.pop(task_id, None)
 
     # --- Query Operations ---
 
@@ -321,11 +344,27 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.updated_at = utc_now_isoformat()
             return deepcopy(task)
 
-    def requeue(self, task_id: str) -> TaskRecord | None:
+    def requeue(
+        self,
+        task_id: str,
+        *,
+        expected_status: str | None = None,
+        expected_generation: int | None = None,
+        run_id: str | None = None,
+    ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 return None
+            if expected_status is not None:
+                if (
+                    task.status != expected_status
+                    or task.metadata.get("resume_generation", 0) != expected_generation
+                ):
+                    return None
+                task.metadata["resume_generation"] = expected_generation + 1
+            if run_id is not None:
+                task.metadata["checkpoint_run_id"] = run_id
             now = utc_now_isoformat()
             task.status = "queued"
             task.updated_at = now

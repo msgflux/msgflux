@@ -239,6 +239,7 @@ The task metadata records enough routing information to reconstruct the call:
 - the child `thread_id` used for that subagent conversation
 - the current child `run_id` (initially the task id)
 - the logical inbox store used by that child execution
+- the logical checkpoint store used by the child (when configured)
 
 For an agent task, `task_message` re-dispatches the same tool with the saved
 routing parameters and a scope like:
@@ -263,22 +264,41 @@ recorded in task metadata. A message sent while that resumed run is executing
 goes to its current inbox, not the inbox of the previous run. The caller does
 not need to pass the new `run_id` to `task_message`.
 
-The inbox is resolved from the task's saved namespace, thread, run, and inbox
-store routing information. This lets a runtime with durable task, checkpoint,
-and inbox stores continue routing messages after it is reconstructed; the
-inbox itself does not need to be retained in a process-local task map. For a
-task recorded as `running`, `task_message` delivers only when this process has
-an active worker future. If the task is still marked running but no worker is
-present (for example, after a process stopped), it returns
-`status="recovery_required"` instead of reporting a message as delivered. The
-application can then reconcile or recover that task before sending more work.
+For a running or queued task, `task_message` first saves the message against
+the task id in the task store, independent of the current run. A local running
+worker also gets an immediate copy in its inbox. The result distinguishes
+acceptance from observation by the model:
 
-`SQLiteAgentInboxStore` persists its `routing_id` in the database, so the
-binding remains stable when the database is reopened or moved. A custom durable
-`AgentInboxStore` should also expose a `routing_id` that stays stable across
-reopens. The base store's default identity is process-local; tasks bound to it
-cannot recover their inbox after a process restart and fail explicitly if the
-runtime cannot verify the original store.
+```json
+{"task_id":"ab12cd34","status":"queued","message_id":"...","inbox_published":true}
+```
+
+`queued` means the message is persisted, **not** that the model has read it.
+`inbox_published` reports only whether this runtime also published to a local
+worker inbox. When the worker is in another process, stopped, or not yet
+started, it is `false`; the message remains available for the next worker
+drain. The application must still recover a task left in `running` after a
+crash. Sending a message does not restart that worker automatically.
+
+The worker replays pending task messages into its current run inbox with a
+stable message ID. After the agent checkpoints its inbox receipt, the task
+store removes the pending row. A failure between publishing and checkpointing
+can therefore replay the message safely to a later run. Concurrent resume
+attempts use a task-store claim so only one can switch the task to a new run.
+The inbox route is still resolved from the task's saved namespace, thread,
+run, and inbox store binding, rather than a process-local map.
+Custom task stores used with background agent messaging must implement
+`enqueue_message`, `pending_messages`, `ack_messages`, and the conditional
+`requeue` arguments shown by the built-in memory and SQLite stores.
+
+The SQLite inbox and checkpoint stores persist their `routing_id` in their
+respective databases, so bindings survive reopening or relocation. Custom
+durable store implementations should also expose stable `routing_id` values.
+The base stores' default identities are process-local; an incompatible store
+binding fails explicitly on resume. Supply the same logical stores to the
+reconstructed runtime. For example, reopen the SQLite task, inbox and
+checkpoint databases at their new locations, then pass those store instances
+when rebuilding the agent and its tool library.
 
 For an opt-in check with two real OpenAI model calls and SQLite stores:
 

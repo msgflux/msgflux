@@ -178,6 +178,18 @@ class AgentConversationMixin:
                 {"count": len(ids), "notification_ids": ids},
             )
 
+    @staticmethod
+    def _forward_task_messages(inbox: AgentInbox) -> None:
+        task_handle = get_execution_context().get("task_handle")
+        if task_handle is not None:
+            task_handle.forward_messages(inbox)
+
+    @staticmethod
+    def _ack_task_messages(notification_ids) -> None:
+        task_handle = get_execution_context().get("task_handle")
+        if task_handle is not None:
+            task_handle.ack_messages(list(notification_ids))
+
     def _prepare_inbox_delivery(self, inbox, messages, notifications, *, drain):
         if not drain:
             return self._handle_control_notifications(notifications)
@@ -228,6 +240,7 @@ class AgentConversationMixin:
             if self._get_effective_checkpoint_store() is None:
                 delivered_ids = inbox.delivered_ids()
                 inbox.ack(delivered_ids)
+                self._ack_task_messages(delivered_ids)
                 self._emit_notification_drain(delivered_ids)
         return bool(notification_messages)
 
@@ -242,6 +255,8 @@ class AgentConversationMixin:
         inbox = self._get_effective_agent_inbox()
         if inbox is None:
             return False
+
+        self._forward_task_messages(inbox)
 
         notifications = inbox.claim() if drain_notifications else inbox.peek()
         notifications = self._prepare_inbox_delivery(
@@ -288,6 +303,8 @@ class AgentConversationMixin:
         inbox = self._get_effective_agent_inbox()
         if inbox is None:
             return False
+
+        self._forward_task_messages(inbox)
 
         notifications = inbox.claim() if drain_notifications else inbox.peek()
         notifications = self._prepare_inbox_delivery(
@@ -873,6 +890,7 @@ class AgentConversationMixin:
             acknowledged_ids = inbox.delivered_ids() & self._inbox_receipt_ids(messages)
             try:
                 inbox.ack(acknowledged_ids)
+                self._ack_task_messages(acknowledged_ids)
                 self._emit_notification_drain(acknowledged_ids)
             except Exception as error:
                 # The durable receipt makes replay safe. Do not turn a committed

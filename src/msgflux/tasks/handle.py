@@ -38,6 +38,27 @@ class TaskHandle:
 
     # --- Task State Updates ---
 
+    def pending_messages(self) -> list[tuple[str, str]]:
+        """Return task-addressed messages awaiting durable inbox consumption."""
+        return self._store.pending_messages(self.task_id)
+
+    def ack_messages(self, message_ids: list[str]) -> None:
+        self._store.ack_messages(self.task_id, message_ids)
+
+    def forward_messages(self, inbox: AgentInbox) -> None:
+        """Replay pending messages into this run; retries keep the same identity."""
+        for message_id, message in self.pending_messages():
+            inbox.publish(
+                AgentNotification(
+                    notification_id=message_id,
+                    source="task_message",
+                    ref=self.task_id,
+                    status="message",
+                    metadata={"direction": "root_to_task", "message": message},
+                    dedupe_key=f"task_message:{message_id}",
+                )
+            )
+
     def _emit_record(self, event_type: str, record: TaskRecord | None) -> None:
         if record is None:
             return

@@ -148,7 +148,8 @@ def test_live_resumed_agenttool_routes_message_without_inbox_map(
                 message="Additional instruction while running",
                 handle=library.get_handle(),
             )
-            assert sent["status"] == "delivered"
+            assert sent["status"] == "queued"
+            assert sent["inbox_published"] is True
             assert (
                 current_inbox.run_id == tasks.get(task_id).metadata["checkpoint_run_id"]
             )

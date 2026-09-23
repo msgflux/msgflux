@@ -1,8 +1,9 @@
 # Background Inbox Routing Without Per-Task Retention
 
-Status: the historical `_task_inboxes` map has been removed. This document
-retains the original measurements and design rationale; the checkpoint-store
-map and cross-process task coordination remain separate work.
+Status: both historical per-task store maps have been removed. This document
+retains the original measurements and design rationale. Task-addressed
+messages and atomic resume claims now cover the run-transition race; automatic
+recovery of an orphaned worker remains separate work.
 
 ## Implemented route
 
@@ -16,19 +17,22 @@ an in-memory store uses an instance-specific ID. Custom durable stores must
 provide a stable `routing_id`.
 
 The worker still holds its inbox view while active, but the dispatcher no
-longer retains one view per historical task. A task marked `running` without
-an active future in this process returns `recovery_required` from
-`task_message`; this does not automatically restart work. Resume creates a
-new run route for completed or interrupted tasks. Parent completion
-notifications still use the parent inbox, including bucket-captured tools.
+longer retains one view or checkpoint store per historical task. A message to
+a running task without a local future is queued durably, but this does not
+automatically restart a crashed worker. Resume creates a new run route for
+completed or interrupted tasks. Parent completion notifications still use the
+parent inbox, including bucket-captured tools.
 
 Tests cover direct and bucket routes, a fresh library with reopened SQLite
 stores, wrong-store rejection, orphan-worker reporting and a real model call
 with a message delivered to a resumed child. A separate 100-task profile
-found no historical inbox entries; the checkpoint-store map still grows per
-agent task. The route metadata update and message publish are not one atomic
-cross-process operation, so concurrent resume/publish coordination remains a
-future durability refinement.
+found no historical inbox entries. Checkpoint stores now use stable bindings
+rather than task-id references. Task messages are committed to the task store
+before being published to a run inbox; an unacknowledged message can be
+replayed after a run changes. The task store atomically claims resume so two
+processes cannot requeue the same task generation. Delivery remains
+at-least-once across a crash, with inbox IDs and checkpoint receipts used for
+deduplication; it is not a claim of exactly-once model execution.
 
 ## Problem and measured boundary
 
