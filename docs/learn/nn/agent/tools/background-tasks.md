@@ -237,14 +237,14 @@ The task metadata records enough routing information to reconstruct the call:
 - the checkpoint namespace for that child execution
 - the parent/root run lineage
 - the child `thread_id` used for that subagent conversation
-- the task id used as the child `run_id`
+- the current child `run_id` (initially the task id)
 
 For an agent task, `task_message` re-dispatches the same tool with the saved
 routing parameters and a scope like:
 
 ```text
 thread_id = original child thread
-run_id = task_id
+run_id = task_id  # initial run
 parent_run_id = root run that launched the task
 root_run_id = root run of the whole execution tree
 ```
@@ -255,6 +255,12 @@ child had completed and you want a new independent subagent conversation, call
 the `agent` tool again so a new task id/run id is created. If you want to keep
 talking to the same subagent task, use `task_message` with the existing
 `task_id`.
+
+After a completed or interrupted child is continued, `task_id` remains the
+handle used by `task_message`, but the new child run receives a new `run_id`
+recorded in task metadata. A message sent while that resumed run is executing
+goes to its current inbox, not the inbox of the previous run. The caller does
+not need to pass the new `run_id` to `task_message`.
 
 ## Reporting Progress
 
