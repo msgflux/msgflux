@@ -75,6 +75,19 @@
         )
         ```
 
+    === "Baseten"
+
+        Authenticate with `BASETEN_API_KEY`. The default OpenAI-compatible base
+        URL is `https://inference.baseten.co/v1`; set `BASETEN_BASE_URL` to
+        override it.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(BASETEN_API_KEY="...")
+        model = mf.Model.chat_completion("baseten/zai-org/GLM-5.2")
+        ```
+
     === "NVIDIA"
 
         Authenticate by setting the `NVIDIA_API_KEY` env variable (free trial

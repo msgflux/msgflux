@@ -21,6 +21,7 @@ authorized workspace; installing the extra does not grant filesystem access.
 
 | Provider    | Dependency | Auth Env               |
 |-------------|------------|------------------------|
+| Baseten     | `msgflux`  | `BASETEN_API_KEY`      |
 | Brave       | `msgflux`  | `BRAVE_SEARCH_API_KEY` |
 | Cerebras    | `msgflux`  | `CEREBRAS_API_KEY`     |
 | Fireworks   | `msgflux`  | `FIREWORKS_API_KEY`    |
