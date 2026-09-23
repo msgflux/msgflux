@@ -37,6 +37,7 @@ from msgflux.runtime.context import (
     new_run_id,
     new_thread_id,
 )
+from msgflux.runtime.events import EventType, emit_event
 from msgflux.tools.runtime import ToolOutcome
 from msgflux.utils.console import cprint
 from msgflux.utils.time import utc_now_isoformat
@@ -168,6 +169,15 @@ class AgentConversationMixin:
                 self._inbox_receipt_ids(messages).union(ids)
             )
 
+    @staticmethod
+    def _emit_notification_drain(notification_ids) -> None:
+        ids = sorted(set(notification_ids))
+        if ids:
+            emit_event(
+                EventType.NOTIFICATION_DRAIN,
+                {"count": len(ids), "notification_ids": ids},
+            )
+
     def _prepare_inbox_delivery(self, inbox, messages, notifications, *, drain):
         if not drain:
             return self._handle_control_notifications(notifications)
@@ -216,7 +226,9 @@ class AgentConversationMixin:
             inbox.mark_delivered(ids)
             inbox.release(except_ids=inbox.delivered_ids())
             if self._get_effective_checkpoint_store() is None:
-                inbox.ack(inbox.delivered_ids())
+                delivered_ids = inbox.delivered_ids()
+                inbox.ack(delivered_ids)
+                self._emit_notification_drain(delivered_ids)
         return bool(notification_messages)
 
     def _drain_inbox_into_messages(
@@ -858,8 +870,10 @@ class AgentConversationMixin:
     def _ack_inbox_notifications(self, messages) -> None:
         inbox = self._get_effective_agent_inbox()
         if inbox is not None:
+            acknowledged_ids = inbox.delivered_ids() & self._inbox_receipt_ids(messages)
             try:
-                inbox.ack(inbox.delivered_ids() & self._inbox_receipt_ids(messages))
+                inbox.ack(acknowledged_ids)
+                self._emit_notification_drain(acknowledged_ids)
             except Exception as error:
                 # The durable receipt makes replay safe. Do not turn a committed
                 # terminal run into a failed run because inbox cleanup failed.

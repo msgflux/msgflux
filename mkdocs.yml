@@ -124,6 +124,7 @@ nav:
     - index.md
   - Anatomy:
     - anatomy/agent-inbox.md
+    - anatomy/background-inbox-routing-plan.md
     - anatomy/agent.md
     - anatomy/checkpoints-and-replay.md
     - anatomy/compaction-and-context-views.md

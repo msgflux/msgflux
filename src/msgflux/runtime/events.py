@@ -46,6 +46,7 @@ class EventType:
     TASK_START = "task.start"
     TASK_UPDATE = "task.update"
     TASK_END = "task.end"
+    NOTIFICATION_DRAIN = "notification.drain"
     COMPACTION_START = "compaction.start"
     COMPACTION_END = "compaction.end"
     CHECKPOINT_SAVED = "checkpoint.saved"

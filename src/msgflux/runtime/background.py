@@ -240,6 +240,18 @@ class BackgroundTaskDispatcher:
                 run_id=run_id,
             )
             self.register_task_inbox(task.task_id, task_inbox)
+        elif (
+            task_inbox.namespace != checkpoint_namespace
+            or task_inbox.thread_id != thread_id
+            or task_inbox.run_id != run_id
+        ):
+            task_inbox = task_inbox.fork(
+                owner=f"{tool_name}:{task.task_id}",
+                namespace=checkpoint_namespace,
+                thread_id=thread_id,
+                run_id=run_id,
+            )
+            self.register_task_inbox(task.task_id, task_inbox)
 
         task_store.requeue(task.task_id)
         emit_event(
