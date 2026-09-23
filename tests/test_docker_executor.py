@@ -2,6 +2,8 @@ import asyncio
 import os
 import shutil
 import subprocess
+from dataclasses import replace
+from uuid import uuid4
 
 import pytest
 
@@ -16,6 +18,28 @@ from msgflux.runtime import (
 )
 from msgflux.runtime.docker_executor import DockerLimits, DockerProcessExecutor
 from msgflux.runtime.process_capture import ProcessOutputLimitError
+
+
+def _container_exists(executor, name):
+    """Ask the same daemon whether an exact ephemeral container still exists."""
+    result = subprocess.run(  # noqa: S603 -- fixed Docker CLI and generated name
+        [
+            *executor._prefix,
+            "container",
+            "ls",
+            "--all",
+            "--filter",
+            f"name=^/{name}$",
+            "--format",
+            "{{.Names}}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=executor._client_env(),
+    )
+    return name in result.stdout.splitlines()
 
 
 @pytest.fixture
@@ -74,11 +98,58 @@ async def test_real_container_writes_and_enforces_isolation(docker_scope, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_real_container_requires_workspace_grant_and_is_removed(
+    docker_scope, monkeypatch
+):
+    scope, root = docker_scope
+    filesystem = scope.environment.filesystem
+    executor = scope.environment.process_executor
+    container_id = uuid4()
+    container_name = f"msgflux-{container_id.hex}"
+    monkeypatch.setattr("msgflux.runtime.docker_executor.uuid4", lambda: container_id)
+    monkeypatch.setenv("MSGFLUX_DOCKER_HOST_ONLY_SENTINEL", "not-for-container")
+    request = ProcessRequest(
+        (
+            "python",
+            "-c",
+            "import os,pathlib; "
+            "assert 'MSGFLUX_DOCKER_HOST_ONLY_SENTINEL' not in os.environ; "
+            "pathlib.Path('permitted.txt').write_text('from container')",
+        )
+    )
+    denied = replace(
+        scope,
+        permissions=PermissionSet(
+            ["process.execute"],
+            [filesystem.permission("/permitted.txt", "filesystem.write")],
+        ),
+    )
+    assert not _container_exists(executor, container_name)
+    with (
+        execution_context(scope=denied),
+        pytest.raises(PermissionError, match="whole-workspace"),
+    ):
+        await scope.environment.arun(request)
+    assert not _container_exists(executor, container_name)
+    assert not (root / "permitted.txt").exists()
+
+    with execution_context(scope=scope):
+        result = await scope.environment.arun(request)
+    assert result.returncode == 0, result.stderr
+    assert (root / "permitted.txt").read_text() == "from container"
+    assert not _container_exists(executor, container_name)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mode", ["quota", "timeout", "cancel", "sink", "early_timeout"]
 )
-async def test_real_container_failure_cleanup(docker_scope, mode):
+async def test_real_container_failure_cleanup(docker_scope, mode, monkeypatch):
     scope, root = docker_scope
+    executor = scope.environment.process_executor
+    container_id = uuid4()
+    container_name = f"msgflux-{container_id.hex}"
+    monkeypatch.setattr("msgflux.runtime.docker_executor.uuid4", lambda: container_id)
     ready = asyncio.Event()
     code = (
         "import subprocess,time; "
@@ -125,6 +196,7 @@ async def test_real_container_failure_cleanup(docker_scope, mode):
             await task
     await asyncio.sleep(2.1)
     assert not (root / "leaked").exists()
+    assert not _container_exists(executor, container_name)
 
 
 def test_limits_and_exact_workspace_grant(tmp_path, monkeypatch):
