@@ -22,6 +22,7 @@ from msgflux.tools.builtin.task_tool import (
     BACKGROUND_ACTIVITY_TOOLS,
     BACKGROUND_MESSAGE_TOOLS,
     BASE_TASK_TOOLS,
+    TaskMessageTool,
 )
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.tools import ToolBackground, ToolLibraryOperator
@@ -1553,6 +1554,88 @@ def test_task_message_resumes_completed_background_agent():
         )
     assert default_task_store.get(task_id) is None
     assert task_store.get(task_id).status == "completed"
+
+
+@pytest.mark.parametrize("use_bucket", [False, True])
+def test_task_message_during_resumed_run_targets_current_inbox(use_bucket):
+    resumed_model_started = threading.Event()
+    release_resumed_model = threading.Event()
+
+    class BlockingResumeModel:
+        model_type = "chat_completion"
+
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                resumed_model_started.set()
+                if not release_resumed_model.wait(timeout=5):
+                    raise TimeoutError("Resumed model was not released")
+            return _text_response("ok")
+
+        async def acall(self, **kwargs):
+            return self(**kwargs)
+
+    checkpoint_store = InMemoryCheckpointStore()
+    task_store = InMemoryTaskStore()
+    worker = Agent(name="worker", model=BlockingResumeModel())
+    if not use_bucket:
+        worker.tool_config = {"background": True}
+    tools = (
+        [mf.tool_config(allow_background=True)(AgentTool()), worker]
+        if use_bucket
+        else [worker]
+    )
+    library = ToolLibrary(name="lib", tools=tools, task_store=task_store)
+
+    try:
+        with execution_context(
+            thread_id="routing_thread",
+            namespace="root",
+            run_id="root_run",
+            root_run_id="root_run",
+            checkpoint_store=checkpoint_store,
+        ):
+            call = (
+                (
+                    "first",
+                    "agent",
+                    {"name": "worker", "message": "Start", "run_in_background": True},
+                )
+                if use_bucket
+                else ("first", "worker", {"task": "Start"})
+            )
+            dispatch = library([call])
+            task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+            _wait_until(lambda: task_store.get(task_id).status == "completed")
+            old_inbox = library.get_background_dispatcher().get_task_inbox(task_id)
+
+            resumed = library(
+                [("resume", "task_message", {"task_id": task_id, "message": "Go"})]
+            )
+            assert resumed.tool_calls[0].result["status"] == "resumed"
+            assert resumed_model_started.wait(timeout=5)
+
+            current_run_id = task_store.get(task_id).metadata["checkpoint_run_id"]
+            delivered = TaskMessageTool()(
+                task_id=task_id,
+                message="New instruction",
+                handle=library.get_handle(),
+            )
+            assert delivered["status"] == "delivered"
+            current_inbox = library.get_background_dispatcher().get_task_inbox(task_id)
+            assert current_run_id != task_id
+            assert current_inbox.run_id == current_run_id
+            assert current_inbox.store is old_inbox.store
+            assert old_inbox.peek() == []
+            assert [item.metadata["message"] for item in current_inbox.peek()] == [
+                "New instruction"
+            ]
+    finally:
+        release_resumed_model.set()
+    _wait_until(lambda: task_store.get(task_id).status == "completed")
 
 
 def test_task_message_resume_clears_previous_interrupt_reason():

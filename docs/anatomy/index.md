@@ -40,6 +40,8 @@ Use this section when you need to answer questions like:
   replay.
 - [Agent Inbox](agent-inbox.md): the notification primitive for runtime
   signals delivered to the model.
+- [Background Inbox Routing Plan](background-inbox-routing-plan.md): how to
+  address resumable task inboxes without retaining one Python inbox per task.
 - [Execution Event Streaming](execution-event-streaming.md): ordered model
   events, lifecycle adaptation, the process-local hub, and atomic thread
   watchers.
