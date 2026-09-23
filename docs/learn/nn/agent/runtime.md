@@ -2827,4 +2827,8 @@ MSGFLUX_TEST_DOCKER=1 uv run pytest -q tests/test_docker_executor.py
 ```
 
 These tests create temporary workspaces and owned containers; they never mount
-the project source or the application's existing result store.
+the project source or the application's existing result store. They verify that
+an individual file grant cannot launch a mounted container, a host-only
+environment variable is absent inside it, and the daemon has removed the
+ephemeral container after success, output-limit failure, timeout, cancellation,
+or output-sink failure.
