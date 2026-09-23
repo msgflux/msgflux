@@ -231,6 +231,90 @@ async def test_agent_run_start_carries_execution_context_and_model_boundaries():
 
 
 @pytest.mark.asyncio
+async def test_agent_stream_events_reports_drained_notifications():
+    agent, _ = make_agent()
+    notification = agent.agent_inbox.publish(
+        {"source": "task", "ref": "task-1", "status": "completed"}
+    )
+
+    events = [event async for event in agent.stream_events("hi")]
+
+    drained = next(
+        event for event in events if event.type == EventType.NOTIFICATION_DRAIN
+    )
+    assert drained.data == {
+        "count": 1,
+        "notification_ids": [notification.notification_id],
+    }
+    assert events.index(drained) < next(
+        index
+        for index, event in enumerate(events)
+        if event.type == EventType.MODEL_REQUEST
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_events_reports_drain_after_checkpoint_commit():
+    agent, _ = make_agent()
+    store = InMemoryCheckpointStore()
+    agent.checkpoint_store = store
+    notification = agent.agent_inbox.publish(
+        {"source": "task", "ref": "task-1", "status": "completed"}
+    )
+
+    events = [event async for event in agent.stream_events("hi")]
+
+    drained = [event for event in events if event.type == EventType.NOTIFICATION_DRAIN]
+    assert len(drained) == 1
+    assert drained[0].data == {
+        "count": 1,
+        "notification_ids": [notification.notification_id],
+    }
+    start = events[0]
+    assert store.list_runs(agent.name, start.data["thread_id"])
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_events_does_not_report_drain_after_checkpoint_failure(
+    monkeypatch,
+):
+    agent, _ = make_agent()
+    store = InMemoryCheckpointStore()
+    agent.checkpoint_store = store
+    agent.agent_inbox.publish({"source": "task", "ref": "task-1"})
+    monkeypatch.setattr(
+        store,
+        "commit_state",
+        Mock(side_effect=RuntimeError("checkpoint failed")),
+    )
+    seen = []
+
+    with pytest.raises(RuntimeError, match="checkpoint failed"):
+        async for event in agent.stream_events("hi"):
+            seen.append(event)
+
+    assert EventType.NOTIFICATION_DRAIN not in [event.type for event in seen]
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_events_does_not_report_notifications_before_ack():
+    def fail_transform(_context):
+        raise RuntimeError("transform failed")
+
+    agent, _ = make_agent(
+        hooks=[Hook(event="transform_notifications", handler=fail_transform)]
+    )
+    agent.agent_inbox.publish({"source": "task", "ref": "task-1"})
+    seen = []
+
+    with pytest.raises(RuntimeError, match="transform failed"):
+        async for event in agent.stream_events("hi"):
+            seen.append(event)
+
+    assert EventType.NOTIFICATION_DRAIN not in [event.type for event in seen]
+
+
+@pytest.mark.asyncio
 async def test_agent_stream_events_reports_compaction_without_summary_content():
     class CompactingModel:
         model_type = "chat_completion"

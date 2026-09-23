@@ -67,6 +67,23 @@ output from the model. Without `stream=True`, the lifecycle stream still emits
 events such as `model.request`, `message.end`, and `run.end`, but it has no
 model chunks from which to produce `message.delta`.
 
+When the Agent acknowledges queued inbox notifications, the stream includes a
+`notification.drain` event. Without checkpointing, acknowledgement follows
+successful delivery; with checkpointing, it follows the durable checkpoint
+commit. Its data contains the number of notifications and their IDs; notification
+content is not copied into the event:
+
+```python
+async for event in agent.stream_events("Continue the task"):
+    if event.type == "notification.drain":
+        print(event.data["count"], event.data["notification_ids"])
+```
+
+This example lets a client observe acknowledged inbox delivery without
+exposing notification payloads. If delivery or checkpointing fails before
+acknowledgement, the event is not emitted and the notifications remain
+available for replay.
+
 ## Watching An Existing Thread
 
 `stream_events()` starts and owns one execution. Use `watch(thread_id)` when a
