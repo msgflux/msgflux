@@ -11,11 +11,12 @@ import msgflux as mf
 import pytest
 from msgflux.chat_messages import ChatMessages
 from msgflux.runtime.context import execution_context
-from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.data.stores import InMemoryCheckpointStore, SQLiteCheckpointStore
 from msgflux.exceptions import TaskPauseRequestedError, TaskInterruptRequestedError
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
+from msgflux.runtime.agent_inbox import AgentInbox, SQLiteAgentInboxStore
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.tools.builtin import AgentTool, TaskActivityTool, TaskStatusTool
 from msgflux.tools.builtin.task_tool import (
@@ -24,7 +25,7 @@ from msgflux.tools.builtin.task_tool import (
     BASE_TASK_TOOLS,
     TaskMessageTool,
 )
-from msgflux.tasks import InMemoryTaskStore
+from msgflux.tasks import InMemoryTaskStore, TaskStore
 from msgflux.tools import ToolBackground, ToolLibraryOperator
 
 
@@ -1610,7 +1611,7 @@ def test_task_message_during_resumed_run_targets_current_inbox(use_bucket):
             dispatch = library([call])
             task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
             _wait_until(lambda: task_store.get(task_id).status == "completed")
-            old_inbox = library.get_background_dispatcher().get_task_inbox(task_id)
+            old_inbox = library.get_handle().get_task_inbox(task_id)
 
             resumed = library(
                 [("resume", "task_message", {"task_id": task_id, "message": "Go"})]
@@ -1625,7 +1626,7 @@ def test_task_message_during_resumed_run_targets_current_inbox(use_bucket):
                 handle=library.get_handle(),
             )
             assert delivered["status"] == "delivered"
-            current_inbox = library.get_background_dispatcher().get_task_inbox(task_id)
+            current_inbox = library.get_handle().get_task_inbox(task_id)
             assert current_run_id != task_id
             assert current_inbox.run_id == current_run_id
             assert current_inbox.store is old_inbox.store
@@ -1636,6 +1637,206 @@ def test_task_message_during_resumed_run_targets_current_inbox(use_bucket):
     finally:
         release_resumed_model.set()
     _wait_until(lambda: task_store.get(task_id).status == "completed")
+
+
+def test_task_message_rejects_running_agent_without_local_future():
+    task_store = InMemoryTaskStore()
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=task_store)
+    task = task_store.create(
+        "worker",
+        task_id="orphaned-task",
+        metadata={
+            "task_kind": "agent",
+            "background_capabilities": ["activity", "message"],
+            "checkpoint_namespace": "worker",
+            "checkpoint_thread_id": "orphaned-thread",
+            "checkpoint_run_id": "orphaned-run",
+        },
+    )
+    task_store.set_running(task.task_id)
+
+    result = TaskMessageTool()(
+        task_id=task.task_id,
+        message="Please continue",
+        handle=library.get_handle(),
+    )
+
+    assert result["status"] == "recovery_required"
+    assert "no active worker" in result["error"]
+    assert task_store.get(task.task_id).status == "running"
+    assert library.get_agent_inbox().peek() == []
+
+
+def test_task_message_fails_when_inbox_store_binding_does_not_match(tmp_path):
+    expected_store = SQLiteAgentInboxStore(str(tmp_path / "expected.sqlite3"))
+    actual_store = SQLiteAgentInboxStore(str(tmp_path / "actual.sqlite3"))
+    task_store = InMemoryTaskStore()
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=task_store)
+    library.set_agent_inbox(AgentInbox(owner="root", store=actual_store))
+    task = task_store.create(
+        "worker",
+        task_id="wrong-inbox-store",
+        metadata={
+            "task_kind": "agent",
+            "background_capabilities": ["activity", "message"],
+            "checkpoint_namespace": "worker",
+            "checkpoint_thread_id": "worker-thread",
+            "checkpoint_run_id": "worker-run",
+            "inbox_store_id": expected_store.routing_id,
+        },
+    )
+    task_store.complete(task.task_id, "previous result")
+
+    try:
+        with pytest.raises(RuntimeError, match="inbox store"):
+            TaskMessageTool()(
+                task_id=task.task_id,
+                message="Continue",
+                handle=library.get_handle(),
+            )
+
+        assert library.get_agent_inbox().peek() == []
+        assert (
+            AgentInbox(
+                owner="worker",
+                store=expected_store,
+                namespace="worker",
+                thread_id="worker-thread",
+                run_id="worker-run",
+            ).peek()
+            == []
+        )
+    finally:
+        expected_store.close()
+        actual_store.close()
+
+
+def test_task_message_resolves_sqlite_inbox_after_runtime_reconstruction(tmp_path):
+    resumed_model_started = threading.Event()
+    release_resumed_model = threading.Event()
+
+    class BlockingResumeModel:
+        model_type = "chat_completion"
+
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                resumed_model_started.set()
+                if not release_resumed_model.wait(timeout=5):
+                    raise TimeoutError("Resumed model was not released")
+            return _text_response("ok")
+
+        async def acall(self, **kwargs):
+            return self(**kwargs)
+
+    checkpoint_path = str(tmp_path / "checkpoints.sqlite3")
+    task_path = str(tmp_path / "tasks.sqlite3")
+    inbox_path = str(tmp_path / "inboxes.sqlite3")
+    checkpoint_store = SQLiteCheckpointStore(checkpoint_path)
+    task_store = TaskStore.sqlite(path=task_path)
+    inbox_store = SQLiteAgentInboxStore(inbox_path)
+    model = BlockingResumeModel()
+    worker = Agent(name="worker", model=model)
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=task_store)
+    library.set_agent_inbox(AgentInbox(owner="root", store=inbox_store))
+    reopened_checkpoint_store = None
+    reopened_task_store = None
+    reopened_inbox_store = None
+    independently_reopened_inbox_store = None
+    task_id = None
+    try:
+        with execution_context(
+            thread_id="durable_thread",
+            namespace="root",
+            run_id="root_run",
+            root_run_id="root_run",
+            checkpoint_store=checkpoint_store,
+        ):
+            dispatch = library([("start", "worker", {"task": "Start"})])
+            task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+            _wait_until(lambda: task_store.get(task_id).status == "completed")
+
+            # Reopen all durable stores and build a fresh library with no
+            # dispatcher state. Persisted routing metadata locates the inbox.
+            reopened_checkpoint_store = SQLiteCheckpointStore(checkpoint_path)
+            reopened_task_store = TaskStore.sqlite(path=task_path)
+            reopened_inbox_store = SQLiteAgentInboxStore(inbox_path)
+            reconstructed_worker = Agent(name="worker", model=model)
+            reconstructed_worker.tool_config = {"background": True}
+            reconstructed_library = ToolLibrary(
+                name="lib",
+                tools=[reconstructed_worker],
+                task_store=reopened_task_store,
+            )
+            reconstructed_library.set_agent_inbox(
+                AgentInbox(owner="root", store=reopened_inbox_store)
+            )
+
+            with execution_context(checkpoint_store=reopened_checkpoint_store):
+                resumed = reconstructed_library(
+                    [
+                        (
+                            "resume",
+                            "task_message",
+                            {"task_id": task_id, "message": "Go"},
+                        )
+                    ]
+                )
+                assert resumed.tool_calls[0].result["status"] == "resumed"
+                assert resumed_model_started.wait(timeout=5)
+
+                task = reopened_task_store.get(task_id)
+                assert task is not None
+                inbox = reconstructed_library.get_handle().get_task_inbox(task_id)
+                assert inbox is not None
+                assert inbox.store is reopened_inbox_store
+                delivered = TaskMessageTool()(
+                    task_id=task_id,
+                    message="After reconstruction",
+                    handle=reconstructed_library.get_handle(),
+                )
+                assert delivered["status"] == "delivered"
+
+                independently_reopened_inbox_store = SQLiteAgentInboxStore(inbox_path)
+                independently_reopened_inbox = AgentInbox(
+                    owner="worker",
+                    namespace=task.metadata["checkpoint_namespace"],
+                    thread_id=task.metadata["checkpoint_thread_id"],
+                    run_id=task.metadata["checkpoint_run_id"],
+                    store=independently_reopened_inbox_store,
+                )
+                assert [
+                    item.metadata["message"]
+                    for item in independently_reopened_inbox.peek()
+                ] == ["After reconstruction"]
+    finally:
+        release_resumed_model.set()
+        try:
+            if task_id is not None and reopened_task_store is not None:
+                _wait_until(
+                    lambda: reopened_task_store.get(task_id).status == "completed",
+                    timeout=6.0,
+                )
+        finally:
+            for store in (
+                independently_reopened_inbox_store,
+                reopened_inbox_store,
+                reopened_task_store,
+                reopened_checkpoint_store,
+                inbox_store,
+                task_store,
+                checkpoint_store,
+            ):
+                if store is not None:
+                    store.close()
 
 
 def test_task_message_resume_clears_previous_interrupt_reason():

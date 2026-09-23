@@ -4,6 +4,7 @@ import time
 from copy import deepcopy
 from threading import RLock
 from typing import Any, Dict, Iterable, List, Mapping
+from uuid import uuid4
 
 from msgflux.data.stores.registry import register_store
 from msgflux.runtime.agent_inbox.base import AgentInboxStore
@@ -18,6 +19,11 @@ class InMemoryAgentInboxStore(AgentInboxStore):
     def __init__(self) -> None:
         self._data: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
         self._lock = RLock()
+        self._routing_id = uuid4().hex
+
+    @property
+    def routing_id(self) -> str:
+        return f"memory:{self._routing_id}"
 
     def _get_run(
         self,

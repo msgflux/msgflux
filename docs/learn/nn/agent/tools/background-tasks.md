@@ -238,6 +238,7 @@ The task metadata records enough routing information to reconstruct the call:
 - the parent/root run lineage
 - the child `thread_id` used for that subagent conversation
 - the current child `run_id` (initially the task id)
+- the logical inbox store used by that child execution
 
 For an agent task, `task_message` re-dispatches the same tool with the saved
 routing parameters and a scope like:
@@ -261,6 +262,36 @@ handle used by `task_message`, but the new child run receives a new `run_id`
 recorded in task metadata. A message sent while that resumed run is executing
 goes to its current inbox, not the inbox of the previous run. The caller does
 not need to pass the new `run_id` to `task_message`.
+
+The inbox is resolved from the task's saved namespace, thread, run, and inbox
+store routing information. This lets a runtime with durable task, checkpoint,
+and inbox stores continue routing messages after it is reconstructed; the
+inbox itself does not need to be retained in a process-local task map. For a
+task recorded as `running`, `task_message` delivers only when this process has
+an active worker future. If the task is still marked running but no worker is
+present (for example, after a process stopped), it returns
+`status="recovery_required"` instead of reporting a message as delivered. The
+application can then reconcile or recover that task before sending more work.
+
+`SQLiteAgentInboxStore` persists its `routing_id` in the database, so the
+binding remains stable when the database is reopened or moved. A custom durable
+`AgentInboxStore` should also expose a `routing_id` that stays stable across
+reopens. The base store's default identity is process-local; tasks bound to it
+cannot recover their inbox after a process restart and fail explicitly if the
+runtime cannot verify the original store.
+
+For an opt-in check with two real OpenAI model calls and SQLite stores:
+
+```bash
+MSGFLUX_LIVE_INBOX_RESOLUTION=1 uv run pytest -q \
+  tests/integration/test_live_background_inbox_resolution.py
+```
+
+Set `OPENAI_API_KEY` first, or provide a local dotenv file through
+`MSGFLUX_LIVE_DOTENV`. The test resumes an `AgentTool` child, holds its second
+model response, and checks that an in-flight `task_message` reaches the current
+run without a retained per-task inbox map. It makes billable requests and is
+skipped by default.
 
 ## Reporting Progress
 

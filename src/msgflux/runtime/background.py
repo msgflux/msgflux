@@ -48,16 +48,12 @@ class BackgroundTaskDispatcher:
         self.library_handle = library_handle
         self._task_futures: Dict[str, Any] = {}
         self._task_futures_lock = Lock()
-        self._task_inboxes: Dict[str, AgentInbox] = {}
-        self._task_inboxes_lock = Lock()
         self._task_checkpoint_stores: Dict[str, Any] = {}
         self._task_checkpoint_stores_lock = Lock()
 
     def clear(self) -> None:
         with self._task_futures_lock:
             self._task_futures.clear()
-        with self._task_inboxes_lock:
-            self._task_inboxes.clear()
         with self._task_checkpoint_stores_lock:
             self._task_checkpoint_stores.clear()
 
@@ -75,13 +71,43 @@ class BackgroundTaskDispatcher:
             if current is future:
                 self._task_futures.pop(task_id, None)
 
-    def register_task_inbox(self, task_id: str, inbox: AgentInbox) -> None:
-        with self._task_inboxes_lock:
-            self._task_inboxes[task_id] = inbox
+    def get_task_inbox(
+        self,
+        task_id: str,
+        *,
+        task_store: Any,
+        agent_inbox: AgentInbox,
+    ) -> AgentInbox | None:
+        """Resolve a task's current inbox without retaining a per-task view."""
+        task = task_store.get(task_id)
+        if task is None or task.metadata.get("task_kind") != "agent":
+            return None
+        return self._resolve_task_inbox(task, agent_inbox=agent_inbox)
 
-    def get_task_inbox(self, task_id: str) -> AgentInbox | None:
-        with self._task_inboxes_lock:
-            return self._task_inboxes.get(task_id)
+    @staticmethod
+    def _resolve_task_inbox(task: Any, *, agent_inbox: AgentInbox) -> AgentInbox:
+        metadata = task.metadata
+        expected_store = metadata.get("inbox_store_id")
+        if not isinstance(expected_store, str) or not expected_store:
+            raise RuntimeError(f"Task `{task.task_id}` has no inbox store binding.")
+        if agent_inbox.store.routing_id != expected_store:
+            raise RuntimeError(
+                f"Task `{task.task_id}` inbox store does not match the current "
+                "runtime binding."
+            )
+        namespace = metadata.get("checkpoint_namespace")
+        thread_id = metadata.get("checkpoint_thread_id")
+        run_id = metadata.get("checkpoint_run_id")
+        if not all(
+            isinstance(value, str) and value for value in (namespace, thread_id, run_id)
+        ):
+            raise RuntimeError(f"Task `{task.task_id}` has an incomplete inbox route.")
+        return agent_inbox.fork(
+            owner=f"{task.tool_name}:{task.task_id}",
+            namespace=namespace,
+            thread_id=thread_id,
+            run_id=run_id,
+        )
 
     def register_task_checkpoint_store(
         self,
@@ -216,6 +242,10 @@ class BackgroundTaskDispatcher:
         thread_id = task.metadata.get("checkpoint_thread_id")
         if not isinstance(thread_id, str) or not thread_id:
             thread_id = new_thread_id()
+        root_inbox = get_execution_context().get("agent_inbox")
+        if root_inbox is None:
+            root_inbox = self.library_handle.get_agent_inbox()
+        task_inbox = self._resolve_task_inbox(task, agent_inbox=root_inbox)
         run_id = task.metadata.get("checkpoint_run_id") or task.task_id
         if task.status in {"completed", "interrupted"}:
             run_id = new_run_id()
@@ -223,35 +253,10 @@ class BackgroundTaskDispatcher:
                 task.task_id,
                 {"checkpoint_run_id": run_id},
             )
-            if updated_task is not None:
-                task = updated_task
-
-        root_inbox = get_execution_context().get("agent_inbox")
-        if root_inbox is None:
-            root_inbox = self.library_handle.get_agent_inbox()
-        task_inbox = self.get_task_inbox(task.task_id)
-        if task_inbox is None:
-            task_inbox = root_inbox.fork(
-                owner=f"{tool_name}:{task.task_id}",
-                namespace=checkpoint_namespace,
-                thread_id=(
-                    thread_id if isinstance(thread_id, str) and thread_id else None
-                ),
-                run_id=run_id,
-            )
-            self.register_task_inbox(task.task_id, task_inbox)
-        elif (
-            task_inbox.namespace != checkpoint_namespace
-            or task_inbox.thread_id != thread_id
-            or task_inbox.run_id != run_id
-        ):
-            task_inbox = task_inbox.fork(
-                owner=f"{tool_name}:{task.task_id}",
-                namespace=checkpoint_namespace,
-                thread_id=thread_id,
-                run_id=run_id,
-            )
-            self.register_task_inbox(task.task_id, task_inbox)
+            if updated_task is None:
+                raise RuntimeError(f"Task `{task.task_id}` disappeared during resume.")
+            task = updated_task
+            task_inbox = self._resolve_task_inbox(task, agent_inbox=root_inbox)
 
         task_store.requeue(task.task_id)
         emit_event(
@@ -381,6 +386,9 @@ class BackgroundTaskDispatcher:
             "tool_call_id": tool_id,
             "task_kind": "agent" if is_agent_task else task_kind,
             "checkpoint_namespace": checkpoint_namespace if is_agent_task else None,
+            "inbox_store_id": (
+                root_agent_inbox.store.routing_id if is_agent_task else None
+            ),
             "task_resume_params": task_resume_params,
             "thread_id": thread_id,
             "parent_run_id": parent_run_id,
@@ -421,7 +429,6 @@ class BackgroundTaskDispatcher:
                 thread_id=thread_id if isinstance(thread_id, str) else None,
                 run_id=task.task_id,
             )
-            self.register_task_inbox(task.task_id, task_inbox)
             self.register_task_checkpoint_store(task.task_id, checkpoint_store)
         runner_params = dict(call_params)
         if is_agent_task:

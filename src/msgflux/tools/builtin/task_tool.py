@@ -266,8 +266,18 @@ class TaskMessageTool(ToolBackground):
                 "error": "task_message requires the task message capability.",
             }
 
-        task_inbox = handle.get_task_inbox(task_id)
         if task.status == "running":
+            future = handle.get_task_future(task_id)
+            if future is None or future.done():
+                return {
+                    "task_id": task_id,
+                    "status": "recovery_required",
+                    "error": (
+                        "Task is marked running but has no active worker in "
+                        "this process."
+                    ),
+                }
+            task_inbox = handle.get_task_inbox(task_id)
             if task_inbox is None:
                 return {
                     "task_id": task_id,

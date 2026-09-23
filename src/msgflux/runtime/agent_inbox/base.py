@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
+from hashlib import blake2s
 from typing import Iterable, List, Mapping
+from uuid import uuid4
 
 from msgflux.data.stores.types import AgentInboxStoreType
+
+_PROCESS_ROUTING_ID = uuid4().hex
 
 
 class AgentInboxStore(ABC, AgentInboxStoreType):
     """Persistent storage boundary for pending agent inbox notifications."""
+
+    @property
+    def routing_id(self) -> str:
+        """Identify one process-local store instance unless a provider overrides it."""
+        identity = f"{_PROCESS_ROUTING_ID}:{os.getpid()}:{id(self)}".encode()
+        return f"process:{blake2s(identity, digest_size=16).hexdigest()}"
 
     @abstractmethod
     def load_notifications(

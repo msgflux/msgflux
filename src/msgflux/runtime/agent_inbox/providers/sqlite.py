@@ -14,6 +14,11 @@ from msgflux.data.stores.registry import register_store
 from msgflux.runtime.agent_inbox.base import AgentInboxStore
 
 _CREATE_INBOX_TABLES = """\
+CREATE TABLE IF NOT EXISTS agent_inbox_store_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_inboxes (
     namespace      TEXT NOT NULL,
     thread_id     TEXT NOT NULL,
@@ -68,7 +73,20 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_CREATE_INBOX_TABLES)
+        self._conn.execute(
+            "INSERT OR IGNORE INTO agent_inbox_store_meta (key, value) VALUES (?, ?)",
+            ("routing_id", uuid4().hex),
+        )
+        self._routing_id = self._conn.execute(
+            "SELECT value FROM agent_inbox_store_meta WHERE key = ?",
+            ("routing_id",),
+        ).fetchone()[0]
         self._conn.commit()
+
+    @property
+    def routing_id(self) -> str:
+        """Stable identity retained when this SQLite database is reopened or moved."""
+        return f"sqlite:{self._routing_id}"
 
     @staticmethod
     def _serialize(notifications: Iterable[Mapping[str, Any]]) -> str:
