@@ -131,8 +131,30 @@ def test_gemini_round_trip_keeps_signature_state(mock_gemini_client):
     ]
 
     request = mock_gemini_client.return_value.chat.completions.create.call_args.kwargs
-    assert request["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in request
+    assert request["extra_body"]["extra_body"]["google"]["thinking_config"] == {
+        "thinking_level": "low",
+        "include_thoughts": True,
+    }
     assert request["extra_headers"]["x-goog-api-client"].startswith("msgflux-oai/")
+
+
+def test_gemini_thinking_config_uses_nested_extra_body_wire_shape():
+    from msgflux.models.providers.gemini import GeminiChatCompletion
+
+    model = GeminiChatCompletion(model_id="gemini-3.6-flash", reasoning_effort="low")
+    params = model._build_generation_params(
+        "hi", system_prompt=None, prefilling=None, tool_catalog=None
+    )
+    prepared = model.api_adapter.prepare_request(
+        model, {**model.sampling_run_params, **params}
+    )
+
+    assert prepared.json["extra_body"]["google"]["thinking_config"] == {
+        "thinking_level": "low",
+        "include_thoughts": True,
+    }
+    assert "google" not in prepared.json
 
 
 def test_gemini_splits_inline_thought_summary(mock_gemini_client):
@@ -255,6 +277,39 @@ def test_gemini_tool_calls_keep_per_call_signatures(mock_gemini_client):
             ],
         }
     ]
+
+
+def test_gemini_effort_none_stays_top_level_without_summaries():
+    from msgflux.models.providers.gemini import GeminiChatCompletion
+
+    model = GeminiChatCompletion(model_id="gemini-3.6-flash", reasoning_effort="none")
+
+    adapted = model._adapt_params(dict(model.sampling_run_params))
+
+    assert adapted["reasoning_effort"] == "none"
+    assert "extra_body" not in adapted
+
+
+def test_gemini_respects_explicit_thinking_config():
+    from msgflux.models.providers.gemini import GeminiChatCompletion
+
+    model = GeminiChatCompletion(
+        model_id="gemini-3.6-flash",
+        reasoning_effort="low",
+        extra_body={
+            "google": {
+                "thinking_config": {"thinking_level": "high", "include_thoughts": False}
+            }
+        },
+    )
+
+    adapted = model._adapt_params(dict(model.sampling_run_params))
+
+    assert "reasoning_effort" not in adapted
+    assert adapted["extra_body"]["extra_body"]["google"]["thinking_config"] == {
+        "thinking_level": "high",
+        "include_thoughts": False,
+    }
 
 
 def test_gemini_stream_splits_thought_tags():

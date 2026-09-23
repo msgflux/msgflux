@@ -63,7 +63,11 @@ class GeminiChatCompletion(_BaseGemini, OpenAICompatibleChatCompletion):
     endpoint returns one on every assistant message (and one per tool
     call), and rejects tool continuations without them. Signatures are
     stored as reasoning/provider state and replayed back into
-    `extra_content` on history conversion. The Interactions API
+    `extra_content` on history conversion. Whenever `reasoning_effort` is
+    set (other than `"none"`), it is translated to
+    ``extra_body.google.thinking_config`` with `include_thoughts` enabled,
+    since the API rejects requests carrying both `reasoning_effort` and a
+    custom thinking config. The Interactions API
     (`previous_interaction_id` server state) is out of scope.
     """
 
@@ -79,12 +83,58 @@ class GeminiChatCompletion(_BaseGemini, OpenAICompatibleChatCompletion):
         default_reasoning_codec=GeminiReasoningCodec(),
     )
 
+    _EFFORT_TO_THINKING_LEVEL = {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+    }
+
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super()._adapt_params(params)
         extra_headers = dict(params.get("extra_headers") or {})
         extra_headers.setdefault("x-goog-api-client", f"msgflux-oai/{__version__}")
         params["extra_headers"] = extra_headers
+        self._adapt_thinking_config(params)
         return params
+
+    @classmethod
+    def _adapt_thinking_config(cls, params: Dict[str, Any]) -> None:
+        """Translate effort to a thinking config with summaries enabled.
+
+        Gemini only accepts these fields nested under a literal
+        ``extra_body`` body key (top-level ``google`` is rejected as an
+        unknown field), so both the auto-injected config and any
+        user-supplied ``google`` mapping are emitted in that shape.
+        """
+        effort = params.get("reasoning_effort")
+        level = (
+            cls._EFFORT_TO_THINKING_LEVEL.get(effort.strip().lower())
+            if isinstance(effort, str)
+            else None
+        )
+        extra_body = dict(params.get("extra_body") or {})
+        nested = dict(extra_body.get("extra_body") or {})
+        google = dict(extra_body.pop("google", None) or {})
+        google = {**dict(nested.get("google") or {}), **google}
+        thinking_config = dict(google.get("thinking_config") or {})
+        if level is not None:
+            thinking_config.setdefault("thinking_level", level)
+            thinking_config.setdefault("include_thoughts", True)
+            params.pop("reasoning_effort", None)
+        if thinking_config:
+            google["thinking_config"] = thinking_config
+        if google:
+            nested["google"] = google
+        if nested:
+            extra_body["extra_body"] = nested
+        elif "extra_body" in extra_body:
+            extra_body.pop("extra_body", None)
+        if extra_body:
+            params["extra_body"] = extra_body
+        else:
+            params.pop("extra_body", None)
 
     def _signature_state(self, signature: str) -> Dict[str, Any]:
         return {
