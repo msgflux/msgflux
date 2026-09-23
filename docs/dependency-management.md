@@ -32,6 +32,7 @@ authorized workspace; installing the extra does not grant filesystem access.
 | OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
 | SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
 | Together    | `msgflux`  | `TOGETHER_API_KEY`     |
+| Vercel AI Gateway | `msgflux`  | `AI_GATEWAY_API_KEY`   |
 | vLLM        | `msgflux`  |                        |
 
 ### Image Embedder
