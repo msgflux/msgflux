@@ -3,11 +3,17 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Iterable, List, Mapping
 
+from msgflux._private.store_routing import process_routing_id
 from msgflux.data.stores.types import AgentInboxStoreType
 
 
 class AgentInboxStore(ABC, AgentInboxStoreType):
     """Persistent storage boundary for pending agent inbox notifications."""
+
+    @property
+    def routing_id(self) -> str:
+        """Identify one process-local store instance unless a provider overrides it."""
+        return process_routing_id(self)
 
     @abstractmethod
     def load_notifications(

@@ -1,7 +1,38 @@
 # Background Inbox Routing Without Per-Task Retention
 
-Status: design proposal plus a focused resume-routing fix. This PR does not
-remove either dispatcher map.
+Status: both historical per-task store maps have been removed. This document
+retains the original measurements and design rationale. Task-addressed
+messages and atomic resume claims now cover the run-transition race; automatic
+recovery of an orphaned worker remains separate work.
+
+## Implemented route
+
+Background agent task metadata now records `inbox_store_id` alongside its
+checkpoint namespace, thread ID and current run ID. `task_message` loads that
+record and forks a short-lived inbox view from the execution-scoped store. A
+missing or mismatched store binding fails explicitly instead of publishing to
+the wrong inbox. The built-in SQLite inbox store persists its logical ID in
+the database, so reopening or relocating the database preserves the binding;
+an in-memory store uses an instance-specific ID. Custom durable stores must
+provide a stable `routing_id`.
+
+The worker still holds its inbox view while active, but the dispatcher no
+longer retains one view or checkpoint store per historical task. A message to
+a running task without a local future is queued durably, but this does not
+automatically restart a crashed worker. Resume creates a new run route for
+completed or interrupted tasks. Parent completion notifications still use the
+parent inbox, including bucket-captured tools.
+
+Tests cover direct and bucket routes, a fresh library with reopened SQLite
+stores, wrong-store rejection, orphan-worker reporting and a real model call
+with a message delivered to a resumed child. A separate 100-task profile
+found no historical inbox entries. Checkpoint stores now use stable bindings
+rather than task-id references. Task messages are committed to the task store
+before being published to a run inbox; an unacknowledged message can be
+replayed after a run changes. The task store atomically claims resume so two
+processes cannot requeue the same task generation. Delivery remains
+at-least-once across a crash, with inbox IDs and checkpoint receipts used for
+deduplication; it is not a claim of exactly-once model execution.
 
 ## Problem and measured boundary
 
@@ -27,7 +58,7 @@ The desired invariant is **retained memory proportional to active work and
 pending messages, not all historical task IDs**, without giving up late
 messages, recovery or bucket-scoped notification routing.
 
-## Current routes
+## Routes before removal
 
 | Operation | Current destination | Why a map currently matters |
 | --- | --- | --- |
@@ -47,7 +78,7 @@ original store, and a regression test holds the resumed model call open while
 a second message is published. This is a correctness fix, not the proposed
 replacement for the map.
 
-## Proposed contract
+## Design contract
 
 Persist a **logical inbox route** with each background agent task: a store
 binding identifier plus `(namespace, thread_id, run_id)`. Keep separate routes
@@ -80,7 +111,7 @@ task, checkpoint and inbox stores, plus a stable way to rebind their logical
 identifiers when the runtime is reconstructed. No default filesystem write or
 automatic worker replay is proposed here.
 
-## Delivery order and review gates
+## Original delivery order and review gates
 
 1. Add route metadata and a resolver/publisher abstraction without removing
    existing maps. Validate direct and bucket-captured agent tasks, separate

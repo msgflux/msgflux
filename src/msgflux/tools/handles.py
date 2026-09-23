@@ -122,7 +122,11 @@ class ToolLibraryHandle:
         return self._library.get_background_dispatcher().get_task_future(task_id)
 
     def get_task_inbox(self, task_id: str) -> AgentInbox | None:
-        return self._library.get_background_dispatcher().get_task_inbox(task_id)
+        return self._library.get_background_dispatcher().get_task_inbox(
+            task_id,
+            task_store=self.get_task_store(),
+            agent_inbox=self.get_agent_inbox(),
+        )
 
     def get_task(self) -> Any:
         task_handle = get_execution_context().get("task_handle")
@@ -195,7 +199,10 @@ class ToolLibraryHandle:
         self.get_task().raise_if_paused()
 
     def resume_background_agent_task(self, *, task: Any, message: str) -> str:
-        with execution_context(task_store=self.get_task_store()):
+        with execution_context(
+            task_store=self.get_task_store(),
+            agent_inbox=self.get_agent_inbox(),
+        ):
             return self._library.get_background_dispatcher().resume_agent_task(
                 task=task,
                 message=message,

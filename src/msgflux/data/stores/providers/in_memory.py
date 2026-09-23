@@ -26,6 +26,7 @@ from copy import deepcopy
 from itertools import islice
 from threading import RLock
 from typing import Any, Dict, List, Literal, Mapping
+from uuid import uuid4
 
 import msgspec
 
@@ -72,9 +73,14 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             return make_page(state, latest, after, records)
 
     def __init__(self) -> None:
+        self._routing_id = uuid4().hex
         self._data: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
         self._message_items: Dict[str, Dict[str, Dict[str, bytes]]] = {}
         self._lock = RLock()
+
+    @property
+    def routing_id(self) -> str:
+        return f"memory:{self._routing_id}"
 
     def _get_run(
         self, namespace: str, thread_id: str, run_id: str

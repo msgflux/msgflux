@@ -1,5 +1,6 @@
 """Tests for msgflux.runtime.agent_inbox."""
 
+from shutil import copyfile
 from unittest.mock import Mock
 
 import pytest
@@ -441,6 +442,29 @@ def test_store_factory_creates_agent_inbox_stores(tmp_path):
     assert isinstance(sqlite_store, SQLiteAgentInboxStore)
 
     sqlite_store.close()
+
+
+def test_inbox_store_routing_ids_distinguish_memory_instances():
+    first = InMemoryAgentInboxStore()
+    second = InMemoryAgentInboxStore()
+
+    assert first.routing_id == first.routing_id
+    assert first.routing_id != second.routing_id
+
+
+def test_sqlite_inbox_routing_id_survives_reopen_and_move(tmp_path):
+    source = tmp_path / "source.sqlite3"
+    destination = tmp_path / "destination.sqlite3"
+    store = SQLiteAgentInboxStore(path=str(source))
+    routing_id = store.routing_id
+    store.close()
+
+    copyfile(source, destination)
+    reopened = SQLiteAgentInboxStore(path=str(destination))
+    try:
+        assert reopened.routing_id == routing_id
+    finally:
+        reopened.close()
 
 
 def test_agent_inbox_persists_notifications_with_sqlite_store(tmp_path):

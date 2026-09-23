@@ -30,6 +30,7 @@ from functools import wraps
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Literal, Mapping
+from uuid import uuid4
 
 from msgflux._private.chat_items import (
     restore_item_occurrence,
@@ -73,6 +74,11 @@ SELECT state FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?
 _DELETE_RUN = "DELETE FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?"
 
 _CREATE_TABLES = """\
+CREATE TABLE IF NOT EXISTS checkpoint_store_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS checkpoints (
     namespace   TEXT NOT NULL,
     thread_id  TEXT NOT NULL,
@@ -194,7 +200,19 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_CREATE_TABLES)
+        self._conn.execute(
+            "INSERT OR IGNORE INTO checkpoint_store_meta (key, value) VALUES (?, ?)",
+            ("routing_id", uuid4().hex),
+        )
+        self._routing_id = self._conn.execute(
+            "SELECT value FROM checkpoint_store_meta WHERE key = ?",
+            ("routing_id",),
+        ).fetchone()[0]
         self._conn.commit()
+
+    @property
+    def routing_id(self) -> str:
+        return f"sqlite:{self._routing_id}"
 
     @staticmethod
     def _serialize(obj: Mapping[str, Any]) -> str:

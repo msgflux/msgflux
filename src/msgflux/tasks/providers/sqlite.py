@@ -42,6 +42,17 @@ CREATE TABLE IF NOT EXISTS task_activity (
 
 CREATE INDEX IF NOT EXISTS idx_task_activity_task
     ON task_activity(task_id, id ASC);
+
+CREATE TABLE IF NOT EXISTS task_messages (
+    message_id TEXT PRIMARY KEY,
+    task_id    TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_messages_task
+    ON task_messages(task_id, created_at, message_id);
 """
 
 
@@ -70,6 +81,37 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         if text is None:
             return None
         return json.loads(text)
+
+    def enqueue_message(self, task_id: str, message_id: str, message: str) -> bool:
+        """Commit a task-addressed message before routing it to an inbox run."""
+        with self._lock:
+            if self.get(task_id) is None:
+                return False
+            self._conn.execute(
+                "INSERT OR IGNORE INTO task_messages "
+                "(message_id, task_id, message, created_at) VALUES (?, ?, ?, ?)",
+                (message_id, task_id, message, utc_now_isoformat()),
+            )
+            self._conn.commit()
+            return True
+
+    def pending_messages(self, task_id: str) -> List[tuple[str, str]]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT message_id, message FROM task_messages "
+                "WHERE task_id = ? ORDER BY created_at, message_id",
+                (task_id,),
+            ).fetchall()
+
+    def ack_messages(self, task_id: str, message_ids: List[str]) -> None:
+        if not message_ids:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "DELETE FROM task_messages WHERE task_id = ? AND message_id = ?",
+                ((task_id, message_id) for message_id in message_ids),
+            )
+            self._conn.commit()
 
     def _row_to_task(self, row: sqlite3.Row | tuple[Any, ...]) -> TaskRecord:
         return TaskRecord(
@@ -508,29 +550,54 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task.updated_at = utc_now_isoformat()
         return self._update_task(task, activity=None)
 
-    def requeue(self, task_id: str) -> TaskRecord | None:
-        task = self.get(task_id)
-        if task is None:
-            return None
-        now = utc_now_isoformat()
-        task.status = "queued"
-        task.updated_at = now
-        task.completed_at = None
-        task.result = None
-        task.error = None
-        task.metadata["interrupt_requested"] = False
-        task.metadata.pop("interrupt_reason", None)
-        task.metadata.pop("pause_reason", None)
-        return self._update_task(
-            task,
-            activity=TaskActivity(
-                task_id=task_id,
-                kind="status",
-                summary="Task re-queued.",
-                created_at=now,
-                metadata={"status": "queued"},
-            ),
-        )
+    def requeue(
+        self,
+        task_id: str,
+        *,
+        expected_status: str | None = None,
+        expected_generation: int | None = None,
+        run_id: str | None = None,
+    ) -> TaskRecord | None:
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self.get(task_id)
+                if task is None:
+                    self._conn.rollback()
+                    return None
+                if expected_status is not None:
+                    if (
+                        task.status != expected_status
+                        or task.metadata.get("resume_generation", 0)
+                        != expected_generation
+                    ):
+                        self._conn.rollback()
+                        return None
+                    task.metadata["resume_generation"] = expected_generation + 1
+                if run_id is not None:
+                    task.metadata["checkpoint_run_id"] = run_id
+                now = utc_now_isoformat()
+                task.status = "queued"
+                task.updated_at = now
+                task.completed_at = None
+                task.result = None
+                task.error = None
+                task.metadata["interrupt_requested"] = False
+                task.metadata.pop("interrupt_reason", None)
+                task.metadata.pop("pause_reason", None)
+                self._save_task(task)
+                self._append_activity(
+                    task_id,
+                    kind="status",
+                    summary="Task re-queued.",
+                    created_at=now,
+                    metadata={"status": "queued"},
+                )
+                self._conn.commit()
+                return self.get(task_id)
+            except BaseException:
+                self._conn.rollback()
+                raise
 
     def close(self) -> None:
         with self._lock:

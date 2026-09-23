@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, List, Literal, Mapping
 from uuid import uuid4
 
+from msgflux._private.store_routing import process_routing_id
+
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
 
 
@@ -28,6 +30,11 @@ class CheckpointStore(ABC):
     """Snapshots and append-only events keyed by namespace, thread and run."""
 
     supports_atomic_commit = False
+
+    @property
+    def routing_id(self) -> str:
+        """Identify a process-local store unless a durable provider overrides it."""
+        return process_routing_id(self)
 
     def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
         """Atomically read a snapshot or bounded durable transitions after a cursor."""
