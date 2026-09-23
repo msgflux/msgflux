@@ -269,3 +269,50 @@ class OpenRouterReasoningCodec(OpenAICompatibleReasoningCodec):
         if details:
             encoded["reasoning_details"] = details
         return encoded
+
+
+class AnthropicThinkingCodec(OpenAICompatibleReasoningCodec):
+    """Anthropic thinking/redacted blocks in the Messages API.
+
+    History items carry complete blocks as state so multi-turn replay is
+    verbatim (text, signatures, and order preserved, as the API requires;
+    modified blocks are rejected). `encode_chat_message` rebuilds the
+    ordered block list for the wire converter to prepend to the assistant
+    content.
+    """
+
+    name = "anthropic_thinking"
+    thinking_block_types = ("thinking", "redacted_thinking")
+
+    def extract_state(
+        self,
+        payload: Any,
+        *,
+        serialize: Callable[[Any], Any],
+    ) -> Any:
+        del serialize
+        block = self._get(payload, "thinking_block")
+        if isinstance(block, Mapping) and block.get("type") in (
+            self.thinking_block_types
+        ):
+            return deepcopy(dict(block))
+        return None
+
+    def encode_chat_message(
+        self,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        provider: str,
+        api_mode: str,
+    ) -> dict[str, Any]:
+        blocks: list[Any] = []
+        for item in items:
+            state = item.get("provider_state")
+            if not self.matches_state(state, provider=provider, api_mode=api_mode):
+                continue
+            data = state.get("data")
+            if isinstance(data, Mapping) and data.get("type") in (
+                self.thinking_block_types
+            ):
+                blocks.append(deepcopy(dict(data)))
+        return {"thinking_blocks": blocks} if blocks else {}
