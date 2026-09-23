@@ -5,9 +5,13 @@ from msgflux.models.chat_capabilities import (
 from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
     OpenAICompatibleChatCompletion,
+    OpenAIResponsesAPI,
 )
 from msgflux.models.provider_env import ProviderEnvBase
-from msgflux.models.reasoning import VercelGatewayReasoningCodec
+from msgflux.models.reasoning import (
+    OpenAIResponsesReasoningCodec,
+    VercelGatewayReasoningCodec,
+)
 from msgflux.models.registry import register_model
 
 
@@ -27,9 +31,10 @@ class VercelChatCompletion(_BaseVercel, OpenAICompatibleChatCompletion):
 
     `POST /v1/chat/completions` on `https://ai-gateway.vercel.sh/v1`
     with `provider/model` identifiers (for example
-    `vercel/anthropic/claude-opus-5`). Only `chat_completions` is
-    declared; the gateway Responses surface is left for a follow-up
-    until its reasoning wire shape is verified live. Reasoning effort is
+    `vercel/anthropic/claude-opus-5`). Chat completions is the default;
+    the gateway Responses surface (`POST /v1/responses`) is also declared
+    with OpenAI-style reasoning, since the gateway mirrors the OpenAI
+    reasoning contract on both surfaces. Reasoning effort is
     requested with top-level `reasoning_effort` (gateway alias for the
     `reasoning.effort` extension). The gateway normalizes reasoning to a
     `reasoning` text field plus an ordered `reasoning_details` array
@@ -43,6 +48,12 @@ class VercelChatCompletion(_BaseVercel, OpenAICompatibleChatCompletion):
             ChatAPIModeCapabilities(
                 name="chat_completions",
                 adapter=OpenAIChatCompletionsAPI(),
+                request_reasoning_effort=True,
+            ),
+            ChatAPIModeCapabilities(
+                name="responses",
+                adapter=OpenAIResponsesAPI(),
+                reasoning_codec=OpenAIResponsesReasoningCodec(),
                 request_reasoning_effort=True,
             ),
         ),

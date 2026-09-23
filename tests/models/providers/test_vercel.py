@@ -33,7 +33,7 @@ def test_vercel_defaults_to_chat_completions():
 
     assert model.provider == "vercel"
     assert model.api_mode == "chat_completions"
-    assert model.supported_api_modes == ("chat_completions",)
+    assert model.supported_api_modes == ("chat_completions", "responses")
 
 
 def test_vercel_reads_base_url_and_api_key():
@@ -69,11 +69,34 @@ def test_vercel_resolves_nested_model_id_through_factory():
     assert model.model_id == "anthropic/claude-opus-5"
 
 
-def test_vercel_rejects_responses_api_mode():
+def test_vercel_responses_reasoning_summary_shape(mock_vercel_client):
     from msgflux.models.providers.vercel import VercelChatCompletion
 
-    with pytest.raises(ValueError, match="responses"):
-        VercelChatCompletion(model_id="anthropic/claude-opus-5", api_mode="responses")
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "rs_1",
+        "status": "completed",
+        "summary": [{"type": "summary_text", "text": "Checking the request."}],
+    }
+    mock_vercel_client.return_value.responses.create.return_value = SimpleNamespace(
+        id="resp_1",
+        status="completed",
+        incomplete_details=None,
+        usage=None,
+        output=[
+            reasoning_item,
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "OK"}],
+            },
+        ],
+    )
+    model = VercelChatCompletion(model_id="openai/gpt-6-astra", api_mode="responses")
+    response = model("Reply with exactly: OK")
+
+    assert response.consume() == "OK"
+    assert response.reasoning_summary == "Checking the request."
 
 
 def test_vercel_reasoning_round_trip(mock_vercel_client):
