@@ -2,6 +2,89 @@
 
 msgFlux provides built-in tools that work out of the box:
 
+## Workspace tools
+
+`ReadFileTool`, `WriteTool`, `EditTool`, `DeleteTool` and `ApplyPatchTool`
+operate through the live workspace binding, not directly on host paths.
+`DeleteTool` removes one UTF-8 file or one empty directory and uses the same
+review and approval mechanism as write/edit. It does not implement recursive
+`rm`, follow symlinks or remove the workspace root. A directory review records
+its identity and requires it to remain the same empty directory at execution.
+
+```python
+from msgflux.tools.builtin import DeleteTool, EditTool, ReadFileTool, WriteTool
+
+tools = [ReadFileTool(cwd="/project"), WriteTool(cwd="/project"),
+         EditTool(cwd="/project"), DeleteTool(cwd="/project")]
+```
+
+This creates tools whose relative paths start at virtual `/project`. Pass them
+to an Agent with an execution environment and exact resource grants. Configure
+`AgentApprovals` when changes require user confirmation; a standalone tool call
+does not create a confirmation UI. See the
+[runtime guide](../runtime.md#write-edit-and-delete-tools-with-agent-previews)
+for configuration, review previews and checkpoint recovery.
+
+For example, a model call `delete(path="build-empty")` with `cwd="/project"`
+removes virtual `/project/build-empty` only if it is empty. Grant
+`filesystem.list` and `filesystem.delete` on that directory; no file-read grant
+is needed. If content appears after approval, deletion fails and the content is
+preserved. A local backend uses cooperative comparison, not a transaction
+against unrelated host processes.
+
+### List, glob and grep
+
+Install query dependencies with `uv add 'msgflux[workspace-tools]'` in your
+application. These tools use the same workspace API on local and in-memory
+backends, without invoking shell commands:
+
+```python
+from msgflux.tools.builtin import GlobTool, GrepTool, LsTool
+
+tools = [
+    LsTool(cwd="/project", max_entries=10_000),
+    GlobTool(cwd="/project", max_results=1_000),
+    GrepTool(cwd="/project", max_results=100, max_file_bytes=1_000_000),
+]
+```
+
+This configures host-side limits without adding budget parameters to every model
+call. The model sees `ls(path)`, `glob(pattern, path)` and `grep(pattern, path)`.
+`path` defaults to `.` and identifies a directory; `cwd` is a virtual path, not
+a host path and not a security boundary.
+
+`ls` returns `{"path": ..., "entries": [{"name": ..., "kind": ...}]}` for one
+directory. `glob` returns `{"matches": [{"path": ..., "kind": ...}],
+"truncated": ...}`. Its patterns support `*`, `?`, character classes and `**`
+for recursive path segments. `grep` searches UTF-8 text line by line, returning
+matches with virtual `path`, one-based `line` and `text`, plus skipped-file
+information and a truncation flag. Non-UTF-8, NUL-containing and oversized
+files are skipped instead of being loaded without a bound.
+Each matching line is previewed up to 4,096 characters, with its own `truncated`
+flag; use `ReadFileTool` with `offset`/`limit` to inspect the surrounding text.
+Grep's output budget counts encoded match and skipped-file records, excluding
+the small enclosing JSON object. Reaching the result limit conservatively marks
+the result as truncated even when it happens to equal the number of matches.
+
+Glob and grep apply nested `.gitignore` rules **starting at the selected search
+directory**. They do not inspect ancestor directories, global Git configuration
+or `.git/info/exclude`. Search from the project root when project-wide ignore
+rules must apply. The `.git` directory is always pruned. `ls` intentionally shows
+all entries, including ignored names. Neither recursive tool follows symlinks
+or other unsafe entry types.
+
+Grant `filesystem.list` for each directory visited and `filesystem.read` for
+existing `.gitignore` files and each file searched by grep. A list grant does
+not imply a read grant. An inaccessible ignore file or unignored target raises
+an error; it is not silently omitted as though the search were complete.
+
+Traversal is bounded by host-configured depth, node count and elapsed-time
+checks. Grep additionally bounds file bytes, match output and regex search time.
+Result limits report truncation; traversal limits raise. Time checks are
+cooperative and cannot interrupt a blocking backend operation. Large results
+can still be handled by `ToolOutputOffloadExtension`; offload does not remove
+the need to bound search work.
+
 ## WebFetchTool
 
 `WebFetchTool` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing.

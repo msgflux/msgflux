@@ -6,6 +6,15 @@ hide:
 
 # Dependency Management
 
+## Workspace tools
+
+Install `msgflux[workspace-tools]` to use `GlobTool` and `GrepTool`.
+`pathspec` implements nested `.gitignore` matching and `regex` supplies timed
+regular-expression searches. These optional packages are loaded only by the
+query tools. `LsTool`, `ReadFileTool`, `WriteTool`, `EditTool` and `DeleteTool`
+need no extra dependency. All filesystem access still goes through the live
+authorized workspace; installing the extra does not grant filesystem access.
+
 ## Models
 
 ### Chat Completion

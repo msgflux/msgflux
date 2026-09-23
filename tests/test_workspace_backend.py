@@ -37,7 +37,7 @@ class FakeExecutor(ProcessExecutor):
     def supports_workspace(self, filesystem):
         return self.supported
 
-    async def execute(self, request, **kwargs):
+    async def execute_stream(self, request, **kwargs):
         return ProcessResult(0)
 
 

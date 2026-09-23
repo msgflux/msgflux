@@ -6,6 +6,7 @@ is deliberately not an OS sandbox: writers outside this backend can race it.
 
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import stat
@@ -16,6 +17,7 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.workspace import WorkspaceConflictError, WorkspaceFilesystem
 from msgflux.runtime.workspace_backend import WorkspaceBackend, WorkspaceBinding
 from msgflux.runtime.workspace_contracts import (
+    WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
@@ -31,7 +33,8 @@ def _check_posix() -> None:
             not hasattr(os, flag)
             for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
         )
-        or not {os.open, os.stat, os.mkdir, os.unlink, os.rename} <= os.supports_dir_fd
+        or not {os.open, os.stat, os.mkdir, os.rmdir, os.unlink, os.rename}
+        <= os.supports_dir_fd
         or os.stat not in os.supports_follow_symlinks
         or os.listdir not in os.supports_fd
     ):
@@ -298,6 +301,125 @@ class LocalWorkspace(WorkspaceFilesystem):
                     os.close(parent)
                 os.close(root)
 
+    def _read_prefix(self, path, max_bytes):
+        with self._lock:
+            self._authorize("read", path)
+            root = self._open_root()
+            parent = root
+            try:
+                parent, name = self._parent(root, path)
+                self._stat_at(parent, name, path)
+                return self._read_fd_at(parent, name, max_bytes)
+            finally:
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
+    def _directory_deletion(self, path, expected=None):
+        with self._lock:
+            self._authorize("delete", path)
+            root = self._open_root()
+            parent = root
+            directory = None
+            try:
+                parent, name = self._parent(root, path)
+                st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode):
+                    self._regular(st, path)
+                    if expected is not None:
+                        raise WorkspaceConflictError("Directory replaced by a file")
+                    return None
+                self._authorize("list", path)
+                if not stat.S_ISDIR(st.st_mode):
+                    raise PermissionError("Deletion target is not a safe directory")
+                directory = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
+                )
+                opened = os.fstat(directory)
+                if opened.st_dev != self._root_stat.st_dev:
+                    raise PermissionError("Workspace mount crossing")
+                token = f"{opened.st_dev}:{opened.st_ino}:{opened.st_ctime_ns}"
+                with os.scandir(directory) as entries:
+                    if next(entries, None) is not None:
+                        raise OSError(errno.ENOTEMPTY, "Directory is not empty", path)
+                if expected is not None:
+                    current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    current_token = (
+                        f"{current.st_dev}:{current.st_ino}:{current.st_ctime_ns}"
+                    )
+                    if token != expected or current_token != expected:
+                        raise WorkspaceConflictError(
+                            "Directory changed since preparation"
+                        )
+                    # POSIX rmdir refuses newly added contents. As with file
+                    # writes, unrelated external writers can race comparison.
+                    os.rmdir(name, dir_fd=parent)
+                return token
+            finally:
+                if directory is not None:
+                    os.close(directory)
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
+    def _deletion_directory_token(self, path):
+        return self._directory_deletion(path)
+
+    def _checked_rmdir(self, path, expected):
+        self._directory_deletion(path, expected)
+
+    def _scandir(self, path, max_entries):  # noqa: C901
+        with self._lock:
+            self._authorize("list", path)
+            root = self._open_root()
+            parent = root
+            directory = root
+            try:
+                if path != "/":
+                    parent, name = self._parent(root, path)
+                    st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                        raise NotADirectoryError(path)
+                    if st.st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                    directory = os.open(
+                        name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=parent,
+                    )
+                    if os.fstat(directory).st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                entries = []
+                with os.scandir(directory) as iterator:
+                    for item in iterator:
+                        st = item.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(st.st_mode):
+                            kind = "other"
+                        elif stat.S_ISDIR(st.st_mode):
+                            kind = (
+                                "directory"
+                                if st.st_dev == self._root_stat.st_dev
+                                else "other"
+                            )
+                        elif (
+                            stat.S_ISREG(st.st_mode)
+                            and st.st_nlink == 1
+                            and st.st_dev == self._root_stat.st_dev
+                        ):
+                            kind = "file"
+                        else:
+                            kind = "other"
+                        entries.append(WorkspaceEntry(name=item.name, kind=kind))
+                        if len(entries) > max_entries:
+                            raise ValueError("Workspace directory exceeds max_entries")
+                return tuple(sorted(entries, key=lambda entry: entry.name))
+            finally:
+                if directory != root:
+                    os.close(directory)
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
     @staticmethod
     def _select_lines(stream, offset, limit, max_bytes):
         for _ in range(offset - 1):
@@ -353,7 +475,7 @@ class LocalWorkspaceBackend(WorkspaceBackend):
                 filesystem._lock = self._filesystem_lock
                 self._resources[workspace_id] = filesystem
             os.close(filesystem._open_root())
-            return WorkspaceBinding(self, filesystem, ownership="borrowed")
+            return self._bind(filesystem)
 
     async def reconnect(self, workspace_id, identity, *, abort_signal=None):
         if abort_signal is not None:
@@ -367,7 +489,10 @@ class LocalWorkspaceBackend(WorkspaceBackend):
                     "Workspace resource is unavailable or identity changed"
                 )
             os.close(filesystem._open_root())
-            return WorkspaceBinding(self, filesystem)
+            return self._bind(filesystem)
+
+    def _bind(self, filesystem):
+        return WorkspaceBinding(self, filesystem, ownership="borrowed")
 
     async def _release(self, binding):
         if binding.backend is not self:

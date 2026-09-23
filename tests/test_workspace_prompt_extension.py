@@ -324,7 +324,7 @@ def test_executor_declarations_do_not_imply_grants_or_satisfied_requirements():
         def supports_workspace(self, filesystem):
             return True
 
-        async def execute(self, request, **kwargs):
+        async def execute_stream(self, request, **kwargs):
             raise AssertionError("Prompt must not run commands")
 
     environment = ExecutionEnvironment(
