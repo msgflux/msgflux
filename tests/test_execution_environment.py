@@ -250,13 +250,14 @@ class FakeExecutor(ProcessExecutor):
     def supports_workspace(self, filesystem):
         return self.supported
 
-    async def execute(self, request, **context):
+    async def execute_stream(self, request, **context):
         self.calls.append((request, context))
         self.started.set()
         try:
             if self.block:
                 await asyncio.Future()
-            return ProcessResult(0, stdout=b"done")
+            await context["on_output"]("stdout", b"done")
+            return ProcessResult(0)
         finally:
             self.cleaned = True
 

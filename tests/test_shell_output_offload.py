@@ -189,10 +189,14 @@ async def test_builtin_bash_event_contains_preview_and_retrievable_reference(tmp
         {"filesystem", "network", "process", "resource_limits"}
     )
     executor.supports_workspace.return_value = True
-    executor.execute = AsyncMock(
-        return_value=ProcessResult(3, b"x" * 20000, b"error" * 2000)
-    )
-    executor.execute_stream = ProcessExecutor.execute_stream.__get__(executor)
+
+    async def stream(_request, *, on_output, **kwargs):
+        del kwargs
+        await on_output("stdout", b"x" * 20000)
+        await on_output("stderr", b"error" * 2000)
+        return ProcessResult(3)
+
+    executor.execute_stream = AsyncMock(side_effect=stream)
     environment = ExecutionEnvironment(InMemoryWorkspace("test"), executor)
     store = LocalToolResultStore(tmp_path)
     library = ToolLibrary(

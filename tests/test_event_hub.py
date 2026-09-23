@@ -168,6 +168,68 @@ def test_hub_keeps_only_active_projection_without_event_log():
 
 
 @pytest.mark.asyncio
+async def test_parent_terminal_event_clears_nested_projection_and_keeps_watcher():
+    hub = EventHub()
+    thread_id = "nested_cleanup"
+    child_path = ("agent:root", "tool:lookup")
+    hub.publish(
+        thread_id,
+        make_event(EventType.RUN_START, source_path=("agent:root",)),
+    )
+    hub.publish(
+        thread_id,
+        make_event(
+            EventType.MESSAGE_DELTA,
+            {"delta": "nested output"},
+            source_path=child_path,
+        ),
+    )
+
+    async with hub.watch(thread_id) as watcher:
+        assert len(watcher.snapshot.active_runs) == 2
+        terminal = make_event(EventType.RUN_END, source_path=("agent:root",))
+        hub.publish(thread_id, terminal)
+
+        assert await watcher.__anext__() == terminal
+        assert not hub._threads[thread_id].active
+        assert thread_id in hub._watchers
+
+    assert thread_id not in hub._threads
+
+
+def test_tool_lifecycle_tracks_tool_without_creating_an_extra_run():
+    hub = EventHub()
+    thread_id = "tool_projection"
+    source_path = ("agent:root", "tool:lookup")
+    hub.publish(
+        thread_id,
+        make_event(
+            EventType.TOOL_START,
+            {
+                "tool_call_id": "call-1",
+                "tool_name": "lookup",
+                "arguments": {"query": "status"},
+            },
+            source_path=source_path,
+        ),
+    )
+
+    state = hub._threads[thread_id]
+    assert state.runs == {}
+    assert len(state.tools) == 1
+
+    hub.publish(
+        thread_id,
+        make_event(
+            EventType.TOOL_END,
+            {"tool_call_id": "call-1"},
+            source_path=source_path,
+        ),
+    )
+    assert not hub._threads
+
+
+@pytest.mark.asyncio
 async def test_watch_is_isolated_by_thread_id():
     hub = EventHub()
     expected = make_event(EventType.RUN_START)

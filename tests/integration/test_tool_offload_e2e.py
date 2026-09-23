@@ -78,14 +78,12 @@ class _FakeExecutor(ProcessExecutor):
     def supports_workspace(self, filesystem) -> bool:
         return isinstance(filesystem, InMemoryWorkspace)
 
-    async def execute(self, request, **kwargs) -> ProcessResult:
+    async def execute_stream(self, request, *, on_output, **kwargs) -> ProcessResult:
         del kwargs
         self.requests.append(request)
-        return ProcessResult(
-            0,
-            b"OFFLOAD_SYNTHETIC_STDOUT\n" * 400,
-            b"OFFLOAD_SYNTHETIC_STDERR\n" * 400,
-        )
+        await on_output("stdout", b"OFFLOAD_SYNTHETIC_STDOUT\n" * 400)
+        await on_output("stderr", b"OFFLOAD_SYNTHETIC_STDERR\n" * 400)
+        return ProcessResult(0)
 
 
 def _skip_reason(case: _ProviderCase) -> str | None:

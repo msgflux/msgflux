@@ -7,6 +7,28 @@ import msgspec
 WriteGuarantee = Literal["cooperative_compare", "atomic_compare"]
 
 
+class WorkspaceEntry(
+    msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
+    """One bounded directory entry; ``other`` is never traversable."""
+
+    name: str
+    kind: Literal["file", "directory", "other"]
+
+    def __post_init__(self):
+        if self.kind not in {"file", "directory", "other"}:
+            raise ValueError("Unknown workspace entry kind")
+        if (
+            not isinstance(self.name, str)
+            or not self.name
+            or self.name in {".", ".."}
+            or "/" in self.name
+            or "\\" in self.name
+            or any(ord(char) < 32 for char in self.name)
+        ):
+            raise ValueError("Workspace entry names must be safe single components")
+
+
 class WorkspacePromptInfo(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
 ):

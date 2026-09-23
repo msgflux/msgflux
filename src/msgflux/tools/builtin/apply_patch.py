@@ -23,7 +23,7 @@ class ApplyPatchTool(WorkspaceChangeTool):
     """
 
     name = "apply_patch"
-    display_name = "Apply patch"
+    display_name = "ApplyPatch"
     annotations = {
         "operation": Literal["create", "update", "delete"],
         "path": str,

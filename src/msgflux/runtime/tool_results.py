@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -69,6 +70,16 @@ class ToolResultTooLargeError(ValueError):
     """A write exceeded its configured per-result storage budget."""
 
 
+class ToolResultQuotaError(ToolResultTooLargeError):
+    """The aggregate content/metadata budget would be exceeded."""
+
+
+class ToolResultUsage(msgspec.Struct, frozen=True):
+    size_bytes: int
+    results: int
+    pending: int
+
+
 class ToolResultStore(ABC):
     """Host-owned result storage; references are identities, not access grants."""
 
@@ -118,17 +129,24 @@ class LocalToolResultStore(ToolResultStore):
 
     Results are immutable through this API. Interrupted writes may leave private
     staging directories; no automatic garbage collection deletes historical data.
-    The size budget is per result, not a total disk quota.
+    Quotas count file bytes, not filesystem block/inode overhead. Writers using
+    this API coordinate through an advisory directory lock on local POSIX disks.
     """
 
     def __init__(
-        self, root: str | os.PathLike[str], *, max_result_bytes: int = 64 * 1024 * 1024
+        self,
+        root: str | os.PathLike[str],
+        *,
+        max_result_bytes: int = 64 * 1024 * 1024,
+        max_store_bytes: int = 1024 * 1024 * 1024,
     ) -> None:
         _check_posix()
         _positive(max_result_bytes, "max_result_bytes")
+        _positive(max_store_bytes, "max_store_bytes")
         self.root = Path(root).expanduser().absolute()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.max_result_bytes = max_result_bytes
+        self.max_store_bytes = max_store_bytes
         self._root_parts = self.root.parts[1:]
         with _root_directory(self._root_parts) as fd:
             st = os.fstat(fd)
@@ -199,14 +217,16 @@ class LocalToolResultStore(ToolResultStore):
         # Validate metadata before starting or consuming a caller's generator.
         ToolResultRef(result_id, 0, hashlib.sha256().hexdigest(), media_type)
         staging = f".pending-{uuid4().hex}"
-        with self._root() as root:
+        with self._locked_root() as root:
+            available = self.max_store_bytes - self._usage(root).size_bytes
+            bounded = self._quota_chunks(chunks, result_id, media_type, available)
             os.mkdir(staging, mode=0o700, dir_fd=root)
             directory = os.open(
                 staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root
             )
             published = False
             try:
-                ref = self._write(directory, chunks, result_id, media_type)
+                ref = self._write(directory, bounded, result_id, media_type)
                 os.fsync(directory)
                 # A published result is a nonempty directory: rename cannot
                 # overwrite it, even if an ID collision is forced.
@@ -220,6 +240,129 @@ class LocalToolResultStore(ToolResultStore):
                 raise
             finally:
                 os.close(directory)
+
+    @contextmanager
+    def _locked_root(self):
+        import fcntl  # noqa: PLC0415
+
+        with self._root() as root:
+            fcntl.flock(root, fcntl.LOCK_EX)
+            try:
+                yield root
+            finally:
+                fcntl.flock(root, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _directories(root):
+        # scandir(fd) duplicates the descriptor but can share its directory
+        # offset. Use a fresh open file description for every inventory pass.
+        scan_root = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=root)
+        try:
+            with os.scandir(scan_root) as entries:
+                for count, entry in enumerate(entries, 1):
+                    if count > 100_000:
+                        raise ToolResultQuotaError(
+                            "Store inventory exceeds 100000 entries"
+                        )
+                    if not re.fullmatch(r"(?:res_|\.pending-)[0-9a-f]{32}", entry.name):
+                        raise ToolResultIntegrityError("Unexpected result store entry")
+                    if not entry.is_dir(follow_symlinks=False):
+                        raise ToolResultIntegrityError(
+                            "Store entry is not a safe directory"
+                        )
+                    yield entry.name
+        finally:
+            os.close(scan_root)
+
+    def _usage(self, root):
+        size = results = pending = 0
+        for name in self._directories(root):
+            directory = os.open(
+                name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root
+            )
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if entry.name not in {"content", "metadata.json"}:
+                            raise ToolResultIntegrityError("Unexpected result file")
+                        with self._file(directory, entry.name) as stream:
+                            size += os.fstat(stream.fileno()).st_size
+            finally:
+                os.close(directory)
+            results += name.startswith("res_")
+            pending += name.startswith(".pending-")
+        return ToolResultUsage(size, results, pending)
+
+    def usage(self) -> ToolResultUsage:
+        """Count published and interrupted staging bytes under the writer lock."""
+        with self._locked_root() as root:
+            return self._usage(root)
+
+    @staticmethod
+    def _quota_chunks(chunks, result_id, media_type, available):
+        size = 0
+
+        def check():
+            metadata = ToolResultRef(result_id, size, "0" * 64, media_type)
+            if size + len(msgspec.json.encode(metadata)) > available:
+                raise ToolResultQuotaError("Tool result store exceeds max_store_bytes")
+
+        check()
+        for chunk in chunks:
+            if not isinstance(chunk, bytes):
+                raise TypeError("Tool result chunks must be bytes")
+            size += len(chunk)
+            check()
+            yield chunk
+
+    def collect_garbage(  # noqa: C901
+        self,
+        retained: Iterable[ToolResultRef],
+        *,
+        quiescent: bool = False,
+        dry_run: bool = True,
+    ) -> tuple[str, ...]:
+        """Offline maintenance with the host's COMPLETE reference inventory.
+
+        Stop all checkpoint writers and readers first, including other processes.
+        Inventory must include every thread, fork, historical event and external
+        consumer sharing this store. No liveness is inferred from file age.
+        Default is preview only; ordinary writes never evict results.
+        """
+        if type(dry_run) is not bool or type(quiescent) is not bool:
+            raise TypeError("Maintenance flags must be booleans")
+        if not quiescent:
+            raise ValueError("A quiescent complete reference inventory is required")
+        refs = {}
+        for ref in retained:
+            if not isinstance(ref, ToolResultRef):
+                raise TypeError("Expected typed retained references")
+            if ref.result_id in refs and refs[ref.result_id] != ref:
+                raise ToolResultIntegrityError("Conflicting retained references")
+            refs[ref.result_id] = ref
+        with self._locked_root() as root:
+            self._usage(root)  # Validate all entries before any deletion.
+            for ref in refs.values():
+                if self.get(ref.result_id) != ref:
+                    raise ToolResultIntegrityError("Retained reference mismatch")
+                self.verify(ref)
+            candidates = tuple(sorted(set(self._directories(root)) - refs.keys()))
+            if not dry_run:
+                for name in candidates:
+                    directory = os.open(
+                        name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root
+                    )
+                    try:
+                        for filename in ("content", "metadata.json"):
+                            try:
+                                os.unlink(filename, dir_fd=directory)
+                            except FileNotFoundError:
+                                pass
+                        os.rmdir(name, dir_fd=root)
+                    finally:
+                        os.close(directory)
+                os.fsync(root)
+            return candidates
 
     @staticmethod
     def _discard(root, staging, directory, error: BaseException) -> None:
