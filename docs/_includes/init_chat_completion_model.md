@@ -75,6 +75,19 @@
         )
         ```
 
+    === "NVIDIA"
+
+        Authenticate by setting the `NVIDIA_API_KEY` env variable (free trial
+        keys available at build.nvidia.com). Model availability and supported
+        features depend on the NVIDIA deployment.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(NVIDIA_API_KEY="...")
+        model = mf.Model.chat_completion("nvidia/openai/gpt-oss-20b")
+        ```
+
     === "Fireworks"
 
         Authenticate by setting the `FIREWORKS_API_KEY` env variable.
