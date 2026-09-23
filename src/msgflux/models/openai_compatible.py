@@ -1739,7 +1739,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             stream_response.chat_accumulator.add_reasoning(
                                 reasoning_chunk
                             )
-                        continue
 
                     if getattr(delta, "content", None):
                         request_timer.mark_first_output()
@@ -1751,7 +1750,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             delta.content,
                             "text_generation",
                         )
-                        continue
 
                     if getattr(delta, "tool_calls", None):
                         if self._has_stream_tool_call_output(delta):
@@ -1764,7 +1762,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             stream_response,
                             aggregator,
                         )
-                        continue
 
             if aggregator.tool_calls:
                 if reasoning_tool_call:
@@ -1863,7 +1860,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             stream_response.chat_accumulator.add_reasoning(
                                 reasoning_chunk
                             )
-                        continue
 
                     if getattr(delta, "content", None):
                         request_timer.mark_first_output()
@@ -1875,7 +1871,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             delta.content,
                             "text_generation",
                         )
-                        continue
 
                     if getattr(delta, "tool_calls", None):
                         if self._has_stream_tool_call_output(delta):
@@ -1888,7 +1883,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             stream_response,
                             aggregator,
                         )
-                        continue
 
             if aggregator.tool_calls:
                 if reasoning_tool_call:

@@ -122,6 +122,68 @@ class TestOpenAIChatCompletion:
         with pytest.raises(ValueError, match="does not support"):
             OpenAIChatCompletion(model_id="gpt-4", api_mode="messages")
 
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.asyncio
+    async def test_chat_stream_keeps_tool_fragments_beside_reasoning(
+        self, asynchronous
+    ):
+        """Mixed reasoning/tool deltas must not drop the first JSON fragment."""
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+        from msgflux.models.response import ModelStreamResponse
+
+        def chunk(*, reasoning=None, arguments="", tool_id=None, name=None):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content=reasoning,
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    index=0,
+                                    id=tool_id,
+                                    function=SimpleNamespace(
+                                        name=name, arguments=arguments
+                                    ),
+                                )
+                            ],
+                            annotations=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            )
+
+        chunks = [
+            chunk(
+                reasoning="Use lookup.",
+                arguments='{"value":',
+                tool_id="call_1",
+                name="record_lookup",
+            ),
+            chunk(arguments='"alpha"}'),
+        ]
+        model = OpenAIChatCompletion(model_id="gpt-4", api_mode="chat_completions")
+        stream_response = ModelStreamResponse(mode="async" if asynchronous else "sync")
+        if asynchronous:
+
+            async def stream():
+                for item in chunks:
+                    yield item
+
+            model._aexecute_model = AsyncMock(return_value=stream())
+            await model._astream_generate(stream_response=stream_response)
+        else:
+            model._execute_model = Mock(return_value=iter(chunks))
+            model._stream_generate(stream_response=stream_response)
+
+        assert stream_response.error is None
+        assert stream_response.response_type == "tool_call"
+        assert stream_response.data.get_calls() == [
+            ("call_1", "record_lookup", {"value": "alpha"})
+        ]
+
     def test_responses_counts_input_tokens_with_provider_endpoint(
         self, mock_openai_client
     ):
