@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Mapping
@@ -9,6 +10,7 @@ from uuid import uuid4
 
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
+from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import SQLiteTaskStoreType
 from msgflux.utils.time import utc_now_isoformat
@@ -53,6 +55,13 @@ CREATE TABLE IF NOT EXISTS task_messages (
 
 CREATE INDEX IF NOT EXISTS idx_task_messages_task
     ON task_messages(task_id, created_at, message_id);
+
+CREATE TABLE IF NOT EXISTS task_worker_leases (
+    task_id    TEXT PRIMARY KEY,
+    owner_id   TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+);
 """
 
 
@@ -66,11 +75,92 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
+        self._clock = time.time
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_CREATE_TABLES)
         self._conn.commit()
+
+    def claim_worker(
+        self,
+        task_id: str,
+        owner_id: str,
+        *,
+        lease_seconds: float,
+        recover_expired: bool = False,
+    ) -> TaskLease | None:
+        if lease_seconds <= 0:
+            raise ValueError("`lease_seconds` must be positive")
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self.get(task_id)
+                previous = self._conn.execute(
+                    "SELECT owner_id, expires_at FROM task_worker_leases "
+                    "WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                now = self._clock()
+                can_claim = task is not None and (
+                    task.status == "queued"
+                    or (
+                        recover_expired
+                        and task.status == "running"
+                        and previous is not None
+                        and previous[1] <= now
+                    )
+                )
+                if not can_claim:
+                    self._conn.rollback()
+                    return None
+                expires_at = now + lease_seconds
+                self._conn.execute(
+                    "INSERT INTO task_worker_leases (task_id, owner_id, expires_at) "
+                    "VALUES (?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET "
+                    "owner_id=excluded.owner_id, expires_at=excluded.expires_at",
+                    (task_id, owner_id, expires_at),
+                )
+                task.status = "running"
+                task.updated_at = utc_now_isoformat()
+                self._save_task(task)
+                self._append_activity(
+                    task_id,
+                    kind="status",
+                    summary="Task running.",
+                    created_at=task.updated_at,
+                    metadata={"status": "running"},
+                )
+                self._conn.commit()
+                return TaskLease(task_id, owner_id, expires_at)
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def get_worker_lease(self, task_id: str) -> TaskLease | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT owner_id, expires_at FROM task_worker_leases WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            return TaskLease(task_id, row[0], row[1]) if row is not None else None
+
+    def renew_worker(
+        self, task_id: str, owner_id: str, *, lease_seconds: float
+    ) -> bool:
+        if lease_seconds <= 0:
+            raise ValueError("`lease_seconds` must be positive")
+        with self._lock:
+            now = self._clock()
+            updated = self._conn.execute(
+                "UPDATE task_worker_leases SET expires_at = ? "
+                "WHERE task_id = ? AND owner_id = ? AND expires_at > ? "
+                "AND EXISTS (SELECT 1 FROM tasks WHERE task_id = ? "
+                "AND status = 'running')",
+                (now + lease_seconds, task_id, owner_id, now, task_id),
+            ).rowcount
+            self._conn.commit()
+            return bool(updated)
 
     @staticmethod
     def _serialize(value: Any) -> str:
@@ -339,24 +429,64 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             self._conn.commit()
             return self.get(task.task_id)
 
+    def _fence_worker_update(self, task: TaskRecord, owner_id: str | None) -> bool:
+        row = self._conn.execute(
+            "SELECT owner_id, expires_at FROM task_worker_leases WHERE task_id = ?",
+            (task.task_id,),
+        ).fetchone()
+        if owner_id is None:
+            return row is None
+        current = self.get(task.task_id)
+        if (
+            row is None
+            or row[0] != owner_id
+            or row[1] <= self._clock()
+            or current is None
+            or current.status != "running"
+        ):
+            return False
+        # Keep metadata written by another process after the worker's read.
+        metadata = dict(current.metadata)
+        if task.status in {"interrupted", "paused"}:
+            metadata["interrupt_requested"] = False
+            key = "interrupt_reason" if task.status == "interrupted" else "pause_reason"
+            if key in task.metadata:
+                metadata[key] = task.metadata[key]
+        task.metadata = metadata
+        return True
+
     def _update_task(
         self,
         task: TaskRecord,
         *,
         activity: TaskActivity | None,
-    ) -> TaskRecord:
+        owner_id: str | None = None,
+    ) -> TaskRecord | None:
         with self._lock:
-            self._save_task(task)
-            if activity is not None:
-                self._append_activity(
-                    activity.task_id,
-                    kind=activity.kind,
-                    summary=activity.summary,
-                    created_at=activity.created_at,
-                    metadata=activity.metadata,
-                )
-            self._conn.commit()
-            return self.get(task.task_id)  # type: ignore[return-value]
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                if not self._fence_worker_update(task, owner_id):
+                    self._conn.rollback()
+                    return None
+                self._save_task(task)
+                if task.status in {"completed", "failed", "interrupted", "paused"}:
+                    self._conn.execute(
+                        "DELETE FROM task_worker_leases WHERE task_id = ?",
+                        (task.task_id,),
+                    )
+                if activity is not None:
+                    self._append_activity(
+                        activity.task_id,
+                        kind=activity.kind,
+                        summary=activity.summary,
+                        created_at=activity.created_at,
+                        metadata=activity.metadata,
+                    )
+                self._conn.commit()
+                return self.get(task.task_id)  # type: ignore[return-value]
+            except BaseException:
+                self._conn.rollback()
+                raise
 
     def set_running(
         self,
@@ -364,6 +494,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         *,
         stage: str | None = None,
         message: str | None = None,
+        owner_id: str | None = None,
     ) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -387,6 +518,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                     "message": task.progress.message,
                 },
             ),
+            owner_id=owner_id,
         )
 
     def update_progress(
@@ -398,6 +530,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         current: int | None = None,
         total: int | None = None,
         percent: float | None = None,
+        owner_id: str | None = None,
     ) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -432,9 +565,12 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 created_at=task.updated_at,
                 metadata=task.progress.to_dict(),
             ),
+            owner_id=owner_id,
         )
 
-    def complete(self, task_id: str, result: Any) -> TaskRecord | None:
+    def complete(
+        self, task_id: str, result: Any, *, owner_id: str | None = None
+    ) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
             return None
@@ -455,9 +591,12 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 created_at=now,
                 metadata={"status": "completed"},
             ),
+            owner_id=owner_id,
         )
 
-    def fail(self, task_id: str, error: Any) -> TaskRecord | None:
+    def fail(
+        self, task_id: str, error: Any, *, owner_id: str | None = None
+    ) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
             return None
@@ -475,6 +614,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 created_at=now,
                 metadata={"status": "failed", "error": task.error},
             ),
+            owner_id=owner_id,
         )
 
     def interrupt(
@@ -482,6 +622,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task_id: str,
         *,
         reason: str | None = None,
+        owner_id: str | None = None,
     ) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
@@ -502,9 +643,16 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 created_at=now,
                 metadata={"status": "interrupted", "reason": reason},
             ),
+            owner_id=owner_id,
         )
 
-    def pause(self, task_id: str, *, reason: str | None = None) -> TaskRecord | None:
+    def pause(
+        self,
+        task_id: str,
+        *,
+        reason: str | None = None,
+        owner_id: str | None = None,
+    ) -> TaskRecord | None:
         task = self.get(task_id)
         if task is None:
             return None
@@ -523,32 +671,41 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 created_at=now,
                 metadata={"status": "paused", "reason": reason},
             ),
+            owner_id=owner_id,
         )
+
+    def _set_interrupt_request(
+        self, task_id: str, *, requested: bool
+    ) -> TaskRecord | None:
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self.get(task_id)
+                if task is None:
+                    self._conn.rollback()
+                    return None
+                task.metadata["interrupt_requested"] = requested
+                task.updated_at = utc_now_isoformat()
+                self._save_task(task)
+                if requested:
+                    self._append_activity(
+                        task_id,
+                        kind="status",
+                        summary="Interrupt requested.",
+                        created_at=task.updated_at,
+                        metadata={"status": task.status},
+                    )
+                self._conn.commit()
+                return self.get(task_id)
+            except BaseException:
+                self._conn.rollback()
+                raise
 
     def request_interrupt(self, task_id: str) -> TaskRecord | None:
-        task = self.get(task_id)
-        if task is None:
-            return None
-        task.updated_at = utc_now_isoformat()
-        task.metadata["interrupt_requested"] = True
-        return self._update_task(
-            task,
-            activity=TaskActivity(
-                task_id=task_id,
-                kind="status",
-                summary="Interrupt requested.",
-                created_at=task.updated_at,
-                metadata={"status": task.status},
-            ),
-        )
+        return self._set_interrupt_request(task_id, requested=True)
 
     def clear_interrupt_request(self, task_id: str) -> TaskRecord | None:
-        task = self.get(task_id)
-        if task is None:
-            return None
-        task.metadata["interrupt_requested"] = False
-        task.updated_at = utc_now_isoformat()
-        return self._update_task(task, activity=None)
+        return self._set_interrupt_request(task_id, requested=False)
 
     def requeue(
         self,

@@ -2,6 +2,8 @@ from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.activity import TaskActivityRecorder
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
 from msgflux.tasks.handle import TaskHandle
+from msgflux.tasks.lease import TaskLease
+from msgflux.tasks.protocol import TaskStoreProtocol
 from msgflux.tasks.providers.in_memory import InMemoryTaskStore
 from msgflux.tasks.providers.sqlite import SQLiteTaskStore
 from msgflux.tasks.registry import register_task_store, task_store_registry
@@ -21,10 +23,12 @@ __all__ = [
     "TaskActivity",
     "TaskActivityRecorder",
     "TaskHandle",
+    "TaskLease",
     "TaskIdCollisionError",
     "TaskProgress",
     "TaskRecord",
     "TaskStore",
+    "TaskStoreProtocol",
     "register_task_store",
     "task_store_registry",
 ]
