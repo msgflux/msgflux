@@ -115,6 +115,10 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             self._handle = ToolLibraryHandle(self)
         return self._handle
 
+    def recover_agent_task(self, task_id: str, *, message: str) -> str:
+        """Explicitly resume an agent whose worker lease has expired."""
+        return self.get_handle().recover_background_agent_task(task_id, message=message)
+
     def set_lifecycle_owner(self, owner: Module) -> None:
         """Bind the owning Agent lifecycle without transferring hook ownership."""
         self._lifecycle_owner_ref = weakref.ref(owner)

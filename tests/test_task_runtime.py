@@ -1,7 +1,7 @@
 """Focused tests for background tasks, task progress, notifications, and
 library-aware tools."""
 
-from concurrent.futures import CancelledError as FutureCancelledError
+from concurrent.futures import CancelledError as FutureCancelledError, Future
 import threading
 import time
 from types import SimpleNamespace
@@ -11,8 +11,13 @@ import msgflux as mf
 import pytest
 from msgflux.chat_messages import ChatMessages
 from msgflux.runtime.context import execution_context
+from msgflux.runtime.background import BackgroundTaskDispatcher
 from msgflux.data.stores import InMemoryCheckpointStore, SQLiteCheckpointStore
-from msgflux.exceptions import TaskPauseRequestedError, TaskInterruptRequestedError
+from msgflux.exceptions import (
+    TaskInterruptRequestedError,
+    TaskLeaseLostError,
+    TaskPauseRequestedError,
+)
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
@@ -25,7 +30,7 @@ from msgflux.tools.builtin.task_tool import (
     BASE_TASK_TOOLS,
     TaskMessageTool,
 )
-from msgflux.tasks import InMemoryTaskStore, TaskStore
+from msgflux.tasks import InMemoryTaskStore, TaskHandle, TaskStore
 from msgflux.tools import ToolBackground, ToolLibraryOperator
 
 
@@ -84,6 +89,9 @@ class _ScriptedModel:
         if not self._responses:
             raise AssertionError("Scripted model exhausted.")
         return self._responses.pop(0)
+
+    async def acall(self, **kwargs):
+        return self(**kwargs)
 
 
 def _notification_messages(
@@ -1611,6 +1619,10 @@ def test_task_message_during_resumed_run_targets_current_inbox(use_bucket):
             dispatch = library([call])
             task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
             _wait_until(lambda: task_store.get(task_id).status == "completed")
+            if use_bucket:
+                initial = task_store.get(task_id).metadata["initial_call_params"]
+                assert initial["name"] == "worker"
+                assert initial["message"] == "Start"
             old_inbox = library.get_handle().get_task_inbox(task_id)
 
             resumed = library(
@@ -1684,6 +1696,208 @@ def test_task_message_queues_for_running_agent_without_local_future():
         (result["message_id"], "Please continue")
     ]
     assert library.get_agent_inbox().peek() == []
+
+
+def test_expired_agent_recovery_requires_checkpoint_or_initial_input_and_expired_lease():
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+    task = tasks.create(
+        "worker",
+        task_id="orphaned-task",
+        metadata={
+            "task_kind": "agent",
+            "checkpoint_namespace": "worker",
+            "checkpoint_thread_id": "orphaned-thread",
+            "checkpoint_run_id": "orphaned-task",
+            "checkpoint_store_id": checkpoints.routing_id,
+            "inbox_store_id": library.get_agent_inbox().store.routing_id,
+        },
+    )
+    assert tasks.claim_worker(task.task_id, "old", lease_seconds=30)
+
+    with execution_context(checkpoint_store=checkpoints):
+        with pytest.raises(
+            RuntimeError, match="no checkpoint or durable initial input"
+        ):
+            library.recover_agent_task(task.task_id, message="Continue")
+
+        checkpoints.save_state(
+            "worker", "orphaned-thread", "orphaned-task", {"status": "running"}
+        )
+        with pytest.raises(TaskLeaseLostError):
+            library.recover_agent_task(task.task_id, message="Continue")
+
+    assert tasks.get(task.task_id).status == "running"
+    assert tasks.get_worker_lease(task.task_id).owner_id == "old"
+    assert not any(item.kind == "message" for item in tasks.list_activity(task.task_id))
+
+
+def test_expired_agent_recovery_rejects_terminal_checkpoint():
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    worker = Agent(name="worker", model=_mock_model("done"))
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+    task = tasks.create(
+        "worker",
+        task_id="orphaned-task",
+        metadata={
+            "task_kind": "agent",
+            "checkpoint_namespace": "worker",
+            "checkpoint_thread_id": "orphaned-thread",
+            "checkpoint_run_id": "orphaned-task",
+            "checkpoint_store_id": checkpoints.routing_id,
+            "inbox_store_id": library.get_agent_inbox().store.routing_id,
+            "initial_call_params": {"task": "Original input"},
+        },
+    )
+    assert tasks.claim_worker(task.task_id, "old", lease_seconds=1)
+    checkpoints.save_state(
+        "worker", "orphaned-thread", "orphaned-task", {"status": "completed"}
+    )
+    with execution_context(checkpoint_store=checkpoints):
+        with pytest.raises(RuntimeError, match="terminal checkpoint"):
+            library.recover_agent_task(task.task_id, message="Continue")
+    assert tasks.get_worker_lease(task.task_id).owner_id == "old"
+
+
+def test_initial_replay_input_requires_lossless_json():
+    assert BackgroundTaskDispatcher._durable_initial_params(
+        {"message": "hello", "options": [1, True, None]}
+    ) == {"message": "hello", "options": [1, True, None]}
+    assert BackgroundTaskDispatcher._durable_initial_params({"image": b"raw"}) is None
+    assert (
+        BackgroundTaskDispatcher._durable_initial_params({"object": object()}) is None
+    )
+
+
+def test_background_execution_context_shares_owned_task_handle():
+    @mf.tool_config(background=True)
+    def inspect_worker() -> bool:
+        """Confirm the running tool can update its own task."""
+        from msgflux.runtime.context import get_execution_context
+
+        handle = get_execution_context()["task_handle"]
+        assert handle.has_worker_lease
+        return handle.update_progress(current=1, total=1) is not None
+
+    tasks = InMemoryTaskStore()
+    library = ToolLibrary(name="lib", tools=[inspect_worker], task_store=tasks)
+    dispatch = library([("call", "inspect_worker", {})])
+    task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+    _wait_until(lambda: tasks.get(task_id).status == "completed")
+    assert tasks.get(task_id).result is True
+
+
+def test_cancelled_recovery_releases_heartbeat_and_fails_task():
+    tasks = InMemoryTaskStore()
+    tasks.create("worker", task_id="cancelled")
+    handle = TaskHandle("cancelled", tasks)
+    handle.start_worker(lease_seconds=30)
+    future = Future()
+    assert future.cancel()
+
+    BackgroundTaskDispatcher._cleanup_cancelled_recovery(handle, future)
+
+    assert tasks.get("cancelled").status == "failed"
+    assert tasks.get_worker_lease("cancelled") is None
+
+
+@pytest.mark.parametrize("use_bucket", [False, True])
+def test_expired_agent_recovery_replays_initial_input_before_first_checkpoint(
+    use_bucket,
+):
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    model = _ScriptedModel([_text_response("replayed")])
+    worker = Agent(name="worker", model=model)
+    if not use_bucket:
+        worker.tool_config = {"background": True}
+    tools = (
+        [mf.tool_config(allow_background=True)(AgentTool()), worker]
+        if use_bucket
+        else [worker]
+    )
+    library = ToolLibrary(name="lib", tools=tools, task_store=tasks)
+    tool_name = "agent" if use_bucket else "worker"
+    initial_input = (
+        {"name": "worker", "message": "Original input"}
+        if use_bucket
+        else {"task": "Original input"}
+    )
+    task = tasks.create(
+        tool_name,
+        task_id="orphaned-task",
+        metadata={
+            "task_kind": "agent",
+            "tool_call_id": "original-call",
+            "checkpoint_namespace": "worker",
+            "checkpoint_thread_id": "orphaned-thread",
+            "checkpoint_run_id": "orphaned-task",
+            "checkpoint_store_id": checkpoints.routing_id,
+            "inbox_store_id": library.get_agent_inbox().store.routing_id,
+            "task_resume_params": {"name": "worker"} if use_bucket else {},
+            "initial_call_params": initial_input,
+        },
+    )
+    now = [100.0]
+    tasks._clock = lambda: now[0]
+    assert tasks.claim_worker(task.task_id, "crashed", lease_seconds=10)
+    now[0] = 111.0
+
+    with execution_context(checkpoint_store=checkpoints):
+        library.recover_agent_task(task.task_id, message="Extra instruction")
+        _wait_until(lambda: tasks.get(task.task_id).status == "completed")
+
+    assert tasks.get(task.task_id).result == "replayed"
+    assert tasks.get(task.task_id).metadata["checkpoint_run_id"] == task.task_id
+    assert checkpoints.load_state("worker", "orphaned-thread", task.task_id)
+    assert tasks.pending_messages(task.task_id) == []
+
+
+def test_expired_agent_recovery_reuses_task_and_checkpoint():
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    model = _ScriptedModel([_text_response("first"), _text_response("recovered")])
+    worker = Agent(name="worker", model=model)
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+
+    with execution_context(
+        thread_id="worker-thread",
+        run_id="root-run",
+        root_run_id="root-run",
+        checkpoint_store=checkpoints,
+    ):
+        dispatch = library([("start", "worker", {"task": "Start"})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        _wait_until(lambda: tasks.get(task_id).status == "completed")
+        assert tasks.get(task_id).metadata["initial_call_params"] == {"task": "Start"}
+        checkpoint = checkpoints.load_state("worker", "worker-thread", task_id)
+        checkpoint["status"] = "running"
+        checkpoint["messages"]["items"] = [
+            item
+            for item in checkpoint["messages"]["items"]
+            if not (item.get("type") == "turn" and item.get("event") == "complete")
+        ]
+        checkpoints.save_state("worker", "worker-thread", task_id, checkpoint)
+        assert tasks.requeue(
+            task_id, expected_status="completed", expected_generation=0
+        )
+
+        now = [100.0]
+        tasks._clock = lambda: now[0]
+        assert tasks.claim_worker(task_id, "crashed", lease_seconds=10)
+        now[0] = 111.0
+        assert "recovered" in library.recover_agent_task(task_id, message="Continue")
+        _wait_until(lambda: tasks.get(task_id).status == "completed")
+
+    assert tasks.get(task_id).result == "recovered"
+    assert tasks.get(task_id).metadata["checkpoint_run_id"] == task_id
+    assert tasks.get_worker_lease(task_id) is None
 
 
 def test_running_agent_acks_task_message_only_after_checkpoint():

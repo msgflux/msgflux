@@ -118,6 +118,14 @@ class TaskIdCollisionError(Exception):
         self.task_id = task_id
 
 
+class TaskLeaseLostError(RuntimeError):
+    """Raised when a background worker no longer owns its durable task lease."""
+
+    def __init__(self, task_id: str):
+        self.task_id = task_id
+        super().__init__(f"Task `{task_id}` worker lease is no longer owned.")
+
+
 class UnsafeUserInputError(Exception):
     def __init__(self, message: Optional[str] = None, data: Any = None):
         super().__init__(message or "Unsafe user input detected")

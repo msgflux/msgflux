@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from copy import deepcopy
 from threading import RLock
 from typing import Any, Dict, List, Mapping
@@ -7,6 +8,7 @@ from uuid import uuid4
 
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskRecord
+from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import InMemoryTaskStoreType
 from msgflux.utils.time import utc_now_isoformat
@@ -23,6 +25,83 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
         self._tasks: Dict[str, TaskRecord] = {}
         self._activities: Dict[str, List[TaskActivity]] = {}
         self._messages: Dict[str, Dict[str, str]] = {}
+        self._worker_leases: Dict[str, TaskLease] = {}
+        self._clock = time.time
+
+    def claim_worker(
+        self,
+        task_id: str,
+        owner_id: str,
+        *,
+        lease_seconds: float,
+        recover_expired: bool = False,
+    ) -> TaskLease | None:
+        if lease_seconds <= 0:
+            raise ValueError("`lease_seconds` must be positive")
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            now = self._clock()
+            previous = self._worker_leases.get(task_id)
+            can_claim = task.status == "queued" or (
+                recover_expired
+                and task.status == "running"
+                and previous is not None
+                and previous.expires_at <= now
+            )
+            if not can_claim:
+                return None
+            lease = TaskLease(task_id, owner_id, now + lease_seconds)
+            self._worker_leases[task_id] = lease
+            task.status = "running"
+            task.updated_at = utc_now_isoformat()
+            self._activities.setdefault(task_id, []).append(
+                TaskActivity(
+                    task_id=task_id,
+                    kind="status",
+                    summary="Task running.",
+                    created_at=task.updated_at,
+                    metadata={"status": "running"},
+                )
+            )
+            return lease
+
+    def get_worker_lease(self, task_id: str) -> TaskLease | None:
+        with self._lock:
+            return self._worker_leases.get(task_id)
+
+    def renew_worker(
+        self, task_id: str, owner_id: str, *, lease_seconds: float
+    ) -> bool:
+        if lease_seconds <= 0:
+            raise ValueError("`lease_seconds` must be positive")
+        with self._lock:
+            task = self._tasks.get(task_id)
+            lease = self._worker_leases.get(task_id)
+            now = self._clock()
+            if (
+                task is None
+                or task.status != "running"
+                or lease is None
+                or lease.owner_id != owner_id
+                or lease.expires_at <= now
+            ):
+                return False
+            self._worker_leases[task_id] = TaskLease(
+                task_id, owner_id, now + lease_seconds
+            )
+            return True
+
+    def _owns_worker_locked(self, task_id: str, owner_id: str | None) -> bool:
+        if owner_id is None:
+            return task_id not in self._worker_leases
+        lease = self._worker_leases.get(task_id)
+        return bool(
+            lease is not None
+            and lease.owner_id == owner_id
+            and lease.expires_at > self._clock()
+        )
 
     def enqueue_message(self, task_id: str, message_id: str, message: str) -> bool:
         """Persist a message against the task, independent of its current run."""
@@ -150,10 +229,11 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
         *,
         stage: str | None = None,
         message: str | None = None,
+        owner_id: str | None = None,
     ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or not self._owns_worker_locked(task_id, owner_id):
                 return None
             task.status = "running"
             task.updated_at = utc_now_isoformat()
@@ -185,10 +265,11 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
         current: int | None = None,
         total: int | None = None,
         percent: float | None = None,
+        owner_id: str | None = None,
     ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or not self._owns_worker_locked(task_id, owner_id):
                 return None
             if task.status == "queued":
                 task.status = "running"
@@ -222,10 +303,12 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
             return deepcopy(task)
 
-    def complete(self, task_id: str, result: Any) -> TaskRecord | None:
+    def complete(
+        self, task_id: str, result: Any, *, owner_id: str | None = None
+    ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or not self._owns_worker_locked(task_id, owner_id):
                 return None
             now = utc_now_isoformat()
             task.status = "completed"
@@ -233,6 +316,7 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.completed_at = now
             task.result = result
             task.error = None
+            self._worker_leases.pop(task_id, None)
             if task.progress.percent is None and task.progress.total:
                 task.progress.percent = 100.0
             self._activities.setdefault(task_id, []).append(
@@ -246,16 +330,19 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
             return deepcopy(task)
 
-    def fail(self, task_id: str, error: Any) -> TaskRecord | None:
+    def fail(
+        self, task_id: str, error: Any, *, owner_id: str | None = None
+    ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or not self._owns_worker_locked(task_id, owner_id):
                 return None
             now = utc_now_isoformat()
             task.status = "failed"
             task.updated_at = now
             task.completed_at = now
             task.error = str(error)
+            self._worker_leases.pop(task_id, None)
             self._activities.setdefault(task_id, []).append(
                 TaskActivity(
                     task_id=task_id,
@@ -272,16 +359,18 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
         task_id: str,
         *,
         reason: str | None = None,
+        owner_id: str | None = None,
     ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or not self._owns_worker_locked(task_id, owner_id):
                 return None
             now = utc_now_isoformat()
             task.status = "interrupted"
             task.updated_at = now
             task.completed_at = now
             task.metadata["interrupt_requested"] = False
+            self._worker_leases.pop(task_id, None)
             if reason:
                 task.metadata["interrupt_reason"] = reason
             self._activities.setdefault(task_id, []).append(
@@ -295,15 +384,22 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
             return deepcopy(task)
 
-    def pause(self, task_id: str, *, reason: str | None = None) -> TaskRecord | None:
+    def pause(
+        self,
+        task_id: str,
+        *,
+        reason: str | None = None,
+        owner_id: str | None = None,
+    ) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or not self._owns_worker_locked(task_id, owner_id):
                 return None
             now = utc_now_isoformat()
             task.status = "paused"
             task.updated_at = now
             task.metadata["interrupt_requested"] = False
+            self._worker_leases.pop(task_id, None)
             if reason:
                 task.metadata["pause_reason"] = reason
             self._activities.setdefault(task_id, []).append(

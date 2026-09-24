@@ -7,10 +7,13 @@ from threading import Lock
 from typing import Any, Dict, Mapping
 from uuid import uuid4
 
+import msgspec
+
 from msgflux._private.executor import Executor
 from msgflux.exceptions import (
     TaskIdCollisionError,
     TaskInterruptRequestedError,
+    TaskLeaseLostError,
     TaskPauseRequestedError,
 )
 from msgflux.logger import logger
@@ -31,6 +34,7 @@ from msgflux.runtime.events import (
     event_source,
 )
 from msgflux.runtime.permissions import require_permissions
+from msgflux.runtime.task_leases import TaskLeaseHeartbeats
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
 from msgflux.tools.builtin.task_tool import (
     build_background_dispatch_result,
@@ -48,6 +52,7 @@ class BackgroundTaskDispatcher:
         self.library_handle = library_handle
         self._task_futures: Dict[str, Any] = {}
         self._task_futures_lock = Lock()
+        self.lease_seconds = 60.0
 
     def clear(self) -> None:
         with self._task_futures_lock:
@@ -134,6 +139,49 @@ class BackgroundTaskDispatcher:
                 "current runtime binding."
             )
 
+    @staticmethod
+    def _validate_recovery_checkpoint(
+        task: Any,
+        checkpoint_store: Any | None,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+    ) -> bool:
+        if task.status != "running":
+            raise RuntimeError(f"Task `{task.task_id}` is not running.")
+        checkpoint = (
+            checkpoint_store.load_state(namespace, thread_id, run_id)
+            if checkpoint_store is not None
+            else None
+        )
+        has_checkpoint = checkpoint is not None
+        if checkpoint is not None and checkpoint.get("status") in {
+            "completed",
+            "interrupted",
+        }:
+            raise RuntimeError(
+                f"Task `{task.task_id}` has a terminal checkpoint but no task "
+                "result; reconcile it before recovery."
+            )
+        if not has_checkpoint and not isinstance(
+            task.metadata.get("initial_call_params"), dict
+        ):
+            raise RuntimeError(
+                f"Task `{task.task_id}` has no checkpoint or durable initial input "
+                "to recover."
+            )
+        return has_checkpoint
+
+    @staticmethod
+    def _durable_initial_params(visible_params: Mapping[str, Any]) -> dict | None:
+        """Keep only inputs that can survive a JSON-backed task store."""
+        original = dict(visible_params)
+        try:
+            decoded = msgspec.json.decode(msgspec.json.encode(original))
+        except (TypeError, ValueError, msgspec.EncodeError):
+            return None
+        return decoded if isinstance(decoded, dict) and decoded == original else None
+
     def _get_task_resume_params(
         self,
         *,
@@ -174,6 +222,7 @@ class BackgroundTaskDispatcher:
         agent_inbox: AgentInbox | None = None,
         required_permissions: tuple[str, ...] = (),
         required_resources: tuple = (),
+        recover_expired: bool = False,
     ) -> Any:
         scope = execution_scope or {}
         capture = (
@@ -186,10 +235,20 @@ class BackgroundTaskDispatcher:
             capture,
             event_source(tool_name, "background"),
         ):
-            task_handle.set_running()
+            if not task_handle.has_worker_lease:
+                task_handle.start_worker(
+                    lease_seconds=self.lease_seconds,
+                    recover_expired=recover_expired,
+                )
+            elif not task_handle.renew_worker(lease_seconds=self.lease_seconds):
+                TaskLeaseHeartbeats.unregister(task_handle)
+                raise TaskLeaseLostError(task_handle.task_id)
+            TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
             try:
                 require_permissions(required_permissions, required_resources)
                 result = tool(**call_params)
+            except TaskLeaseLostError:
+                raise
             except TaskInterruptRequestedError as exc:
                 task_handle.interrupt(reason=str(exc))
                 self.publish_task_notification(
@@ -217,20 +276,24 @@ class BackgroundTaskDispatcher:
                     agent_inbox=agent_inbox,
                 )
                 raise
-            task_handle.complete(result)
-            self.publish_task_notification(
-                task_id=task_handle.task_id,
-                tool_name=tool_name,
-                status="completed",
-                agent_inbox=agent_inbox,
-            )
-            return result
+            else:
+                task_handle.complete(result)
+                self.publish_task_notification(
+                    task_id=task_handle.task_id,
+                    tool_name=tool_name,
+                    status="completed",
+                    agent_inbox=agent_inbox,
+                )
+                return result
+            finally:
+                TaskLeaseHeartbeats.unregister(task_handle)
 
-    def resume_agent_task(
+    def resume_agent_task(  # noqa: C901 - restart and expired-worker recovery share routing
         self,
         *,
         task: Any,
         message: str,
+        recover_expired: bool = False,
     ) -> str:
         task_store = self.library_handle.get_task_store()
         tool_name = task.tool_name
@@ -260,41 +323,36 @@ class BackgroundTaskDispatcher:
             root_inbox = self.library_handle.get_agent_inbox()
         task_inbox = self._resolve_task_inbox(task, agent_inbox=root_inbox)
         run_id = task.metadata.get("checkpoint_run_id") or task.task_id
-        if task.status in {"queued", "running"}:
+        has_checkpoint = True
+        if recover_expired:
+            has_checkpoint = self._validate_recovery_checkpoint(
+                task, checkpoint_store, checkpoint_namespace, thread_id, run_id
+            )
+        elif task.status in {"queued", "running"}:
             raise RuntimeError(f"Task `{task.task_id}` is already active.")
         next_run_id = None
-        if task.status in {"completed", "interrupted"}:
+        if not recover_expired and task.status in {"completed", "interrupted"}:
             run_id = new_run_id()
             next_run_id = run_id
-        updated_task = task_store.requeue(
-            task.task_id,
-            expected_status=task.status,
-            expected_generation=task.metadata.get("resume_generation", 0),
-            run_id=next_run_id,
-        )
-        if updated_task is None:
-            raise RuntimeError(f"Task `{task.task_id}` changed during resume.")
-        task = updated_task
-        task_inbox = self._resolve_task_inbox(task, agent_inbox=root_inbox)
-        emit_event(
-            EventType.TASK_START,
-            {
-                "task_id": task.task_id,
-                "tool_name": tool_name,
-                "status": "queued",
-            },
-        )
-        task_store.add_activity(
-            task.task_id,
-            kind="message",
-            summary=(f"Root message: {truncate_activity_text(message)}"),
-            metadata={
-                "direction": "root_to_task",
-                "resume": True,
-                "run_id": run_id,
-            },
-        )
-
+        if not recover_expired:
+            updated_task = task_store.requeue(
+                task.task_id,
+                expected_status=task.status,
+                expected_generation=task.metadata.get("resume_generation", 0),
+                run_id=next_run_id,
+            )
+            if updated_task is None:
+                raise RuntimeError(f"Task `{task.task_id}` changed during resume.")
+            task = updated_task
+            task_inbox = self._resolve_task_inbox(task, agent_inbox=root_inbox)
+            emit_event(
+                EventType.TASK_START,
+                {
+                    "task_id": task.task_id,
+                    "tool_name": tool_name,
+                    "status": "queued",
+                },
+            )
         activity_recorder = TaskActivityRecorder(task.task_id, task_store)
         task_handle = TaskHandle(
             task.task_id,
@@ -314,9 +372,16 @@ class BackgroundTaskDispatcher:
             "task_handle": task_handle,
             "task_activity_recorder": activity_recorder,
         }
+        initial_params = (
+            dict(task.metadata["initial_call_params"])
+            if recover_expired and not has_checkpoint
+            else {
+                **dict(task.metadata.get("task_resume_params") or {}),
+                "message": message,
+            }
+        )
         resume_params = {
-            **dict(task.metadata.get("task_resume_params") or {}),
-            "message": message,
+            **initial_params,
             "scope": ExecutionScope(
                 thread_id=thread_id,
                 namespace=checkpoint_namespace,
@@ -325,6 +390,8 @@ class BackgroundTaskDispatcher:
                 root_run_id=task.metadata.get("root_run_id"),
             ),
         }
+        if recover_expired and not has_checkpoint:
+            resume_params["tool_call_id"] = task.metadata.get("tool_call_id")
         if isinstance(getattr(tool, "impl", None), ToolBucket):
             resume_params["handle"] = self.library_handle.for_tool(
                 tool_name=tool_name,
@@ -335,23 +402,75 @@ class BackgroundTaskDispatcher:
                 activity_recorder=activity_recorder,
             )
 
-        future = Executor.get_instance().submit(
-            partial(
-                self.run_tool,
-                tool=tool,
-                task_handle=task_handle,
-                tool_name=tool_name,
-                call_params=resume_params,
-                required_permissions=required_permissions,
-                required_resources=required_resources,
-                execution_scope=execution_scope,
-                agent_inbox=root_inbox,
+        if recover_expired:
+            task_handle.start_worker(
+                lease_seconds=self.lease_seconds,
+                recover_expired=True,
             )
-        )
+            emit_event(
+                EventType.TASK_START,
+                {
+                    "task_id": task.task_id,
+                    "tool_name": tool_name,
+                    "status": "running",
+                    "recovered": True,
+                },
+            )
+            TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
+        try:
+            if recover_expired and not has_checkpoint:
+                task_store.enqueue_message(task.task_id, uuid4().hex, message)
+            task_store.add_activity(
+                task.task_id,
+                kind="message",
+                summary=(f"Root message: {truncate_activity_text(message)}"),
+                metadata={
+                    "direction": "root_to_task",
+                    "resume": True,
+                    "run_id": run_id,
+                },
+            )
+            future = Executor.get_instance().submit(
+                partial(
+                    self.run_tool,
+                    tool=tool,
+                    task_handle=task_handle,
+                    tool_name=tool_name,
+                    call_params=resume_params,
+                    required_permissions=required_permissions,
+                    required_resources=required_resources,
+                    execution_scope=execution_scope,
+                    agent_inbox=root_inbox,
+                    recover_expired=recover_expired,
+                )
+            )
+        except BaseException:
+            if recover_expired:
+                TaskLeaseHeartbeats.unregister(task_handle)
+                task_handle.fail("Worker submission failed")
+            raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
+        if recover_expired:
+            future.add_done_callback(
+                partial(self._cleanup_cancelled_recovery, task_handle)
+            )
         future.add_done_callback(self.log_task_failure)
-        return "Message scheduled and background agent resumed."
+        return (
+            "Message scheduled and expired background agent recovered."
+            if recover_expired
+            else "Message scheduled and background agent resumed."
+        )
+
+    @staticmethod
+    def _cleanup_cancelled_recovery(task_handle: TaskHandle, future: Any) -> None:
+        if not future.cancelled():
+            return
+        TaskLeaseHeartbeats.unregister(task_handle)
+        try:
+            task_handle.fail("Recovered worker was cancelled before execution")
+        except TaskLeaseLostError:
+            pass
 
     def log_task_failure(self, future: Any) -> None:
         try:
@@ -417,6 +536,9 @@ class BackgroundTaskDispatcher:
                 else None
             ),
             "task_resume_params": task_resume_params,
+            "initial_call_params": (
+                self._durable_initial_params(visible_params) if is_agent_task else None
+            ),
             "thread_id": thread_id,
             "parent_run_id": parent_run_id,
             "root_run_id": root_run_id,
@@ -475,6 +597,12 @@ class BackgroundTaskDispatcher:
             )
         runner_params["tool_call_id"] = tool_id
         activity_recorder = TaskActivityRecorder(task.task_id, task_store)
+        task_handle = TaskHandle(
+            task.task_id,
+            task_store,
+            tool_name=tool_name,
+            agent_inbox=root_agent_inbox,
+        )
         execution_scope = {
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
@@ -490,12 +618,7 @@ class BackgroundTaskDispatcher:
             ),
             "checkpoint_store": checkpoint_store,
             "agent_inbox": task_inbox or root_agent_inbox,
-            "task_handle": TaskHandle(
-                task.task_id,
-                task_store,
-                tool_name=tool_name,
-                agent_inbox=root_agent_inbox,
-            ),
+            "task_handle": task_handle,
             "task_activity_recorder": activity_recorder,
         }
         bucket_handle = runner_params.get("handle")
@@ -509,12 +632,7 @@ class BackgroundTaskDispatcher:
             partial(
                 self.run_tool,
                 tool=tool,
-                task_handle=TaskHandle(
-                    task.task_id,
-                    task_store,
-                    tool_name=tool_name,
-                    agent_inbox=root_agent_inbox,
-                ),
+                task_handle=task_handle,
                 tool_name=tool_name,
                 call_params=runner_params,
                 required_permissions=definition.required_permissions,
