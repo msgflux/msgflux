@@ -13,6 +13,7 @@ from msgflux.nn.modules.agent import Agent
 from msgflux.runtime import AbortSignal
 from msgflux.runtime.agent_inbox import AgentInbox, InMemoryAgentInboxStore
 from msgflux.runtime.context import ExecutionScope, execution_context
+from msgflux.tasks import InMemoryTaskStore, TaskHandle
 
 
 def _mock_model():
@@ -861,6 +862,32 @@ def test_agent_stream_checkpoint_completes_when_stream_finishes():
         )
         == 1
     )
+
+
+def test_background_agent_stream_commits_reconcilable_result():
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    tasks.create("test_agent", task_id="run_stream")
+    handle = TaskHandle("run_stream", tasks)
+    handle.start_worker(lease_seconds=30)
+    agent = _make_agent(checkpoint_store=checkpoints, config={"stream": True})
+    stream = ModelStreamResponse(mode="sync")
+    stream.set_response_type("text_generation")
+    agent.generator.forward = Mock(return_value=stream)
+
+    with execution_context(task_handle=handle):
+        result = agent(
+            "Stream status",
+            scope=ExecutionScope(
+                thread_id="thread", namespace="test_agent", run_id="run_stream"
+            ),
+        )
+        result.add("streamed result")
+        result.finish()
+
+    state = checkpoints.load_state("test_agent", "thread", "run_stream")
+    assert state["status"] == "completed"
+    assert state["task_result"] == {"value": "streamed result"}
 
 
 def test_agent_stream_updates_the_caller_chat_messages_when_finished():

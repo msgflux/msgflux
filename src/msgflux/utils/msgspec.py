@@ -499,6 +499,15 @@ def msgspec_loads(data: str | bytes) -> Any:
     return msgspec.json.decode(data)
 
 
+def lossless_json_roundtrip(value: Any) -> tuple[bool, Any]:
+    """Return a JSON copy only when encoding preserves the original value."""
+    try:
+        decoded = msgspec_loads(msgspec.json.encode(value))
+        return (decoded == value) is True, decoded
+    except (TypeError, ValueError, msgspec.EncodeError):
+        return False, None
+
+
 def export_to_json(
     obj: object, filepath: Union[str, os.PathLike], indent: Optional[int] = 4
 ):

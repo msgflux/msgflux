@@ -119,6 +119,10 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
         """Explicitly resume an agent whose worker lease has expired."""
         return self.get_handle().recover_background_agent_task(task_id, message=message)
 
+    def reconcile_agent_task(self, task_id: str) -> str:
+        """Record a completed background Agent result from its checkpoint."""
+        return self.get_handle().reconcile_background_agent_task(task_id)
+
     def set_lifecycle_owner(self, owner: Module) -> None:
         """Bind the owning Agent lifecycle without transferring hook ownership."""
         self._lifecycle_owner_ref = weakref.ref(owner)
