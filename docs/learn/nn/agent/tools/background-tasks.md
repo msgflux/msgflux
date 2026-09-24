@@ -291,6 +291,54 @@ Custom task stores used with background agent messaging must implement
 `enqueue_message`, `pending_messages`, `ack_messages`, and the conditional
 `requeue` arguments shown by the built-in memory and SQLite stores.
 
+### Recovering an abandoned worker
+
+Each background execution claims a time-limited worker lease in its task
+store. One process-wide heartbeat renews leases while local workers run. If a
+process exits abruptly, its task can remain `running` until the lease expires.
+The host can then explicitly recover a background agent from its last
+checkpoint:
+
+```python
+import msgflux as mf
+from msgflux.data.stores import SQLiteCheckpointStore
+from msgflux.tasks import SQLiteTaskStore
+
+# Rebuild the same tool library, Agent, and logical inbox/checkpoint bindings.
+task_store = SQLiteTaskStore(".msgflux/tasks.sqlite3")
+checkpoint_store = SQLiteCheckpointStore(".msgflux/checkpoints.sqlite3")
+with mf.execution_context(
+    task_store=task_store, checkpoint_store=checkpoint_store
+):
+    result = agent.tool_library.recover_agent_task(
+        "ab12cd34", message="Continue the interrupted investigation."
+    )
+```
+
+The call schedules the replacement worker and returns immediately. It only
+accepts an agent task whose prior worker lease has expired. When a checkpoint
+exists, the worker continues that run. If the process fell before the first
+checkpoint, msgFlux replays the JSON-serializable initial tool input saved at
+dispatch and queues the recovery message for the agent inbox. A live worker,
+a task with neither a checkpoint nor durable initial input, or mismatched store
+bindings fails explicitly; `task_message` alone never steals a worker.
+Do not invoke recovery for every `running` task: inspect the stored lease and
+let it expire first. The replacement keeps the same task, thread, and run IDs,
+while a stale worker is fenced from updating task status or output. Inputs
+that cannot be encoded as JSON still run normally but cannot use the
+pre-checkpoint replay path. Tool calls and other external effects made
+immediately before a crash may still be repeated after recovery; leases are
+not an exactly-once guarantee.
+If the Agent committed a terminal checkpoint but the process exited before
+recording the task result, recovery stops with an explicit reconciliation
+error; msgFlux does not guess the missing result from conversation history.
+
+Custom task stores can implement the structural `TaskStoreProtocol` from
+`msgflux.tasks`. In addition to lifecycle, activity, messages, and conditional
+`requeue`, the contract includes atomic `claim_worker` and `renew_worker`
+operations with owner-checked status updates. The shared
+conformance tests cover these semantics for memory and SQLite providers.
+
 The SQLite inbox and checkpoint stores persist their `routing_id` in their
 respective databases, so bindings survive reopening or relocation. Custom
 durable store implementations should also expose stable `routing_id` values.
