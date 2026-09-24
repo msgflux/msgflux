@@ -19,11 +19,6 @@ class TestMCPError:
             raise MCPError("Base error message")
         assert str(exc_info.value) == "Base error message"
 
-    def test_inheritance_from_exception(self):
-        """Test that MCPError inherits from Exception."""
-        error = MCPError("Test error")
-        assert isinstance(error, Exception)
-
 
 class TestMCPTimeoutError:
     """Tests for MCPTimeoutError exception."""
@@ -33,12 +28,6 @@ class TestMCPTimeoutError:
         with pytest.raises(MCPTimeoutError) as exc_info:
             raise MCPTimeoutError("Operation timed out after 30s")
         assert "timed out" in str(exc_info.value)
-
-    def test_inherits_from_mcp_error(self):
-        """Test that MCPTimeoutError inherits from MCPError."""
-        error = MCPTimeoutError("Timeout")
-        assert isinstance(error, MCPError)
-        assert isinstance(error, Exception)
 
 
 class TestMCPToolError:
@@ -50,11 +39,6 @@ class TestMCPToolError:
             raise MCPToolError("Tool execution failed")
         assert "Tool execution failed" in str(exc_info.value)
 
-    def test_inherits_from_mcp_error(self):
-        """Test that MCPToolError inherits from MCPError."""
-        error = MCPToolError("Tool failed")
-        assert isinstance(error, MCPError)
-
 
 class TestMCPConnectionError:
     """Tests for MCPConnectionError exception."""
@@ -65,7 +49,8 @@ class TestMCPConnectionError:
             raise MCPConnectionError("Failed to connect to server")
         assert "Failed to connect" in str(exc_info.value)
 
-    def test_inherits_from_mcp_error(self):
-        """Test that MCPConnectionError inherits from MCPError."""
-        error = MCPConnectionError("Connection failed")
-        assert isinstance(error, MCPError)
+
+def test_mcp_error_subclasses_inherit_from_mcp_error():
+    """Keep the public MCP error hierarchy consistent."""
+    for error_type in (MCPTimeoutError, MCPToolError, MCPConnectionError):
+        assert issubclass(error_type, MCPError)

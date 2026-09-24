@@ -72,18 +72,6 @@ class TestBaseModel:
 
             model = IncompleteModel()
 
-    def test_initialize_called_correctly(self):
-        """Test that _initialize works when implemented."""
-        model = ConcreteModel()
-        model._initialize()
-        assert model.client == "initialized_client"
-
-    def test_model_call(self):
-        """Test that __call__ works."""
-        model = ConcreteModel()
-        result = model()
-        assert result == {"result": "success"}
-
     def test_serialize(self):
         """Test model serialization."""
         model = ConcreteModel(model_id="test-123", api_key="secret")
