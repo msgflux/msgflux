@@ -88,6 +88,10 @@ workspace-tools = [
     "pathspec>=1.1.1",
     "regex>=2024.11.6",
 ]
+screenshot = [
+    "mss>=10.2",
+    "dbus-next>=0.2.3; sys_platform == 'linux'",
+]
 
 [tool.ruff]
 target-version = "py311"
