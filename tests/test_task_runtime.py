@@ -2,6 +2,7 @@
 library-aware tools."""
 
 from concurrent.futures import CancelledError as FutureCancelledError, Future
+from dataclasses import replace
 import threading
 import time
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from msgflux.exceptions import (
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
+from msgflux.nn.hooks import Hook
 from msgflux.runtime.agent_inbox import AgentInbox, SQLiteAgentInboxStore
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.tools.builtin import AgentTool, TaskActivityTool, TaskStatusTool
@@ -1735,7 +1737,7 @@ def test_expired_agent_recovery_requires_checkpoint_or_initial_input_and_expired
     assert not any(item.kind == "message" for item in tasks.list_activity(task.task_id))
 
 
-def test_expired_agent_recovery_rejects_terminal_checkpoint():
+def test_terminal_checkpoint_reconciliation_requires_result_but_accepts_none():
     checkpoints = InMemoryCheckpointStore()
     tasks = InMemoryTaskStore()
     worker = Agent(name="worker", model=_mock_model("done"))
@@ -1761,7 +1763,20 @@ def test_expired_agent_recovery_rejects_terminal_checkpoint():
     with execution_context(checkpoint_store=checkpoints):
         with pytest.raises(RuntimeError, match="terminal checkpoint"):
             library.recover_agent_task(task.task_id, message="Continue")
+        with pytest.raises(RuntimeError, match="no recorded result"):
+            library.reconcile_agent_task(task.task_id)
     assert tasks.get_worker_lease(task.task_id).owner_id == "old"
+    checkpoints.save_state(
+        "worker",
+        "orphaned-thread",
+        "orphaned-task",
+        {"status": "completed", "task_result": {"value": None}},
+    )
+    tasks._clock = lambda: time.time() + 2
+    with execution_context(checkpoint_store=checkpoints):
+        assert "reconciled" in library.reconcile_agent_task(task.task_id)
+    assert tasks.get(task.task_id).status == "completed"
+    assert tasks.get(task.task_id).result is None
 
 
 def test_initial_replay_input_requires_lossless_json():
@@ -1854,8 +1869,127 @@ def test_expired_agent_recovery_replays_initial_input_before_first_checkpoint(
 
     assert tasks.get(task.task_id).result == "replayed"
     assert tasks.get(task.task_id).metadata["checkpoint_run_id"] == task.task_id
-    assert checkpoints.load_state("worker", "orphaned-thread", task.task_id)
+    checkpoint = checkpoints.load_state("worker", "orphaned-thread", task.task_id)
+    assert checkpoint["task_result"] == {"value": "replayed"}
     assert tasks.pending_messages(task.task_id) == []
+
+
+@pytest.mark.parametrize("use_bucket", [False, True])
+def test_reconcile_terminal_agent_checkpoint_without_rerunning_model(use_bucket):
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    model = _ScriptedModel([_text_response("committed")])
+    worker = Agent(name="worker", model=model)
+    if not use_bucket:
+        worker.tool_config = {"background": True}
+    tools = (
+        [mf.tool_config(allow_background=True)(AgentTool()), worker]
+        if use_bucket
+        else [worker]
+    )
+    library = ToolLibrary(name="lib", tools=tools, task_store=tasks)
+
+    with execution_context(
+        thread_id="worker-thread",
+        run_id="root-run",
+        root_run_id="root-run",
+        checkpoint_store=checkpoints,
+    ):
+        call = (
+            (
+                "start",
+                "agent",
+                {"name": "worker", "message": "Start", "run_in_background": True},
+            )
+            if use_bucket
+            else ("start", "worker", {"task": "Start"})
+        )
+        dispatch = library([call])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        _wait_until(lambda: tasks.get(task_id).status == "completed")
+        checkpoint = checkpoints.load_state("worker", "worker-thread", task_id)
+        assert checkpoint["task_result"] == {"value": "committed"}
+
+        # Model a process exiting after the terminal checkpoint but before
+        # task_handle.complete could record the output.
+        assert tasks.requeue(
+            task_id, expected_status="completed", expected_generation=0
+        )
+        now = [100.0]
+        tasks._clock = lambda: now[0]
+        assert tasks.claim_worker(task_id, "crashed", lease_seconds=10)
+        with pytest.raises(TaskLeaseLostError):
+            library.reconcile_agent_task(task_id)
+        now[0] = 111.0
+
+        assert tasks.claim_worker(task_id, "racing", lease_seconds=10) is None
+        assert "reconciled" in library.reconcile_agent_task(task_id)
+
+    assert tasks.get(task_id).status == "completed"
+    assert tasks.get(task_id).result == "committed"
+    assert len(model.calls) == 1
+    assert tasks.get_worker_lease(task_id) is None
+
+
+def test_background_checkpoint_records_pre_after_run_end_output():
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    worker = Agent(
+        name="worker",
+        model=_ScriptedModel([_text_response("answer")]),
+        hooks=[
+            Hook(
+                event="before_run_end",
+                handler=lambda context: replace(
+                    context, output=f"{context.output}:before"
+                ),
+            ),
+            Hook(
+                event="after_run_end",
+                handler=lambda context: replace(
+                    context, output=f"{context.output}:after"
+                ),
+            ),
+        ],
+    )
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+
+    with execution_context(thread_id="thread", checkpoint_store=checkpoints):
+        dispatch = library([("start", "worker", {"task": "Start"})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        _wait_until(lambda: tasks.get(task_id).status == "completed")
+
+    checkpoint = checkpoints.load_state("worker", "thread", task_id)
+    assert checkpoint["task_result"] == {"value": "answer:before"}
+    assert tasks.get(task_id).result == "answer:before:after"
+
+
+def test_non_json_background_output_does_not_break_terminal_checkpoint():
+    checkpoints = InMemoryCheckpointStore()
+    tasks = InMemoryTaskStore()
+    worker = Agent(
+        name="worker",
+        model=_ScriptedModel([_text_response("answer")]),
+        hooks=[
+            Hook(
+                event="before_run_end",
+                handler=lambda context: replace(context, output=b"binary"),
+            )
+        ],
+    )
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+
+    with execution_context(thread_id="thread", checkpoint_store=checkpoints):
+        dispatch = library([("start", "worker", {"task": "Start"})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        _wait_until(lambda: tasks.get(task_id).status == "completed")
+
+    checkpoint = checkpoints.load_state("worker", "thread", task_id)
+    assert checkpoint["status"] == "completed"
+    assert "task_result" not in checkpoint
+    assert tasks.get(task_id).result == b"binary"
 
 
 def test_expired_agent_recovery_reuses_task_and_checkpoint():

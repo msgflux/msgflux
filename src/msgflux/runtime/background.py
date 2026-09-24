@@ -7,8 +7,6 @@ from threading import Lock
 from typing import Any, Dict, Mapping
 from uuid import uuid4
 
-import msgspec
-
 from msgflux._private.executor import Executor
 from msgflux.exceptions import (
     TaskIdCollisionError,
@@ -43,6 +41,7 @@ from msgflux.tools.builtin.task_tool import (
 from msgflux.tools.handles import ToolBucketHandle
 from msgflux.tools.responses import ToolCall
 from msgflux.tools.types import ToolBackground, ToolBucket
+from msgflux.utils.msgspec import lossless_json_roundtrip
 
 
 class BackgroundTaskDispatcher:
@@ -146,7 +145,7 @@ class BackgroundTaskDispatcher:
         namespace: str,
         thread_id: str,
         run_id: str,
-    ) -> bool:
+    ) -> Mapping[str, Any] | None:
         if task.status != "running":
             raise RuntimeError(f"Task `{task.task_id}` is not running.")
         checkpoint = (
@@ -154,33 +153,21 @@ class BackgroundTaskDispatcher:
             if checkpoint_store is not None
             else None
         )
-        has_checkpoint = checkpoint is not None
-        if checkpoint is not None and checkpoint.get("status") in {
-            "completed",
-            "interrupted",
-        }:
-            raise RuntimeError(
-                f"Task `{task.task_id}` has a terminal checkpoint but no task "
-                "result; reconcile it before recovery."
-            )
-        if not has_checkpoint and not isinstance(
+        if checkpoint is None and not isinstance(
             task.metadata.get("initial_call_params"), dict
         ):
             raise RuntimeError(
                 f"Task `{task.task_id}` has no checkpoint or durable initial input "
                 "to recover."
             )
-        return has_checkpoint
+        return checkpoint
 
     @staticmethod
     def _durable_initial_params(visible_params: Mapping[str, Any]) -> dict | None:
         """Keep only inputs that can survive a JSON-backed task store."""
         original = dict(visible_params)
-        try:
-            decoded = msgspec.json.decode(msgspec.json.encode(original))
-        except (TypeError, ValueError, msgspec.EncodeError):
-            return None
-        return decoded if isinstance(decoded, dict) and decoded == original else None
+        lossless, decoded = lossless_json_roundtrip(original)
+        return decoded if lossless and isinstance(decoded, dict) else None
 
     def _get_task_resume_params(
         self,
@@ -294,6 +281,7 @@ class BackgroundTaskDispatcher:
         task: Any,
         message: str,
         recover_expired: bool = False,
+        reconcile_terminal: bool = False,
     ) -> str:
         task_store = self.library_handle.get_task_store()
         tool_name = task.tool_name
@@ -323,11 +311,31 @@ class BackgroundTaskDispatcher:
             root_inbox = self.library_handle.get_agent_inbox()
         task_inbox = self._resolve_task_inbox(task, agent_inbox=root_inbox)
         run_id = task.metadata.get("checkpoint_run_id") or task.task_id
-        has_checkpoint = True
+        checkpoint = None
         if recover_expired:
-            has_checkpoint = self._validate_recovery_checkpoint(
+            checkpoint = self._validate_recovery_checkpoint(
                 task, checkpoint_store, checkpoint_namespace, thread_id, run_id
             )
+            if reconcile_terminal:
+                if checkpoint is None or checkpoint.get("status") != "completed":
+                    raise RuntimeError(
+                        f"Task `{task.task_id}` has no completed checkpoint "
+                        "to reconcile."
+                    )
+                result = checkpoint.get("task_result")
+                if not isinstance(result, Mapping) or "value" not in result:
+                    raise RuntimeError(
+                        f"Task `{task.task_id}` terminal checkpoint has no "
+                        "recorded result."
+                    )
+            elif checkpoint is not None and checkpoint.get("status") in {
+                "completed",
+                "interrupted",
+            }:
+                raise RuntimeError(
+                    f"Task `{task.task_id}` has a terminal checkpoint; "
+                    "use `reconcile_agent_task` for completed runs."
+                )
         elif task.status in {"queued", "running"}:
             raise RuntimeError(f"Task `{task.task_id}` is already active.")
         next_run_id = None
@@ -360,6 +368,28 @@ class BackgroundTaskDispatcher:
             tool_name=tool_name,
             agent_inbox=root_inbox,
         )
+        if reconcile_terminal:
+            task_handle.start_worker(
+                lease_seconds=self.lease_seconds,
+                recover_expired=True,
+            )
+            emit_event(
+                EventType.TASK_START,
+                {
+                    "task_id": task.task_id,
+                    "tool_name": tool_name,
+                    "status": "running",
+                    "reconciled": True,
+                },
+            )
+            task_handle.complete(result["value"])
+            self.publish_task_notification(
+                task_id=task.task_id,
+                tool_name=tool_name,
+                status="completed",
+                agent_inbox=root_inbox,
+            )
+            return "Completed background agent result reconciled from checkpoint."
         execution_scope = {
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
@@ -374,7 +404,7 @@ class BackgroundTaskDispatcher:
         }
         initial_params = (
             dict(task.metadata["initial_call_params"])
-            if recover_expired and not has_checkpoint
+            if recover_expired and checkpoint is None
             else {
                 **dict(task.metadata.get("task_resume_params") or {}),
                 "message": message,
@@ -390,7 +420,7 @@ class BackgroundTaskDispatcher:
                 root_run_id=task.metadata.get("root_run_id"),
             ),
         }
-        if recover_expired and not has_checkpoint:
+        if recover_expired and checkpoint is None:
             resume_params["tool_call_id"] = task.metadata.get("tool_call_id")
         if isinstance(getattr(tool, "impl", None), ToolBucket):
             resume_params["handle"] = self.library_handle.for_tool(
@@ -418,7 +448,7 @@ class BackgroundTaskDispatcher:
             )
             TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
         try:
-            if recover_expired and not has_checkpoint:
+            if recover_expired and checkpoint is None:
                 task_store.enqueue_message(task.task_id, uuid4().hex, message)
             task_store.add_activity(
                 task.task_id,

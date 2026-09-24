@@ -208,13 +208,17 @@ class ToolLibraryHandle:
                 message=message,
             )
 
-    def recover_background_agent_task(self, task_id: str, *, message: str) -> str:
-        """Claim an expired worker lease and resume an existing checkpoint."""
+    def _get_background_agent_task(self, task_id: str) -> Any:
         task = self.get_task_store().get(task_id)
         if task is None:
             raise ValueError(f"Task `{task_id}` was not found.")
         if task.metadata.get("task_kind") != "agent":
             raise ValueError(f"Task `{task_id}` is not a background agent.")
+        return task
+
+    def recover_background_agent_task(self, task_id: str, *, message: str) -> str:
+        """Claim an expired worker lease and resume an existing checkpoint."""
+        task = self._get_background_agent_task(task_id)
         with execution_context(
             task_store=self.get_task_store(),
             agent_inbox=self.get_agent_inbox(),
@@ -223,6 +227,20 @@ class ToolLibraryHandle:
                 task=task,
                 message=message,
                 recover_expired=True,
+            )
+
+    def reconcile_background_agent_task(self, task_id: str) -> str:
+        """Claim an expired worker and persist its committed Agent result."""
+        task = self._get_background_agent_task(task_id)
+        with execution_context(
+            task_store=self.get_task_store(),
+            agent_inbox=self.get_agent_inbox(),
+        ):
+            return self._library.get_background_dispatcher().resume_agent_task(
+                task=task,
+                message="",
+                recover_expired=True,
+                reconcile_terminal=True,
             )
 
     def build_notification_handle(

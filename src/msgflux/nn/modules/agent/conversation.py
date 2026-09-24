@@ -40,6 +40,7 @@ from msgflux.runtime.context import (
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.tools.runtime import ToolOutcome
 from msgflux.utils.console import cprint
+from msgflux.utils.msgspec import lossless_json_roundtrip
 from msgflux.utils.time import utc_now_isoformat
 from msgflux.utils.xml import apply_xml_tags
 
@@ -49,6 +50,8 @@ from msgflux.nn.modules.agent.context import (
     _CURRENT_AGENT_CONTEXT,
     _require_lifecycle_payload,
 )
+
+_TASK_RESULT_UNSET = object()
 
 
 class AgentConversationMixin:
@@ -805,7 +808,12 @@ class AgentConversationMixin:
                     raise
                 settled = run_end.messages
                 close_turn(settled, final_state.status, final_state.error)
-                self._checkpoint_save(settled, vars, status=final_state.status)
+                self._checkpoint_save(
+                    settled,
+                    vars,
+                    status=final_state.status,
+                    task_result=run_end.output,
+                )
                 committed = True
                 run_end = self._run_after_run_end_hook(run_end)
                 model_response._settled_output = run_end.output
@@ -826,7 +834,12 @@ class AgentConversationMixin:
                     raise
                 settled = run_end.messages
                 close_turn(settled, final_state.status, final_state.error)
-                await self._acheckpoint_save(settled, vars, status=final_state.status)
+                await self._acheckpoint_save(
+                    settled,
+                    vars,
+                    status=final_state.status,
+                    task_result=run_end.output,
+                )
                 committed = True
                 run_end = await self._arun_after_run_end_hook(run_end)
                 model_response._settled_output = run_end.output
@@ -919,6 +932,8 @@ class AgentConversationMixin:
         messages: Union[ChatMessages, List[Mapping[str, Any]], None],
         _vars: Mapping[str, Any],
         status: str = "running",
+        *,
+        task_result: Any = _TASK_RESULT_UNSET,
     ) -> None:
         checkpoint_store = self._get_effective_checkpoint_store()
         if checkpoint_store is None or not isinstance(messages, ChatMessages):
@@ -930,7 +945,9 @@ class AgentConversationMixin:
 
         thread_id = messages.thread_id or new_thread_id()
         run_id = turns[-1]["turn_id"]
-        state = self._build_checkpoint_state(messages, status=status)
+        state = self._build_checkpoint_state(
+            messages, status=status, task_result=task_result
+        )
         try:
             run = get_agent_run()
             if run is not None and getattr(
@@ -962,6 +979,8 @@ class AgentConversationMixin:
         messages: Union[ChatMessages, List[Mapping[str, Any]], None],
         _vars: Mapping[str, Any],
         status: str = "running",
+        *,
+        task_result: Any = _TASK_RESULT_UNSET,
     ) -> None:
         checkpoint_store = self._get_effective_checkpoint_store()
         if checkpoint_store is None or not isinstance(messages, ChatMessages):
@@ -973,7 +992,9 @@ class AgentConversationMixin:
 
         thread_id = messages.thread_id or new_thread_id()
         run_id = turns[-1]["turn_id"]
-        state = self._build_checkpoint_state(messages, status=status)
+        state = self._build_checkpoint_state(
+            messages, status=status, task_result=task_result
+        )
         try:
             run = get_agent_run()
             if run is not None and getattr(
@@ -1059,13 +1080,14 @@ class AgentConversationMixin:
         messages: ChatMessages,
         *,
         status: str,
+        task_result: Any = _TASK_RESULT_UNSET,
     ) -> Mapping[str, Any]:
         run = get_agent_run()
         context = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self), {})
         scope = context.get("scope") or get_execution_context()["scope"]
         if run is not None:
             run.head_item_id = messages[-1].get("item_id") if messages else None
-        return {
+        state = {
             "schema_version": 1,
             "status": status,
             "messages": messages._to_state(),
@@ -1077,6 +1099,16 @@ class AgentConversationMixin:
                 "saved_at": utc_now_isoformat(),
             },
         }
+        task_handle = get_execution_context().get("task_handle")
+        if (
+            status == "completed"
+            and task_result is not _TASK_RESULT_UNSET
+            and getattr(task_handle, "task_id", None) == scope.run_id
+        ):
+            lossless, value = lossless_json_roundtrip(task_result)
+            if lossless:
+                state["task_result"] = {"value": value}
+        return state
 
     def _checkpoint_save_on_error(self, inputs: Mapping[str, Any]) -> None:
         if self._get_effective_checkpoint_store() is None:

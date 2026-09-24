@@ -725,7 +725,9 @@ class AgentModelRuntimeMixin:
         except Exception as error:
             raise _BeforeRunEndHookError(error) from error
         self._finalize_chat_turn(run_end.messages, raw_response)
-        self._checkpoint_save(run_end.messages, vars, status="completed")
+        self._checkpoint_save(
+            run_end.messages, vars, status="completed", task_result=run_end.output
+        )
         run_end = self._run_after_run_end_hook(run_end)
         return run_end.output
 
@@ -832,7 +834,9 @@ class AgentModelRuntimeMixin:
         except Exception as error:
             raise _BeforeRunEndHookError(error) from error
         self._finalize_chat_turn(run_end.messages, raw_response)
-        await self._acheckpoint_save(run_end.messages, vars, status="completed")
+        await self._acheckpoint_save(
+            run_end.messages, vars, status="completed", task_result=run_end.output
+        )
         run_end = await self._arun_after_run_end_hook(run_end)
         return run_end.output
 

@@ -329,9 +329,27 @@ that cannot be encoded as JSON still run normally but cannot use the
 pre-checkpoint replay path. Tool calls and other external effects made
 immediately before a crash may still be repeated after recovery; leases are
 not an exactly-once guarantee.
-If the Agent committed a terminal checkpoint but the process exited before
-recording the task result, recovery stops with an explicit reconciliation
-error; msgFlux does not guess the missing result from conversation history.
+If the Agent committed a `completed` checkpoint but the process exited before
+recording the task result, call `reconcile_agent_task` instead:
+
+```python
+with mf.execution_context(
+    task_store=task_store, checkpoint_store=checkpoint_store
+):
+    result = agent.tool_library.reconcile_agent_task("ab12cd34")
+```
+
+This claims the expired lease, copies the result committed in that checkpoint
+to the task store, and publishes completion without another model call. It
+does not consume or silently discard a new user message. If the worker is
+still live, the checkpoint is not completed, or an older checkpoint lacks a
+recorded result, the call fails without changing the task. The result must
+round-trip through JSON without changing type or value; other outputs still
+run normally but cannot be reconciled from the checkpoint. The checkpointed
+result is the value after `before_run_end` and before `after_run_end`; a
+transformation made only by `after_run_end` is not guaranteed to survive a
+crash in this window. Reconciliation does not provide exactly-once delivery
+of external effects.
 
 Custom task stores can implement the structural `TaskStoreProtocol` from
 `msgflux.tasks`. In addition to lifecycle, activity, messages, and conditional
