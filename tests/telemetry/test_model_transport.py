@@ -143,6 +143,105 @@ def test_ollama_native_think_preserves_level_or_boolean(spans, think, level, ena
     assert span.attributes.get("ollama.request.think") == enabled
 
 
+def test_anthropic_native_request_captures_parameters_output_and_usage(spans):
+    class AnthropicOwner(_Owner):
+        provider = "anthropic"
+
+    def handler(_request):
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_123",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-test",
+                "content": [
+                    {"type": "text", "text": "Checking weather."},
+                    {
+                        "type": "tool_use",
+                        "id": "tool_1",
+                        "name": "get_weather",
+                        "input": {"city": "Paris"},
+                    },
+                ],
+                "stop_reason": "tool_use",
+                "usage": {
+                    "input_tokens": 3,
+                    "cache_read_input_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                    "output_tokens": 4,
+                },
+            },
+        )
+
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+        HTTPTransport(client=client).request(
+            AnthropicOwner(),
+            "/v1/messages",
+            json={
+                "model": "claude-test",
+                "stream": False,
+                "temperature": 0.3,
+                "max_tokens": 256,
+                "stop_sequences": ["END"],
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "high"},
+            },
+        )
+
+    (span,) = spans.get_finished_spans()
+    attrs = span.attributes
+    assert attrs["gen_ai.operation.name"] == "chat"
+    assert attrs["gen_ai.request.reasoning.level"] == "high"
+    assert attrs["gen_ai.request.temperature"] == 0.3
+    assert attrs["gen_ai.request.max_tokens"] == 256
+    assert attrs["gen_ai.request.stop_sequences"] == ("END",)
+    assert attrs["gen_ai.request.stream"] is False
+    assert attrs["gen_ai.response.finish_reasons"] == ("tool_use",)
+    assert attrs["gen_ai.usage.input_tokens"] == 10
+    assert attrs["gen_ai.usage.output_tokens"] == 4
+    assert attrs["gen_ai.usage.cache_read.input_tokens"] == 5
+    assert attrs["gen_ai.usage.cache_creation.input_tokens"] == 2
+    assert json.loads(attrs["gen_ai.output.messages"]) == [
+        {
+            "role": "assistant",
+            "parts": [
+                {"type": "text", "content": "Checking weather."},
+                {
+                    "type": "tool_call",
+                    "name": "get_weather",
+                    "id": "tool_1",
+                    "arguments": {"city": "Paris"},
+                },
+            ],
+        }
+    ]
+
+
+def test_anthropic_thinking_budget_and_disabled_level(spans):
+    class AnthropicOwner(_Owner):
+        provider = "anthropic"
+
+    with httpx2.Client(
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json={}))
+    ) as client:
+        transport = HTTPTransport(client=client)
+        transport.request(
+            AnthropicOwner(),
+            "/v1/messages",
+            json={"thinking": {"type": "enabled", "budget_tokens": 1024}},
+        )
+        transport.request(
+            AnthropicOwner(),
+            "/v1/messages",
+            json={"thinking": {"type": "disabled"}},
+        )
+
+    budget, disabled = spans.get_finished_spans()
+    assert budget.attributes["anthropic.request.thinking.budget_tokens"] == 1024
+    assert disabled.attributes["gen_ai.request.reasoning.level"] == "none"
+
+
 def test_stream_span_ends_when_closed_and_records_final_usage(spans):
     body = b'data: {"choices":[],"usage":{"input_tokens":3,"output_tokens":4}}\n\n'
 
