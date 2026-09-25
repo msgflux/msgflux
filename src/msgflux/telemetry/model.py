@@ -60,6 +60,23 @@ def _stop_reason(payload: Any) -> str | None:
     return None
 
 
+def _gemini_thinking_level(body: Any) -> str | None:
+    extra_body = _value(body, "extra_body")
+    google = _value(extra_body, "google")
+    thinking_config = _value(google, "thinking_config")
+    level = _value(thinking_config, "thinking_level")
+    return level if isinstance(level, str) and level else None
+
+
+def _reasoning_level(body: Any, provider: Any) -> str | None:
+    level = _value(body, "reasoning_effort")
+    if not isinstance(level, str):
+        level = _value(_value(body, "reasoning"), "effort")
+    if isinstance(level, str) and level:
+        return level
+    return _gemini_thinking_level(body) if provider == "gemini" else None
+
+
 class _OutputCollector:
     """Collect text and stop reasons across one response or SSE stream."""
 
@@ -226,10 +243,8 @@ def _span_context(owner: Any, endpoint: str, kwargs: dict[str, Any]):
         value = _value(body, field)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             attributes[f"gen_ai.request.{field}"] = value
-    reasoning_level = _value(body, "reasoning_effort")
-    if not isinstance(reasoning_level, str):
-        reasoning_level = _value(_value(body, "reasoning"), "effort")
-    if isinstance(reasoning_level, str) and reasoning_level:
+    reasoning_level = _reasoning_level(body, provider)
+    if reasoning_level is not None:
         attributes["gen_ai.request.reasoning.level"] = reasoning_level
     if provider == "ollama":
         think = _value(body, "think")
