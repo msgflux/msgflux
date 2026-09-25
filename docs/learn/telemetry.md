@@ -274,15 +274,20 @@ In Jaeger, open a `chat <model>` span and expand its attributes to see
 
 ### Functional API
 
-All operations in `msgflux.nn.functional` are automatically traced:
+Fan-out operations in `msgflux.nn.functional` emit a span around the full gather:
 
 | Function | Description |
 |----------|-------------|
 | `map_gather` / `amap_gather` | Map over args and gather results |
 | `scatter_gather` / `ascatter_gather` | Scatter inputs and gather outputs |
-| `bcast_gather` | Broadcast and gather |
-| `Inline` | DSL workflow execution |
-| `detached` | Detached execution |
+| `bcast_gather` / `abcast_gather` | Broadcast and gather |
+
+These spans record `msgflux.functional.task_count` and
+`msgflux.functional.failed_tasks`; synchronous helpers also record
+`msgflux.functional.timeout_seconds` when a timeout is supplied. Child spans
+created by the dispatched work are nested under the fan-out span when execution
+context is propagated. Wait and detached dispatch helpers do not emit their own
+spans; the work they invoke keeps its existing module, tool, and model spans.
 
 ---
 
