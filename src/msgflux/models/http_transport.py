@@ -15,6 +15,7 @@ import httpx2
 
 from msgflux.exceptions import ModelProviderHTTPError
 from msgflux.models.model_credentials import ResolvedModelCredentials
+from msgflux.telemetry.model import trace_model_request
 
 _RETRYABLE_STATUS_CODES = {408, 409, 425, 429, *range(500, 600)}
 
@@ -40,6 +41,7 @@ class HTTPTransport:
         self.max_retries = max_retries
         self.max_retry_delay = max_retry_delay
 
+    @trace_model_request
     def request(
         self,
         owner: Any,
@@ -82,6 +84,7 @@ class HTTPTransport:
                 self._wait(owner, self._retry_delay(attempt))
         raise RuntimeError("HTTP retry loop ended without a response")
 
+    @trace_model_request
     async def arequest(
         self,
         owner: Any,
@@ -124,6 +127,7 @@ class HTTPTransport:
                 await self._await(owner, self._retry_delay(attempt))
         raise RuntimeError("HTTP retry loop ended without a response")
 
+    @trace_model_request
     def stream(
         self,
         owner: Any,
@@ -178,6 +182,7 @@ class HTTPTransport:
                     raise
                 self._wait(owner, self._retry_delay(attempt))
 
+    @trace_model_request
     async def astream(
         self,
         owner: Any,
@@ -268,6 +273,8 @@ class HTTPTransport:
         endpoint: str,
         credentials: ResolvedModelCredentials,
     ) -> str:
+        if endpoint.startswith(("https://", "http://")):
+            return endpoint
         base_url = credentials.base_url or owner.sampling_params.get("base_url")
         if not base_url:
             base_url = "https://api.openai.com/v1"

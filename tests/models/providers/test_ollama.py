@@ -19,9 +19,9 @@ def mock_native_clients():
     client = MagicMock()
     aclient = MagicMock()
     with (
-        patch("msgflux.models.providers.ollama.httpx2.Client", return_value=client),
+        patch("msgflux.models.http_transport.httpx2.Client", return_value=client),
         patch(
-            "msgflux.models.providers.ollama.httpx2.AsyncClient",
+            "msgflux.models.http_transport.httpx2.AsyncClient",
             return_value=aclient,
         ),
     ):
@@ -238,7 +238,7 @@ def test_native_missing_tool_ids_are_unique_across_responses():
     assert first_id != second_id
 
 
-def test_native_execute_posts_to_api_chat(mock_native_clients):
+def test_native_execute_requests_api_chat_through_shared_transport(mock_native_clients):
     from msgflux.models.providers.ollama import OllamaChatCompletion
 
     client, _ = mock_native_clients
@@ -251,17 +251,39 @@ def test_native_execute_posts_to_api_chat(mock_native_clients):
         "eval_count": 1,
         "message": {"role": "assistant", "content": "ok"},
     }
-    client.post.return_value = http_response
+    client.request.return_value = http_response
     model = OllamaChatCompletion(model_id="smollm2:135m")
 
     response = model("say ok")
 
     assert response.data == "ok"
-    client.post.assert_called_once()
-    assert client.post.call_args.args == ("http://localhost:11434/api/chat",)
-    assert client.post.call_args.kwargs["json"]["messages"] == [
+    client.request.assert_called_once()
+    assert client.request.call_args.args == (
+        "POST",
+        "http://localhost:11434/api/chat",
+    )
+    assert client.request.call_args.kwargs["json"]["messages"] == [
         {"role": "user", "content": "say ok"}
     ]
+
+
+def test_native_auth_remains_optional(mock_native_clients, monkeypatch):
+    from msgflux.models.providers.ollama import OllamaChatCompletion
+
+    monkeypatch.delenv("OLLAMA_API_KEY")
+    model = OllamaChatCompletion(model_id="smollm2:135m")
+
+    assert model.credential_resolver.resolve(model).headers == {}
+
+
+def test_compatible_mode_keeps_default_bearer_auth(mock_native_clients):
+    from msgflux.models.providers.ollama import OllamaChatCompletion
+
+    model = OllamaChatCompletion(model_id="smollm2:135m", api_mode="chat_completions")
+
+    assert model.credential_resolver.resolve(model).headers == {
+        "Authorization": "Bearer ollama"
+    }
 
 
 def test_openai_compatible_chat_does_not_replay_thinking():

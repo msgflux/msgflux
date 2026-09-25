@@ -1,18 +1,21 @@
 import json
 from base64 import b64encode
+from contextlib import aclosing, closing
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, Mapping
 from uuid import uuid4
 
-import httpx2
-
 from msgflux.chat_messages import ChatMessages
 from msgflux.core.dotdict import dotdict
-from msgflux.models.cache import ResponseCache
 from msgflux.models.chat_capabilities import (
     ChatAPIModeCapabilities,
     ChatProviderCapabilities,
+)
+from msgflux.models.http_transport import HTTPTransport
+from msgflux.models.model_credentials import (
+    ModelCredentialResolver,
+    ResolvedModelCredentials,
 )
 from msgflux.models.openai_compatible import (
     OpenAIChatCompletionsAPI,
@@ -28,7 +31,18 @@ from msgflux.models.reasoning import (
     OpenAICompatibleReasoningCodec,
 )
 from msgflux.models.registry import register_model
-from msgflux.utils.tenacity import apply_retry, default_model_retry
+
+
+class OllamaCredentialResolver(ModelCredentialResolver):
+    """Preserve native optional auth and compatible-mode bearer auth."""
+
+    def resolve(self, owner: Any) -> ResolvedModelCredentials:
+        if getattr(owner, "api_mode", None) == "ollama_chat":
+            key = getenv("OLLAMA_API_KEY")
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+        else:
+            headers = {"Authorization": f"Bearer {owner._get_api_key()}"}
+        return ResolvedModelCredentials(headers=headers)
 
 
 class _BaseOllama(ProviderEnvBase):
@@ -40,6 +54,7 @@ class _BaseOllama(ProviderEnvBase):
     api_key_default: str = "ollama"
     base_url_env: str = "OLLAMA_BASE_URL"
     base_url: str = "http://localhost:11434/v1"
+    credential_resolver: ModelCredentialResolver = OllamaCredentialResolver()
 
     @property
     def profile(self):
@@ -108,18 +123,10 @@ class OllamaChatCompletion(_BaseOllama, OpenAICompatibleChatCompletion):
     def _initialize(self):
         if self.api_mode == "chat_completions":
             return super()._initialize()
-        self.current_key_index = 0
         timeout_value = getenv("OLLAMA_TIMEOUT")
         timeout = float(timeout_value) if timeout_value else None
-        self.client = httpx2.Client(timeout=timeout)
-        self.aclient = httpx2.AsyncClient(timeout=timeout)
-        self._response_cache = (
-            ResponseCache(maxsize=self.cache_size) if self.enable_cache else None
-        )
-        self.__call__ = apply_retry(
-            self.__call__, self.retry, default=default_model_retry
-        )
-        self.acall = apply_retry(self.acall, self.retry, default=default_model_retry)
+        self.native_http_transport = HTTPTransport(timeout=timeout, max_retries=0)
+        self._initialize_runtime()
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if self.api_mode == "ollama_chat":
@@ -330,33 +337,37 @@ class OllamaChatCompletion(_BaseOllama, OpenAICompatibleChatCompletion):
             base_url = base_url[:-3]
         return f"{base_url}/api/chat"
 
-    def _native_headers(self) -> dict[str, str]:
-        api_key = getenv("OLLAMA_API_KEY")
-        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
-
     def _native_stream(self, params: dict[str, Any]) -> Iterator[dotdict]:
-        with self.client.stream(
-            "POST",
-            self._native_url(),
-            headers=self._native_headers(),
-            json=params,
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if line:
-                    yield self._native_to_completion(json.loads(line), stream=True)
+        with closing(
+            self.native_http_transport.stream(
+                self,
+                self._native_url(),
+                json=params,
+                iterate=lambda response: (
+                    json.loads(line) for line in response.iter_lines() if line
+                ),
+            )
+        ) as source:
+            for payload in source:
+                yield self._native_to_completion(payload, stream=True)
 
     async def _anative_stream(self, params: dict[str, Any]):
-        async with self.aclient.stream(
-            "POST",
-            self._native_url(),
-            headers=self._native_headers(),
-            json=params,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line:
-                    yield self._native_to_completion(json.loads(line), stream=True)
+        async with aclosing(
+            self.native_http_transport.astream(
+                self,
+                self._native_url(),
+                json=params,
+                iterate=self._native_stream_lines,
+            )
+        ) as source:
+            async for payload in source:
+                yield self._native_to_completion(payload, stream=True)
+
+    @staticmethod
+    async def _native_stream_lines(response):
+        async for line in response.aiter_lines():
+            if line:
+                yield json.loads(line)
 
     def _execute_model(self, **kwargs):
         if self.api_mode == "chat_completions":
@@ -371,10 +382,9 @@ class OllamaChatCompletion(_BaseOllama, OpenAICompatibleChatCompletion):
         params = self._adapt_native_params({**self.sampling_run_params, **kwargs})
         if params.get("stream"):
             return self._native_stream(params)
-        response = self.client.post(
-            self._native_url(), headers=self._native_headers(), json=params
+        response = self.native_http_transport.request(
+            self, self._native_url(), json=params
         )
-        response.raise_for_status()
         self._raise_if_aborted()
         return self._native_to_completion(response.json(), stream=False)
 
@@ -391,12 +401,21 @@ class OllamaChatCompletion(_BaseOllama, OpenAICompatibleChatCompletion):
         params = self._adapt_native_params({**self.sampling_run_params, **kwargs})
         if params.get("stream"):
             return self._anative_stream(params)
-        response = await self.aclient.post(
-            self._native_url(), headers=self._native_headers(), json=params
+        response = await self.native_http_transport.arequest(
+            self, self._native_url(), json=params
         )
-        response.raise_for_status()
         self._raise_if_aborted()
         return self._native_to_completion(response.json(), stream=False)
+
+    def close(self) -> None:
+        super().close()
+        if transport := getattr(self, "native_http_transport", None):
+            transport.close()
+
+    async def aclose(self) -> None:
+        await super().aclose()
+        if transport := getattr(self, "native_http_transport", None):
+            await transport.aclose()
 
     def warmup_system_prompt(self, *, system_prompt, tool_catalog=None):
         if self.api_mode == "chat_completions":
