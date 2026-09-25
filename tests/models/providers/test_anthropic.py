@@ -1,8 +1,10 @@
 """Tests for the Anthropic Messages API provider."""
 
+import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx2
 import pytest
 
 from msgflux.chat_messages import ChatMessages
@@ -19,9 +21,9 @@ def mock_anthropic_clients():
     client = MagicMock()
     aclient = MagicMock()
     with (
-        patch("msgflux.models.providers.anthropic.httpx2.Client", return_value=client),
+        patch("msgflux.models.http_transport.httpx2.Client", return_value=client),
         patch(
-            "msgflux.models.providers.anthropic.httpx2.AsyncClient",
+            "msgflux.models.http_transport.httpx2.AsyncClient",
             return_value=aclient,
         ),
     ):
@@ -68,10 +70,10 @@ def test_anthropic_reads_base_url_and_api_key(mock_anthropic_clients):
     assert model._get_api_key() == "test-key"
     assert model._native_url() == "https://api.anthropic.com/v1/messages"
     assert model._native_headers() == {
-        "x-api-key": "test-key",
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
+    assert model.credential_resolver.resolve(model).headers == {"x-api-key": "test-key"}
 
 
 def test_anthropic_missing_api_key_raises(monkeypatch):
@@ -105,7 +107,7 @@ def test_anthropic_text_thinking_round_trip(mock_anthropic_clients):
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = _native_text_response()
-    client.post.return_value = response
+    client.request.return_value = response
 
     model = AnthropicChatCompletion(model_id="claude-opus-4-8", reasoning_effort="high")
     result = model("Reply with exactly: OK")
@@ -130,12 +132,127 @@ def test_anthropic_text_thinking_round_trip(mock_anthropic_clients):
         }
     ]
 
-    body = client.post.call_args.kwargs["json"]
+    body = client.request.call_args.kwargs["json"]
+    assert client.request.call_args.args[:2] == (
+        "POST",
+        "https://api.anthropic.com/v1/messages",
+    )
+    assert client.request.call_args.kwargs["headers"] == {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key",
+    }
     assert body["model"] == "claude-opus-4-8"
     assert body["max_tokens"] == 4096
     assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert body["output_config"] == {"effort": "high"}
     assert "cache_control" not in body
+
+
+def test_anthropic_async_request_uses_shared_transport(mock_anthropic_clients):
+    from msgflux.models.providers.anthropic import AnthropicChatCompletion
+
+    _, aclient = mock_anthropic_clients
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = _native_text_response()
+    aclient.request = AsyncMock(return_value=response)
+
+    model = AnthropicChatCompletion(model_id="claude-opus-4-8")
+    result = asyncio.run(model.acall("Reply with exactly: OK"))
+
+    assert result.consume() == "OK"
+    assert aclient.request.await_args.args[:2] == (
+        "POST",
+        "https://api.anthropic.com/v1/messages",
+    )
+    assert aclient.request.await_args.kwargs["headers"]["x-api-key"] == "test-key"
+
+
+def test_anthropic_sync_stream_uses_shared_transport(mock_anthropic_clients):
+    from msgflux.models.providers.anthropic import AnthropicChatCompletion
+
+    client, _ = mock_anthropic_clients
+    response = MagicMock()
+    response.status_code = 200
+    response.iter_lines.return_value = [
+        "event: message_start",
+        'data: {"message":{"usage":{"input_tokens":7}}}',
+        "",
+        "event: content_block_start",
+        'data: {"index":0,"content_block":{"type":"text","text":""}}',
+        "",
+        "event: content_block_delta",
+        'data: {"index":0,"delta":{"type":"text_delta","text":"OK"}}',
+        "",
+        "event: content_block_stop",
+        'data: {"index":0}',
+        "",
+        "event: message_delta",
+        'data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}',
+        "",
+    ]
+    client.stream.return_value.__enter__.return_value = response
+
+    model = AnthropicChatCompletion(model_id="claude-opus-4-8")
+    chunks = list(
+        model._execute_model(messages=[{"role": "user", "content": "hi"}], stream=True)
+    )
+
+    assert any(chunk.choices[0].delta.content == "OK" for chunk in chunks)
+    assert chunks[-1].choices[0].finish_reason == "stop"
+    assert client.stream.call_args.args[:2] == (
+        "POST",
+        "https://api.anthropic.com/v1/messages",
+    )
+    assert client.stream.call_args.kwargs["headers"]["x-api-key"] == "test-key"
+
+
+def test_anthropic_async_stream_uses_shared_transport(mock_anthropic_clients):
+    from msgflux.models.providers.anthropic import AnthropicChatCompletion
+
+    _, aclient = mock_anthropic_clients
+    response = MagicMock()
+    response.status_code = 200
+
+    async def lines():
+        for line in (
+            "event: content_block_start",
+            'data: {"index":0,"content_block":{"type":"text","text":""}}',
+            "",
+            "event: content_block_delta",
+            'data: {"index":0,"delta":{"type":"text_delta","text":"OK"}}',
+            "",
+            "event: content_block_stop",
+            'data: {"index":0}',
+            "",
+            "event: message_delta",
+            'data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}',
+            "",
+        ):
+            yield line
+
+    response.aiter_lines.return_value = lines()
+    aclient.stream.return_value.__aenter__.return_value = response
+    model = AnthropicChatCompletion(model_id="claude-opus-4-8")
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in await model._aexecute_model(
+                messages=[{"role": "user", "content": "hi"}], stream=True
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+
+    assert any(chunk.choices[0].delta.content == "OK" for chunk in chunks)
+    assert chunks[-1].choices[0].finish_reason == "stop"
+    assert aclient.stream.call_args.args[:2] == (
+        "POST",
+        "https://api.anthropic.com/v1/messages",
+    )
+    assert aclient.stream.call_args.kwargs["headers"]["x-api-key"] == "test-key"
 
 
 def test_anthropic_redacted_thinking_round_trip(mock_anthropic_clients):
@@ -150,7 +267,7 @@ def test_anthropic_redacted_thinking_round_trip(mock_anthropic_clients):
             {"type": "text", "text": "OK"},
         ]
     )
-    client.post.return_value = response
+    client.request.return_value = response
 
     model = AnthropicChatCompletion(model_id="claude-opus-4-8")
     result = model("Reply with exactly: OK")
@@ -193,7 +310,7 @@ def test_anthropic_tool_use_replay(mock_anthropic_clients):
         ],
         stop_reason="tool_use",
     )
-    client.post.return_value = response
+    client.request.return_value = response
 
     model = AnthropicChatCompletion(model_id="claude-opus-4-8")
     result = model("What is the weather in Paris?")
@@ -313,7 +430,7 @@ def test_anthropic_usage_aggregates_cache_counters(mock_anthropic_clients):
             "cache_read_input_tokens": 0,
         }
     )
-    client.post.return_value = response
+    client.request.return_value = response
 
     model = AnthropicChatCompletion(model_id="claude-opus-4-8")
     result = model("hi")
@@ -349,7 +466,10 @@ def test_anthropic_http_error_mapping(mock_anthropic_clients):
         "type": "error",
         "error": {"type": "billing_error", "message": "No credits."},
     }
-    client.post.return_value = response
+    response.raise_for_status.side_effect = httpx2.HTTPStatusError(
+        "billing error", request=MagicMock(), response=response
+    )
+    client.request.return_value = response
 
     model = AnthropicChatCompletion(model_id="claude-opus-4-8")
 

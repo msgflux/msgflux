@@ -3,24 +3,26 @@
 from __future__ import annotations
 
 import json
+from contextlib import aclosing, closing
 from copy import deepcopy
 from typing import Any, Dict, Iterator, Mapping, Optional
 
-import httpx2
-
 from msgflux.core.dotdict import dotdict
 from msgflux.exceptions import ModelProviderHTTPError
-from msgflux.models.cache import ResponseCache
 from msgflux.models.chat_api import ChatAPIAdapter
 from msgflux.models.chat_capabilities import (
     ChatAPIModeCapabilities,
     ChatProviderCapabilities,
 )
+from msgflux.models.http_transport import HTTPTransport
+from msgflux.models.model_credentials import (
+    ModelCredentialResolver,
+    ResolvedModelCredentials,
+)
 from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.provider_env import ProviderEnvBase
 from msgflux.models.reasoning import AnthropicThinkingCodec
 from msgflux.models.registry import register_model
-from msgflux.utils.tenacity import apply_retry, default_model_retry
 
 ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -52,6 +54,13 @@ class _BaseAnthropic(ProviderEnvBase):
     api_key_env: str = "ANTHROPIC_API_KEY"
     base_url_env: str = "ANTHROPIC_BASE_URL"
     base_url: str = "https://api.anthropic.com"
+
+
+class AnthropicCredentialResolver(ModelCredentialResolver):
+    """Resolve Anthropic's API key using its native header."""
+
+    def resolve(self, owner: Any) -> ResolvedModelCredentials:
+        return ResolvedModelCredentials(headers={"x-api-key": owner._get_api_key()})
 
 
 class AnthropicMessagesAPI(ChatAPIAdapter):
@@ -147,6 +156,8 @@ class AnthropicChatCompletion(_BaseAnthropic, OpenAICompatibleChatCompletion):
         ),
         default_reasoning_codec=AnthropicThinkingCodec(),
     )
+    endpoint = "/v1/messages"
+    credential_resolver = AnthropicCredentialResolver()
 
     def __init__(
         self,
@@ -179,19 +190,11 @@ class AnthropicChatCompletion(_BaseAnthropic, OpenAICompatibleChatCompletion):
 
     def _initialize(self):
         self.current_key_index = 0
-        self.client = httpx2.Client(timeout=None)
-        self.aclient = httpx2.AsyncClient(timeout=None)
-        self._response_cache = (
-            ResponseCache(maxsize=self.cache_size) if self.enable_cache else None
-        )
-        self.__call__ = apply_retry(
-            self.__call__, self.retry, default=default_model_retry
-        )
-        self.acall = apply_retry(self.acall, self.retry, default=default_model_retry)
+        self.http_transport = HTTPTransport(timeout=None)
+        self._initialize_runtime()
 
     def _native_headers(self) -> Dict[str, str]:
         return {
-            "x-api-key": self._get_api_key(),
             "anthropic-version": ANTHROPIC_API_VERSION,
             "content-type": "application/json",
         }
@@ -446,56 +449,17 @@ class AnthropicChatCompletion(_BaseAnthropic, OpenAICompatibleChatCompletion):
 
     # -- native transport --------------------------------------------------
 
-    def _raise_anthropic_error_for_payload(
-        self, *, status_code: int, headers: Any, raw: Any
-    ) -> None:
-        if isinstance(raw, (bytes, str)):
-            try:
-                payload = json.loads(raw)
-            except ValueError:
-                payload = {}
-        else:
-            payload = raw
-        error = payload.get("error") if isinstance(payload, Mapping) else {}
-        description = (
-            error.get("message") if isinstance(error, Mapping) else str(raw)[:500]
-        )
-        request_id = None
-        if headers is not None:
-            getter = getattr(headers, "get", None)
-            if callable(getter):
-                request_id = getter("request-id")
-        raise ModelProviderHTTPError(
-            status_code=status_code,
-            description=str(description),
-            provider=self.provider,
-            model_id=self.model_id,
-            error_type=error.get("type") if isinstance(error, Mapping) else None,
-            request_id=request_id,
-            response=raw,
-        )
-
-    def _raise_anthropic_error(self, response: Any) -> None:
-        try:
-            raw = response.json()
-        except ValueError:
-            raw = response.text
-        self._raise_anthropic_error_for_payload(
-            status_code=response.status_code,
-            headers=getattr(response, "headers", None),
-            raw=raw,
-        )
-
     def _execute_model(self, **kwargs):
         self._raise_if_aborted()
         body = self._to_anthropic_body({**self.sampling_run_params, **kwargs})
         if body.get("stream"):
             return self._stream_chunks(body)
-        response = self.client.post(
-            self._native_url(), headers=self._native_headers(), json=body
+        response = self.http_transport.request(
+            self,
+            self.endpoint,
+            headers=self._native_headers(),
+            json=body,
         )
-        if response.status_code >= 400:
-            self._raise_anthropic_error(response)
         self._raise_if_aborted()
         return self._anthropic_to_completion(response.json(), stream=False)
 
@@ -505,14 +469,12 @@ class AnthropicChatCompletion(_BaseAnthropic, OpenAICompatibleChatCompletion):
         if body.get("stream"):
             return self._astream_chunks(body)
 
-        async def _post():
-            return await self.aclient.post(
-                self._native_url(), headers=self._native_headers(), json=body
-            )
-
-        response = await _post()
-        if response.status_code >= 400:
-            self._raise_anthropic_error(response)
+        response = await self.http_transport.arequest(
+            self,
+            self.endpoint,
+            headers=self._native_headers(),
+            json=body,
+        )
         self._raise_if_aborted()
         return self._anthropic_to_completion(response.json(), stream=False)
 
@@ -876,35 +838,37 @@ class AnthropicChatCompletion(_BaseAnthropic, OpenAICompatibleChatCompletion):
                 yield item
 
     def _stream_chunks(self, body: Dict[str, Any]):
-        with self.client.stream(
-            "POST", self._native_url(), headers=self._native_headers(), json=body
-        ) as response:
-            if response.status_code >= 400:
-                self._raise_anthropic_error_for_payload(
-                    status_code=response.status_code,
-                    headers=response.headers,
-                    raw=response.read(),
-                )
-            self._raise_if_aborted()
-            yield from self._expand_stream_events(
+        stream = self.http_transport.stream(
+            self,
+            self.endpoint,
+            headers=self._native_headers(),
+            json=body,
+            iterate=lambda response: self._expand_stream_events(
                 self._iter_sse_events(response.iter_lines())
-            )
+            ),
+        )
+        with closing(stream):
+            yield from stream
 
     async def _astream_chunks(self, body: Dict[str, Any]):
-        async with self.aclient.stream(
-            "POST", self._native_url(), headers=self._native_headers(), json=body
-        ) as response:
-            if response.status_code >= 400:
-                self._raise_anthropic_error_for_payload(
-                    status_code=response.status_code,
-                    headers=response.headers,
-                    raw=await response.aread(),
-                )
-            self._raise_if_aborted()
-            async for item in self._expand_astream_events(
+        stream = self.http_transport.astream(
+            self,
+            self.endpoint,
+            headers=self._native_headers(),
+            json=body,
+            iterate=lambda response: self._expand_astream_events(
                 self._aiter_sse_events(response.aiter_lines())
-            ):
+            ),
+        )
+        async with aclosing(stream):
+            async for item in stream:
                 yield item
+
+    def close(self) -> None:
+        self.http_transport.close()
+
+    async def aclose(self) -> None:
+        await self.http_transport.aclose()
 
     def warmup_system_prompt(self, *, system_prompt, tool_catalog=None):
         generation_params = self._build_generation_params(
