@@ -123,6 +123,121 @@ def test_request_records_only_sent_reasoning_level(spans, endpoint, params, leve
     assert span.attributes.get("gen_ai.request.reasoning.level") == level
 
 
+def test_gemini_transport_records_nested_thinking_level_without_schema(spans):
+    class GeminiOwner(_Owner):
+        provider = "gemini"
+
+    response_payload = {
+        "id": "gemini-response",
+        "model": "gemini-served-model",
+        "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+        "choices": [
+            {"finish_reason": "stop", "message": {"content": "structured output"}}
+        ],
+    }
+    with httpx2.Client(
+        transport=httpx2.MockTransport(
+            lambda _: httpx2.Response(200, json=response_payload)
+        )
+    ) as client:
+        HTTPTransport(client=client).request(
+            GeminiOwner(),
+            "/chat/completions",
+            json={
+                "model": "gemini-requested-model",
+                "extra_body": {
+                    "google": {"thinking_config": {"thinking_level": "low"}}
+                },
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "private-schema",
+                        "schema": {"type": "object"},
+                    },
+                },
+            },
+        )
+
+    (span,) = spans.get_finished_spans()
+    assert span.attributes["gen_ai.request.reasoning.level"] == "low"
+    assert span.attributes["gen_ai.request.model"] == "gemini-requested-model"
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("stop",)
+    assert span.attributes["gen_ai.usage.input_tokens"] == 7
+    assert span.attributes["gen_ai.usage.output_tokens"] == 3
+    assert json.loads(span.attributes["gen_ai.output.messages"]) == [
+        {
+            "role": "assistant",
+            "parts": [{"type": "text", "content": "structured output"}],
+        }
+    ]
+    assert "private-schema" not in repr(span.attributes)
+
+
+def test_gemini_provider_records_translated_effort_over_http_transport(
+    spans, monkeypatch
+):
+    from msgflux.models.chat_transport import HTTPChatTransport
+    from msgflux.models.providers.gemini import GeminiChatCompletion
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    observed = {}
+
+    def handler(request):
+        observed["body"] = json.loads(request.content)
+        return httpx2.Response(
+            200,
+            json={
+                "id": "gemini-response",
+                "model": "gemini-served-model",
+                "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "OK"},
+                    }
+                ],
+            },
+        )
+
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+        model = GeminiChatCompletion(
+            model_id="gemini-3.6-flash",
+            reasoning_effort="low",
+            chat_transport=HTTPChatTransport(client=client),
+        )
+        response = model("Reply with exactly OK")
+        assert response.consume() == "OK"
+
+    assert observed["body"]["extra_body"]["google"]["thinking_config"] == {
+        "thinking_level": "low",
+        "include_thoughts": True,
+    }
+    (span,) = spans.get_finished_spans()
+    assert span.attributes["gen_ai.request.reasoning.level"] == "low"
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("stop",)
+    assert span.attributes["gen_ai.usage.input_tokens"] == 7
+    assert span.attributes["gen_ai.usage.output_tokens"] == 3
+
+
+def test_non_gemini_transport_ignores_gemini_thinking_config(spans):
+    with httpx2.Client(
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json={}))
+    ) as client:
+        HTTPTransport(client=client).request(
+            _Owner(),
+            "/chat/completions",
+            json={
+                "model": "test-model",
+                "extra_body": {
+                    "google": {"thinking_config": {"thinking_level": "high"}}
+                },
+            },
+        )
+
+    (span,) = spans.get_finished_spans()
+    assert "gen_ai.request.reasoning.level" not in span.attributes
+
+
 @pytest.mark.parametrize(
     ("think", "level", "enabled"),
     [("high", "high", None), (True, None, True), (False, None, False)],

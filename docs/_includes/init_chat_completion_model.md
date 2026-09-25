@@ -88,6 +88,21 @@
         model = mf.Model.chat_completion("baseten/zai-org/GLM-5.2")
         ```
 
+    === "Gemini"
+
+        Authenticate by setting the `GEMINI_API_KEY` env variable.
+        Thinking effort is requested with `reasoning_effort`
+        (for example `"low"`).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(GEMINI_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "gemini/gemini-3.6-flash", reasoning_effort="low"
+        )
+        ```
+
     === "NVIDIA"
 
         Authenticate by setting the `NVIDIA_API_KEY` env variable (free trial
