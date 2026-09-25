@@ -114,6 +114,21 @@
         )
         ```
 
+    === "Mistral"
+
+        Authenticate by setting the `MISTRAL_API_KEY` env variable.
+        Reasoning models surface thinking traces as `thinking` chunks;
+        request them with `reasoning_effort` (for example `"high"`).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(MISTRAL_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "mistral/mistral-small-latest", reasoning_effort="high"
+        )
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:
