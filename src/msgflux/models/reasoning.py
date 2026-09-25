@@ -240,6 +240,62 @@ class TextResponsesReasoningCodec(ReasoningCodec):
         return response_item
 
 
+class MistralReasoningCodec(OpenAICompatibleReasoningCodec):
+    """Mistral structured thinking chunks in Chat Completions content.
+
+    With ``reasoning_effort`` enabled, Mistral returns assistant
+    ``content`` as a list of ``thinking``/``text`` chunks instead of a
+    plain string. The thinking trace is extract-only state: it is exposed
+    as text and merged back into history as a transient
+    ``reasoning_content`` field, which the Mistral model converts back
+    into a native ``thinking`` chunk for multi-turn replay.
+    """
+
+    name = "mistral_thinking"
+
+    def extract_text(self, payload: Any) -> str | None:
+        thinking, _ = self.split_content(self._get(payload, "content"))
+        if thinking:
+            return thinking
+        return super().extract_text(payload)
+
+    def encode_chat_message(
+        self,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        provider: str,
+        api_mode: str,
+    ) -> dict[str, Any]:
+        del provider, api_mode
+        chunks = [text for item in items if (text := self._item_text(item))]
+        return {self.history_text_field: "".join(chunks)} if chunks else {}
+
+    @staticmethod
+    def split_content(content: Any) -> tuple[str | None, str | None]:
+        """Split Mistral structured content into thinking and answer text."""
+        if isinstance(content, str):
+            return None, content or None
+        if not isinstance(content, list):
+            return None, None
+        thinking_chunks: list[str] = []
+        text_chunks: list[str] = []
+        for chunk in content:
+            chunk_type = ReasoningCodec._get(chunk, "type")
+            if chunk_type == "thinking":
+                for inner in ReasoningCodec._get(chunk, "thinking") or []:
+                    text = ReasoningCodec._get(inner, "text")
+                    if isinstance(text, str) and text:
+                        thinking_chunks.append(text)
+            elif chunk_type == "text":
+                text = ReasoningCodec._get(chunk, "text")
+                if isinstance(text, str) and text:
+                    text_chunks.append(text)
+        return (
+            "".join(thinking_chunks) or None,
+            "".join(text_chunks) or None,
+        )
+
+
 class OpenRouterReasoningCodec(OpenAICompatibleReasoningCodec):
     """OpenRouter reasoning text plus its ordered opaque detail blocks."""
 

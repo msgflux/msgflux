@@ -26,6 +26,7 @@ authorized workspace; installing the extra does not grant filesystem access.
 | Cerebras    | `msgflux`  | `CEREBRAS_API_KEY`     |
 | Fireworks   | `msgflux`  | `FIREWORKS_API_KEY`    |
 | Groq        | `msgflux`  | `GROQ_API_KEY`         |
+| Mistral     | `msgflux`  | `MISTRAL_API_KEY`      |
 | Ollama      | `msgflux`  |                        |
 | NVIDIA      | `msgflux`  | `NVIDIA_API_KEY`       |
 | OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
