@@ -242,6 +242,41 @@ def test_anthropic_thinking_budget_and_disabled_level(spans):
     assert disabled.attributes["gen_ai.request.reasoning.level"] == "none"
 
 
+def test_anthropic_provider_emits_model_span(spans, monkeypatch):
+    from msgflux.models.providers.anthropic import AnthropicChatCompletion
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def handler(request):
+        assert request.headers["x-api-key"] == "test-key"
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_123",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-test",
+                "content": [{"type": "text", "text": "OK"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 2, "output_tokens": 1},
+            },
+        )
+
+    model = AnthropicChatCompletion(model_id="claude-test", reasoning_effort="high")
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+        model.http_transport._client = client
+        assert model("Reply OK").consume() == "OK"
+
+    (span,) = spans.get_finished_spans()
+    assert span.name == "chat claude-test"
+    assert span.attributes["gen_ai.provider.name"] == "anthropic"
+    assert span.attributes["gen_ai.request.reasoning.level"] == "high"
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("end_turn",)
+    assert json.loads(span.attributes["gen_ai.output.messages"])[0]["parts"] == [
+        {"type": "text", "content": "OK"}
+    ]
+
+
 def test_stream_span_ends_when_closed_and_records_final_usage(spans):
     body = b'data: {"choices":[],"usage":{"input_tokens":3,"output_tokens":4}}\n\n'
 
