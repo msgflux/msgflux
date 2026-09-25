@@ -28,6 +28,11 @@ from msgflux.vulcano.extensions.types import (
     ExtensionObserver,
     ExtensionSource,
 )
+from msgflux.vulcano.packs.base import (
+    ExtensionPack,
+    ExtensionPackRegistration,
+    validate_pack_name,
+)
 from msgflux.vulcano.permissions import ExtensionPermissionApi, PermissionManager
 from msgflux.vulcano.ui import (
     ExtensionUiApi,
@@ -77,6 +82,9 @@ class ExtensionApi:
         self._owner = owner
         self._active = True
         self._registrations: list[_Registration] = []
+        self._registration_scopes: list[list[_Registration]] = []
+        self._packs: dict[str, ExtensionPackRegistration] = {}
+        self._installing_packs: set[str] = set()
         self._cleanups: list[ExtensionCleanup] = []
         self.agent = AgentApi(
             agent_binding,
@@ -128,6 +136,60 @@ class ExtensionApi:
         """Convenience alias for the main Agent's ToolLibrary facade."""
         self._assert_active()
         return self.agent.tools
+
+    @property
+    def packs(self) -> tuple[str, ...]:
+        """Names of extension packs installed in this API generation."""
+        self._assert_active()
+        return tuple(self._packs)
+
+    def register_pack(
+        self,
+        pack: ExtensionPack,
+    ) -> ExtensionPackRegistration:
+        """Install a reusable capability group as one atomic registration."""
+        self._assert_active()
+        name = validate_pack_name(getattr(pack, "name", None))
+        if name in self._packs or name in self._installing_packs:
+            raise ValueError(f"Extension pack is already registered: {name}")
+        setup = getattr(pack, "setup", None)
+        if not callable(setup):
+            raise TypeError("Extension packs must define setup(api)")
+
+        registrations: list[_Registration] = []
+        self._registration_scopes.append(registrations)
+        self._installing_packs.add(name)
+        try:
+            result = setup(self)
+            if inspect.isawaitable(result):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                raise TypeError("ExtensionPack.setup() must be synchronous")
+            if result is not None:
+                raise TypeError("ExtensionPack.setup() must return None")
+        except Exception as error:
+            rollback_errors: list[str] = []
+            for registration in reversed(registrations):
+                try:
+                    registration.remove()
+                except Exception as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+            if rollback_errors:
+                error.add_note("Pack rollback failed: " + "; ".join(rollback_errors))
+            raise
+        finally:
+            self._installing_packs.remove(name)
+            self._registration_scopes.pop()
+
+        registration = ExtensionPackRegistration(
+            name,
+            tuple(registrations),
+            self._remove_pack,
+        )
+        self._packs[name] = registration
+        self._track_registration(registration)
+        return registration
 
     def register_tool(
         self,
@@ -200,7 +262,7 @@ class ExtensionApi:
             owner=self._owner,
         )
         registration = self._host.commands._register(owned_command)
-        self._registrations.append(registration)
+        self._track_registration(registration)
         return registration
 
     def command(
@@ -260,7 +322,7 @@ class ExtensionApi:
             observer,
             self._context,
         )
-        self._registrations.append(registration)
+        self._track_registration(registration)
         return registration
 
     def register_renderer(
@@ -301,12 +363,24 @@ class ExtensionApi:
 
     def on_cleanup(self, cleanup: ExtensionCleanup) -> ExtensionCleanup:
         self._assert_active()
+        if self._registration_scopes:
+            raise RuntimeError(
+                "Extension packs must use removable registrations instead of "
+                "extension cleanup callbacks"
+            )
         self._cleanups.append(cleanup)
         return cleanup
 
     def _track_registration(self, registration: _Registration) -> None:
         self._assert_active()
-        self._registrations.append(registration)
+        if self._registration_scopes:
+            self._registration_scopes[-1].append(registration)
+        else:
+            self._registrations.append(registration)
+
+    def _remove_pack(self, registration: ExtensionPackRegistration) -> None:
+        if self._packs.get(registration.name) is registration:
+            self._packs.pop(registration.name)
 
     async def _deactivate(self) -> tuple[str, ...]:
         if not self._active:
@@ -319,6 +393,7 @@ class ExtensionApi:
             except Exception as error:
                 errors.append(f"registration cleanup failed: {error}")
         self._registrations.clear()
+        self._packs.clear()
 
         for cleanup in reversed(self._cleanups):
             try:

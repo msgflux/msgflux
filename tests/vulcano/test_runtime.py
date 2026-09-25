@@ -92,6 +92,7 @@ def test_internal_commands_are_owned_by_core_extension_api():
     runtime = VulcanoRuntime(stream_delay=0, extensions_enabled=False)
 
     assert {command.owner for command in runtime.commands} == {"vulcano"}
+    assert runtime.extensions.api.packs == ("session-workspace",)
 
 
 @pytest.mark.asyncio

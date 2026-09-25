@@ -206,6 +206,45 @@ boundary, without exposing the private `VulcanoRuntime` object. The raw
 `CommandRegistry` only stores, resolves, and invokes commands; its mutation
 methods are internal.
 
+### Extension packs
+
+`ExtensionPack` groups a coherent capability without creating another Python
+distribution. Packs live in the same msgflux egg and are installed through the
+owning API:
+
+```python
+from msgflux.vulcano import CommandOptions, CommandResult
+
+
+class ReviewPack:
+    name = "review"
+
+    def setup(self, api):
+        api.register_command(
+            "review",
+            CommandOptions(
+                description="Review the current workspace.",
+                handler=lambda args, ctx: CommandResult(),
+            ),
+        )
+
+
+registration = api.register_pack(ReviewPack())
+```
+
+Pack setup is synchronous because all registration surfaces are synchronous.
+`register_pack()` is transactional: if setup fails, its commands, tools,
+observers, shortcuts, renderers, and UI contributions are removed in reverse
+order. The returned `ExtensionPackRegistration` removes the complete group, and
+extension unload or reload removes it automatically. `api.packs` exposes the
+active pack names for the current extension generation.
+
+The built-in `SessionWorkspacePack` is implemented under
+`msgflux.vulcano.packs` and registered by Vulcano's core `ExtensionApi`. It owns
+the session slash-command surface while `SessionController` remains the
+runtime service and the TUI remains an event projection. This keeps headless
+execution independent from Textual.
+
 ### Main Agent and tools
 
 `ExtensionApi.agent` is an owner-aware facade over the main Agent.
@@ -358,7 +397,9 @@ under the same thread. The store writes append-only JSONL events. On restart,
 replayable transcript events are published before `runtime.started`; incomplete
 assistant, block, and tool streams are closed as aborted projections.
 
-The CLI enables this store at `~/.vulcano/sessions` by default. `/new`,
+The `SessionWorkspacePack` exposes `/session`, `/sessions`, `/new`, `/resume`,
+`/fork`, `/close`, `/pin`, and `/export`. The CLI enables its store at
+`~/.vulcano/sessions` by default. `/new`,
 `/resume`, `/fork`, `/close`, and `/pin` defer their workspace mutation until
 their command has completed. Session changes then emit `session.switched` or
 `session.tabs.updated`. `/new` creates a fresh thread with an empty replay,

@@ -187,15 +187,19 @@ available through runtime commands and events instead of occupying the footer.
 ```mermaid
 flowchart LR
     Extension[Extension generation] --> Api[ExtensionApi / ctx.ui]
+    Api --> Pack[ExtensionPack]
+    Pack --> Registry
     Api --> Registry[Runtime UiManager]
     Registry --> Driver[TextualUiDriver]
     Driver --> App[VulcanoApp]
 ```
 
 The runtime registry owns status entries, widgets, slots, renderers,
-autocomplete providers, and shortcuts. The Textual driver materializes the
-active state. Setup rollback, unload, and reload remove registrations in
-reverse order. A stale extension context cannot mutate a newer generation.
+autocomplete providers, and shortcuts. An `ExtensionPack` can register these
+capabilities as one transactional group through the same API. The Textual
+driver materializes the active state. Setup rollback, pack removal, unload, and
+reload remove registrations in reverse order. A stale extension context cannot
+mutate a newer generation.
 
 Dialogs and immediate interactions return safe cancellation values in headless
 mode. Permission requests deny by default. Persistent contributions can be

@@ -53,6 +53,11 @@ from msgflux.vulcano.extensions import (
     ToolLibraryApi,
     ToolRegistration,
 )
+from msgflux.vulcano.packs import (
+    ExtensionPack,
+    ExtensionPackRegistration,
+    SessionWorkspacePack,
+)
 from msgflux.vulcano.permissions import (
     ExtensionPermissionApi,
     PermissionActionDecision,
@@ -127,6 +132,8 @@ __all__ = [
     "ExtensionContext",
     "ExtensionDiagnostic",
     "ExtensionInfo",
+    "ExtensionPack",
+    "ExtensionPackRegistration",
     "ExtensionPermissionApi",
     "ExtensionSettings",
     "ExtensionSource",
@@ -147,6 +154,7 @@ __all__ = [
     "SessionTabRequest",
     "SessionTabStatus",
     "SessionTransition",
+    "SessionWorkspacePack",
     "SessionWorkspace",
     "StopRuntime",
     "SubmitInput",
