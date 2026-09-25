@@ -17,6 +17,7 @@ pytestmark = [pytest.mark.asyncio(loop_scope="module")]
 
 async def test_connect_and_list_tools(live_mcp_client):
     """Connect to the server and verify the expected tools are listed."""
+    assert live_mcp_client.protocol_version == "2026-07-28"
     tools = await live_mcp_client.list_tools()
 
     names = {t.name for t in tools}
@@ -60,3 +61,15 @@ async def test_list_tools_cache(live_mcp_client):
     tools_cached = await live_mcp_client.list_tools(use_cache=True)
 
     assert [t.name for t in tools_first] == [t.name for t in tools_cached]
+
+
+async def test_stdio_modern_progress(live_mcp_client):
+    progress = []
+
+    result = await live_mcp_client.call_tool(
+        "report_progress",
+        _progress_callback=lambda value, message: progress.append((value, message)),
+    )
+
+    assert result.structuredContent == {"result": "done"}
+    assert progress == [(1, "half"), (2, "done")]
