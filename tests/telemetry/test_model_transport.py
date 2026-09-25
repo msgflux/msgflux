@@ -102,6 +102,47 @@ def test_request_records_genai_attributes_and_parent(spans):
     assert "secret-token" not in repr(parent.attributes)
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "params", "level"),
+    [
+        ("/chat/completions", {"reasoning_effort": "high"}, "high"),
+        ("/responses", {"reasoning": {"effort": "low"}}, "low"),
+        ("/chat/completions", {"reasoning": {"effort": "medium"}}, "medium"),
+        ("/api/chat", {"think": "high"}, None),
+    ],
+)
+def test_request_records_only_sent_reasoning_level(spans, endpoint, params, level):
+    with httpx2.Client(
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json={}))
+    ) as client:
+        HTTPTransport(client=client).request(
+            _Owner(), endpoint, json={"model": "test-model", **params}
+        )
+
+    (span,) = spans.get_finished_spans()
+    assert span.attributes.get("gen_ai.request.reasoning.level") == level
+
+
+@pytest.mark.parametrize(
+    ("think", "level", "enabled"),
+    [("high", "high", None), (True, None, True), (False, None, False)],
+)
+def test_ollama_native_think_preserves_level_or_boolean(spans, think, level, enabled):
+    class OllamaOwner(_Owner):
+        provider = "ollama"
+
+    with httpx2.Client(
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json={}))
+    ) as client:
+        HTTPTransport(client=client).request(
+            OllamaOwner(), "/api/chat", json={"model": "test-model", "think": think}
+        )
+
+    (span,) = spans.get_finished_spans()
+    assert span.attributes.get("gen_ai.request.reasoning.level") == level
+    assert span.attributes.get("ollama.request.think") == enabled
+
+
 def test_stream_span_ends_when_closed_and_records_final_usage(spans):
     body = b'data: {"choices":[],"usage":{"input_tokens":3,"output_tokens":4}}\n\n'
 

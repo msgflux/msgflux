@@ -226,6 +226,17 @@ def _span_context(owner: Any, endpoint: str, kwargs: dict[str, Any]):
         value = _value(body, field)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             attributes[f"gen_ai.request.{field}"] = value
+    reasoning_level = _value(body, "reasoning_effort")
+    if not isinstance(reasoning_level, str):
+        reasoning_level = _value(_value(body, "reasoning"), "effort")
+    if isinstance(reasoning_level, str) and reasoning_level:
+        attributes["gen_ai.request.reasoning.level"] = reasoning_level
+    if provider == "ollama":
+        think = _value(body, "think")
+        if isinstance(think, str) and think:
+            attributes["gen_ai.request.reasoning.level"] = think
+        elif isinstance(think, bool):
+            attributes["ollama.request.think"] = think
     return tracer_manager.tracer.start_as_current_span(
         f"{operation} {model}" if model else operation,
         kind=SpanKind.CLIENT,

@@ -237,7 +237,14 @@ text and tool call arguments are assembled before the span ends. Chat Completion
 stop reasons and Responses API terminal status are recorded in
 `gen_ai.response.finish_reasons`; Responses API also records
 `gen_ai.response.status`. Request parameters such as temperature are included
-when present. HTTP failures mark the span as an error.
+when present. When the request sends `reasoning_effort` or `reasoning.effort`,
+the span records the exact value in `gen_ai.request.reasoning.level` (for
+example, `low`). HTTP failures mark the span as an error.
+
+Ollama's native `/api/chat` uses `think` instead of `reasoning_effort`. Named
+levels such as `think="high"` use `gen_ai.request.reasoning.level`. Boolean
+`think` values are recorded as `ollama.request.think`, preserving whether
+thinking was enabled or disabled without treating a boolean as a level.
 
 Model output can contain sensitive data and increase span size. Set
 `MSGFLUX_TELEMETRY_CAPTURE_MODEL_OUTPUT=false` to omit generated text and tool
