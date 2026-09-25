@@ -153,11 +153,15 @@ providers and API modes:
 
 ```python
 usage = response.metadata.usage
-print(f"Cache hit: {usage.cache_hit_percentage:.1f}%")
+if usage.cache_hit_percentage is None:
+    print("Cache usage unknown: provider did not report cached tokens")
+else:
+    print(f"Cache hit: {usage.cache_hit_percentage:.1f}%")
 ```
 
-The value is `None` when the provider does not report a valid input-token
-denominator. A valid request with no cached tokens reports `0.0`.
+The value is `None` when the provider does not report cached tokens or a
+valid input-token denominator. A request that explicitly reports zero cached
+tokens reports `0.0`.
 
 msgflux currently implements this warmup path for chat completions.
 

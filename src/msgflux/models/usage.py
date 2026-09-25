@@ -155,21 +155,23 @@ class UsageCodec:
         raw: Mapping[str, Any],
         details: Mapping[str, Any],
         fields: Iterable[str],
-    ) -> int:
+    ) -> int | None:
+        """Return an optional detail counter, preserving unknown as None."""
         value = cls._first_int(details, fields)
         if value is None:
             value = cls._first_int(raw, fields)
-        return value or 0
+        return value
 
     @staticmethod
     def _cache_hit_percentage(
         input_tokens: int | None,
-        cached_tokens: int,
+        cached_tokens: int | None,
     ) -> float | None:
         """Return the cached share of input tokens as a percentage."""
         if (
             input_tokens is None
             or input_tokens <= 0
+            or cached_tokens is None
             or cached_tokens < 0
             or cached_tokens > input_tokens
         ):
