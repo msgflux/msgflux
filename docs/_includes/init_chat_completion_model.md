@@ -81,16 +81,26 @@
         URL is `https://inference.baseten.co/v1`; set `BASETEN_BASE_URL` to
         override it.
 
-    === "Gemini"
-
-        Authenticate by setting the `GEMINI_API_KEY` env variable.
-        Thinking effort is requested with `reasoning_effort`
-        (for example `"low"`).
         ```python
         import msgflux as mf
 
         mf.set_envs(BASETEN_API_KEY="...")
         model = mf.Model.chat_completion("baseten/zai-org/GLM-5.2")
+        ```
+
+    === "Gemini"
+
+        Authenticate by setting the `GEMINI_API_KEY` env variable.
+        Thinking effort is requested with `reasoning_effort`
+        (for example `"low"`).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(GEMINI_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "gemini/gemini-3.6-flash", reasoning_effort="low"
+        )
         ```
 
     === "NVIDIA"
@@ -116,15 +126,6 @@
         mf.set_envs(FIREWORKS_API_KEY="...")
         model = mf.Model.chat_completion(
             "fireworks/accounts/fireworks/models/gpt-oss-120b"
-        )
-        ```
-
-        ```python
-        import msgflux as mf
-
-        mf.set_envs(GEMINI_API_KEY="...")
-        model = mf.Model.chat_completion(
-            "gemini/gemini-3.6-flash", reasoning_effort="low"
         )
         ```
 
