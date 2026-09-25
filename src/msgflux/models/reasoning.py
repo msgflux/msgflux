@@ -269,3 +269,16 @@ class OpenRouterReasoningCodec(OpenAICompatibleReasoningCodec):
         if details:
             encoded["reasoning_details"] = details
         return encoded
+
+
+class VercelGatewayReasoningCodec(OpenRouterReasoningCodec):
+    """Vercel AI Gateway reasoning text plus its normalized detail blocks.
+
+    The gateway normalizes cross-provider reasoning into a `reasoning`
+    text field with an ordered `reasoning_details` array (signatures,
+    encrypted payloads, summaries). Replay echoes that same shape so
+    multi-turn and tool flows resume provider thought processes.
+    """
+
+    name = "vercel_reasoning_details"
+    history_text_field = "reasoning"
