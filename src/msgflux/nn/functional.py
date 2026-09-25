@@ -1,14 +1,17 @@
 # https://mpitutorial.com/tutorials/mpi-scatter-gather-and-allgather/
 import asyncio
 import concurrent.futures
+import inspect
 import threading
 from concurrent.futures import Future
+from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from msgflux._private.executor import Executor
 from msgflux.exceptions import TaskError
 from msgflux.logger import logger
 from msgflux.telemetry import Spans
+from msgflux.telemetry.context import aactive_span, active_span
 
 
 def _resolve_async_call(f: Callable) -> Callable:
@@ -31,7 +34,57 @@ __all__ = [
 ]
 
 
-@Spans.instrument()
+def _fanout_attributes(count_argument, args, kwargs):
+    items = kwargs.get(count_argument)
+    if items is None and count_argument == "to_send" and args:
+        items = args[0]
+    attributes = {}
+    if isinstance(items, list):
+        attributes["msgflux.functional.task_count"] = len(items)
+    timeout = kwargs.get("timeout")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+        attributes["msgflux.functional.timeout_seconds"] = timeout
+    return attributes
+
+
+def _record_fanout_failures(span, results):
+    if span.is_recording():
+        span.set_attribute(
+            "msgflux.functional.failed_tasks",
+            sum(isinstance(result, TaskError) for result in results),
+        )
+
+
+def _trace_fanout(count_argument):
+    def decorator(func):
+        if inspect.iscoroutinefunction(func):
+
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                attributes = _fanout_attributes(count_argument, args, kwargs)
+                async with aactive_span(
+                    Spans.aspan_context(func.__name__, **attributes)
+                ) as span:
+                    results = await func(*args, **kwargs)
+                    _record_fanout_failures(span, results)
+                    return results
+
+            return async_wrapper
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            attributes = _fanout_attributes(count_argument, args, kwargs)
+            with active_span(Spans.span_context(func.__name__, **attributes)) as span:
+                results = func(*args, **kwargs)
+                _record_fanout_failures(span, results)
+                return results
+
+        return wrapper
+
+    return decorator
+
+
+@_trace_fanout("args_list")
 def map_gather(
     to_send: Callable,
     *,
@@ -111,7 +164,7 @@ def map_gather(
     return tuple(responses)
 
 
-@Spans.instrument()
+@_trace_fanout("to_send")
 def scatter_gather(
     to_send: List[Callable],
     args_list: Optional[List[Tuple[Any, ...]]] = None,
@@ -202,7 +255,7 @@ def scatter_gather(
     return tuple(responses)
 
 
-@Spans.instrument()
+@_trace_fanout("to_send")
 def bcast_gather(
     to_send: List[Callable], *args: Any, timeout: Optional[float] = None, **kwargs: Any
 ) -> Tuple[Any, ...]:
@@ -259,7 +312,6 @@ def bcast_gather(
     return tuple(responses)
 
 
-@Spans.instrument()
 def wait_for(
     to_send: Callable, *args: Any, timeout: Optional[float] = None, **kwargs: Any
 ) -> Any:
@@ -303,7 +355,6 @@ def wait_for(
         return TaskError(exception=e, index=0)
 
 
-@Spans.instrument()
 def wait_for_event(event: Any) -> None:
     """Waits synchronously for an event to be set.
 
@@ -331,7 +382,6 @@ def wait_for_event(event: Any) -> None:
     raise TypeError("`event` must be an instance of asyncio.Event or threading.Event")
 
 
-@Spans.instrument()
 def detached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
     """Dispatch a detached task without waiting for a result.
     Uses the AsyncExecutorPool. The task is not tracked and no return is provided.
@@ -382,7 +432,6 @@ def detached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
     future.add_done_callback(log_future)
 
 
-@Spans.ainstrument()
 async def adetached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
     """Dispatch an async detached task without waiting for a result.
     The task is not tracked and no return is provided.
@@ -431,7 +480,6 @@ async def adetached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
     asyncio.create_task(run_task())  # noqa: RUF006
 
 
-@Spans.ainstrument()
 async def await_for_event(event: Any) -> None:
     """Waits asynchronously for an event to be set.
 
@@ -468,7 +516,7 @@ async def await_for_event(event: Any) -> None:
     raise TypeError("`event` must be an instance of asyncio.Event or threading.Event")
 
 
-@Spans.ainstrument()
+@_trace_fanout("args_list")
 async def amap_gather(
     to_send: Callable,
     *,
@@ -532,7 +580,7 @@ async def amap_gather(
     return tuple(results)
 
 
-@Spans.ainstrument()
+@_trace_fanout("to_send")
 async def ascatter_gather(
     to_send: List[Callable],
     args_list: Optional[List[Tuple[Any, ...]]] = None,
@@ -595,7 +643,7 @@ async def ascatter_gather(
     return tuple(results)
 
 
-@Spans.instrument()
+@_trace_fanout("to_send")
 async def abcast_gather(
     to_send: List[Callable], *args: Any, **kwargs: Any
 ) -> Tuple[Any, ...]:

@@ -10,7 +10,7 @@ All modules, agents, and tools are automatically instrumented. You can also add 
 
 The telemetry pipeline works at two levels:
 
-- **Automatic** — every `Module`, `Agent`, `Tool`, and functional operation emits spans with no extra code.
+- **Automatic** — modules, agents, tools, functional operations, and model HTTP requests emit spans with no extra code.
 - **Manual** — use `Spans.instrument()` / `Spans.ainstrument()` to trace your own functions.
 
 Telemetry is **disabled by default** and has zero overhead when turned off.
@@ -27,6 +27,7 @@ Set the environment variable before running your application:
 
 ```bash
 export MSGTRACE_TELEMETRY_ENABLED=true
+export MSGTRACE_EXPORTER=console
 ```
 
 Or configure it programmatically at startup:
@@ -34,7 +35,7 @@ Or configure it programmatically at startup:
 ```python
 from msgflux.telemetry.config import configure_msgtrace
 
-configure_msgtrace(enabled=True)
+configure_msgtrace(enabled=True, exporter="console")
 ```
 
 ---
@@ -48,12 +49,16 @@ These variables control how traces are collected and exported.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `MSGTRACE_TELEMETRY_ENABLED` | `bool` | `false` | Master switch — enable/disable all telemetry |
-| `MSGTRACE_EXPORTER` | `str` | `"console"` | Exporter backend: `"console"` or `"otlp"` |
-| `MSGTRACE_OTLP_ENDPOINT` | `str` | `"http://localhost:4318"` | OTLP collector endpoint (gRPC/HTTP) |
-| `MSGTRACE_SERVICE_NAME` | `str` | `"msgflux"` | Service name shown in your tracing backend |
-| `MSGTRACE_SAMPLING_RATIO` | `str` | `None` | Sampling ratio, e.g. `"0.5"` for 50% |
+| `MSGTRACE_EXPORTER` | `str` | `"otlp"` | Exporter backend: `"console"` or `"otlp"` |
+| `MSGTRACE_OTLP_ENDPOINT` | `str` | `"http://localhost:8000/api/v1/traces/export"` | Full OTLP HTTP trace endpoint |
+| `MSGTRACE_SERVICE_NAME` | `str` | `"msgtrace-app"` | Service name shown in your tracing backend |
+| `MSGTRACE_SAMPLING_RATIO` | `str` | `None` | Reserved setting; the current SDK does not apply it |
 | `MSGTRACE_CAPTURE_PLATFORM` | `bool` | `true` | Attach OS/platform metadata to spans |
-| `MSGTRACE_MAX_RETRIES` | `int` | `3` | Max retries on export failure |
+| `MSGTRACE_MAX_RETRIES` | `int` | `3` | Reserved setting; the current SDK does not apply it |
+
+These are the defaults used by the installed msgtrace SDK at export time.
+`configure_msgtrace()` applies the values you pass to it; it does not apply
+unspecified defaults from `MsgTraceSettings` to the exporter.
 
 ### msgflux (what to capture)
 
@@ -62,6 +67,7 @@ Fine-grained control over the data included in spans.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `MSGFLUX_TELEMETRY_CAPTURE_TOOL_CALL_RESPONSES` | `bool` | `true` | Include tool return values in spans |
+| `MSGFLUX_TELEMETRY_CAPTURE_MODEL_OUTPUT` | `bool` | `true` | Include generated text and tool calls in model spans |
 | `MSGFLUX_TELEMETRY_CAPTURE_AGENT_PREPARE_MODEL_EXECUTION` | `bool` | `false` | Capture agent state, system prompt and tool schemas before each LM call |
 | `MSGFLUX_TELEMETRY_CAPTURE_STATE_DICT` | `bool` | `false` | Attach the full `state_dict()` of a module to its span |
 
@@ -69,11 +75,11 @@ Fine-grained control over the data included in spans.
 
 ## 3. **Console Exporter (development)**
 
-The default exporter prints spans to stdout — useful during local development.
+The console exporter prints spans to stdout — useful during local development.
 
 ```bash
 export MSGTRACE_TELEMETRY_ENABLED=true
-# MSGTRACE_EXPORTER defaults to "console"
+export MSGTRACE_EXPORTER=console
 ```
 
 ```python
@@ -96,7 +102,7 @@ Send traces to any OpenTelemetry-compatible backend (Jaeger, Tempo, Honeycomb, D
 ```bash
 export MSGTRACE_TELEMETRY_ENABLED=true
 export MSGTRACE_EXPORTER=otlp
-export MSGTRACE_OTLP_ENDPOINT=http://localhost:4318
+export MSGTRACE_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 export MSGTRACE_SERVICE_NAME=my-ai-app
 ```
 
@@ -110,6 +116,9 @@ docker run -d --name jaeger \
 ```
 
 Then open `http://localhost:16686` to browse traces.
+
+Set `MSGTRACE_OTLP_ENDPOINT` to the full OTLP HTTP traces URL, including
+`/v1/traces`. The msgtrace SDK passes this value directly to its HTTP exporter.
 
 ---
 
@@ -198,6 +207,60 @@ Each span records:
 - Exception details on failure
 - Full `state_dict()` when `MSGFLUX_TELEMETRY_CAPTURE_STATE_DICT=true`
 
+### Model requests
+
+Calls through the shared model HTTP transport emit one OpenTelemetry client span
+per logical request. The span includes retries and, for streamed responses, stays
+open until the stream finishes or is closed. This also applies when a model is
+called directly, outside an agent:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+response = model("Summarize this document", stream=False)
+# Emits a client span named "chat gpt-4.1-mini".
+```
+
+Ollama's default native `/api/chat` mode also uses the shared HTTP transport.
+It emits the same GenAI span attributes, including structured JSON output,
+tool calls, finish reasons, and token usage. Both sync and async calls,
+including streams, are covered. OpenAI Responses API calls use this transport
+too.
+
+The span records the GenAI operation, provider, requested model, available
+response model and ID, finish reasons, and token usage using `gen_ai.*`
+attributes. Generated text and tool calls are recorded in `gen_ai.output.messages`
+as a JSON array of assistant messages with text or `tool_call` parts. Each tool
+call part includes its name, ID when available, and parsed arguments. Streaming
+text and tool call arguments are assembled before the span ends. Chat Completions
+stop reasons and Responses API terminal status are recorded in
+`gen_ai.response.finish_reasons`; Responses API also records
+`gen_ai.response.status`. Request parameters such as temperature are included
+when present. When the request sends `reasoning_effort` or `reasoning.effort`,
+the span records the exact value in `gen_ai.request.reasoning.level` (for
+example, `low`). HTTP failures mark the span as an error.
+
+Ollama's native `/api/chat` uses `think` instead of `reasoning_effort`. Named
+levels such as `think="high"` use `gen_ai.request.reasoning.level`. Boolean
+`think` values are recorded as `ollama.request.think`, preserving whether
+thinking was enabled or disabled without treating a boolean as a level.
+
+Model output can contain sensitive data and increase span size. Set
+`MSGFLUX_TELEMETRY_CAPTURE_MODEL_OUTPUT=false` to omit generated text and tool
+call arguments while retaining stop reasons and token usage. Prompts,
+authorization headers, and request bodies are not added to model spans.
+Streaming token usage is recorded
+when the provider includes it in a stream event.
+
+For example, `gen_ai.operation.name=chat`, `gen_ai.provider.name=openai`,
+`gen_ai.request.model=gpt-4.1-mini`, and `gen_ai.usage.input_tokens=42` can be
+queried in an OpenTelemetry collector or trace backend. Other model operations
+such as embeddings use the corresponding operation name.
+
+In Jaeger, open a `chat <model>` span and expand its attributes to see
+`gen_ai.output.messages` and `gen_ai.response.finish_reasons`.
+
 ### Tools
 
 `LocalTool` and `MCPTool` emit spans with:
@@ -211,15 +274,20 @@ Each span records:
 
 ### Functional API
 
-All operations in `msgflux.nn.functional` are automatically traced:
+Fan-out operations in `msgflux.nn.functional` emit a span around the full gather:
 
 | Function | Description |
 |----------|-------------|
 | `map_gather` / `amap_gather` | Map over args and gather results |
 | `scatter_gather` / `ascatter_gather` | Scatter inputs and gather outputs |
-| `bcast_gather` | Broadcast and gather |
-| `Inline` | DSL workflow execution |
-| `detached` | Detached execution |
+| `bcast_gather` / `abcast_gather` | Broadcast and gather |
+
+These spans record `msgflux.functional.task_count` and
+`msgflux.functional.failed_tasks`; synchronous helpers also record
+`msgflux.functional.timeout_seconds` when a timeout is supplied. Child spans
+created by the dispatched work are nested under the fan-out span when execution
+context is propagated. Wait and detached dispatch helpers do not emit their own
+spans; the work they invoke keeps its existing module, tool, and model spans.
 
 ---
 
@@ -233,11 +301,9 @@ from msgflux.telemetry.config import configure_msgtrace
 configure_msgtrace(
     enabled=True,
     exporter="otlp",
-    otlp_endpoint="http://otel-collector:4318",
+    otlp_endpoint="http://otel-collector:4318/v1/traces",
     service_name="my-ai-app",
-    sampling_ratio="1.0",
     capture_platform=True,
-    max_retries=3,
 )
 ```
 
@@ -248,15 +314,9 @@ configure_msgtrace(
 
 ## 8. **Sampling**
 
-Use `MSGTRACE_SAMPLING_RATIO` to control the fraction of traces that are recorded:
-
-```bash
-# Record 10% of all traces
-export MSGTRACE_SAMPLING_RATIO=0.1
-
-# Record everything (default behaviour when unset)
-export MSGTRACE_SAMPLING_RATIO=1.0
-```
+The current `msgtrace-sdk` stores `MSGTRACE_SAMPLING_RATIO` but does not attach
+it to the OpenTelemetry tracer provider. Until the SDK supports it, configure
+sampling in the tracer provider used by your application.
 
 ---
 
@@ -267,6 +327,9 @@ For high-throughput systems, disable verbose captures to keep span sizes small:
 ```bash
 # Disable tool response capture
 export MSGFLUX_TELEMETRY_CAPTURE_TOOL_CALL_RESPONSES=false
+
+# Disable generated model text capture
+export MSGFLUX_TELEMETRY_CAPTURE_MODEL_OUTPUT=false
 
 # Disable full agent state capture
 export MSGFLUX_TELEMETRY_CAPTURE_AGENT_PREPARE_MODEL_EXECUTION=false

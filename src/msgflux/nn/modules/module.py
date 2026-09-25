@@ -59,6 +59,7 @@ from msgflux.runtime.events import (
     event_source,
 )
 from msgflux.telemetry import Spans
+from msgflux.telemetry.context import aactive_span, active_span
 from msgflux.utils.convert import convert_camel_snake_to_title
 from msgflux.utils.mermaid import plot_mermaid
 from msgflux.utils.msgspec import StructFactory
@@ -1576,7 +1577,7 @@ class Module:
         Returns:
             Module output from forward method
         """
-        with Spans.init_module(module_name_title, module_type) as span:
+        with active_span(Spans.init_module(module_name_title)) as span:
             try:
                 MsgTraceAttributes.set_module_name(module_name_title)
                 MsgTraceAttributes.set_module_type(module_type)
@@ -1602,7 +1603,7 @@ class Module:
         current_span = trace.get_current_span()
         # If there is no active span or it is not recording, this is the root module
         if current_span is None or not current_span.is_recording():
-            with Spans.init_flow(module_name_title) as span:
+            with active_span(Spans.init_flow(module_name_title)) as span:
                 try:
                     MsgTraceAttributes.set_module_name(module_name_title)
                     MsgTraceAttributes.set_module_type(module_type)
@@ -1768,7 +1769,7 @@ class Module:
         Returns:
             Module output from aforward method
         """
-        async with Spans.ainit_module(module_name_title, module_type) as span:
+        async with aactive_span(Spans.ainit_module(module_name_title)) as span:
             try:
                 MsgTraceAttributes.set_module_name(module_name_title)
                 MsgTraceAttributes.set_module_type(module_type)
@@ -1794,7 +1795,7 @@ class Module:
         current_span = trace.get_current_span()
         # If there is no active span or it is not recording, this is the root module
         if current_span is None or not current_span.is_recording():
-            async with Spans.ainit_flow(module_name_title) as span:
+            async with aactive_span(Spans.ainit_flow(module_name_title)) as span:
                 try:
                     MsgTraceAttributes.set_module_name(module_name_title)
                     MsgTraceAttributes.set_module_type(module_type)

@@ -62,6 +62,9 @@ class EnvironmentVariables(BaseSettings):
     # Capture tool call responses
     telemetry_capture_tool_call_responses: bool = True
 
+    # Capture generated text in GenAI model spans
+    telemetry_capture_model_output: bool = True
+
     # Capture agent state, system prompt and tool schemas
     telemetry_capture_agent_prepare_model_execution: bool = False
 

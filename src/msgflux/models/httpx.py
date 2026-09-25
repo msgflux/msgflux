@@ -5,6 +5,7 @@ import httpx2
 from msgflux.envs import envs
 from msgflux.models.base import BaseModel
 from msgflux.models.profiles import ensure_profiles_loaded
+from msgflux.telemetry.model import trace_model_call
 from msgflux.utils.tenacity import apply_retry, default_model_retry
 
 
@@ -33,11 +34,11 @@ class HTTPXModelClient(BaseModel):
 
         # Apply retry
         retry_config = getattr(self, "retry", None)
-        self._execute = apply_retry(
-            self._execute, retry_config, default=default_model_retry
+        self._execute = trace_model_call(
+            self, apply_retry(self._execute, retry_config, default=default_model_retry)
         )
-        self._aexecute = apply_retry(
-            self._aexecute, retry_config, default=default_model_retry
+        self._aexecute = trace_model_call(
+            self, apply_retry(self._aexecute, retry_config, default=default_model_retry)
         )
 
     def _execute(self, **kwargs):
