@@ -2032,6 +2032,36 @@ not proof of OS isolation. The current tests use a fake backend, never real bash
     pin file contents or inspect shell commands. Change host policy/tool revisions
     when those implementations or their security meaning change.
 
+### Capturing a desktop screenshot
+
+`ScreenshotTool` captures the host desktop to a PNG, publishes the image through
+the tool's agent inbox, and returns the PNG path. It does not use
+the workspace filesystem. Install the optional MSS dependency and Linux D-Bus
+support with
+`pip install 'msgflux[screenshot]'` and grant the `desktop.capture` capability
+in the execution scope:
+
+```python
+from msgflux.nn import Agent
+from msgflux.runtime import ExecutionScope, PermissionSet
+from msgflux.tools.builtin import ScreenshotTool
+
+agent = Agent(name="desktop_viewer", model=model, tools=[ScreenshotTool()])
+scope = ExecutionScope(
+    namespace=agent.name,
+    permissions=PermissionSet(grants={"desktop.capture"}),
+)
+answer = agent("Describe the current screen.", scope=scope)
+```
+
+The screenshot is attached as a subsequent user-role message for the model to
+inspect. The tool result contains only its local file path, not image data. MSS
+writes its PNG into the system temporary directory. On Linux/Wayland, the
+desktop portal returns the screenshot path chosen by the desktop backend. On
+Linux/X11 and on Windows or macOS, capture uses MSS. The Wayland portal can show
+a native confirmation/selection dialog. A graphical display must be available
+to the process that runs the tool.
+
 ### Ready-to-use workspace tools
 
 `ReadFileTool` and `BashTool` use the same live dependencies described above. Add
