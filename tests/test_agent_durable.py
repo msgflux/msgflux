@@ -256,6 +256,15 @@ def test_agent_persists_model_audit_metadata_from_lm_response():
         "api_mode": "responses",
         "reasoning_effort": "medium",
     }
+    assert agent.get_last_model_metadata(
+        scope=ExecutionScope(
+            thread_id="user_42", namespace="test_agent", run_id="run_audit"
+        )
+    ) == {
+        "provider": "openai",
+        "model_id": "gpt-5.6-luna",
+        "api_mode": "responses",
+    }
 
 
 def test_agent_persists_tool_call_usage_before_return_direct():
@@ -406,6 +415,65 @@ def test_before_resume_transforms_restored_state():
     sent_messages = agent.generator.forward.call_args.kwargs["messages"]
     assert sent_messages.to_chatml()[0]["content"] == "Transformed input"
     assert agent.generator.forward.call_args.kwargs["model_preference"] == "strong"
+
+
+def test_explicit_model_preference_wins_when_resuming_same_run():
+    store = InMemoryCheckpointStore()
+    agent = _make_agent(checkpoint_store=store)
+    chat = ChatMessages(thread_id="user_42", namespace="test_agent")
+    chat.begin_turn(turn_id="run_resume_choice")
+    chat.add_user("Continue")
+    store.save_state(
+        "test_agent",
+        "user_42",
+        "run_resume_choice",
+        {
+            "status": "running",
+            "messages": chat._to_state(),
+            "model_preference": "old_default",
+        },
+    )
+    agent.generator.forward = Mock(return_value=_text_response("Done"))
+
+    agent(
+        "ignored",
+        scope=ExecutionScope(
+            thread_id="user_42", namespace="test_agent", run_id="run_resume_choice"
+        ),
+        model_preference="chosen",
+    )
+
+    assert agent.generator.forward.call_args.kwargs["model_preference"] == "chosen"
+
+
+@pytest.mark.asyncio
+async def test_explicit_model_preference_wins_when_resuming_same_run_async():
+    store = InMemoryCheckpointStore()
+    agent = _make_agent(checkpoint_store=store)
+    chat = ChatMessages(thread_id="user_42", namespace="test_agent")
+    chat.begin_turn(turn_id="run_async_choice")
+    chat.add_user("Continue")
+    store.save_state(
+        "test_agent",
+        "user_42",
+        "run_async_choice",
+        {
+            "status": "running",
+            "messages": chat._to_state(),
+            "model_preference": "old_default",
+        },
+    )
+    agent.generator.aforward = AsyncMock(return_value=_text_response("Done"))
+
+    await agent.aforward(
+        "ignored",
+        scope=ExecutionScope(
+            thread_id="user_42", namespace="test_agent", run_id="run_async_choice"
+        ),
+        model_preference="chosen",
+    )
+
+    assert agent.generator.aforward.call_args.kwargs["model_preference"] == "chosen"
 
 
 def test_before_resume_rejects_checkpoint_identity_changes():

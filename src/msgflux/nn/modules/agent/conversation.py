@@ -15,6 +15,7 @@ from typing import (
 
 import msgspec
 
+from msgflux._private.model_metadata import last_model_metadata
 from msgflux._private.response_metadata import attach_response_metadata
 from msgflux.chat_messages import ChatMessages
 from msgflux.exceptions import (
@@ -58,6 +59,14 @@ _TASK_RESULT_UNSET = object()
 
 class AgentConversationMixin:
     """Conversation state, inbox, checkpoint, and durable-resume behavior."""
+
+    def get_last_model_metadata(
+        self, *, scope: ExecutionScope | None = None
+    ) -> dict[str, str] | None:
+        """Return the identity of the last model recorded for a checkpointed thread."""
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("`scope` must be ExecutionScope or None")
+        return last_model_metadata(self._reasoning_checkpoint_state(scope))
 
     def get_reasoning_effort(
         self,

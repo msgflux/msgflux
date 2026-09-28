@@ -126,6 +126,45 @@ def _deployment(
 class TestModelGatewayInitialization:
     """Test suite for ModelGateway initialization."""
 
+    def test_find_model_name_by_recorded_identity(self):
+        first = MockModel("gpt-5.4", provider="openai")
+        first.api_mode = "responses"
+        second = MockModel("openai/gpt-6", provider="openrouter")
+        second.api_mode = "responses"
+        gateway = ModelGateway(
+            models=[
+                {"model_name": "default", "model": first},
+                {"model_name": "last_used", "model": second},
+            ]
+        )
+        assert (
+            gateway.find_model_name(
+                provider="openrouter", model_id="openai/gpt-6", api_mode="responses"
+            )
+            == "last_used"
+        )
+        assert (
+            gateway.find_model_name(
+                provider="openrouter",
+                model_id="openai/gpt-6",
+                api_mode="chat_completions",
+            )
+            is None
+        )
+
+    def test_find_model_name_rejects_ambiguous_identity(self):
+        gateway = ModelGateway(
+            models=[
+                _deployment("first"),
+                _deployment("second"),
+            ]
+        )
+        gateway.models[1].model_id = gateway.models[0].model_id
+        with pytest.raises(ValueError, match="Multiple deployments"):
+            gateway.find_model_name(
+                provider="mock", model_id=gateway.models[0].model_id
+            )
+
     def test_gateway_initialization_basic(self):
         """Test basic ModelGateway initialization."""
         models = [

@@ -67,6 +67,7 @@ from msgflux.nn.modules.agent.context import (
     _RESERVED_KWARGS,
     _UNSET,
     _apply_before_resume,
+    _apply_explicit_model_preference,
     _prepare_agent_guard_input,
     _prepare_agent_guard_output,
 )
@@ -541,6 +542,7 @@ class Agent(
                 resume_event,
                 vars=kwargs.get("vars", {}),
             )
+            _apply_explicit_model_preference(inputs, kwargs)
         else:
             run_event = self._run_lifecycle_hooks(
                 "before_run",
@@ -620,6 +622,7 @@ class Agent(
                 resume_event,
                 vars=kwargs.get("vars", {}),
             )
+            _apply_explicit_model_preference(inputs, kwargs)
         else:
             run_event = await self._arun_lifecycle_hooks(
                 "before_run",

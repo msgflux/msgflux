@@ -256,6 +256,35 @@ With no update, the method returns the model's constructor setting, or `None`
 when the model does not support reasoning effort. An inbox signal remains pending
 until the Agent drains it before a model request.
 
+### Recover the last model used
+
+The checkpoint store can report the identity of the model that produced the
+latest recorded response. This is useful when showing a model choice before
+continuing a thread:
+
+```python
+model = checkpoint_store.get_last_model_metadata(namespace, thread_id)
+# Example: {"provider": "openai", "model_id": "gpt-5.4", "api_mode": "responses"}
+
+if model is not None:
+    alias = gateway.find_model_name(**model)
+    # Present `alias` to the user; pass their selection as `model_preference`.
+    if alias is not None:
+        next_scope = mf.ExecutionScope(thread_id=thread_id, run_id="follow_up")
+        answer = agent("Continue", scope=next_scope, model_preference=alias)
+```
+
+Pass `run_id` as the third argument to inspect a specific run. An Agent with a
+checkpoint store also exposes `agent.get_last_model_metadata(scope=scope)`.
+The result contains `provider`, `model_id`, and `api_mode` when recorded; it
+returns `None` for a missing or unaudited latest response. `find_model_name`
+returns `None` if that identity is absent from the gateway and raises
+`ValueError` if multiple deployments match. The user chooses the alias to
+resume with; the Agent does not change the gateway selection automatically.
+An explicit `model_preference` also takes precedence when resuming the same
+run. The checkpointed `model_configuration` items remain the source of effort
+updates for subsequent requests.
+
 Turn events are `start`, `pause`, `resume`, `complete`, `fail`, and
 `interrupt`. The `messages.turns` property is a calculated view of those
 events, not additional persisted state. This means a failed or paused turn can
