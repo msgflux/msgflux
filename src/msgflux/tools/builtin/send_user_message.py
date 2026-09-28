@@ -1,10 +1,8 @@
 """Explicit progress messages for models without a trusted commentary phase."""
 
 from msgflux.runtime.events import EventType, _is_capturing_events, emit_event
-from msgflux.tools.config import tool_config
 
 
-@tool_config()
 def send_user_message(message: str) -> str:
     """Send a brief user-visible update while continuing the task.
 
