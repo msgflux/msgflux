@@ -220,6 +220,42 @@ provider reports them. Derived totals, cache percentages, costs, and the raw
 provider payload are not checkpointed. These metadata annotations are for
 inspection and are not sent back to the model provider.
 
+To change reasoning effort during a conversation, publish an inbox update before
+the next model request:
+
+```python
+agent.agent_inbox.set_reasoning_effort("high")
+answer = agent("Analyze the failure modes.", messages=history, scope=scope)
+print(agent.get_reasoning_effort(messages=history))  # "high"
+```
+
+The inbox keeps the latest pending effort update. The Agent records it as a
+`model_configuration` item in `ChatMessages`, and the checkpoint persists that
+item at the point where the update takes effect. Before a new turn's first
+model request, it precedes that turn's user message; during a turn, it follows
+the model output already produced. The update is not rendered as a user or
+system message. The model response's audit metadata records the effective
+effort alongside its provider and model ID. Restoring the checkpoint preserves
+the update for later turns.
+
+For supported OpenAI Responses models in the GPT-6 family, the provider sends
+the item as `configuration_update` and keeps the original request-level effort
+stable. An update before the first response sets the request-level baseline
+instead. Other models that accept reasoning effort use the updated request
+parameter. Each later round reads the latest update from the restored history,
+so it continues using that value until another update arrives. The model's
+constructor setting remains the default for histories without an update.
+Changing the request parameter may reduce prompt cache reuse. Cache reuse
+also depends on the shared prompt prefix and provider caching rules.
+
+`agent.get_reasoning_effort(messages=history)` reads the latest durable update
+in that conversation. After a checkpointed run, use
+`agent.get_reasoning_effort(scope=scope)` to read its saved state; omitting both
+arguments uses the thread currently bound to the Agent inbox when available.
+With no update, the method returns the model's constructor setting, or `None`
+when the model does not support reasoning effort. An inbox signal remains pending
+until the Agent drains it before a model request.
+
 Turn events are `start`, `pause`, `resume`, `complete`, `fail`, and
 `interrupt`. The `messages.turns` property is a calculated view of those
 events, not additional persisted state. This means a failed or paused turn can

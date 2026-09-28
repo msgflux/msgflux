@@ -21,6 +21,22 @@ def validate_reasoning_effort(reasoning_effort: str | None) -> None:
         raise TypeError("`reasoning_effort` must be a non-empty string or None")
 
 
+def reasoning_effort_from_history(messages: Any) -> str | None:
+    """Return the latest durable reasoning-effort update in a conversation."""
+    if messages is None or isinstance(messages, (str, bytes)):
+        return None
+    return next(
+        (
+            item["reasoning_effort"]
+            for item in reversed(messages)
+            if isinstance(item, Mapping)
+            and item.get("type") == "model_configuration"
+            and isinstance(item.get("reasoning_effort"), str)
+        ),
+        None,
+    )
+
+
 class ChatCompletionModel:
     model_type = "chat_completion"
 

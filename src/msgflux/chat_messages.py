@@ -867,6 +867,8 @@ class ChatMessages:
                 item_type = item["type"]
             if item_type == "turn":
                 continue
+            if item_type == "model_configuration":
+                continue
             if item_type == "reasoning":
                 pending_reasoning.append(item)
                 continue
@@ -1006,6 +1008,7 @@ class ChatMessages:
         api_mode: str = "responses",
         reasoning_codec: ReasoningCodec | None = None,
         native_tools: bool = True,
+        reasoning_updates: bool = False,
     ) -> List[dict[str, Any]]:
         result: List[dict[str, Any]] = []
         for stored_item in self._materialized_items(
@@ -1030,6 +1033,22 @@ class ChatMessages:
                 item = adapter.project_history(item)
             item_type = item.get("type")
             if item_type == "turn":
+                continue
+            if item_type == "model_configuration":
+                has_prior_response = any(
+                    prior.get("role") == "assistant"
+                    or prior.get("type") in {"function_call", "reasoning"}
+                    for prior in result
+                )
+                if reasoning_updates and has_prior_response:
+                    update = {
+                        "type": "configuration_update",
+                        "reasoning": {"effort": item["reasoning_effort"]},
+                    }
+                    if result and result[-1].get("type") == "configuration_update":
+                        result[-1] = update
+                    else:
+                        result.append(update)
                 continue
             if item_type == "reasoning":
                 converted_reasoning = self._reasoning_item_to_responses(
@@ -1480,6 +1499,13 @@ class ChatMessages:
     ) -> List[dict[str, Any]]:
         normalized = deepcopy(dict(item))
         item_type = normalized.get("type")
+
+        if item_type == "model_configuration":
+            effort = normalized.get("reasoning_effort")
+            if not isinstance(effort, str) or not effort.strip():
+                raise TypeError("`reasoning_effort` must be a non-empty string")
+            normalized["reasoning_effort"] = effort.strip()
+            return [normalized]
 
         if item_type == "reasoning":
             text = self._extract_reasoning_content(normalized)

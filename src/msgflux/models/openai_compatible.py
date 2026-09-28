@@ -23,6 +23,7 @@ from msgflux.models.chat_api import (
 )
 from msgflux.models.chat_capabilities import (
     ChatAPIModeCapabilities,
+    ChatModelCapabilities,
     ChatProviderCapabilities,
 )
 from msgflux.models.chat_extensions import (
@@ -34,6 +35,7 @@ from msgflux.models.chat_extensions import (
 from msgflux.models.chat_transport import HTTPChatTransport
 from msgflux.models.compaction import ContextTokenEstimate, ModelCompaction
 from msgflux.models.http_transport import HTTPTransport
+from msgflux.models.model_capabilities import built_in_model_capabilities
 from msgflux.models.model_credentials import (
     BearerTokenCredentialResolver,
     ModelCredentialResolver,
@@ -48,7 +50,11 @@ from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.timing import ModelRequestTimer
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.tool_transport import native_item_types
-from msgflux.models.types import ChatCompletionModel, validate_reasoning_effort
+from msgflux.models.types import (
+    ChatCompletionModel,
+    reasoning_effort_from_history,
+    validate_reasoning_effort,
+)
 from msgflux.models.usage import UsageCodec, default_usage_codec
 from msgflux.runtime.context import get_execution_context
 from msgflux.tools.catalog import ToolCatalogEntry, ToolCatalogView
@@ -285,18 +291,43 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def supports_native_tool_search(self) -> bool:
         """Return whether this model/API pair supports hosted tool search."""
-        families = self.api_mode_capabilities.hosted_tool_search_model_families
-        if not families:
+        if self.api_mode != "responses":
             return False
-        model_id = self.model_id.rsplit("/", maxsplit=1)[-1]
-        return any(
-            model_id == family or model_id.startswith(f"{family}-20")
-            for family in families
-        )
+        override = self.model_capabilities.hosted_tool_search
+        if override is not None:
+            return override
+        return built_in_model_capabilities(self.model_id).hosted_tool_search is True
 
     def supports_reasoning_effort(self) -> bool:
         """Return whether the active API mode accepts request-level effort."""
         return self.api_mode_capabilities.request_reasoning_effort
+
+    def supports_reasoning_update(self) -> bool:
+        """Return whether conversation items can change effort and keep the prefix."""
+        if self.api_mode != "responses":
+            return False
+        override = self.model_capabilities.reasoning_updates
+        if override is not None:
+            return override
+        return built_in_model_capabilities(self.model_id).reasoning_updates is True
+
+    @staticmethod
+    def _initial_reasoning_effort(messages) -> str | None:
+        """Return the last update before the conversation's first model response."""
+        if isinstance(messages, (str, bytes)):
+            return None
+        initial = None
+        for item in messages:
+            if not isinstance(item, Mapping):
+                continue
+            if item.get("role") == "assistant" or item.get("type") in {
+                "function_call",
+                "reasoning",
+            }:
+                break
+            if item.get("type") == "model_configuration":
+                initial = item.get("reasoning_effort")
+        return initial
 
     def set_reasoning_effort(
         self, reasoning_effort: str | None
@@ -617,6 +648,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         chat_extensions: Optional[Sequence[ChatModelExtension]] = None,
         credential_resolver: Optional[ModelCredentialResolver] = None,
         api_key_env: Optional[str] = None,
+        model_capabilities: Optional[ChatModelCapabilities] = None,
         **extra_body_kwargs: Any,
     ):
         """Args:
@@ -735,12 +767,21 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             Environment variable holding the provider API key. Takes
             precedence over the provider default; only the variable name
             is stored, never the secret itself.
+        model_capabilities:
+            Model-specific overrides for reasoning updates and hosted tool search.
         """
         super().__init__()
         if not isinstance(self.capabilities, ChatProviderCapabilities):
             raise TypeError(
                 "`capabilities` must be a ChatProviderCapabilities instance"
             )
+        if model_capabilities is not None and not isinstance(
+            model_capabilities, ChatModelCapabilities
+        ):
+            raise TypeError(
+                "`model_capabilities` must be ChatModelCapabilities or None"
+            )
+        self.model_capabilities = model_capabilities or ChatModelCapabilities()
         selected_transport = chat_transport or self.chat_transport
         self.chat_transport = (
             selected_transport()
@@ -1604,6 +1645,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         return kwargs
 
     def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         tool_routes = self._request_native_tool_routes(
             kwargs, kwargs.get("tool_catalog")
         )
@@ -1628,6 +1670,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             transport_generation_schema,
             tool_routes=tool_routes,
         )
+        if effective_effort is not None:
+            response.metadata.model.reasoning_effort = effective_effort
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
@@ -1637,6 +1681,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         return response
 
     async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         tool_routes = self._request_native_tool_routes(
             kwargs, kwargs.get("tool_catalog")
         )
@@ -1661,6 +1706,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             transport_generation_schema,
             tool_routes=tool_routes,
         )
+        if effective_effort is not None:
+            response.metadata.model.reasoning_effort = effective_effort
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
@@ -1676,8 +1723,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         metadata = self._build_response_metadata(None)
+        if effective_effort is not None:
+            metadata.model.reasoning_effort = effective_effort
         reasoning_tool_call = ""
         reasoning_accumulated = ""
         reasoning_stream_started = False
@@ -1796,8 +1846,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         metadata = self._build_response_metadata(None)
+        if effective_effort is not None:
+            metadata.model.reasoning_effort = effective_effort
         reasoning_tool_call = ""
         reasoning_accumulated = ""
         reasoning_stream_started = False
@@ -2221,9 +2274,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
         state = self._new_responses_stream_state(request_timer)
+        if effective_effort is not None:
+            state["metadata"].model.reasoning_effort = effective_effort
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         try:
@@ -2260,9 +2316,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
         state = self._new_responses_stream_state(request_timer)
+        if effective_effort is not None:
+            state["metadata"].model.reasoning_effort = effective_effort
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         model_output = None
@@ -2310,7 +2369,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         extra_body: Optional[Dict[str, Any]] = None,
         extra_body_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return self.api_adapter.build_generation_params(
+        updated_effort = reasoning_effort_from_history(messages)
+        params = self.api_adapter.build_generation_params(
             self,
             messages,
             system_prompt,
@@ -2321,6 +2381,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             extra_body=extra_body,
             extra_body_kwargs=extra_body_kwargs,
         )
+        if updated_effort is not None and self.supports_reasoning_effort():
+            params["_effective_reasoning_effort"] = updated_effort
+            has_update = any(
+                item.get("type") == "configuration_update"
+                for item in params.get("input", ())
+            )
+            if self.supports_reasoning_update():
+                initial_effort = self._initial_reasoning_effort(messages)
+                if initial_effort is not None:
+                    params["reasoning_effort"] = initial_effort
+            if not self.supports_reasoning_update() or not has_update:
+                params["reasoning_effort"] = updated_effort
+        return params
 
     def _build_chat_completions_generation_params(
         self,
@@ -2399,6 +2472,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 api_mode=self.api_mode,
                 reasoning_codec=self.reasoning_codec,
                 native_tools=self.native_tools,
+                reasoning_updates=self.supports_reasoning_update(),
             )
         elif isinstance(messages, str):
             response_input = [{"role": "user", "content": messages}]
@@ -2408,6 +2482,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 api_mode=self.api_mode,
                 reasoning_codec=self.reasoning_codec,
                 native_tools=self.native_tools,
+                reasoning_updates=self.supports_reasoning_update(),
             )
 
         if isinstance(system_prompt, str):

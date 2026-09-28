@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from msgflux.models.chat_capabilities import (
         ChatAPIModeCapabilities,
+        ChatModelCapabilities,
         ChatProviderCapabilities,
     )
     from msgflux.models.chat_context import (
@@ -24,6 +25,7 @@ __all__ = [
     "ChatAPIModeCapabilities",
     "ChatContextAdapter",
     "ChatModelExtension",
+    "ChatModelCapabilities",
     "ChatRequestContext",
     "ChatProviderCapabilities",
     "ContextTokenEstimate",
@@ -44,7 +46,11 @@ def __getattr__(name: str):
         value = getattr(import_module("msgflux.models.model_credentials"), name)
         globals()[name] = value
         return value
-    if name in {"ChatAPIModeCapabilities", "ChatProviderCapabilities"}:
+    if name in {
+        "ChatAPIModeCapabilities",
+        "ChatModelCapabilities",
+        "ChatProviderCapabilities",
+    }:
         value = getattr(import_module("msgflux.models.chat_capabilities"), name)
         globals()[name] = value
         return value
