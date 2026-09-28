@@ -20,6 +20,11 @@ class ReasoningCodec:
     canonical_text_field = "text"
     state_field: str | None = None
 
+    def canonical_text_field_for_item(self, payload: Any) -> str:
+        """Select the canonical text field for one native reasoning item."""
+        del payload
+        return self.canonical_text_field
+
     def extract_text(self, payload: Any) -> str | None:
         for field in self.text_fields:
             value = self._get(payload, field)
@@ -238,6 +243,42 @@ class TextResponsesReasoningCodec(ReasoningCodec):
             response_item["content"] = [{"type": "reasoning_text", "text": text}]
         response_item.setdefault("summary", [])
         return response_item
+
+
+class OpenRouterResponsesReasoningCodec(OpenAIResponsesReasoningCodec):
+    """Preserve opaque Responses reasoning and classify clear text by item."""
+
+    name = "openrouter_responses"
+
+    def extract_text(self, payload: Any) -> str | None:
+        summary = super().extract_text(payload)
+        return summary or TextResponsesReasoningCodec.extract_text(self, payload)
+
+    def canonical_text_field_for_item(self, payload: Any) -> str:
+        return "summary" if super().extract_text(payload) else "text"
+
+    def extract_state(
+        self,
+        payload: Any,
+        *,
+        serialize: Callable[[Any], Any],
+    ) -> Any:
+        if self._get(payload, "type") != "reasoning":
+            return None
+        return serialize(payload)
+
+    def encode_responses_item(
+        self,
+        item: Mapping[str, Any],
+        *,
+        provider: str,
+        api_mode: str,
+    ) -> dict[str, Any] | None:
+        state = item.get("provider_state")
+        if not self.matches_state(state, provider=provider, api_mode=api_mode):
+            return None
+        data = state.get("data")
+        return deepcopy(dict(data)) if isinstance(data, Mapping) else None
 
 
 class OpenRouterReasoningCodec(OpenAICompatibleReasoningCodec):

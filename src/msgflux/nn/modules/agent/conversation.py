@@ -736,16 +736,28 @@ class AgentConversationMixin:
             items = getattr(model_response, "history_items", [])
         if not isinstance(items, list):
             return set()
+        has_commentary = bool(getattr(model_response, "commentary", None))
         trajectory_items = [
             item
             for item in items
-            if item.get("type")
-            in {
-                "reasoning",
-                "tool_search_call",
-                "tool_search_output",
-                "function_call",
-            }
+            if (
+                item.get("type")
+                in {
+                    "reasoning",
+                    "tool_search_call",
+                    "tool_search_output",
+                    "function_call",
+                }
+                or (
+                    has_commentary
+                    and item.get("type") == "message"
+                    and item.get("role") == "assistant"
+                    and (
+                        item.get("phase") == "commentary"
+                        or item.get("visibility") == "commentary"
+                    )
+                )
+            )
         ]
         messages.extend(trajectory_items)
 
