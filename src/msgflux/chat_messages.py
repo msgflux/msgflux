@@ -856,6 +856,7 @@ class ChatMessages:
     ) -> List[dict[str, Any]]:
         messages: List[dict[str, Any]] = []
         pending_reasoning: list[Mapping[str, Any]] = []
+        pending_tool_commentary = False
         for stored_item in self._materialized_items(
             provider=provider, api_mode=api_mode
         ):
@@ -904,6 +905,22 @@ class ChatMessages:
                         reasoning_codec,
                     )
                     pending_reasoning = []
+                if (
+                    api_mode == "chat_completions"
+                    and pending_tool_commentary
+                    and messages
+                    and messages[-1].get("role") == "assistant"
+                ):
+                    preceding = messages.pop()
+                    converted_call["content"] = preceding["content"]
+                    converted_call.update(
+                        {
+                            key: value
+                            for key, value in preceding.items()
+                            if key not in {"role", "content"}
+                        }
+                    )
+                pending_tool_commentary = False
                 if (
                     messages
                     and messages[-1].get("role") == "assistant"
@@ -963,6 +980,10 @@ class ChatMessages:
                         if converted_reasoning is not None:
                             messages.append(converted_reasoning)
                         pending_reasoning = []
+                    pending_tool_commentary = (
+                        item.get("visibility") == "commentary"
+                        and api_mode == "chat_completions"
+                    )
                     messages.append(converted)
                 continue
 

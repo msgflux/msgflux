@@ -28,6 +28,7 @@ class LMStreamEvent:
 
     type: Literal[
         "output.delta",
+        "commentary.delta",
         "reasoning.delta",
         "reasoning_summary.delta",
     ]
@@ -66,6 +67,7 @@ class BaseResponse(CoreResponse):
         self.data = None
         self.reasoning = None
         self.reasoning_summary = None
+        self.commentary = []
         self.history_items = []
         self.metadata = None
         self.response_type = None
@@ -108,6 +110,7 @@ class BaseStreamResponse(CoreResponse):
         self.data = None
         self.reasoning = None
         self.reasoning_summary = None
+        self.commentary = []
         self.has_reasoning = False
         self.has_reasoning_summary = False
 
@@ -472,6 +475,15 @@ class BaseStreamResponse(CoreResponse):
                 loop.call_soon_threadsafe(queue.put_nowait, data)
         if data is not None:
             self._add_event(LMStreamEvent(type="reasoning.delta", data=data))
+
+    def add_commentary(self, data: str) -> None:
+        """Publish a user-visible intermediate assistant message."""
+        if not data:
+            return
+        self.commentary.append(data)
+        if not self.first_chunk_event.is_set():
+            self.first_chunk_event.set()
+        self._add_event(LMStreamEvent(type="commentary.delta", data=data))
 
     def add_reasoning_summary(self, data: Any, *, item_id: str | None = None):
         """Add a summary delta without presenting it as chain-of-thought."""

@@ -1,7 +1,7 @@
 """Built-in model capability rules for OpenAI-compatible Responses APIs.
 
-Rules describe model families rather than the service that distributes them.
-Unknown IDs remain unsupported unless the caller supplies an explicit override.
+Rules describe known model behavior and apply only where the provider checks
+them. Unknown IDs remain unsupported unless the caller supplies an override.
 """
 
 import re
@@ -16,7 +16,7 @@ _GPT_MODEL_ID = re.compile(
 
 
 def built_in_model_capabilities(model_id: str) -> ChatModelCapabilities:
-    """Infer known capabilities from a GPT model ID, including routed IDs."""
+    """Infer known capabilities from a model ID, including routed GPT IDs."""
     name = model_id.rsplit("/", maxsplit=1)[-1]
     match = _GPT_MODEL_ID.fullmatch(name)
     if match is None:

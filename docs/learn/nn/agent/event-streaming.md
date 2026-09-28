@@ -253,6 +253,7 @@ them. All following events remain correlatable through `run_id` and
 | `model.response` | The model response settled; includes compact token usage and timing when available |
 | `message.start` | Assistant output presentation started |
 | `message.delta` | Assistant content chunk |
+| `commentary.delta` | User-visible intermediate assistant update, distinct from final content and reasoning |
 | `reasoning.delta` | Reasoning content chunk, when exposed by the provider |
 | `reasoning_summary.delta` | Provider reasoning-summary chunk |
 | `message.end` | Complete assistant output |

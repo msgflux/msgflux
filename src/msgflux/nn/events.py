@@ -65,6 +65,12 @@ def emit_model_response_events(
         return
 
     reasoning = getattr(response, "reasoning", None)
+    for commentary in getattr(response, "commentary", ()):
+        emit_event(
+            EventType.COMMENTARY_DELTA,
+            {"delta": commentary},
+            scope=scope,
+        )
     if reasoning:
         emit_event(
             EventType.REASONING_DELTA,

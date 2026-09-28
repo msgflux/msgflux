@@ -95,6 +95,7 @@ class OpenAIChatCompletion(_OpenAICompatibleChatCompletion):
                 reasoning_codec=OpenAIResponsesReasoningCodec(),
                 reasoning_summary=True,
                 encrypted_reasoning=True,
+                assistant_commentary=True,
                 request_reasoning_effort=True,
                 context_adapter=OpenAIResponsesContextAdapter(),
             ),
