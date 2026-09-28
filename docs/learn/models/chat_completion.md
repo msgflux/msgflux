@@ -2094,10 +2094,39 @@ print(response.metadata.model)
 ```
 
 `reasoning_effort` is present only when that LM transport uses the setting.
+When an Agent changes effort through its inbox, this field reports the effective
+conversation value. For GPT-6 Responses requests using `configuration_update`,
+the request-level value remains at its original setting to preserve the cacheable
+prefix; it may therefore differ from the effective value recorded here.
 Speed fields are present only when requested or reported by the provider. The
-other three fields are always produced by OpenAI-compatible chat LMs. An
-Agent can persist this small audit record with the generated timeline item
+other three fields are always produced by OpenAI-compatible chat LMs.
+An Agent can persist this small audit record with the generated timeline item
 without reconstructing provider details itself.
+
+Built-in model rules enable hosted tool search for recognized GPT-5.4 and later
+IDs and reasoning updates for recognized GPT-6 and later IDs in Responses mode.
+The rules also recognize routed IDs such as `openai/gpt-6-astra`, regardless of
+which compatible provider serves the model. Unknown variants are left disabled.
+When a deployment has different capabilities, override only the known fields:
+
+```python
+import msgflux as mf
+from msgflux.models import ChatModelCapabilities
+
+model = mf.Model.chat_completion(
+    "openai/custom-model",
+    api_mode="responses",
+    model_capabilities=ChatModelCapabilities(
+        reasoning_updates=True,
+        hosted_tool_search=False,
+    ),
+)
+```
+
+This tells the Responses adapter to emit `configuration_update` items for
+reasoning changes and to use ordinary function tools instead of hosted tool
+search. These overrides describe transport support; they do not alter model
+profiles or guarantee a prompt cache hit.
 
 The same response metadata includes operational request timing:
 

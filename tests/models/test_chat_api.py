@@ -298,6 +298,29 @@ def test_chat_capabilities_reject_duplicate_api_modes():
         )
 
 
+def test_routed_gpt_capabilities_do_not_depend_on_provider_name():
+    class RoutedResponsesModel(OpenAICompatibleChatCompletion):
+        provider = "partner"
+        capabilities = ChatProviderCapabilities(
+            default_api_mode="responses",
+            api_modes=(
+                ChatAPIModeCapabilities(
+                    name="responses",
+                    adapter=OpenAIResponsesAPI(),
+                    request_reasoning_effort=True,
+                ),
+            ),
+            default_reasoning_codec=OpenAICompatibleReasoningCodec(),
+        )
+
+        def _get_api_key(self):
+            return "test"
+
+    model = RoutedResponsesModel(model_id="openai/gpt-6-astra")
+    assert model.supports_native_tool_search()
+    assert model.supports_reasoning_update()
+
+
 def test_chat_capabilities_require_a_typed_context_adapter():
     with pytest.raises(TypeError, match="ChatContextAdapter instance"):
         ChatAPIModeCapabilities(

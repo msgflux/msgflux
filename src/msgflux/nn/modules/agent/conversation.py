@@ -22,7 +22,9 @@ from msgflux.exceptions import (
     TaskInterruptRequestedError,
     TaskPauseRequestedError,
 )
+from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.types import reasoning_effort_from_history
 from msgflux.nn.hooks.events import (
     NotificationContext,
 )
@@ -56,6 +58,71 @@ _TASK_RESULT_UNSET = object()
 
 class AgentConversationMixin:
     """Conversation state, inbox, checkpoint, and durable-resume behavior."""
+
+    def get_reasoning_effort(
+        self,
+        messages: ChatMessages | List[Mapping[str, Any]] | None = None,
+        *,
+        scope: ExecutionScope | None = None,
+        model_preference: str | None = None,
+    ) -> str | None:
+        """Return the effort active for a conversation or checkpointed thread.
+
+        A persisted conversation update takes precedence over the model's
+        constructor setting. Pending inbox updates take effect when drained.
+        """
+        if messages is not None and not isinstance(messages, (ChatMessages, list)):
+            raise TypeError("`messages` must be ChatMessages, a list, or None")
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("`scope` must be ExecutionScope or None")
+
+        if messages is None:
+            state = self._reasoning_checkpoint_state(scope)
+            if state is not None:
+                messages = state.get("messages", {}).get("items", [])
+                if model_preference is None:
+                    saved_preference = state.get("model_preference")
+                    if isinstance(saved_preference, str):
+                        model_preference = saved_preference
+
+        model = self._reasoning_model(model_preference)
+        supports = getattr(model, "supports_reasoning_effort", None)
+        if callable(supports) and not supports():
+            return None
+
+        updated = reasoning_effort_from_history(messages)
+        if updated is not None:
+            return updated
+        params = getattr(model, "sampling_run_params", None)
+        return params.get("reasoning_effort") if isinstance(params, Mapping) else None
+
+    def _reasoning_model(self, model_preference: str | None):
+        model = self.model
+        if not isinstance(model, ModelGateway):
+            return model
+        if model_preference is None:
+            return model.models[0]
+        model.validate_model_name(model_preference)
+        return model.models[model._model_name_to_index[model_preference]]
+
+    def _reasoning_checkpoint_state(
+        self, scope: ExecutionScope | None
+    ) -> Mapping[str, Any] | None:
+        context = get_execution_context()
+        inbox = getattr(self, "agent_inbox", None)
+        thread_id = (
+            scope.thread_id
+            if scope is not None
+            else context.get("thread_id")
+            or (inbox.thread_id if inbox is not None and inbox._scope_bound else None)
+        )
+        store = self._get_effective_checkpoint_store()
+        if store is None or thread_id is None:
+            return None
+        namespace = self.get_module_name()
+        if scope is not None and scope.run_id is not None:
+            return store.load_state(namespace, thread_id, scope.run_id)
+        return store.load_latest_run(namespace, thread_id)
 
     def _coerce_chat_messages(
         self,
@@ -232,7 +299,43 @@ class AgentConversationMixin:
 
     def _finish_inbox_delivery(self, inbox, messages, notifications, *, drain):
         ids = [item.notification_id for item in notifications]
-        notification_messages = inbox.render_messages(notifications)
+        configuration = [
+            item
+            for item in notifications
+            if item.source == "model_configuration"
+            and item.status == "reasoning_effort"
+        ]
+        if configuration:
+            effort = configuration[-1].metadata["reasoning_effort"]
+            update = {
+                "type": "model_configuration",
+                "reasoning_effort": effort,
+                "metadata": {
+                    "inbox_receipts": [item.notification_id for item in configuration]
+                },
+            }
+            if isinstance(messages, ChatMessages):
+                active_turn = messages.get_active_turn()
+                start = (
+                    active_turn.get("start_item_index")
+                    if active_turn is not None
+                    else None
+                )
+                has_model_output = isinstance(start, int) and any(
+                    item.get("role") == "assistant"
+                    or item.get("type")
+                    in {"reasoning", "function_call", "tool_search_call"}
+                    for item in messages[start:]
+                )
+                if has_model_output:
+                    messages.append(update)
+                else:
+                    messages.insert_before_active_turn(update)
+            else:
+                messages.append(update)
+        notification_messages = inbox.render_messages(
+            item for item in notifications if item not in configuration
+        )
         for item in notification_messages:
             item["metadata"] = {**item.get("metadata", {}), "inbox_receipts": ids}
         self._persist_notification_messages(messages, notification_messages)

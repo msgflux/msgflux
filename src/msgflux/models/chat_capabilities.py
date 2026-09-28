@@ -19,7 +19,6 @@ class ChatAPIModeCapabilities(msgspec.Struct, frozen=True, kw_only=True):
     encrypted_reasoning: bool = False
     request_reasoning_effort: bool = False
     context_adapter: ChatContextAdapter | None = None
-    hosted_tool_search_model_families: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -43,6 +42,19 @@ class ChatAPIModeCapabilities(msgspec.Struct, frozen=True, kw_only=True):
                 f"Context adapter for {self.context_adapter.api_mode!r} cannot be "
                 f"attached to API mode {self.name!r}"
             )
+
+
+class ChatModelCapabilities(msgspec.Struct, frozen=True, kw_only=True):
+    """Optional model-specific overrides for capabilities absent from profiles."""
+
+    reasoning_updates: bool | None = None
+    hosted_tool_search: bool | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("reasoning_updates", "hosted_tool_search"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, bool):
+                raise TypeError(f"`{name}` must be bool or None")
 
 
 class ChatProviderCapabilities(msgspec.Struct, frozen=True, kw_only=True):

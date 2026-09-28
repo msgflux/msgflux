@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Tuple
 from uuid import uuid4
 from xml.sax.saxutils import escape, quoteattr
 
+from msgflux.models.types import validate_reasoning_effort
 from msgflux.runtime.agent_inbox.base import AgentInboxStore
 from msgflux.runtime.agent_inbox.content import normalize_content, validate_description
 from msgflux.runtime.agent_inbox.dataclasses import (
@@ -175,6 +176,19 @@ class AgentInbox:
 
     def pause(self, *, reason: str | None = None) -> AgentNotification:
         return self.control("pause", reason=reason)
+
+    def set_reasoning_effort(self, effort: str) -> AgentNotification:
+        """Queue a durable reasoning-effort change for the next model request."""
+        validate_reasoning_effort(effort)
+        return self.publish(
+            AgentNotification(
+                notification_id=uuid4().hex,
+                source="model_configuration",
+                status="reasoning_effort",
+                metadata={"reasoning_effort": effort.strip()},
+                dedupe_key="model_configuration:reasoning_effort",
+            )
+        )
 
     def user_message(
         self,
