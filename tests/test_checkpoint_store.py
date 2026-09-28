@@ -22,6 +22,94 @@ def _replace_items(messages, items):
     messages["items"] = ChatMessages(items).to_items()
 
 
+def test_last_model_metadata_reads_actual_last_response(checkpoint_store):
+    store = checkpoint_store
+    first = _message_state("run_1")
+    _replace_items(
+        first,
+        [
+            {
+                "role": "assistant",
+                "content": "first",
+                "metadata": {
+                    "model": {
+                        "provider": "openai",
+                        "model_id": "gpt-5.4",
+                        "api_mode": "responses",
+                        "reasoning_effort": "low",
+                    }
+                },
+            },
+        ],
+    )
+    second = _message_state("run_2")
+    _replace_items(
+        second,
+        [
+            first["items"][0],
+            {"type": "model_configuration", "reasoning_effort": "high"},
+            {
+                "role": "assistant",
+                "content": "second",
+                "metadata": {
+                    "model": {
+                        "provider": "openrouter",
+                        "model_id": "openai/gpt-6",
+                        "api_mode": "responses",
+                        "reasoning_effort": "high",
+                    }
+                },
+            },
+        ],
+    )
+    store.save_state(
+        "agent:test", "session_1", "run_1", {"status": "completed", "messages": first}
+    )
+    store.save_state(
+        "agent:test", "session_1", "run_2", {"status": "completed", "messages": second}
+    )
+
+    assert store.get_last_model_metadata("agent:test", "session_1", "run_1") == {
+        "provider": "openai",
+        "model_id": "gpt-5.4",
+        "api_mode": "responses",
+    }
+    assert store.get_last_model_metadata("agent:test", "session_1") == {
+        "provider": "openrouter",
+        "model_id": "openai/gpt-6",
+        "api_mode": "responses",
+    }
+    assert store.get_last_model_metadata("agent:test", "missing") is None
+
+
+def test_last_model_metadata_does_not_suggest_stale_model(checkpoint_store):
+    store = checkpoint_store
+    messages = _message_state("run_1")
+    _replace_items(
+        messages,
+        [
+            {
+                "role": "assistant",
+                "content": "known",
+                "metadata": {
+                    "model": {
+                        "provider": "openai",
+                        "model_id": "gpt-5.4",
+                    }
+                },
+            },
+            {"role": "assistant", "content": "unknown"},
+        ],
+    )
+    store.save_state(
+        "agent:test",
+        "session_1",
+        "run_1",
+        {"status": "completed", "messages": messages},
+    )
+    assert store.get_last_model_metadata("agent:test", "session_1") is None
+
+
 def test_in_memory_checkpoint_store_state_and_events():
     store = InMemoryCheckpointStore()
 

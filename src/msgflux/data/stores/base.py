@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, List, Literal, Mapping
 from uuid import uuid4
 
+from msgflux._private.model_metadata import last_model_metadata
 from msgflux._private.store_routing import process_routing_id
 
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
@@ -226,6 +227,20 @@ class CheckpointStore(ABC):
         if not runs:
             return None
         return self.load_state(namespace, thread_id, runs[0]["run_id"])
+
+    def get_last_model_metadata(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str | None = None,
+    ) -> dict[str, str] | None:
+        """Return the last audited model response in a run or thread."""
+        state = (
+            self.load_latest_run(namespace, thread_id)
+            if run_id is None
+            else self.load_state(namespace, thread_id, run_id)
+        )
+        return last_model_metadata(state)
 
     def fork_run(
         self,
@@ -545,6 +560,20 @@ class AsyncCheckpointStore(ABC):
         if not runs:
             return None
         return await self.aload_state(namespace, thread_id, runs[0]["run_id"])
+
+    async def aget_last_model_metadata(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str | None = None,
+    ) -> dict[str, str] | None:
+        """Return the last audited model response in a run or thread."""
+        state = (
+            await self.aload_latest_run(namespace, thread_id)
+            if run_id is None
+            else await self.aload_state(namespace, thread_id, run_id)
+        )
+        return last_model_metadata(state)
 
     async def afind_incomplete_runs(
         self,

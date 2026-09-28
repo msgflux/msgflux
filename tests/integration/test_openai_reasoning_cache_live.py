@@ -70,3 +70,13 @@ def test_gpt6_reasoning_update_preserves_cached_prefix():
     assert audited[-1]["model"]["provider"] == "openai"
     assert audited[-1]["model"]["model_id"] == "gpt-6-astra"
     assert audited[-1]["usage"]["cached_input_tokens"] > 0
+    identity = {
+        "provider": "openai",
+        "model_id": "gpt-6-astra",
+        "api_mode": "responses",
+    }
+    assert (
+        store.get_last_model_metadata("reasoning_cache_probe", "cache-thread")
+        == identity
+    )
+    assert agent.get_last_model_metadata(scope=second_scope) == identity

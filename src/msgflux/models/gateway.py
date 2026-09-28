@@ -452,6 +452,30 @@ class ModelGateway:
                 f"Unknown model `{model_name}`. Available models: {available}."
             )
 
+    def find_model_name(
+        self, *, provider: str, model_id: str, api_mode: str | None = None
+    ) -> str | None:
+        """Find a unique deployment alias matching a recorded model identity."""
+        for field, value in (("provider", provider), ("model_id", model_id)):
+            if not isinstance(value, str) or not value:
+                raise TypeError(f"`{field}` must be a non-empty string")
+        if api_mode is not None and (not isinstance(api_mode, str) or not api_mode):
+            raise TypeError("`api_mode` must be a non-empty string or None")
+
+        matches = [
+            name
+            for name, model in zip(self.model_names, self.models)
+            if model.provider == provider
+            and model.model_id == model_id
+            and (api_mode is None or getattr(model, "api_mode", None) == api_mode)
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                "Multiple deployments match the recorded model identity: "
+                + ", ".join(matches)
+            )
+        return matches[0] if matches else None
+
     def get_model_description(self, model_name: str) -> Optional[str]:
         """Return the configured capability description for one deployment."""
         self.validate_model_name(model_name)

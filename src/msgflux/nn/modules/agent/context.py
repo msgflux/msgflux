@@ -57,6 +57,15 @@ def _apply_before_resume(
     }
 
 
+def _apply_explicit_model_preference(
+    inputs: dict[str, Any], kwargs: Mapping[str, Any]
+) -> None:
+    """Honor the caller's selection over the saved or hook-provided preference."""
+    preference = kwargs.get("model_preference")
+    if preference is not None:
+        inputs["model_preference"] = preference
+
+
 def _require_lifecycle_payload(event: str, payload: Any, expected_type: type):
     if not isinstance(payload, expected_type):
         raise TypeError(
