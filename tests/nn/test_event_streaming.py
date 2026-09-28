@@ -75,6 +75,73 @@ class StreamingModule(Module):
         return response
 
 
+class CommentaryModule(Module):
+    def forward(self):
+        response = ModelStreamResponse()
+        response.add_commentary("Checking inventory.")
+        response.set_response_type("text_generation")
+        response.add("In stock.")
+        response.finish()
+        return response
+
+
+@pytest.mark.asyncio
+async def test_commentary_stream_event_is_distinct_from_answer_and_reasoning():
+    events = [event async for event in CommentaryModule().stream_events()]
+    assert [
+        event.data["delta"]
+        for event in events
+        if event.type == EventType.COMMENTARY_DELTA
+    ] == ["Checking inventory."]
+    assert [
+        event.data["delta"] for event in events if event.type == EventType.MESSAGE_DELTA
+    ] == ["In stock."]
+    assert not any(event.type == EventType.REASONING_DELTA for event in events)
+
+
+def test_send_user_message_requires_an_event_stream():
+    from msgflux.tools.builtin import send_user_message
+
+    with pytest.raises(RuntimeError, match="active event stream"):
+        send_user_message("Checking inventory.")
+
+
+def test_send_user_message_emits_commentary_event():
+    from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
+    from msgflux.tools.builtin import send_user_message
+
+    events = []
+    token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
+    try:
+        assert send_user_message("Checking inventory.").startswith("Message sent")
+    finally:
+        _CURRENT_EVENT_SINK.reset(token)
+    assert [(event.type, event.data["delta"]) for event in events] == [
+        (EventType.COMMENTARY_DELTA, "Checking inventory.")
+    ]
+
+
+def test_nonstream_model_commentary_emits_separate_runtime_event():
+    from msgflux.nn.events import emit_model_response_events
+    from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
+
+    response = ModelResponse()
+    response.set_response_type("text_generation")
+    response.add("In stock.")
+    response.commentary = ["Checking inventory."]
+    events = []
+    token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
+    try:
+        emit_model_response_events(response)
+    finally:
+        _CURRENT_EVENT_SINK.reset(token)
+
+    assert [(event.type, event.data.get("delta")) for event in events] == [
+        (EventType.COMMENTARY_DELTA, "Checking inventory."),
+        (EventType.MODEL_RESPONSE, None),
+    ]
+
+
 class FailingModule(Module):
     def forward(self):
         raise RuntimeError("boom")
@@ -106,6 +173,33 @@ def make_agent(*, hooks=None):
     model.return_value = response
     model.acall = AsyncMock(return_value=response)
     return Agent(name="agent", model=model, hooks=hooks), model
+
+
+@pytest.mark.parametrize("marker", ["phase", "visibility"])
+def test_tool_turn_replays_visible_commentary_before_function_call(marker):
+    agent, _ = make_agent()
+    messages = ChatMessages()
+    response = ModelResponse()
+    response.commentary = ["Checking inventory."]
+    response.history_items = [
+        {
+            "type": "message",
+            "role": "assistant",
+            marker: "commentary",
+            "content": [{"type": "output_text", "text": "Checking inventory."}],
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "lookup_inventory",
+            "arguments": "{}",
+        },
+    ]
+
+    agent._append_tool_model_history(messages, response)
+
+    assert [item["type"] for item in messages] == ["message", "function_call"]
+    assert messages[0][marker] == "commentary"
 
 
 @pytest.mark.asyncio

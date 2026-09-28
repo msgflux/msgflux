@@ -17,6 +17,7 @@ class ChatAPIModeCapabilities(msgspec.Struct, frozen=True, kw_only=True):
     reasoning_codec: ReasoningCodec | None = None
     reasoning_summary: bool = False
     encrypted_reasoning: bool = False
+    assistant_commentary: bool = False
     request_reasoning_effort: bool = False
     context_adapter: ChatContextAdapter | None = None
 
@@ -49,9 +50,14 @@ class ChatModelCapabilities(msgspec.Struct, frozen=True, kw_only=True):
 
     reasoning_updates: bool | None = None
     hosted_tool_search: bool | None = None
+    unphased_tool_commentary: bool | None = None
 
     def __post_init__(self) -> None:
-        for name in ("reasoning_updates", "hosted_tool_search"):
+        for name in (
+            "reasoning_updates",
+            "hosted_tool_search",
+            "unphased_tool_commentary",
+        ):
             value = getattr(self, name)
             if value is not None and not isinstance(value, bool):
                 raise TypeError(f"`{name}` must be bool or None")

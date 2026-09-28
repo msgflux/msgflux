@@ -1890,6 +1890,8 @@ class Module:
                             emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
                 elif event.type == "reasoning.delta":
                     emit_event(EventType.REASONING_DELTA, {"delta": event.data})
+                elif event.type == "commentary.delta":
+                    emit_event(EventType.COMMENTARY_DELTA, {"delta": event.data})
                 elif event.type == "reasoning_summary.delta":
                     emit_event(
                         EventType.REASONING_SUMMARY_DELTA,

@@ -33,6 +33,7 @@ class EventType:
     MODEL_RESPONSE = "model.response"
     MESSAGE_START = "message.start"
     MESSAGE_DELTA = "message.delta"
+    COMMENTARY_DELTA = "commentary.delta"
     MESSAGE_END = "message.end"
     REASONING_DELTA = "reasoning.delta"
     REASONING_SUMMARY_DELTA = "reasoning_summary.delta"

@@ -120,7 +120,8 @@ response = model(
 providers default to `"chat_completions"`. The concrete OpenAI provider defaults
 to `"responses"`, following OpenAI's current recommendation for reasoning,
 tool-calling, and multi-turn workflows. Groq and vLLM also support Responses
-behind the same `Model.chat_completion` frontend:
+behind the same `Model.chat_completion` frontend. OpenRouter also supports
+Responses explicitly; its default remains Chat Completions:
 
 ```python
 import msgflux as mf
@@ -141,7 +142,19 @@ response = responses_model(
     system_prompt="Answer in one sentence.",
 )
 print(response.consume())
+
+openrouter_responses = mf.Model.chat_completion(
+    "openrouter/meta/muse-spark-1.3-contributor",
+    api_mode="responses",
+)
+print(openrouter_responses("What is 2 + 2?").consume())
 ```
+
+The last call uses [OpenRouter's `/responses` endpoint](https://openrouter.ai/docs/api/api-reference/responses/create-responses).
+Its model catalog spans multiple underlying providers, so a Responses item with
+`phase="commentary"` is not automatically trusted as a user-visible update.
+OpenRouter reasoning items, including encrypted content when returned, remain
+separate from answer text and retain their native fields for replay.
 
 To use an OpenAI feature that remains specific to Chat Completions, select it
 explicitly:
@@ -194,6 +207,82 @@ final-answer phase while `ToolFlowControl` selects commentary as the actionable
 trajectory. Both native messages remain in `ChatMessages`, including their
 `phase`, so subsequent manual-history requests can replay every Responses output
 item without synthesizing or duplicating the selected answer.
+
+`commentary` is a user-visible progress message, separate from `reasoning` and
+the final answer. A non-streaming OpenAI Responses call exposes these updates in
+`response.commentary` (a list of messages); `response.consume()` still returns
+the final answer. Streaming calls emit `LMStreamEvent(type="commentary.delta")`,
+while final text emits `output.delta` and reasoning emits `reasoning.delta`.
+
+In Chat Completions, an assistant message may contain `content`, a separate
+reasoning field, and `tool_calls` in the same response. When `tool_calls` are
+present, msgFlux publishes the message's `content` as commentary and keeps
+reasoning separate. A stream waits for the tool decision before classifying
+that text. The local non-streaming response cache retains commentary and
+re-emits its event on a cache hit. For replay, assistant content, reasoning,
+and tool calls are reconstructed in one Chat Completions message.
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion("openai/gpt-5.6-luna", api_mode="responses")
+response = model("Check the inventory and report the result")
+for update in response.commentary:
+    print("Progress:", update)
+print("Answer:", response.consume())
+```
+
+This example reads intermediate progress independently of the final result.
+Structured `ToolFlowControl` commentary remains an internal trajectory payload
+and is not published as a user progress update. Only OpenAI Responses currently
+declares its `commentary` phase as user-visible. Groq, vLLM, and OpenRouter
+Responses compatibility does not imply that guarantee. For all Responses
+providers, msgFlux treats an assistant message before a function call as
+commentary when its content was not marked as a reasoning item. It waits for
+the tool decision in streams. An unphased message without a following tool
+call remains answer output; an untrusted `phase="commentary"` message without
+a following tool call is kept in history but not published. This classification
+is stored as local `visibility` metadata. Replay retains the provider's
+original message and `phase`, preserving the prompt prefix. Applications can
+disable the inference for a model whose behavior requires it:
+
+```python
+import msgflux as mf
+from msgflux.models import ChatModelCapabilities
+
+model = mf.Model.chat_completion(
+    "openrouter/custom-model",
+    api_mode="responses",
+    model_capabilities=ChatModelCapabilities(unphased_tool_commentary=False),
+)
+```
+
+The example disables pre-tool commentary classification for that model instance.
+
+OpenRouter uses a stable conversation session to keep successive requests on a
+provider endpoint with a warm prompt cache. When an Agent or `ChatMessages`
+has a thread ID, msgFlux sends it as `x-session-id` for both Chat Completions
+and Responses. For direct calls without a thread ID, pass the same `session_id`
+on each turn:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "openrouter/z-ai/glm-5.3-flash", api_mode="responses"
+)
+response = model(
+    "Continue the inventory check",
+    extra_body={"session_id": "inventory-thread-42"},
+)
+print(response.metadata.usage.cache_hit_percentage)
+```
+
+This example gives OpenRouter one routing key for subsequent turns and reads
+the provider's reported cached-token percentage. The first turn warms the
+cache; a later turn can reuse its unchanged prefix when the model and provider
+support prompt caching. The cache hit percentage depends on prompt length,
+provider routing, and cache lifetime. See [OpenRouter's prompt caching guide](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
 
 ### 1.3 **Storage and ZDR preference**
 

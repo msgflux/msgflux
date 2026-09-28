@@ -2,6 +2,42 @@
 
 msgFlux provides built-in tools that work out of the box:
 
+## Send a progress message
+
+For models without a trusted Responses `commentary` phase, add
+`send_user_message` to the Agent's tools. It emits `commentary.delta` through
+the active event stream and returns control to the model so it can continue.
+The application displays that event to the user. The tool requires an active
+event stream; a plain Agent call without one raises an error rather than claiming
+delivery. Do not put private reasoning in the message.
+
+```python
+import asyncio
+import msgflux as mf
+from msgflux.nn import Agent
+from msgflux.tools.builtin import send_user_message
+from msgflux.runtime.events import EventType
+
+model = mf.Model.chat_completion(
+    "openrouter/meta/muse-spark-1.3-contributor", api_mode="responses"
+)
+agent = Agent(
+    name="assistant", model=model, tools=[send_user_message], config={"stream": True}
+)
+
+async def main():
+    async for event in agent.stream_events("Check the inventory"):
+        if event.type == EventType.COMMENTARY_DELTA:
+            print("Progress:", event.data["delta"])
+        elif event.type == EventType.MESSAGE_DELTA:
+            print(event.data["delta"], end="")
+
+asyncio.run(main())
+```
+
+The tool call publishes a progress message before the Agent's final answer;
+`message.delta` continues to represent answer text.
+
 ## Workspace tools
 
 `ReadFileTool`, `WriteTool`, `EditTool`, `DeleteTool` and `ApplyPatchTool`

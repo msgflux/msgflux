@@ -673,6 +673,7 @@ class TestOpenAIChatCompletion:
             "actions": None,
             "final_answer": None,
         }
+        assert response.commentary == []
         assert [item["phase"] for item in response.history_items] == [
             "commentary",
             "final_answer",
@@ -681,6 +682,87 @@ class TestOpenAIChatCompletion:
         assert [item["phase"] for item in replay] == [
             "commentary",
             "final_answer",
+        ]
+
+    def test_responses_commentary_is_separate_from_answer_and_reasoning(
+        self, mock_openai_client
+    ):
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+
+        model = OpenAIChatCompletion(model_id="gpt-5.6-luna")
+        response = model._process_responses_model_output(
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "phase": "commentary",
+                        "content": [
+                            {"type": "output_text", "text": "Checking inventory."}
+                        ],
+                    },
+                    {
+                        "type": "message",
+                        "phase": "final_answer",
+                        "content": [{"type": "output_text", "text": "In stock."}],
+                    },
+                ],
+            }
+        )
+
+        assert response.data == "In stock."
+        assert response.commentary == ["Checking inventory."]
+        assert response.reasoning is None
+        assert [item["phase"] for item in response.history_items] == [
+            "commentary",
+            "final_answer",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_responses_stream_emits_commentary_before_answer(
+        self, mock_openai_client
+    ):
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+        from msgflux.models.response import ModelStreamResponse
+        from msgflux.models.tool_call_agg import ToolCallAggregator
+
+        model = OpenAIChatCompletion(model_id="gpt-5.6-luna")
+        response = ModelStreamResponse()
+        state = model._new_responses_stream_state(MagicMock())
+        aggregator = ToolCallAggregator(api_mode="responses")
+        for index, phase, content in (
+            (0, "commentary", "Checking inventory."),
+            (1, "final_answer", "In stock."),
+        ):
+            model._handle_responses_stream_event(
+                {
+                    "type": "response.output_item.added",
+                    "output_index": index,
+                    "item": {"type": "message", "role": "assistant", "phase": phase},
+                },
+                response,
+                aggregator,
+                state,
+            )
+            model._handle_responses_stream_event(
+                {
+                    "type": "response.output_text.delta",
+                    "output_index": index,
+                    "delta": content,
+                },
+                response,
+                aggregator,
+                state,
+            )
+        response.finish()
+
+        assert response.data == "In stock."
+        assert response.commentary == ["Checking inventory."]
+        assert [
+            (event.type, event.data) async for event in response.consume_events()
+        ] == [
+            ("commentary.delta", "Checking inventory."),
+            ("output.delta", "In stock."),
         ]
 
     def test_responses_mode_converts_frontend_and_preserves_reasoning_state(
