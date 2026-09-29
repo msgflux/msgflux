@@ -324,6 +324,15 @@ tau_model = mf.Model.chat_completion(
 )
 ```
 
+In Responses mode, providers whose names contain `openai`, or models whose IDs
+start with `openai/` (regardless of provider), send system-role history messages
+as `developer` messages at their original positions. This includes notifications
+added after background tool execution. Codex keeps the main prompt in top-level `instructions`; OpenAI
+and OpenRouter retain its existing position in the input. Token counting and
+compaction use the same conversion where supported. Canonical msgFlux history
+retains the system role. Chat Completions and other routed models keep their
+existing role handling.
+
 For calls in an Agent thread, the provider sends the stable thread ID as
 `prompt_cache_key`, `session-id`, and `x-client-request-id`, matching the Codex
 session routing used by Pi. Direct multi-turn calls can carry the same identity

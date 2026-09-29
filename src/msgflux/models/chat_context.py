@@ -12,6 +12,19 @@ if TYPE_CHECKING:
     from msgflux.tools.catalog import ToolCatalogView
 
 
+def normalize_responses_input_roles(items: Any, *, provider: str, model_id: str) -> Any:
+    """Project OpenAI system history as developer messages without reordering."""
+    openai_model = "openai" in provider or model_id.startswith("openai/")
+    if not openai_model or not isinstance(items, list):
+        return items
+    return [
+        {**item, "role": "developer"}
+        if isinstance(item, Mapping) and item.get("role") == "system"
+        else item
+        for item in items
+    ]
+
+
 def _payload_value(payload: Any, name: str) -> Any:
     if isinstance(payload, Mapping):
         return payload.get(name)
@@ -64,10 +77,13 @@ class OpenAIResponsesContextAdapter(ChatContextAdapter):
             return messages
         if not isinstance(messages, ChatMessages):
             messages = ChatMessages(messages)
-        return messages.to_responses_input(
+        items = messages.to_responses_input(
             provider=owner.provider,
             api_mode=owner.api_mode,
             reasoning_codec=owner.reasoning_codec,
+        )
+        return normalize_responses_input_roles(
+            items, provider=owner.provider, model_id=owner.model_id
         )
 
     def prepare_token_count(
