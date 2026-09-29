@@ -149,12 +149,13 @@ class ReadFileTool:
     retry=False,
 )
 class BashTool:
-    """Run Bash in the configured isolated executor, never on the host directly.
+    """Run Bash using the host-configured process executor.
 
     Use an absolute virtual workspace cwd. Execution is limited to 30 seconds
     and, by default, 1,000,000 combined stdout/stderr bytes. The host may override
     the capture budget. Requires a configured executor
-    with Bash and authorization for every resource accessed by the command.
+    with Bash and the required execution permission. Isolation and filesystem
+    access depend on the configured executor and its declared requirements.
 
     Args:
         command: Bash command or ordered batch of independent commands.
