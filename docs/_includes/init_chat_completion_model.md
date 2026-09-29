@@ -75,6 +75,18 @@
         )
         ```
 
+    === "Vercel AI Gateway"
+
+        Authenticate by setting the `AI_GATEWAY_API_KEY` env variable.
+        Models use `provider/model` identifiers routed through the gateway.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(AI_GATEWAY_API_KEY="...")
+        model = mf.Model.chat_completion("vercel/anthropic/claude-opus-5")
+        ```
+
     === "Baseten"
 
         Authenticate with `BASETEN_API_KEY`. The default OpenAI-compatible base
