@@ -1,6 +1,6 @@
 """Tests for control flow functionality."""
 
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping
 from unittest.mock import MagicMock
 
 import pytest
@@ -46,12 +46,8 @@ class TestToolFlowResult:
 class TestToolFlowControl:
     """Tests for ToolFlowControl base class."""
 
-    def test_tool_flow_control_is_class(self):
-        """Test that ToolFlowControl exists and is a class."""
-        assert isinstance(ToolFlowControl, type)
-
     def test_tool_flow_control_can_be_inherited(self):
-        """Test that ToolFlowControl can be inherited with required methods."""
+        """Test a concrete implementation of ToolFlowControl can be used."""
 
         class CustomControl(ToolFlowControl):
             @classmethod
@@ -77,7 +73,10 @@ class TestToolFlowControl:
             ) -> List[Mapping[str, Any]]:
                 return messages
 
-        assert issubclass(CustomControl, ToolFlowControl)
+        control = CustomControl()
+        result = control.extract_flow_result({})
+        assert isinstance(control, ToolFlowControl)
+        assert result.is_complete is True
 
     def test_tool_flow_control_class_attributes(self):
         """Test that ToolFlowControl has class attributes."""
@@ -96,84 +95,6 @@ class TestToolFlowControl:
 
         with pytest.raises(NotImplementedError):
             ToolFlowControl.build_history({}, [])
-
-
-class TestCustomToolFlowControl:
-    """Tests for custom ToolFlowControl implementation."""
-
-    def test_simple_tool_loop(self):
-        """Test a simple custom tool flow control."""
-
-        class SimpleToolLoop(ToolFlowControl):
-            """Simple tool loop without ReAct structure."""
-
-            @classmethod
-            def extract_flow_result(
-                cls, raw_response: Mapping[str, Any]
-            ) -> ToolFlowResult:
-                if raw_response.get("done"):
-                    return ToolFlowResult(
-                        is_complete=True,
-                        tool_calls=None,
-                        reasoning=None,
-                        final_response={"done": True},
-                    )
-
-                calls = raw_response.get("calls", [])
-                if calls:
-                    tool_calls = [
-                        (f"id_{i}", call["name"], call["args"])
-                        for i, call in enumerate(calls)
-                    ]
-                    return ToolFlowResult(
-                        is_complete=False,
-                        tool_calls=tool_calls,
-                        reasoning="Processing calls",
-                        final_response=None,
-                    )
-
-                return ToolFlowResult(
-                    is_complete=True,
-                    tool_calls=None,
-                    reasoning=None,
-                    final_response={"done": True, "no_calls": True},
-                )
-
-            @classmethod
-            def inject_results(
-                cls, raw_response: Mapping[str, Any], tool_results
-            ) -> Mapping[str, Any]:
-                calls = raw_response.get("calls", [])
-                for i, call in enumerate(calls):
-                    call_id = f"id_{i}"
-                    result = tool_results.get_by_id(call_id)
-                    if result:
-                        call["result"] = result.result
-                return raw_response
-
-            @classmethod
-            def build_history(
-                cls, raw_response: Mapping[str, Any], messages: List[Mapping[str, Any]]
-            ) -> List[Mapping[str, Any]]:
-                messages.append({"role": "assistant", "content": str(raw_response)})
-                return messages
-
-        # Test completed state
-        result = SimpleToolLoop.extract_flow_result({"done": True})
-        assert result.is_complete is True
-
-        # Test with pending calls
-        raw = {"calls": [{"name": "search", "args": {"q": "test"}}]}
-        result = SimpleToolLoop.extract_flow_result(raw)
-        assert result.is_complete is False
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0][1] == "search"
-
-        # Test build_history
-        messages = []
-        messages = SimpleToolLoop.build_history(raw, messages)
-        assert len(messages) == 1
-        assert messages[0]["role"] == "assistant"
 
 
 class TestToolFlowControlAsync:
