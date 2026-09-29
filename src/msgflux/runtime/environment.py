@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ProcessRequest:
-    """Explicit argv, virtual cwd and limits; no inherited host environment."""
+    """Explicit argv, virtual cwd and limits; executor owns environment policy."""
 
     argv: tuple[str, ...]
     cwd: str = "/"
@@ -249,7 +249,7 @@ class ExecutionEnvironment:
         require_permissions(("process.execute",))
         executor = self.process_executor
         if executor is None:
-            raise PermissionError("No isolated process executor configured")
+            raise PermissionError("No process executor configured")
         executor.capabilities.require(self.requirements)
         if executor.supports_workspace(self.filesystem) is not True:
             raise PermissionError("Process executor cannot use this workspace")

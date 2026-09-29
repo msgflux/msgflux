@@ -319,7 +319,7 @@ async def test_bash_requires_executor_and_never_retries(workspace_tools):
             permissions=scope.permissions,
         )
     ):
-        with pytest.raises(PermissionError, match="No isolated"):
+        with pytest.raises(PermissionError, match="No process executor"):
             await library.arun("bash", {"command": "true"})
     executor.execute.side_effect = RuntimeError("backend failed after an effect")
     with execution_context(scope=scope):

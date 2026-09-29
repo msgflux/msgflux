@@ -2051,8 +2051,10 @@ dynamic path by themselves nor stop arbitrary Python from using host APIs.
 
 ### Process executors
 
-`ProcessExecutor` is an abstract, host-supplied backend. **No shell or OS sandbox
-backend is included.** An environment without one refuses process execution:
+`ProcessExecutor` is the interface for host-supplied process execution. msgFlux
+includes `LocalProcessExecutor` for direct host commands and
+`DockerProcessExecutor` for configured Docker isolation. Neither is enabled
+automatically. An environment without an executor refuses process execution:
 
 ```python
 from dataclasses import replace
@@ -2075,14 +2077,16 @@ Before calling a backend, the environment checks `process.execute`, declared
 `SandboxRequirements` require filesystem, network, process and resource-limit
 mechanisms. The trusted host owns any explicit relaxation. A backend must enforce
 the requested policy, the passed live resource grants, virtual cwd, timeout and
-output limit. It must not inherit the host's filesystem, credentials or environment
-implicitly. Cancellation must terminate/reap its children before cleanup returns.
+output limit. Host access and environment inheritance must be an explicit choice
+of executor policy. Cancellation must terminate/reap its children before cleanup
+returns.
 
 `ProcessRequest` carries explicit argv, a virtual cwd, timeout and output byte
 limit; `ProcessResult` carries return code and byte stdout/stderr. The runtime
 requests cancellation on timeout and rejects oversized returned output, but the
 backend must bound capture while running. Declaring capabilities is a contract,
-not proof of OS isolation. The current tests use a fake backend, never real bash.
+not proof of OS isolation. Tests cover real local processes as well as fake
+backends.
 
 !!! warning "Current boundaries"
     The memory VFS is process-local and has no persistence, quotas or artifact
@@ -2096,6 +2100,61 @@ not proof of OS isolation. The current tests use a fake backend, never real bash
     static requirements, workspace identity and isolation mechanisms, but do not
     pin file contents or inspect shell commands. Change host policy/tool revisions
     when those implementations or their security meaning change.
+
+### Direct host Bash with LocalProcessExecutor
+
+Use the local executor when the application intends to run commands with normal
+host access. No extra dependency or Docker daemon is required; `LocalWorkspace`
+currently requires POSIX and Bash must be installed for `BashTool`.
+
+```python
+import asyncio
+from pathlib import Path
+
+from msgflux.runtime import (
+    ExecutionEnvironment, ExecutionScope, LocalProcessExecutor, LocalWorkspace,
+    PermissionSet, SandboxRequirements, execution_context,
+)
+from msgflux.tools.builtin import BashTool
+
+
+async def main():
+    filesystem = LocalWorkspace("project", str(Path.cwd()))
+    environment = ExecutionEnvironment(
+        filesystem=filesystem,
+        process_executor=LocalProcessExecutor(filesystem),
+        requirements=SandboxRequirements(),
+        write_guarantee="cooperative_compare",
+    )
+    scope = ExecutionScope(
+        namespace="local", thread_id="example", run_id="command",
+        environment=environment,
+        permissions=PermissionSet(grants={"process.execute"}),
+    )
+    with execution_context(scope=scope):
+        result = await BashTool().acall("pwd", environment=environment)
+        print(result)
+
+
+asyncio.run(main())
+```
+
+The example explicitly selects an unsandboxed environment and executes Bash in
+the project directory. Virtual cwd `/` maps to `filesystem.host_root`, and
+`/src` maps to its `src` directory. Commands inherit the process environment,
+including its configured credentials; stdin is disconnected. The executor is
+bound to that exact filesystem instance and rejects isolation requirements it
+cannot enforce. Use file resource grants separately for workspace read/edit
+tools. `process.execute` authorizes commands with host access, including paths
+outside the selected project; file grants do not restrict Bash.
+
+The shared subprocess capture helper bounds combined stdout/stderr, streams
+output or returns a buffered `ProcessResult`, and terminates/reaps the process
+on timeout, cancellation, callback failure, or output overflow. POSIX children
+are launched in a separate process group for cleanup; this does not isolate
+processes or prevent descendants escaping the group. The host must cancel and
+drain active operations before releasing an environment. The existing local
+workspace backend remains filesystem-only; its bindings do not enable Bash.
 
 ### Ready-to-use workspace tools
 

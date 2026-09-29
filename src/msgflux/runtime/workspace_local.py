@@ -93,6 +93,11 @@ class LocalWorkspace(WorkspaceFilesystem):
             self._root_stat = os.fstat(fd)
 
     @property
+    def host_root(self) -> str:
+        """Selected host directory for trusted adapters, not a model path."""
+        return "/" + "/".join(self._root_parts)
+
+    @property
     def write_capabilities(self) -> WorkspaceWriteCapabilities:
         return WorkspaceWriteCapabilities(
             atomic_replace=True, cooperative_compare=True, atomic_compare=False

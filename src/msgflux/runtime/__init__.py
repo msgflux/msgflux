@@ -68,6 +68,7 @@ from msgflux.runtime.event_hub import (
 )
 from msgflux.runtime.events import EventType, ExecutionEvent
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
+from msgflux.runtime.local_executor import LocalProcessExecutor
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
 from msgflux.runtime.process_capture import ProcessOutputLimitError, drain_subprocess
 from msgflux.runtime.resources import RuntimeResources
@@ -129,6 +130,7 @@ __all__ = [
     "get_tool_result_reference",
     "WorkspacePromptInfo",
     "LocalWorkspace",
+    "LocalProcessExecutor",
     "LocalWorkspaceBackend",
     "InMemoryWorkspaceBackend",
     "WorkspaceBackend",
