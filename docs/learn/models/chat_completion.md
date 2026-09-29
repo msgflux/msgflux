@@ -284,6 +284,82 @@ cache; a later turn can reuse its unchanged prefix when the model and provider
 support prompt caching. The cache hit percentage depends on prompt length,
 provider routing, and cache lifetime. See [OpenRouter's prompt caching guide](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
 
+### OpenAI Codex subscription (experimental)
+
+The `openai-codex` provider reads an existing OAuth login from the Codex CLI or
+Tau and sends Responses requests through the Codex backend. The backend protocol
+is not a public provider API and may change without notice. This integration is
+experimental; it does not start a login, refresh tokens, or manage credential
+files. Use an explicit model ID because the models available to a subscription
+can differ from the OpenAI API catalog. The subscription endpoint supports a
+smaller set of request options than the public Responses API; for example,
+`max_tokens` is currently rejected because this backend does not accept an
+output-token limit.
+
+By default, the provider checks `MSGFLUX_CODEX_AUTH_FILE`, then
+`~/.codex/auth.json`. You can also pass `auth_file` explicitly. For example,
+use an existing Codex CLI login:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "openai-codex/gpt-5.5",
+    auth_file="~/.codex/auth.json",
+    reasoning_effort="medium",
+)
+
+response = model("Summarize the deployment plan.")
+print(response.consume())
+```
+
+This creates a normal msgFlux chat model, so it can be passed to an Agent and
+used with the usual tool flow. To read a Tau login instead, point `auth_file`
+at `~/.tau/credentials.json`:
+
+```python
+tau_model = mf.Model.chat_completion(
+    "openai-codex/gpt-5.5",
+    auth_file="~/.tau/credentials.json",
+)
+```
+
+For calls in an Agent thread, the provider sends the stable thread ID as
+`prompt_cache_key`, `session-id`, and `x-client-request-id`, matching the Codex
+session routing used by Pi. Direct multi-turn calls can carry the same identity
+with `ChatMessages(thread_id=...)`. Keep the system prompt and tools stable
+across turns so their shared prefix can be cached. Inspect
+`response.metadata.usage.input_tokens_details.cached_tokens` to measure hits;
+the backend may still report zero when its cache has expired or the prefix has
+changed.
+
+To set the cache identity explicitly for a direct call, pass a stable key in
+`extra_body` on every turn:
+
+```python
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Review this change."}],
+    thread_id="review-thread-42",
+)
+response = model(
+    messages,
+    extra_body={"prompt_cache_key": "workspace-42-review"},
+)
+print(response.metadata.usage.input_tokens_details.cached_tokens)
+```
+
+This also sends the key in both Codex session headers. Reuse the key for
+related requests that share a prefix; the key alone does not guarantee a hit.
+
+The provider reads the selected file before each request. It does not copy or
+modify the file, store credentials in serialized model state, fall back to
+`OPENAI_API_KEY`, or silently select another account. If the login expires or
+is revoked, sign in again with the tool that owns it (Codex CLI or Tau), then
+retry. The Codex CLI credential layout is not a stable public interface, so
+keep the provider updated if that format changes. Only credentials stored in
+these files are supported; keyring and in-memory Codex logins are not visible
+to msgFlux.
+
 ### 1.3 **Storage and ZDR preference**
 
 `store` is optional and defaults to `None`, so msgFlux does not impose a data
