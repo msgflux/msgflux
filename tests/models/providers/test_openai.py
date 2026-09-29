@@ -804,7 +804,7 @@ class TestOpenAIChatCompletion:
 
         call_kwargs = mock_client.return_value.responses.create.call_args.kwargs
         assert call_kwargs["input"] == [
-            {"role": "system", "content": "Be concise."},
+            {"role": "developer", "content": "Be concise."},
             {"role": "user", "content": "Is SKU-1842 available?"},
         ]
         assert call_kwargs["max_output_tokens"] == 256

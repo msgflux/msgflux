@@ -26,6 +26,7 @@ from msgflux.models.chat_capabilities import (
     ChatModelCapabilities,
     ChatProviderCapabilities,
 )
+from msgflux.models.chat_context import normalize_responses_input_roles
 from msgflux.models.chat_extensions import (
     ChatModelExtension,
     ChatRequestContext,
@@ -2871,6 +2872,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
         if params.get("tool_choice") is None:
             params.pop("tool_choice", None)
+
+        if "input" in params:
+            params["input"] = normalize_responses_input_roles(
+                params["input"], provider=self.provider, model_id=self.model_id
+            )
 
         return params
 
