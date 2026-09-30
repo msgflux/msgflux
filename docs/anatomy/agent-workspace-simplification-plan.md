@@ -4,7 +4,8 @@ Reference: developer plan.md (left untouched as a local reference).
 
 ## Implementation order
 
-1. Baseline committed as c729c680. Scope holds only workspace; migrate scopes,
+1. Commit the previous implementation as c729c680. Make scope hold only workspace;
+   migrate scopes,
    lifecycle and runtime consumers. ExecutionEnvironment stays an internal driver.
 2. Workspace owns a public editor boundary using relative paths and exact prepared
    proposals. Move prepare/apply there; mutations use explicit editor calls.
@@ -35,10 +36,23 @@ review and validation; do not stage developer plan.md or credentials.
 
 ## Completed validation
 
-- Full offline suite: 3,642 passed, 32 skipped.
+- Final full offline suite: 3,646 passed, 32 skipped.
 - Runtime durability gate: 148 passed.
 - Focused Agent runtime playground: 53 passed.
 - Ruff check and format check passed; MkDocs build passed.
 - Live integration exposed a separate native-tool history defect: Agent retained
-  native outputs but projected their calls to function_call. Track that fix in a
-  separate commit and repeat the read/patch/read/Bash flow after correcting it.
+  native outputs but projected their calls to function_call. Fixed separately in
+  b5ad0f1e, covering streamed and nonstreamed history for patch and shell.
+  The repeated live test passed
+  with OpenAI gpt-6-luna, medium reasoning, Responses streaming: read, apply_patch,
+  read, Bash and final sentinel answer. Credentials were read from the authorized
+  dotenv path, never copied to this worktree or committed.
+
+## Additional integration fix
+
+The live flow justified a focused change to agent/conversation.py and
+tests/nn/test_event_streaming.py. Native call types now survive trajectory
+filtering and participate in call-id deduplication, preserving matched native
+call/output pairs. The focused event-streaming/native-tool suite passed 107 tests.
+The opt-in tests/integration/test_agent_workspace_live.py bounds provider calls
+and operates only on a temporary project.
