@@ -42,6 +42,7 @@ from msgflux.nn.extensions import (
 from msgflux.runtime import (
     AgentApprovals,
     AgentInbox,
+    AgentWorkspace,
     ExecutionEnvironment,
     ExecutionScope,
     InMemoryAgentInboxStore,
@@ -168,7 +169,7 @@ def _scope(fs, *, thread: str, run: str, full: bool = True) -> ExecutionScope:
         thread_id=thread,
         run_id=run,
         principal="offline-harness",
-        environment=ExecutionEnvironment(fs, FakeProcessExecutor()),
+        workspace=AgentWorkspace(ExecutionEnvironment(fs, FakeProcessExecutor())),
         permissions=PermissionSet(
             ["process.execute"] if full else [], resources=resources
         ),
@@ -666,7 +667,7 @@ async def run_live(
                 thread_id=thread,
                 run_id=uuid4().hex,
                 principal="local-user",
-                environment=ExecutionEnvironment(fs),
+                workspace=AgentWorkspace(ExecutionEnvironment(fs)),
                 permissions=PermissionSet(resources=resources),
             )
             await drive_agent(

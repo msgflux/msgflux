@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import os
 
 import msgspec
@@ -30,7 +31,7 @@ def workspace(request, tmp_path):
         guarantee = "atomic_compare"
     environment = ExecutionEnvironment(fs, write_guarantee=guarantee)
     scope = ExecutionScope(
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(
             resources=[
                 fs.permission(path, f"filesystem.{action}")
@@ -81,7 +82,7 @@ def test_directory_review_rejects_changed_target(workspace, change):
             fs.checked_rmdir(
                 "/empty",
                 expected=preview.directory_token,
-                guarantee=scope.environment.write_guarantee,
+                guarantee=scope.workspace._environment.write_guarantee,
             )
             if change == "replacement":
                 fs.mkdir("/empty")
@@ -97,7 +98,7 @@ def test_empty_directory_requires_list_and_delete_not_read(workspace):
     fs, original = workspace
     for actions in [("delete",), ("list",), ("delete", "list")]:
         scope = ExecutionScope(
-            environment=original.environment,
+            workspace=AgentWorkspace.from_environment(original.workspace._environment),
             permissions=PermissionSet(
                 resources=[
                     fs.permission("/empty", f"filesystem.{action}")
@@ -131,7 +132,9 @@ def test_local_symlink_directory_is_not_followed(tmp_path):
     (tmp_path / "alias").symlink_to(tmp_path / "target", target_is_directory=True)
     fs = LocalWorkspace("links", tmp_path)
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs, write_guarantee="cooperative_compare"),
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs, write_guarantee="cooperative_compare")
+        ),
         permissions=PermissionSet(
             resources=[
                 fs.permission("/alias", f"filesystem.{action}")
@@ -149,7 +152,9 @@ def test_local_rmdir_refuses_content_added_after_last_check(tmp_path, monkeypatc
     (tmp_path / "empty").mkdir()
     fs = LocalWorkspace("race", tmp_path)
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs, write_guarantee="cooperative_compare"),
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs, write_guarantee="cooperative_compare")
+        ),
         permissions=PermissionSet(
             resources=[
                 fs.permission("/empty", f"filesystem.{action}")

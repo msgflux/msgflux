@@ -276,7 +276,7 @@ class WriteTool(WorkspaceChangeTool):
 
     def prepare_workspace_change(self, arguments, workspace):
         workspace = resolve_workspace(workspace)
-        return workspace.prepare_write(
+        return workspace.editor.prepare_write(
             _tool_path(arguments["path"], workspace), arguments["content"]
         )
 
@@ -318,7 +318,7 @@ class EditTool(WorkspaceChangeTool):
 
     def prepare_workspace_change(self, arguments, workspace):
         workspace = resolve_workspace(workspace)
-        return workspace.prepare_edit(
+        return workspace.editor.prepare_edit(
             _tool_path(arguments["path"], workspace), arguments["old"], arguments["new"]
         )
 
@@ -363,7 +363,9 @@ class DeleteTool(WorkspaceChangeTool):
 
     def prepare_workspace_change(self, arguments, workspace):
         workspace = resolve_workspace(workspace)
-        return workspace.prepare_delete_target(_tool_path(arguments["path"], workspace))
+        return workspace.editor.prepare_delete_target(
+            _tool_path(arguments["path"], workspace)
+        )
 
     def __call__(
         self,

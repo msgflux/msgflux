@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -112,14 +113,21 @@ def test_approval_binds_workspace_and_static_resources():
         run_id="r",
         principal="user",
         permissions=PermissionSet(resources=[READ]),
-        environment=ExecutionEnvironment(InMemoryWorkspace("one")),
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(InMemoryWorkspace("one"))
+        ),
     )
     with execution_context(scope=first):
         batch = policy.prepare(library, [intent], {"requests": {}})
         binding = batch.records["call"].binding
     from dataclasses import replace
 
-    second = replace(first, environment=ExecutionEnvironment(InMemoryWorkspace("two")))
+    second = replace(
+        first,
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(InMemoryWorkspace("two"))
+        ),
+    )
     with execution_context(scope=second):
         assert (
             policy.binding(library, intent).resources_digest != binding.resources_digest

@@ -96,13 +96,13 @@ class AgentApprovals:
                 {"resource": item.resource, "action": item.action}
                 for item in definition.required_resources
             ]
-        if scope.environment is not None:
-            scope.environment.require_active()
-            resources["workspace_id"] = scope.environment.filesystem.workspace_id
+        if scope.workspace is not None:
+            scope.workspace.require_active()
+            resources["workspace_id"] = scope.workspace.workspace_id
             resources["workspace_identity"] = msgspec.to_builtins(
-                scope.environment.filesystem.identity
+                scope.workspace.identity
             )
-            resources["isolation"] = sorted(scope.environment.requirements.mechanisms)
+            resources["isolation"] = sorted(scope.workspace.requirements.mechanisms)
         return resources
 
     def prepare(self, library, intents, pending):
@@ -253,14 +253,25 @@ def approval_batch_active():
     return _CURRENT_APPROVAL_BATCH.get() is not None
 
 
+def workspace_change_approved(change: PreparedFileChange) -> bool:
+    """Check whether a consumed approval in this batch bound this exact preview."""
+    if not isinstance(change, PreparedFileChange):
+        return False
+    batch = _CURRENT_APPROVAL_BATCH.get()
+    if batch is None:
+        return False
+    return any(batch.changes.get(intent_id) == change for intent_id in batch.consumed)
+
+
 def prepare_workspace_change(definition, arguments):
     tool = workspace_change_tool(definition)
     if tool is None:
         return None
-    environment = get_execution_scope().environment
-    if environment is None:
-        raise PermissionError("Workspace changes require a live environment")
-    change = tool.prepare_workspace_change(arguments, get_execution_scope().workspace)
+    workspace = get_execution_scope().workspace
+    if workspace is None:
+        raise PermissionError("Workspace changes require a live workspace")
+    workspace.require_active()
+    change = tool.prepare_workspace_change(arguments, workspace)
     if not isinstance(change, PreparedFileChange):
         raise TypeError("Workspace change tools must return PreparedFileChange")
     return change

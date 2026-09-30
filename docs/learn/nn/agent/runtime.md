@@ -16,7 +16,7 @@ The core pieces are:
 
 ## Workspace
 
-A `AgentWorkspace` gives tools explicit access to files and command execution in the
+An `AgentWorkspace` gives tools explicit access to files and command execution in the
 same project. The local factory requires no context manager:
 
 ```python
@@ -24,7 +24,7 @@ import msgflux as mf
 from msgflux.nn import Agent
 from msgflux.tools.builtin import BashTool, ReadFileTool, ApplyPatchTool
 
-workspace = mf.AgentAgentWorkspace.local(".")
+workspace = mf.AgentWorkspace.local(".")
 agent = Agent(
     name="main",
     model="openai/gpt-4.1-mini",
@@ -43,7 +43,7 @@ To select a workspace for one invocation, pass it through an execution scope:
 
 ```python
 scope = mf.ExecutionScope(
-    workspace=mf.AgentAgentWorkspace.local(".", read_only=True),
+    workspace=mf.AgentWorkspace.local(".", read_only=True),
 )
 result = agent("Review the project without changing files", scope=scope)
 ```
@@ -52,7 +52,7 @@ An explicitly supplied scope workspace takes precedence over the Agent default.
 The read-only factory permits reads and listings, rejects mutations, and has no
 command executor. Factory permissions apply when no permissions are supplied;
 an explicit `PermissionSet`, including an empty set, is preserved. Nested runs
-inherit the environment and can narrow permissions but cannot replace it or
+inherit the workspace driver and can narrow permissions but cannot replace it or
 expand its authority.
 
 ### Explicit tool dependencies
@@ -74,6 +74,22 @@ that parameter. Injection also propagates to background tools. Register this
 function in the Agent's `tools` list to let the model inspect the README and Git
 status using that project's workspace.
 
+### Preparing a reviewed edit
+
+The workspace owns an editor that resolves paths using the same cwd:
+
+```python
+proposal = workspace.editor.prepare_write("notes.txt", "Reviewed notes\n")
+print(proposal.diff)
+workspace.editor.apply(proposal)
+```
+
+This application example previews and explicitly applies an edit. Applying
+rechecks the live permissions, resource identity and original file contents.
+Builtin tools use the same editor during Agent approval and recovery. During an
+active approval batch, the editor accepts only the exact reviewed proposal whose
+approval was consumed; custom tools cannot apply an unrelated proposal.
+
 The same object can be used directly by application code:
 
 ```python
@@ -93,6 +109,7 @@ are returned in `result.returncode`; permission and validation failures raise.
 | `read_prefix`, `read_lines` | Read bounded prefixes or paginated text bytes. |
 | `listdir`, `scandir` | List directory names or bounded entry metadata. |
 | `write_text`, `edit_text`, `delete`, `mkdir` | Modify files or create/remove empty directories. |
+| `supports_execution` | Reports whether a process executor is configured, independently of live permissions. |
 | `run` | Execute a command with a deadline and bounded output. |
 | `with_cwd`, `resolve` | Select a virtual working directory or resolve a path. |
 
@@ -109,8 +126,9 @@ reviewed proposal; use the builtin mutation tools for approval-managed changes.
 Application calls outside such a batch do not create a confirmation UI.
 
 For advanced setup, `AgentWorkspace.from_environment(environment)` wraps an existing
-`ExecutionEnvironment` while keeping its backend and permission checks. Tools declare `workspace` for file and command access. Workspace
-handles are live runtime resources and are not stored in checkpoints; supply the
+`ExecutionEnvironment` while keeping its backend and permission checks. The scope
+stores only `workspace`; the environment is its internal execution driver. Tools
+declare `workspace` for file and command access. Workspace handles are live runtime resources and are not stored in checkpoints; supply the
 workspace again when constructing an Agent after a process restart.
 
 ## Execution Scope
@@ -1358,6 +1376,7 @@ filesystem. Its initial files are supplied by trusted host code. Runtime operati
 require exact resource/action grants and an active scope bound to that filesystem.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 from msgflux.runtime import (
     ExecutionEnvironment, ExecutionScope, InMemoryWorkspace, PermissionSet,
     execution_context,
@@ -1368,7 +1387,7 @@ filesystem = InMemoryWorkspace(
 )
 environment = ExecutionEnvironment(filesystem)
 scope = ExecutionScope(
-    principal="user:42", environment=environment,
+    principal="user:42", workspace=AgentWorkspace.from_environment(environment),
     permissions=PermissionSet(resources=[
         filesystem.permission("/workspace/report.txt", "filesystem.read"),
         filesystem.permission("/workspace/output.txt", "filesystem.write"),
@@ -1413,6 +1432,7 @@ differences and mark missing final newlines; empty-file creation/deletion still
 has source/target headers.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 import time
 from uuid import uuid4
 
@@ -1428,7 +1448,7 @@ editor = WorkspaceEditor(filesystem)  # approval required by default
 journal = InMemoryApprovalStore()
 scope = ExecutionScope(
     namespace="editor", thread_id="thread:1", run_id="run:1", principal="user:1",
-    environment=ExecutionEnvironment(filesystem),
+    workspace=AgentWorkspace.from_environment(ExecutionEnvironment(filesystem)),
     permissions=PermissionSet(resources=[
         filesystem.permission("/config.txt", "filesystem.read"),
         filesystem.permission("/config.txt", "filesystem.write"),
@@ -1516,6 +1536,7 @@ Different ids on this backend still address the same root, not isolated copies.
 Use different directories/backends when file isolation between sessions is needed.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 from pathlib import Path
 from msgflux.runtime import (
     ExecutionEnvironment, ExecutionScope, LocalWorkspaceBackend,
@@ -1534,7 +1555,7 @@ async def update_local_file(root: Path):
             fs.permission("/notes.txt", "filesystem.write"),
         ])
         with execution_context(scope=ExecutionScope(
-            environment=environment, permissions=permissions,
+            workspace=AgentWorkspace.from_environment(environment), permissions=permissions,
         )):
             editor = environment.workspace_editor(require_approval=False)
             change = await editor.aprepare_write("/notes.txt", "Updated locally\n")
@@ -1585,6 +1606,7 @@ change. The strict default also permits reading a local workspace; it rejects
 mutation when the editor is requested, rather than rejecting the whole environment.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 from msgflux.nn import ToolLibrary
 from msgflux.runtime import ExecutionEnvironment, ExecutionScope, PermissionSet, execution_context
 from msgflux.tools.builtin import ApplyPatchTool, EditTool, ReadFileTool, WriteTool
@@ -1598,7 +1620,7 @@ async def exercise_workspace(backend, *, write_guarantee="atomic_compare"):
             binding, write_guarantee=write_guarantee,
         )
         scope = ExecutionScope(
-            environment=environment,
+            workspace=AgentWorkspace.from_environment(environment),
             permissions=PermissionSet(resources=[
                 fs.permission("/notes.txt", f"filesystem.{action}")
                 for action in ("read", "write")
@@ -1638,9 +1660,10 @@ policy. No prompt or checkpoint field grants filesystem access by itself.
 live execution scope each time the Agent composes a model request, including
 sync/async calls and prompt warmup. It appends one bounded `<workspace_context>`
 section to the existing prompt; it does not modify the Agent's base prompt or
-store permissions in extension state. A run without an environment adds nothing.
+store permissions in extension state. A run without a workspace adds nothing.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 from msgflux.nn import Agent
 from msgflux.nn.extensions import WorkspacePromptExtension
 from msgflux.runtime import ExecutionEnvironment, ExecutionScope, LocalWorkspaceBackend, PermissionSet
@@ -1659,9 +1682,9 @@ async def ask_about_file(root):
     async with await backend.open("project") as binding:
         fs = binding.filesystem
         scope = ExecutionScope(
-            environment=ExecutionEnvironment.from_binding(
+            workspace=AgentWorkspace.from_environment(ExecutionEnvironment.from_binding(
                 binding, write_guarantee="cooperative_compare",
-            ),
+            )),
             permissions=PermissionSet(resources=[
                 fs.permission("/notes.txt", "filesystem.read"),
             ]),
@@ -1730,6 +1753,7 @@ same filesystem in an unmanaged environment does not restore access; preexisting
 unmanaged environments are also rejected on subsequent use of that resource.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 import asyncio
 
 from msgflux.runtime import (
@@ -1746,7 +1770,7 @@ async def main():
         environment = ExecutionEnvironment.from_binding(binding)
         fs = binding.filesystem
         scope = ExecutionScope(
-            environment=environment,
+            workspace=AgentWorkspace.from_environment(environment),
             permissions=PermissionSet(resources=[
                 fs.permission("/note.txt", "filesystem.read"),
                 fs.permission("/note.txt", "filesystem.write"),
@@ -2206,6 +2230,7 @@ host access. No extra dependency or Docker daemon is required; `LocalWorkspace`
 currently requires POSIX and Bash must be installed for `BashTool`.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 import asyncio
 from pathlib import Path
 
@@ -2226,7 +2251,7 @@ async def main():
     )
     scope = ExecutionScope(
         namespace="local", thread_id="example", run_id="command",
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(grants={"process.execute"}),
     )
     with execution_context(scope=scope):
@@ -2260,6 +2285,7 @@ workspace backend remains filesystem-only; its bindings do not enable Bash.
 them explicitly to a ToolLibrary or an Agent; they are not enabled automatically.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 from msgflux.nn import ToolLibrary
 from msgflux.runtime import (
     ExecutionEnvironment,
@@ -2272,7 +2298,7 @@ from msgflux.tools.builtin import BashTool, ReadFileTool
 
 workspace = InMemoryWorkspace("report", {"/report.txt": b"Quarterly report"})
 scope = ExecutionScope(
-    environment=ExecutionEnvironment(workspace),
+    workspace=AgentWorkspace.from_environment(ExecutionEnvironment(workspace)),
     permissions=PermissionSet(
         resources=[workspace.permission("/report.txt", "filesystem.read")],
     ),
@@ -2287,8 +2313,8 @@ with execution_context(scope=scope):
 This example reads only the authorized virtual file, not a host path. The async
 equivalent is `await tools.arun("read", {"path": "/report.txt"})` inside
 the same execution context. For an Agent, pass `tools=[ReadFileTool(), BashTool()]`
-and supply the live scope to its call. `filesystem` and `environment` are injected
-runtime inputs, excluded from model schemas; arguments cannot replace them.
+and supply the live scope to its call. `workspace` is an injected runtime input,
+excluded from model schemas; model arguments cannot replace it.
 
 `ReadFileTool` is exposed as `read(path, offset=None, limit=None)`. It accepts an absolute
 virtual path and returns strict UTF-8 text by default. There is no separate
@@ -2354,7 +2380,7 @@ rejected before execution. Their UI labels are `Read` and `Bash`.
 from msgflux import AgentWorkspace
 
 scope = scope.with_overrides(
-    workspace=AgentWorkspace.from_environment(scope.environment, cwd="/project")
+    workspace=scope.workspace.with_cwd("/project")
 )
 reader = ReadFileTool()
 shell = BashTool()
@@ -2986,6 +3012,7 @@ trusted image containing Bash (and other programs you intend to expose). The
 adapter never pulls images automatically. Prefer an immutable image ID/digest.
 
 ```python
+from msgflux.runtime import AgentWorkspace
 from msgflux.runtime import (
     DockerLimits, DockerWorkspaceBackend, ExecutionEnvironment, ExecutionScope,
     PermissionSet, execution_context,
@@ -3001,7 +3028,7 @@ async with await backend.open("project") as binding:
         binding, write_guarantee="cooperative_compare",
     )
     scope = ExecutionScope(
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(
             ["process.execute"],
             [binding.filesystem.permission("/", "process.workspace")],

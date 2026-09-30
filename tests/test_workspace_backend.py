@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 
 import msgspec
@@ -144,7 +145,10 @@ async def test_borrowed_release_retains_resource_contents():
         resources=[filesystem.permission("/a", "filesystem.read")]
     )
     with execution_context(
-        scope=ExecutionScope(environment=environment, permissions=permissions)
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(environment),
+            permissions=permissions,
+        )
     ):
         assert filesystem.read_bytes("/a") == b"kept"
     await binding.aclose()
@@ -184,7 +188,10 @@ async def test_closed_environment_blocks_filesystem_access():
         resources=[filesystem.permission("/a", "filesystem.read")]
     )
     with execution_context(
-        scope=ExecutionScope(environment=environment, permissions=permissions)
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(environment),
+            permissions=permissions,
+        )
     ):
         await binding.aclose()
         with pytest.raises(PermissionError, match="not open"):
@@ -195,7 +202,9 @@ async def test_closed_environment_blocks_filesystem_access():
 async def test_scope_serialization_excludes_live_binding_handles():
     binding = await TrackingBackend().open("project")
     environment = ExecutionEnvironment.from_binding(binding)
-    scope = ExecutionScope(environment=environment, principal="user")
+    scope = ExecutionScope(
+        workspace=AgentWorkspace.from_environment(environment), principal="user"
+    )
     serialized = scope.to_dict()
     assert "environment" not in serialized
     assert "binding" not in serialized
@@ -223,10 +232,16 @@ async def test_nested_execution_cannot_replace_live_environment():
     second = await TrackingBackend().open("second")
     first_environment = ExecutionEnvironment.from_binding(first)
     second_environment = ExecutionEnvironment.from_binding(second)
-    with execution_context(scope=ExecutionScope(environment=first_environment)):
-        with pytest.raises(ValueError, match="replace its environment"):
+    with execution_context(
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(first_environment)
+        )
+    ):
+        with pytest.raises(ValueError, match="replace its workspace driver"):
             with execution_context(
-                scope=ExecutionScope(environment=second_environment)
+                scope=ExecutionScope(
+                    workspace=AgentWorkspace.from_environment(second_environment)
+                )
             ):
                 pass
     await first.aclose()
@@ -243,7 +258,7 @@ async def test_closing_gates_new_operations_and_concurrent_close_releases_once()
     fs = InMemoryWorkspace("project", {"/a": b"original"})
     binding = WorkspaceBinding(backend, fs, FakeExecutor())
     environment = ExecutionEnvironment.from_binding(binding)
-    scope = ExecutionScope(environment=environment)
+    scope = ExecutionScope(workspace=AgentWorkspace.from_environment(environment))
     first = asyncio.create_task(binding.aclose())
     await asyncio.wait_for(backend.release_started.wait(), timeout=2)
     try:
@@ -278,7 +293,7 @@ async def test_reconnected_binding_survives_other_binding_close():
     environment = ExecutionEnvironment.from_binding(second)
     with execution_context(
         scope=ExecutionScope(
-            environment=environment,
+            workspace=AgentWorkspace.from_environment(environment),
             permissions=PermissionSet(
                 resources=[fs.permission("/a", "filesystem.read")]
             ),
@@ -308,7 +323,7 @@ async def test_managed_filesystem_cannot_escape_binding_lifecycle():
             replace(environment, binding=None)
         with execution_context(
             scope=ExecutionScope(
-                environment=old_environment,
+                workspace=AgentWorkspace.from_environment(old_environment),
                 permissions=permissions,
             )
         ):

@@ -1,5 +1,7 @@
 """Shell offload, structured retrieval and native history compatibility."""
 
+from msgflux.runtime import AgentWorkspace
+
 from copy import deepcopy
 from unittest.mock import AsyncMock, Mock
 
@@ -208,7 +210,8 @@ async def test_builtin_bash_event_contains_preview_and_retrievable_reference(tmp
     )
     with execution_context(
         scope=ExecutionScope(
-            environment=environment, permissions=PermissionSet(["process.execute"])
+            workspace=AgentWorkspace.from_environment(environment),
+            permissions=PermissionSet(["process.execute"]),
         )
     ):
         events = [

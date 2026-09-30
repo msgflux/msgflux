@@ -6,6 +6,7 @@ ever run on the host.
 """
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 import asyncio
 import os
@@ -140,7 +141,7 @@ async def test_live_provider_shell_output_offload_and_followup(
         namespace=agent.name,
         thread_id="offload-live",
         run_id="initial",
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(["process.execute"]),
     )
 
@@ -185,7 +186,7 @@ async def test_live_provider_shell_output_offload_and_followup(
                         namespace=agent.name,
                         thread_id="offload-live",
                         run_id="followup",
-                        environment=environment,
+                        workspace=AgentWorkspace.from_environment(environment),
                         permissions=PermissionSet(["process.execute"]),
                     ),
                 )

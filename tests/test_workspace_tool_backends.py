@@ -40,7 +40,7 @@ def _scope(environment, filesystem, *, read=True, write=True, delete=True):
         thread_id="thread",
         run_id="run",
         principal="user",
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(
             resources=[
                 filesystem.permission("/a", f"filesystem.{action}")
@@ -161,7 +161,7 @@ async def test_same_library_reused_with_different_live_bindings(tmp_path):
 def test_workspace_tool_cannot_use_filesystem_outside_live_environment():
     first, other = InMemoryWorkspace("files"), InMemoryWorkspace("files")
     with execution_context(scope=_scope(ExecutionEnvironment(first), first)):
-        with pytest.raises(PermissionError, match="live environment"):
+        with pytest.raises(PermissionError, match="live workspace"):
             WriteTool()(
                 "a",
                 "wrong resource",
@@ -284,7 +284,10 @@ def test_memory_pending_approval_invalidated_by_guarantee_change(guarantee):
         ),
     )
     with pytest.raises(TaskPauseRequestedError):
-        current("resume", scope=replace(scope, environment=changed))
+        current(
+            "resume",
+            scope=replace(scope, workspace=AgentWorkspace.from_environment(changed)),
+        )
     with execution_context(scope=scope):
         assert filesystem.read_text("/a") == "old"
     assert approvals.get("editor", record.request_id).status == "approved"

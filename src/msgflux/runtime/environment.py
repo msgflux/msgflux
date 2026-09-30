@@ -215,9 +215,10 @@ class ExecutionEnvironment:
         Capabilities are checked here, not when constructing the environment,
         so a strictly configured environment can still read a cooperative backend.
         """
+        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
         from msgflux.runtime.workspace_changes import WorkspaceEditor  # noqa: PLC0415
 
-        self.require_active()
+        require_workspace_authority(environment=self)
         self.filesystem.require_write_guarantee(self.write_guarantee)
         return WorkspaceEditor(
             self.filesystem,
@@ -238,14 +239,11 @@ class ExecutionEnvironment:
         *,
         on_output: ProcessOutputCallback | None = None,
     ) -> ProcessResult:
-        from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
+        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
 
         if not isinstance(request, ProcessRequest):
             raise TypeError("Expected ProcessRequest")
-        self.require_active()
-        scope = get_execution_scope()
-        if scope.environment is not self:
-            raise PermissionError("Environment is not bound to the current execution")
+        scope = require_workspace_authority(environment=self)
         require_permissions(("process.execute",))
         executor = self.process_executor
         if executor is None:

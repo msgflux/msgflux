@@ -1,6 +1,7 @@
 """Workspace navigation tools across authorized filesystem backends."""
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def _scope(filesystem, paths):
     resources = [filesystem.permission(path, action) for path, action in paths]
     return execution_context(
         scope=ExecutionScope(
-            environment=ExecutionEnvironment(filesystem),
+            workspace=AgentWorkspace.from_environment(ExecutionEnvironment(filesystem)),
             permissions=PermissionSet(resources=resources),
         )
     )

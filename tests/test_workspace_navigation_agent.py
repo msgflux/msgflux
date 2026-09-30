@@ -1,5 +1,7 @@
 """End-to-end navigation flow through the Agent runtime."""
 
+from msgflux.runtime import AgentWorkspace
+
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -50,7 +52,7 @@ async def test_agent_navigates_searches_and_deletes_with_compact_checkpointed_ou
         namespace="navigation",
         thread_id="thread",
         run_id="run",
-        environment=ExecutionEnvironment(filesystem),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(filesystem)),
         permissions=PermissionSet(
             resources=[
                 filesystem.permission("/", "filesystem.list"),

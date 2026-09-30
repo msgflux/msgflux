@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 import os
 import shutil
@@ -65,7 +66,7 @@ def docker_scope(tmp_path):
         fs, executor, write_guarantee="cooperative_compare"
     )
     scope = ExecutionScope(
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(
             ["process.execute"], [fs.permission("/", "process.workspace")]
         ),
@@ -90,7 +91,9 @@ async def test_real_container_writes_and_enforces_isolation(docker_scope, tmp_pa
         "print('isolated')"
     )
     with execution_context(scope=scope):
-        result = await scope.environment.arun(ProcessRequest(("python", "-c", code)))
+        result = await scope.workspace._environment.arun(
+            ProcessRequest(("python", "-c", code))
+        )
     assert result.returncode == 0, result.stderr
     assert result.stdout == b"isolated\n"
     assert (root / "created").read_text() == "real container"
@@ -102,8 +105,8 @@ async def test_real_container_requires_workspace_grant_and_is_removed(
     docker_scope, monkeypatch
 ):
     scope, root = docker_scope
-    filesystem = scope.environment.filesystem
-    executor = scope.environment.process_executor
+    filesystem = scope.workspace._environment.filesystem
+    executor = scope.workspace._environment.process_executor
     container_id = uuid4()
     container_name = f"msgflux-{container_id.hex}"
     monkeypatch.setattr("msgflux.runtime.docker_executor.uuid4", lambda: container_id)
@@ -129,12 +132,12 @@ async def test_real_container_requires_workspace_grant_and_is_removed(
         execution_context(scope=denied),
         pytest.raises(PermissionError, match="whole-workspace"),
     ):
-        await scope.environment.arun(request)
+        await scope.workspace._environment.arun(request)
     assert not _container_exists(executor, container_name)
     assert not (root / "permitted.txt").exists()
 
     with execution_context(scope=scope):
-        result = await scope.environment.arun(request)
+        result = await scope.workspace._environment.arun(request)
     assert result.returncode == 0, result.stderr
     assert (root / "permitted.txt").read_text() == "from container"
     assert not _container_exists(executor, container_name)
@@ -146,7 +149,7 @@ async def test_real_container_requires_workspace_grant_and_is_removed(
 )
 async def test_real_container_failure_cleanup(docker_scope, mode, monkeypatch):
     scope, root = docker_scope
-    executor = scope.environment.process_executor
+    executor = scope.workspace._environment.process_executor
     container_id = uuid4()
     container_name = f"msgflux-{container_id.hex}"
     monkeypatch.setattr("msgflux.runtime.docker_executor.uuid4", lambda: container_id)
@@ -167,7 +170,7 @@ async def test_real_container_failure_cleanup(docker_scope, mode, monkeypatch):
 
     with execution_context(scope=scope):
         task = asyncio.create_task(
-            scope.environment.arun(
+            scope.workspace._environment.arun(
                 ProcessRequest(
                     ("python", "-c", code),
                     timeout_seconds=(
@@ -212,7 +215,7 @@ def test_limits_and_exact_workspace_grant(tmp_path, monkeypatch):
 async def test_real_container_memory_limit_is_enforced(docker_scope):
     scope, _ = docker_scope
     with execution_context(scope=scope):
-        result = await scope.environment.arun(
+        result = await scope.workspace._environment.arun(
             ProcessRequest(
                 ("python", "-c", "x=bytearray(512*1024*1024); print('unexpected')")
             )
@@ -242,7 +245,7 @@ async def test_real_backend_bash_output_can_be_offloaded(tmp_path):
             binding, write_guarantee="cooperative_compare"
         )
         scope = ExecutionScope(
-            environment=environment,
+            workspace=AgentWorkspace.from_environment(environment),
             permissions=PermissionSet(
                 ["process.execute"],
                 [binding.filesystem.permission("/", "process.workspace")],
@@ -251,7 +254,7 @@ async def test_real_backend_bash_output_can_be_offloaded(tmp_path):
         with execution_context(scope=scope):
             result = await BashTool().acall(
                 "printf 'real bash' > result.txt; python -c \"print('x'*1048576,end='')\"",
-                environment=environment,
+                workspace=scope.workspace,
                 shell_capture=capture,
             )
         assert result.output_reference is not None
@@ -273,7 +276,7 @@ async def test_individual_file_grants_do_not_authorize_mount(tmp_path, monkeypat
     with (
         execution_context(
             scope=ExecutionScope(
-                environment=environment,
+                workspace=AgentWorkspace.from_environment(environment),
                 permissions=PermissionSet(
                     ["process.execute"], [fs.permission("/", "filesystem.read")]
                 ),

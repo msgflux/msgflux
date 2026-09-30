@@ -1,6 +1,7 @@
 """Deterministic coverage for incremental shell output capture."""
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 import asyncio
 import threading
@@ -81,7 +82,7 @@ async def _capture(capture, environment, requests):
         namespace="capture",
         thread_id="capture",
         run_id="run",
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(["process.execute"]),
     )
     with execution_context(scope=scope):

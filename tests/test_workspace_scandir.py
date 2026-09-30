@@ -1,6 +1,7 @@
 """Contract tests for bounded workspace enumeration and prefix reads."""
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 import os
 from pathlib import Path
@@ -41,7 +42,7 @@ def filesystem(request, tmp_path):
 def _authorized(filesystem, *permissions):
     environment = ExecutionEnvironment(filesystem)
     scope = ExecutionScope(
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(
             resources=[
                 filesystem.permission(path, action) for path, action in permissions
@@ -183,7 +184,10 @@ async def test_closed_local_binding_rejects_operations(tmp_path):
     )
     await binding.aclose()
     with execution_context(
-        scope=ExecutionScope(environment=environment, permissions=permissions)
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(environment),
+            permissions=permissions,
+        )
     ):
         with pytest.raises(PermissionError):
             filesystem.scandir("/")

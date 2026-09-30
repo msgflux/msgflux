@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 import math
 import os
@@ -71,7 +72,7 @@ async def test_execute_adapter_collects_streaming_chunks(streaming):
     environment = ExecutionEnvironment(InMemoryWorkspace("stream"), StreamingExecutor())
     seen = []
     scope = ExecutionScope(
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(["process.execute"]),
     )
 
@@ -105,7 +106,7 @@ async def test_environment_rejects_duplicate_streamed_buffers():
         InMemoryWorkspace("stream"), DuplicateStreamingExecutor()
     )
     scope = ExecutionScope(
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(["process.execute"]),
     )
 

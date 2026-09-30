@@ -31,7 +31,7 @@ class WorkspaceChangeTool(ABC):
             if prepared is not None and prepared[0] is self
             else self.prepare_workspace_change(arguments, workspace)
         )
-        workspace._apply_prepared(change)
+        workspace.editor.apply(change)
         return {"status": "completed"}
 
 

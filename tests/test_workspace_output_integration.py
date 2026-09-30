@@ -4,6 +4,8 @@ The executor below is a test fixture, not a sandbox: it ignores model commands
 and runs only a constant Python program, with an empty inherited environment.
 """
 
+from msgflux.runtime import AgentWorkspace
+
 import asyncio
 import os
 import sys
@@ -98,7 +100,7 @@ def setup_capture(tmp_path, blocks):
         namespace="fixture",
         thread_id="fixture",
         run_id="run",
-        environment=environment,
+        workspace=AgentWorkspace.from_environment(environment),
         permissions=PermissionSet(["process.execute"]),
     )
     return resources, results, executor, extension, scope

@@ -608,7 +608,7 @@ class AgentLifecycleMixin:
             raise TypeError("scope must be ExecutionScope or None")
         current = get_execution_context()["scope"]
         base = scope or current
-        if base.environment is not None or self.workspace is None:
+        if base.workspace is not None or self.workspace is None:
             return scope
         return base.with_overrides(workspace=self.workspace)
 

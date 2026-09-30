@@ -38,13 +38,15 @@ class ApplyPatchTool(WorkspaceChangeTool):
         if operation == "delete":
             if diff is not None:
                 raise ValueError("Delete operations must not contain a diff")
-            return workspace.prepare_delete(path)
+            return workspace.editor.prepare_delete(path)
         if not isinstance(diff, str):
             raise ValueError("Create and update require a text diff")
         if operation == "create":
-            return workspace.prepare_create(path, apply_diff("", diff, mode="create"))
+            return workspace.editor.prepare_create(
+                path, apply_diff("", diff, mode="create")
+            )
         if operation == "update":
-            return workspace.prepare_transform(
+            return workspace.editor.prepare_transform(
                 path, lambda text: apply_diff(text, diff)
             )
         raise ValueError("Unknown patch operation")

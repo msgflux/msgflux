@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import tracemalloc
 from unittest.mock import Mock
 
@@ -20,8 +21,10 @@ def test_sparse_real_file_rejected_without_full_allocation(tmp_path, kind):
         stream.truncate(1024 * 1024 * 1024)
     fs = LocalWorkspace("bounded", tmp_path)
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(
-            fs, write_guarantee="cooperative_compare", max_edit_bytes=4096
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(
+                fs, write_guarantee="cooperative_compare", max_edit_bytes=4096
+            )
         ),
         permissions=PermissionSet(
             resources=[

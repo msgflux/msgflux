@@ -51,7 +51,7 @@ async def test_reader_image_agent_trajectory():
         namespace="viewer",
         thread_id="t",
         run_id="r",
-        environment=ExecutionEnvironment(fs),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
         permissions=PermissionSet(
             resources=[fs.permission("/image.png", "filesystem.read")]
         ),
@@ -116,7 +116,7 @@ async def test_reader_image_publication(asynchronous, mode):
     fs = InMemoryWorkspace("images", {"/image.png": PNG})
     inbox = AgentInbox(store=InMemoryAgentInboxStore())
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
         permissions=PermissionSet(
             resources=[]
             if mode == "denied"
@@ -199,7 +199,7 @@ def workspace_tools():
     executor.supports_workspace.return_value = True
     executor.execute.return_value = ProcessResult(7, b"output\xff", b"error")
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs, executor),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs, executor)),
         permissions=PermissionSet(
             ["process.execute"],
             [
@@ -239,7 +239,8 @@ async def test_workspace_tools_invocation(workspace_tools, asynchronous):
     assert request.timeout_seconds == 30
     assert request.max_output_bytes == 1_000_000
     assert (
-        executor.execute.call_args.kwargs["filesystem"] is scope.environment.filesystem
+        executor.execute.call_args.kwargs["filesystem"]
+        is scope.workspace._environment.filesystem
     )
     assert executor.execute.call_args.kwargs["permissions"] is scope.permissions
     executor.execute.assert_awaited_once()
@@ -273,7 +274,7 @@ async def test_runtime_dependencies_not_model_arguments(
         assert result.results[0].returncode == 7
         assert (
             executor.execute.call_args.kwargs["filesystem"]
-            is scope.environment.filesystem
+            is scope.workspace._environment.filesystem
         )
 
 
@@ -303,9 +304,13 @@ async def test_missing_live_context_cannot_be_supplied_by_vars(workspace_tools):
         await library.arun(
             "read",
             {"path": "/input"},
-            vars={"filesystem": scope.environment.filesystem},
+            vars={"filesystem": scope.workspace._environment.filesystem},
         )
-    with execution_context(scope=ExecutionScope(environment=scope.environment)):
+    with execution_context(
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(scope.workspace._environment)
+        )
+    ):
         with pytest.raises(RuntimeError, match=r"process\.execute"):
             await library.arun("bash", {"command": "true"})
     executor.execute.assert_not_called()
@@ -316,7 +321,9 @@ async def test_bash_requires_executor_and_never_retries(workspace_tools):
     library, scope, executor = workspace_tools
     with execution_context(
         scope=ExecutionScope(
-            environment=ExecutionEnvironment(scope.environment.filesystem),
+            workspace=AgentWorkspace.from_environment(
+                ExecutionEnvironment(scope.workspace._environment.filesystem)
+            ),
             permissions=scope.permissions,
         )
     ):
@@ -367,13 +374,15 @@ async def test_reader_line_windows_and_configured_cwd(asynchronous):
     content = "first\r\n ação 🐍\r\nlast".encode()
     fs = InMemoryWorkspace("lines", {"/repo/file.txt": content})
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
         permissions=PermissionSet(
             resources=[fs.permission("/repo/file.txt", "filesystem.read")]
         ),
     )
     scope = scope.with_overrides(
-        workspace=AgentWorkspace.from_environment(scope.environment, cwd="/repo")
+        workspace=AgentWorkspace.from_environment(
+            scope.workspace._environment, cwd="/repo"
+        )
     )
     library = ToolLibrary("reader", [ReadFileTool()])
     with execution_context(scope=scope):
@@ -416,7 +425,7 @@ def test_read_selected_window_not_whole_file_size_or_encoding():
         "large", {"/large": b"ok\n" + b"\xff" * 2_000_000, "/many": b"x\n" * 3000}
     )
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
         permissions=PermissionSet(
             resources=[
                 fs.permission(path, "filesystem.read") for path in ("/large", "/many")
@@ -451,7 +460,9 @@ def test_workspace_cwd_is_virtual_and_host_owned():
 async def test_bash_configured_cwd_cannot_be_overridden_by_model(workspace_tools):
     _, scope, executor = workspace_tools
     scope = scope.with_overrides(
-        workspace=AgentWorkspace.from_environment(scope.environment, cwd="/project")
+        workspace=AgentWorkspace.from_environment(
+            scope.workspace._environment, cwd="/project"
+        )
     )
     library = ToolLibrary("bash", [BashTool()])
     with execution_context(scope=scope):

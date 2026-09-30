@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import os
 import time
 from io import BytesIO
@@ -31,7 +32,7 @@ def scope(fs, paths=("/a",), actions=("read", "write", "delete"), binding=None):
         thread_id="thread",
         run_id="run",
         principal="user",
-        environment=(
+        workspace=AgentWorkspace.from_environment(
             ExecutionEnvironment(fs)
             if binding is None
             else ExecutionEnvironment.from_binding(binding)

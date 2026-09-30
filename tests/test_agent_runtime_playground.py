@@ -1,6 +1,7 @@
 """Regression tests for the offline Agent runtime playground harness."""
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 import asyncio
 import importlib.util
@@ -539,7 +540,7 @@ async def test_terminal_budget_survives_approval_resume(harness, tmp_path, deny,
             thread_id="t",
             run_id="r",
             principal="host",
-            environment=environment,
+            workspace=AgentWorkspace.from_environment(environment),
             permissions=harness.PermissionSet(
                 resources=[
                     fs.permission("/note.txt", action)

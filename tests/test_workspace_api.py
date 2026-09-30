@@ -7,7 +7,6 @@ from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
 from msgflux.runtime import (
-    ExecutionEnvironment,
     ExecutionScope,
     PermissionSet,
     AgentWorkspace,
@@ -58,6 +57,29 @@ class _WorkspaceModel:
         return self.responses.pop(0)
 
 
+class _WorkspaceToolFlowModel(_WorkspaceModel):
+    """Script real workspace tools, then require their output in the answer."""
+
+    def __init__(self):
+        self.responses = [
+            _tool_response("read", '{"path":"status.txt"}'),
+            _tool_response(
+                "edit",
+                '{"path":"status.txt","old":"PENDING","new":"ACTIVE"}',
+            ),
+            _tool_response("read", '{"path":"status.txt"}'),
+            _tool_response("bash", '{"command":"cat status.txt"}'),
+        ]
+        self.requests = []
+
+    async def acall(self, **kwargs):
+        self.requests.append(kwargs)
+        if self.responses:
+            return self.responses.pop(0)
+        assert "status: ACTIVE" in str(kwargs)
+        return self._text("Verified command output: status: ACTIVE")
+
+
 def test_local_workspace_files_and_commands_share_project(tmp_path):
     (tmp_path / "sub").mkdir()
     workspace = AgentWorkspace.local(tmp_path)
@@ -85,10 +107,40 @@ def test_local_workspace_limits_and_path_validation(tmp_path):
         workspace.read_text("../outside")
 
 
+def test_workspace_editor_prepares_exact_relative_path_proposal(tmp_path):
+    workspace = AgentWorkspace.local(tmp_path)
+    (tmp_path / "src").mkdir()
+    scoped = workspace.with_cwd("src")
+    scoped.write_text("note.txt", "before marker after\n")
+
+    proposal = scoped.editor.prepare_edit("note.txt", "marker", "reviewed")
+
+    assert proposal.path == "/src/note.txt"
+    assert proposal.before == "before marker after\n"
+    assert proposal.after == "before reviewed after\n"
+    assert "-before marker after" in proposal.diff
+    assert "+before reviewed after" in proposal.diff
+    assert scoped.read_text("note.txt") == "before marker after\n"
+    with pytest.raises(ValueError, match="exactly once"):
+        scoped.editor.prepare_edit("note.txt", "absent", "changed")
+
+
+def test_editor_rejects_unreviewed_proposal_inside_approval_batch(tmp_path):
+    workspace = AgentWorkspace.local(tmp_path)
+    proposal = workspace.editor.prepare_write("note.txt", "not approved")
+
+    with execution_context(scope=ExecutionScope(workspace=workspace)):
+        with ApprovalBatch(None, None, {}).activate():
+            with pytest.raises(PermissionError, match="reviewed workspace proposal"):
+                workspace.editor.apply(proposal)
+
+    assert not (tmp_path / "note.txt").exists()
+
+
 def test_read_only_workspace_rejects_mutation_and_commands(tmp_path):
     workspace = AgentWorkspace.local(tmp_path, read_only=True)
     assert workspace.read_only
-    assert not workspace.can_execute
+    assert not workspace.supports_execution
 
     with pytest.raises(PermissionError):
         workspace.write_text("blocked.txt", "no")
@@ -130,7 +182,7 @@ def test_custom_workspace_mutation_refuses_active_approval_batch(tmp_path):
     scope = ExecutionScope(workspace=workspace)
 
     with execution_context(scope=scope), ApprovalBatch(None, None, {}).activate():
-        with pytest.raises(PermissionError, match="reviewed approval"):
+        with pytest.raises(PermissionError, match="reviewed workspace proposal"):
             workspace.write_text("needs-review.txt", "not applied")
 
     assert not (tmp_path / "needs-review.txt").exists()
@@ -199,7 +251,30 @@ def test_sync_agent_uses_init_workspace_and_excludes_it_from_state_dict(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_scope_workspace_overrides_agent_default_and_conflicts_fail(tmp_path):
+async def test_agent_executes_workspace_read_edit_read_and_bash_tools(tmp_path):
+    from msgflux.tools.builtin import BashTool, EditTool, ReadFileTool
+
+    (tmp_path / "status.txt").write_text("status: PENDING\n")
+    workspace = AgentWorkspace.local(tmp_path)
+    model = _WorkspaceToolFlowModel()
+    agent = Agent(
+        name="workspace-tool-flow",
+        model=model,
+        tools=[ReadFileTool(), EditTool(), BashTool()],
+        workspace=workspace,
+    )
+
+    answer = await agent.acall("Activate and verify the workspace status.")
+
+    assert answer == "Verified command output: status: ACTIVE"
+    assert len(model.requests) == 5
+    assert (tmp_path / "status.txt").read_text() == "status: ACTIVE\n"
+
+
+@pytest.mark.asyncio
+async def test_scope_workspace_overrides_agent_default_without_duplicate_environment(
+    tmp_path,
+):
     (tmp_path / "default").mkdir()
     (tmp_path / "alternate").mkdir()
     default = AgentWorkspace.local(tmp_path / "default")
@@ -223,12 +298,7 @@ async def test_scope_workspace_overrides_agent_default_and_conflicts_fail(tmp_pa
         == "complete"
     )
     assert seen == [alternate]
-
-    with pytest.raises(ValueError, match="Conflicting workspace and environment"):
-        ExecutionScope(
-            workspace=alternate,
-            environment=ExecutionEnvironment(default._environment.filesystem),
-        )
+    assert not hasattr(ExecutionScope(workspace=default), "environment")
 
 
 def test_background_tool_keeps_injected_workspace_and_hides_it_from_schema(tmp_path):

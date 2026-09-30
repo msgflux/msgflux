@@ -262,6 +262,9 @@ class WorkspaceEditor:
             )
         if change.write_guarantee != self.write_guarantee:
             raise PermissionError("Prepared change write guarantee changed")
+        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
+
+        require_workspace_authority(filesystem=self.filesystem)
         self.filesystem._authorize(
             "list" if change.target_kind == "empty_directory" else "read", change.path
         )
@@ -298,7 +301,7 @@ class WorkspaceEditor:
                 "write_guarantee": self.write_guarantee,
                 "path": change.path,
                 "operation": change.operation,
-                "isolation": sorted(scope.environment.requirements.mechanisms),
+                "isolation": sorted(scope.workspace.requirements.mechanisms),
             },
         )
 

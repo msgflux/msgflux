@@ -83,7 +83,7 @@ def scope(fs):
         thread_id="t",
         run_id="r",
         principal="user",
-        environment=ExecutionEnvironment(fs),
+        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
         permissions=PermissionSet(
             resources=[
                 fs.permission("/a", "filesystem.read"),
@@ -275,7 +275,7 @@ def test_changed_execution_cannot_escape_review(mode):
     elif mode == "cwd":
         current_scope = current_scope.with_overrides(
             workspace=AgentWorkspace.from_environment(
-                current_scope.environment, cwd="/other"
+                current_scope.workspace._environment, cwd="/other"
             )
         )
     elif mode == "permissions":

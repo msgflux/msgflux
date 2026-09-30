@@ -69,10 +69,13 @@ class WorkspacePromptExtension(AgentExtension):
 
     def _add_workspace(self, ctx: ModelContext) -> ModelContext:
         scope = get_execution_scope()
-        environment = scope.environment
-        if environment is None:
+        workspace = scope.workspace
+        if workspace is None:
             return ctx
-        environment.require_active()
+        # The prompt includes backend presentation metadata which AgentWorkspace
+        # does not expose directly. This trusted extension can use its driver.
+        environment = workspace._environment
+        workspace.require_active()
         filesystem = environment.filesystem
         info, capabilities = filesystem.prompt_info, filesystem.write_capabilities
         if not isinstance(info, WorkspacePromptInfo):
