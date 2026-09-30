@@ -226,7 +226,8 @@ Ollama's default native `/api/chat` mode also uses the shared HTTP transport.
 It emits the same GenAI span attributes, including structured JSON output,
 tool calls, finish reasons, and token usage. Both sync and async calls,
 including streams, are covered. OpenAI Responses API calls use this transport
-too.
+too. Anthropic's native Messages API also uses it and records text, tool use,
+stop reason, and token usage, including cache reads and writes.
 
 The span records the GenAI operation, provider, requested model, available
 response model and ID, finish reasons, and token usage using `gen_ai.*`
@@ -245,6 +246,13 @@ Ollama's native `/api/chat` uses `think` instead of `reasoning_effort`. Named
 levels such as `think="high"` use `gen_ai.request.reasoning.level`. Boolean
 `think` values are recorded as `ollama.request.think`, preserving whether
 thinking was enabled or disabled without treating a boolean as a level.
+
+Anthropic adaptive thinking uses `output_config.effort` as the requested
+reasoning level. A disabled thinking request records `none`; a fixed thinking
+budget records `anthropic.request.thinking.budget_tokens`. The common request
+attributes also include supported limits, sampling settings, stop sequences,
+and whether the request is streamed. Anthropic's native `stop_reason` is kept
+in `gen_ai.response.finish_reasons`.
 
 Model output can contain sensitive data and increase span size. Set
 `MSGFLUX_TELEMETRY_CAPTURE_MODEL_OUTPUT=false` to omit generated text and tool

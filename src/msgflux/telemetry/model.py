@@ -18,7 +18,7 @@ from msgflux.models.usage import default_usage_codec
 
 def _operation(endpoint: str) -> str:
     path = endpoint.split("?", 1)[0].rstrip("/")
-    if path.endswith(("/chat/completions", "/responses", "/api/chat")):
+    if path.endswith(("/chat/completions", "/responses", "/api/chat", "/v1/messages")):
         return "chat"
     if path.endswith("/embeddings"):
         return "embeddings"
@@ -91,6 +91,11 @@ class _OutputCollector:
         if native_message is not None and not isinstance(choices, list):
             self._native_message(payload, native_message)
 
+        if _value(payload, "type") == "message" and isinstance(
+            _value(payload, "content"), list
+        ):
+            self._anthropic_message(payload)
+
         output = _value(payload, "output")
         if isinstance(output, list):
             self._response_output(output)
@@ -105,6 +110,27 @@ class _OutputCollector:
         for position, tool in enumerate(_value(message, "tool_calls") or []):
             self._tool_call(0, position, tool, full=True)
         reason = _value(payload, "done_reason")
+        if isinstance(reason, str):
+            self.reasons[0] = reason
+
+    def _anthropic_message(self, payload: Any) -> None:
+        self.roles[0] = _value(payload, "role") or "assistant"
+        for position, block in enumerate(_value(payload, "content")):
+            block_type = _value(block, "type")
+            if block_type == "text":
+                self._append(0, _value(block, "text"))
+            elif block_type == "tool_use":
+                self._tool_call(
+                    0,
+                    position,
+                    {
+                        "id": _value(block, "id"),
+                        "name": _value(block, "name"),
+                        "arguments": _value(block, "input"),
+                    },
+                    full=True,
+                )
+        reason = _value(payload, "stop_reason")
         if isinstance(reason, str):
             self.reasons[0] = reason
 
@@ -212,31 +238,73 @@ class _OutputCollector:
         return messages
 
 
-def _span_context(owner: Any, endpoint: str, kwargs: dict[str, Any]):
-    body = kwargs.get("json") or kwargs.get("data")
-    operation = _operation(endpoint)
-    model = _value(body, "model") or getattr(owner, "model_id", None)
-    attributes: dict[str, Any] = {"gen_ai.operation.name": operation}
-    provider = getattr(owner, "provider", None)
-    if provider:
-        attributes["gen_ai.provider.name"] = str(provider)
-    if model:
-        attributes["gen_ai.request.model"] = str(model)
-    for field in ("temperature", "top_p", "max_tokens"):
+def _request_attributes(body: Any, provider: str | None) -> dict[str, Any]:
+    attributes: dict[str, Any] = {}
+    for field in (
+        "temperature",
+        "top_p",
+        "top_k",
+        "max_tokens",
+        "frequency_penalty",
+        "presence_penalty",
+        "seed",
+    ):
         value = _value(body, field)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             attributes[f"gen_ai.request.{field}"] = value
+    if "gen_ai.request.max_tokens" not in attributes:
+        for field in ("max_output_tokens", "max_completion_tokens"):
+            value = _value(body, field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                attributes["gen_ai.request.max_tokens"] = value
+                break
+    stop_sequences = _value(body, "stop_sequences") or _value(body, "stop")
+    if isinstance(stop_sequences, list) and all(
+        isinstance(sequence, str) for sequence in stop_sequences
+    ):
+        attributes["gen_ai.request.stop_sequences"] = stop_sequences
+    if isinstance(_value(body, "stream"), bool):
+        attributes["gen_ai.request.stream"] = _value(body, "stream")
+    _reasoning_attributes(attributes, body, provider)
+    return attributes
+
+
+def _reasoning_attributes(
+    attributes: dict[str, Any], body: Any, provider: str | None
+) -> None:
     reasoning_level = _value(body, "reasoning_effort")
     if not isinstance(reasoning_level, str):
         reasoning_level = _value(_value(body, "reasoning"), "effort")
+    if not isinstance(reasoning_level, str):
+        reasoning_level = _value(_value(body, "output_config"), "effort")
     if isinstance(reasoning_level, str) and reasoning_level:
         attributes["gen_ai.request.reasoning.level"] = reasoning_level
+    if provider == "anthropic":
+        thinking = _value(body, "thinking")
+        budget = _value(thinking, "budget_tokens")
+        if isinstance(budget, int) and not isinstance(budget, bool):
+            attributes["anthropic.request.thinking.budget_tokens"] = budget
+        if _value(thinking, "type") == "disabled":
+            attributes["gen_ai.request.reasoning.level"] = "none"
     if provider == "ollama":
         think = _value(body, "think")
         if isinstance(think, str) and think:
             attributes["gen_ai.request.reasoning.level"] = think
         elif isinstance(think, bool):
             attributes["ollama.request.think"] = think
+
+
+def _span_context(owner: Any, endpoint: str, kwargs: dict[str, Any]):
+    body = kwargs.get("json") or kwargs.get("data")
+    operation = _operation(endpoint)
+    model = _value(body, "model") or getattr(owner, "model_id", None)
+    provider = getattr(owner, "provider", None)
+    attributes: dict[str, Any] = {"gen_ai.operation.name": operation}
+    if provider:
+        attributes["gen_ai.provider.name"] = str(provider)
+    if model:
+        attributes["gen_ai.request.model"] = str(model)
+    attributes.update(_request_attributes(body, provider))
     return tracer_manager.tracer.start_as_current_span(
         f"{operation} {model}" if model else operation,
         kind=SpanKind.CLIENT,
@@ -262,6 +330,18 @@ def _record_payload(span: Any, payload: Any) -> None:
         if status == "failed":
             span.set_status(Status(StatusCode.ERROR, "model response failed"))
     usage = _value(payload, "usage")
+    if _value(payload, "type") == "message" and isinstance(usage, Mapping):
+        usage = dict(usage)
+        usage["input_tokens"] = sum(
+            value
+            for field in (
+                "input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            )
+            if isinstance(value := usage.get(field), int)
+            and not isinstance(value, bool)
+        )
     if usage is None:
         native_usage = {
             field: value
@@ -288,6 +368,11 @@ def _record_usage(span: Any, usage: Any) -> None:
             if details.cached_tokens is not None:
                 span.set_attribute(
                     "gen_ai.usage.cache_read.input_tokens", details.cached_tokens
+                )
+            if details.cache_write_tokens is not None:
+                span.set_attribute(
+                    "gen_ai.usage.cache_creation.input_tokens",
+                    details.cache_write_tokens,
                 )
             output_details = normalized.output_tokens_details
             if output_details.reasoning_tokens is not None:
