@@ -25,6 +25,7 @@ from msgflux.exceptions import (
 )
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.tool_transport import native_item_types
 from msgflux.models.types import reasoning_effort_from_history
 from msgflux.nn.hooks.events import (
     NotificationContext,
@@ -737,6 +738,7 @@ class AgentConversationMixin:
         if not isinstance(items, list):
             return set()
         has_commentary = bool(getattr(model_response, "commentary", None))
+        call_item_types = {"function_call", *native_item_types()}
         trajectory_items = [
             item
             for item in items
@@ -746,7 +748,7 @@ class AgentConversationMixin:
                     "reasoning",
                     "tool_search_call",
                     "tool_search_output",
-                    "function_call",
+                    *call_item_types,
                 }
                 or (
                     has_commentary
@@ -764,7 +766,7 @@ class AgentConversationMixin:
         existing_call_ids = {
             item.get("call_id") or item.get("id")
             for item in messages
-            if item.get("type") == "function_call"
+            if item.get("type") in call_item_types
         }
         get_tool_intents = getattr(model_response, "get_tool_intents", None)
         if callable(get_tool_intents):
@@ -805,18 +807,19 @@ class AgentConversationMixin:
             messages.extend(tool_response_messages)
             return
 
+        call_item_types = {"function_call", *native_item_types()}
         existing_call_ids = {
-            item.get("call_id")
+            item.get("call_id") or item.get("id")
             for item in messages
-            if item.get("type") == "function_call"
+            if item.get("type") in call_item_types
         }
         normalized = ChatMessages(tool_response_messages).to_items()
         messages.extend(
             item
             for item in normalized
             if not (
-                item.get("type") == "function_call"
-                and item.get("call_id") in existing_call_ids
+                item.get("type") in call_item_types
+                and (item.get("call_id") or item.get("id")) in existing_call_ids
             )
         )
 
