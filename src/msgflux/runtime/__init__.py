@@ -96,6 +96,7 @@ from msgflux.runtime.workspace import (
     WorkspaceConflictError,
     WorkspaceFilesystem,
 )
+from msgflux.runtime.workspace_api import AgentWorkspace
 from msgflux.runtime.workspace_backend import (
     InMemoryWorkspaceBackend,
     WorkspaceBackend,
@@ -112,6 +113,7 @@ from msgflux.runtime.workspace_contracts import (
 from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
 
 __all__ = [
+    "AgentWorkspace",
     "DockerLimits",
     "DockerProcessExecutor",
     "DockerWorkspaceBackend",

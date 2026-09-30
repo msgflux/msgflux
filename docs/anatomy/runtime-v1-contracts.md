@@ -415,7 +415,7 @@ unchanged internal output enforcement. Do not migrate pending approval bindings
 implicitly when changing the tool implementation revision.
 
 Workspace tool ergonomics increment: explicit public annotations and UI
-labels in tools/builtin/workspace.py; offset/limit line reads backed by an
+labels in tools/builtin/workspace_tools.py; offset/limit line reads backed by an
 authorized WorkspaceFilesystem.read_lines hook; cwd configured in tool
 constructors, never taken from the host process. Update tool/provider tests and
 runtime learning docs. Keep one shell process deadline (timeout_ms); background
@@ -466,7 +466,7 @@ approval metadata is deliberately rejected rather than guessed.
 ### Tool configuration and native shell increment
 
 Order: (1) reader instance-owned tool_config and BashTool class in
-tools/builtin/workspace.py, exports/tests; (2) native-binding propagation through
+tools/builtin/workspace_tools.py, exports/tests; (2) native-binding propagation through
 the existing tool compiler and Responses catalog, shell call aggregation and
 history/streaming; (3) approval reconstruction and continuation fidelity;
 (4) offline integration tests and runtime learning docs. Use the public local
@@ -498,7 +498,7 @@ promise complete shell analysis in this increment.
 
 ### Inbox conversation content increment
 
-Follow-up: unify the builtin reader in `tools/builtin/workspace.py` as
+Follow-up: unify the builtin reader in `tools/builtin/workspace_tools.py` as
 `ReadFileTool`, removing the duplicate coroutine/export. Add host-only
 `supports_vision=False`; concatenate visual delivery guidance with existing
 instance/class guidance. Read image bytes through the authorized VFS and publish
@@ -530,7 +530,7 @@ publication; ranged reading remains separate work.
 ### Workspace builtin tools increment
 
 Branch `feat/workspace-builtin-tools` depends on `feat/runtime-resource-security`.
-Implementation order: add `tools/builtin/workspace.py`, export `ReadFileTool` and
+Implementation order: add `tools/builtin/workspace_tools.py`, export `ReadFileTool` and
 `BashTool` from `tools/builtin/__init__.py`, cover invocation and denial in
 `tests/test_workspace_builtin_tools.py`, then document both on the existing
 runtime learning page. Reuse runtime-input injection, VFS authorization and

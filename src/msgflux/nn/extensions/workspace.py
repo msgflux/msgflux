@@ -89,8 +89,9 @@ class WorkspacePromptExtension(AgentExtension):
             "guidance": info.guidance,
             "paths": (
                 "Virtual absolute POSIX paths rooted at /. "
-                "Relative paths use each tool's configured cwd."
+                "Relative paths use the injected workspace cwd."
             ),
+            "cwd": scope.workspace.cwd,
             "write_guarantee": environment.write_guarantee,
             "write_capabilities": capabilities,
             "resources": resources[: self.max_resources],

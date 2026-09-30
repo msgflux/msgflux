@@ -12,6 +12,7 @@ from msgflux.runtime import (
     PreparedFileChange,
     WorkspaceConflictError,
     execution_context,
+    get_execution_scope,
 )
 from msgflux.tools.builtin import ApplyPatchTool, DeleteTool
 from msgflux.tools.workspace_changes import workspace_change_execution
@@ -49,7 +50,9 @@ async def test_empty_directory_review_and_delete(workspace, asynchronous):
     fs, scope = workspace
     tool = DeleteTool()
     with execution_context(scope=scope):
-        preview = tool.prepare_workspace_change({"path": "/empty"}, fs)
+        preview = tool.prepare_workspace_change(
+            {"path": "/empty"}, get_execution_scope().workspace
+        )
         assert preview.target_kind == "empty_directory"
         assert preview.operation == "delete"
         assert preview.before is None and preview.after is None
@@ -59,11 +62,7 @@ async def test_empty_directory_review_and_delete(workspace, asynchronous):
             == preview
         )
         with workspace_change_execution(tool, preview):
-            result = (
-                await tool.acall("/empty", filesystem=fs)
-                if asynchronous
-                else tool("/empty", filesystem=fs)
-            )
+            result = await tool.acall("/empty") if asynchronous else tool("/empty")
         assert result == {"status": "completed"}
         assert fs.listdir("/") == ()
 
@@ -73,7 +72,9 @@ def test_directory_review_rejects_changed_target(workspace, change):
     fs, scope = workspace
     tool = DeleteTool()
     with execution_context(scope=scope):
-        preview = tool.prepare_workspace_change({"path": "/empty"}, fs)
+        preview = tool.prepare_workspace_change(
+            {"path": "/empty"}, get_execution_scope().workspace
+        )
         if change == "content":
             fs.write_text("/empty/item", "keep")
         else:
@@ -88,7 +89,7 @@ def test_directory_review_rejects_changed_target(workspace, change):
                 fs.write_text("/empty", "keep")
         with workspace_change_execution(tool, preview):
             with pytest.raises((WorkspaceConflictError, OSError)):
-                tool("/empty", filesystem=fs)
+                tool("/empty")
         assert "empty" in fs.listdir("/")
 
 
@@ -107,19 +108,20 @@ def test_empty_directory_requires_list_and_delete_not_read(workspace):
         with execution_context(scope=scope):
             if len(actions) == 1:
                 with pytest.raises(PermissionError):
-                    DeleteTool()("/empty", filesystem=fs)
+                    DeleteTool()("/empty")
             else:
-                assert DeleteTool()("/empty", filesystem=fs)["status"] == "completed"
+                assert DeleteTool()("/empty")["status"] == "completed"
 
 
 def test_root_and_apply_patch_directory_deletion_are_rejected(workspace):
     fs, scope = workspace
     with execution_context(scope=scope):
         with pytest.raises(PermissionError, match="root"):
-            DeleteTool()("/", filesystem=fs)
+            DeleteTool()("/")
         with pytest.raises((IsADirectoryError, PermissionError)):
             ApplyPatchTool().prepare_workspace_change(
-                {"operation": "delete", "path": "/empty", "diff": None}, fs
+                {"operation": "delete", "path": "/empty", "diff": None},
+                get_execution_scope().workspace,
             )
         assert fs.listdir("/empty") == ()
 
@@ -138,7 +140,7 @@ def test_local_symlink_directory_is_not_followed(tmp_path):
         ),
     )
     with execution_context(scope=scope), pytest.raises(PermissionError):
-        DeleteTool()("/alias", filesystem=fs)
+        DeleteTool()("/alias")
     assert (tmp_path / "target").is_dir()
     assert (tmp_path / "alias").is_symlink()
 
@@ -163,5 +165,5 @@ def test_local_rmdir_refuses_content_added_after_last_check(tmp_path, monkeypatc
 
     monkeypatch.setattr(os, "rmdir", insert_then_remove)
     with execution_context(scope=scope), pytest.raises(OSError):
-        DeleteTool()("/empty", filesystem=fs)
+        DeleteTool()("/empty")
     assert (tmp_path / "empty" / "new").read_text() == "keep"

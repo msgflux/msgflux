@@ -177,30 +177,28 @@ def test_workspace_identity_and_nested_authority():
 
 
 @pytest.mark.asyncio
-async def test_injected_filesystem_has_dynamic_authorization_sync_and_async():
+async def test_injected_workspace_has_dynamic_authorization_sync_and_async():
     fs = InMemoryWorkspace("w", {"/allowed": b"yes", "/denied": b"no"})
 
-    @tool_config(runtime_inputs=["filesystem"], retry=False)
-    async def read_file(path: str, *, filesystem) -> str:
+    @tool_config(runtime_inputs=["workspace"], retry=False)
+    async def read_file(path: str, *, workspace) -> str:
         """Read an authorized virtual file."""
-        return await filesystem.aread_text(path)
+        return await workspace.aread_text(path)
 
     library = ToolLibrary("files", [read_file])
     assert (
-        "filesystem"
+        "workspace"
         not in library.get_tool_definition("read_file").input_schema["properties"]
     )
     with authorized(fs, ("/allowed", "filesystem.read")):
         assert await library.arun("read_file", {"path": "/allowed"}) == "yes"
         assert library.run("read_file", {"path": "/allowed"}) == "yes"
         with pytest.raises(ValueError, match="both visible and runtime"):
-            await library.arun(
-                "read_file", {"path": "/allowed", "filesystem": "forged"}
-            )
+            await library.arun("read_file", {"path": "/allowed", "workspace": "forged"})
         with pytest.raises(PermissionError, match="resource permissions"):
             await library.arun("read_file", {"path": "/denied"})
     with pytest.raises(RuntimeError, match="unavailable"):
-        await library.arun("read_file", {"path": "/allowed"}, vars={"filesystem": fs})
+        await library.arun("read_file", {"path": "/allowed"}, vars={"workspace": fs})
 
 
 @pytest.mark.asyncio
@@ -342,19 +340,19 @@ def test_request_validation_and_initial_file_conflicts():
 
 
 @pytest.mark.asyncio
-async def test_environment_injection_and_output_limit():
+async def test_workspace_injection_and_output_limit():
     fs, executor = InMemoryWorkspace("w"), FakeExecutor()
 
-    @tool_config(runtime_inputs=["environment"], retry=False)
-    async def run_program(*, environment) -> str:
+    @tool_config(runtime_inputs=["workspace"], retry=False)
+    async def run_program(*, workspace) -> str:
         """Demonstrate process context injection using a test executor."""
-        result = await environment.arun(ProcessRequest(["program"]))
+        result = await workspace.arun(ProcessRequest(["program"]))
         return result.stdout.decode()
 
     library = ToolLibrary("processes", [run_program])
     with authorized(fs, executor=executor) as scope:
         with pytest.raises(ValueError, match="both visible and runtime"):
-            await library.arun("run_program", {"environment": "forged"})
+            await library.arun("run_program", {"workspace": "forged"})
         assert executor.calls == []
         assert await library.arun("run_program", {}) == "done"
         with pytest.raises(RuntimeError, match="output limit"):
@@ -368,11 +366,11 @@ async def test_agent_resumes_with_live_workspace_not_checkpoint_authority():
     fs = InMemoryWorkspace("w", {"/report": b"report"})
     observed = []
 
-    @tool_config(runtime_inputs=["filesystem"], retry=False)
-    async def read_file(path: str, *, filesystem) -> str:
+    @tool_config(runtime_inputs=["workspace"], retry=False)
+    async def read_file(path: str, *, workspace) -> str:
         """Read a file after host approval."""
-        observed.append(filesystem)
-        return await filesystem.aread_text(path)
+        observed.append(workspace)
+        return await workspace.aread_text(path)
 
     checkpoint, journal = InMemoryCheckpointStore(), InMemoryApprovalStore()
     model = Mock(model_type="chat_completion")
@@ -410,5 +408,6 @@ async def test_agent_resumes_with_live_workspace_not_checkpoint_authority():
     request = journal.pending("reader", "t", "r")[0]
     agent.decide_approval(request.request_id, approved=True, decided_by="host")
     assert await agent.acall("", scope=scope) == "done"
-    assert observed == [fs]
+    assert len(observed) == 1
+    assert observed[0]._environment.filesystem is fs
     assert agent.generator.aforward.call_count == 2

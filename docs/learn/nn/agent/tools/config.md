@@ -241,7 +241,9 @@ def inspect_runtime(handle, messages, vars):
     }
 ```
 
-Built-in sources are `message`, `messages`, `vars`, and `handle`. Use
+Built-in sources include `message`, `messages`, `vars`, `handle`, and `workspace`.
+Use `workspace` for explicit shared file and command access; see the
+[workspace guide](../runtime.md#workspace). Use
 `ContextBinding` when the parameter name differs from the source or only one
 value should be selected:
 

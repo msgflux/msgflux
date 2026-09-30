@@ -18,6 +18,7 @@ from msgflux.runtime import (
     InMemoryWorkspaceBackend,
     LocalWorkspaceBackend,
     PermissionSet,
+    AgentWorkspace,
     execution_context,
 )
 from msgflux.runtime.workspace_local import LocalWorkspace
@@ -90,12 +91,9 @@ async def test_workspace_tools_are_backend_neutral_and_read_bounds_work(
         )
     with execution_context(scope=scope):
         if asynchronous:
-            assert (
-                await read.acall("a", offset=2, limit=1, filesystem=filesystem)
-                == "two\n"
-            )
+            assert await read.acall("a", offset=2, limit=1) == "two\n"
         else:
-            assert read("a", offset=2, limit=1, filesystem=filesystem) == "two\n"
+            assert read("a", offset=2, limit=1) == "two\n"
 
         for tool, arguments in (
             (write, {"path": "a", "content": "changed"}),
@@ -106,17 +104,17 @@ async def test_workspace_tools_are_backend_neutral_and_read_bounds_work(
             ),
         ):
             if asynchronous:
-                result = await tool.acall(**arguments, filesystem=filesystem)
+                result = await tool.acall(**arguments)
             else:
-                result = tool(**arguments, filesystem=filesystem)
+                result = tool(**arguments)
             assert result == {"status": "completed"}
         assert filesystem.read_text("/a") == "final"
         if asynchronous:
-            await patch.acall("delete", "a", filesystem=filesystem)
-            await patch.acall("create", "a", "+created", filesystem=filesystem)
+            await patch.acall("delete", "a")
+            await patch.acall("create", "a", "+created")
         else:
-            patch("delete", "a", filesystem=filesystem)
-            patch("create", "a", "+created", filesystem=filesystem)
+            patch("delete", "a")
+            patch("create", "a", "+created")
         assert filesystem.read_text("/a") == "created"
 
 
@@ -127,9 +125,9 @@ def test_local_default_strict_guarantee_rejects_mutation_but_allows_read(tmp_pat
     environment = ExecutionEnvironment(filesystem)
     scope = _scope(environment, filesystem)
     with execution_context(scope=scope):
-        assert ReadFileTool()("a", filesystem=filesystem) == "one\ntwo\nthree\n"
+        assert ReadFileTool()("a") == "one\ntwo\nthree\n"
         with pytest.raises(NotImplementedError):
-            WriteTool()("a", "new", filesystem=filesystem)
+            WriteTool()("a", "new")
 
 
 def test_workspace_tool_permission_denial_is_live(backend_scope):
@@ -137,7 +135,7 @@ def test_workspace_tool_permission_denial_is_live(backend_scope):
     scope = _scope(environment, filesystem, write=False)
     with execution_context(scope=scope):
         with pytest.raises(PermissionError):
-            WriteTool()("a", "denied", filesystem=filesystem)
+            WriteTool()("a", "denied")
 
 
 @pytest.mark.asyncio
@@ -164,7 +162,11 @@ def test_workspace_tool_cannot_use_filesystem_outside_live_environment():
     first, other = InMemoryWorkspace("files"), InMemoryWorkspace("files")
     with execution_context(scope=_scope(ExecutionEnvironment(first), first)):
         with pytest.raises(PermissionError, match="live environment"):
-            WriteTool()("a", "wrong resource", filesystem=other)
+            WriteTool()(
+                "a",
+                "wrong resource",
+                workspace=AgentWorkspace.from_environment(ExecutionEnvironment(other)),
+            )
 
 
 def test_selected_guarantee_is_recorded_in_preview(backend_scope):
@@ -193,7 +195,7 @@ def test_saved_proposal_cannot_apply_after_guarantee_changes(backend_scope):
                 (PermissionError, NotImplementedError),
                 match=r"guarantee|atomic_compare",
             ):
-                tool("a", "preview", filesystem=filesystem)
+                tool("a", "preview")
 
 
 def _response(name=None, arguments=None):

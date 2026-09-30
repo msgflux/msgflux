@@ -260,7 +260,7 @@ def prepare_workspace_change(definition, arguments):
     environment = get_execution_scope().environment
     if environment is None:
         raise PermissionError("Workspace changes require a live environment")
-    change = tool.prepare_workspace_change(arguments, environment.filesystem)
+    change = tool.prepare_workspace_change(arguments, get_execution_scope().workspace)
     if not isinstance(change, PreparedFileChange):
         raise TypeError("Workspace change tools must return PreparedFileChange")
     return change

@@ -31,7 +31,7 @@ against unrelated external writers.
 
 Affected implementation files: `runtime/workspace.py`,
 `runtime/workspace_local.py`, `runtime/workspace_changes.py`, and
-`tools/builtin/workspace.py`. Focused backend tests live in
+`tools/builtin/workspace_tools.py`. Focused backend tests live in
 `tests/test_workspace_empty_directory.py`. Run the offline durability gate,
 full offline tests, Ruff, package build and strict MkDocs validation.
 

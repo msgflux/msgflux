@@ -17,6 +17,7 @@ from msgflux.runtime import (
     InMemoryWorkspace,
     PermissionSet,
     SQLiteApprovalStore,
+    AgentWorkspace,
     execution_context,
 )
 from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
@@ -272,7 +273,11 @@ def test_changed_execution_cannot_escape_review(mode):
             ),
         ).register(current)
     elif mode == "cwd":
-        current.tool_library.get_tool_definition("write").executor.impl.cwd = "/other"
+        current_scope = current_scope.with_overrides(
+            workspace=AgentWorkspace.from_environment(
+                current_scope.environment, cwd="/other"
+            )
+        )
     elif mode == "permissions":
         current_scope = replace(current_scope, permissions=PermissionSet())
     if mode in {"cwd", "permissions"}:

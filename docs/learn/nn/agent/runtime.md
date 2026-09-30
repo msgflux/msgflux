@@ -14,6 +14,105 @@ The core pieces are:
 | `AgentInbox` | Holds pending messages, notifications, and control signals for the agent loop. |
 | `AgentInboxStore` | Optional persistence boundary for the inbox. Without one, the inbox is in memory. |
 
+## Workspace
+
+A `AgentWorkspace` gives tools explicit access to files and command execution in the
+same project. The local factory requires no context manager:
+
+```python
+import msgflux as mf
+from msgflux.nn import Agent
+from msgflux.tools.builtin import BashTool, ReadFileTool, ApplyPatchTool
+
+workspace = mf.AgentAgentWorkspace.local(".")
+agent = Agent(
+    name="main",
+    model="openai/gpt-4.1-mini",
+    workspace=workspace,
+    tools=[ReadFileTool(), BashTool(), ApplyPatchTool()],
+)
+result = agent("Inspect README.md and propose a small improvement")
+```
+
+The factory uses the selected directory as virtual `/`. File paths and command
+working directories share that mapping. Tools always use the injected workspace cwd. `workspace.with_cwd("src")` creates an independent
+view without changing the original object. Local commands execute on the host;
+the project mapping is not an operating-system sandbox.
+
+To select a workspace for one invocation, pass it through an execution scope:
+
+```python
+scope = mf.ExecutionScope(
+    workspace=mf.AgentAgentWorkspace.local(".", read_only=True),
+)
+result = agent("Review the project without changing files", scope=scope)
+```
+
+An explicitly supplied scope workspace takes precedence over the Agent default.
+The read-only factory permits reads and listings, rejects mutations, and has no
+command executor. Factory permissions apply when no permissions are supplied;
+an explicit `PermissionSet`, including an empty set, is preserved. Nested runs
+inherit the environment and can narrow permissions but cannot replace it or
+expand its authority.
+
+### Explicit tool dependencies
+
+Declare only the workspace dependency a tool needs:
+
+```python
+from msgflux import Hidden, AgentWorkspace, tool_config
+
+@tool_config(runtime_inputs=["workspace"])
+async def inspect_readme(*, workspace: Hidden[AgentWorkspace]) -> str:
+    text = await workspace.aread_text("README.md")
+    result = await workspace.arun(["git", "status", "--short"], timeout=10)
+    return text + "\n" + result.stdout.decode()
+```
+
+The runtime injects the live workspace instance; the model does not see or fill
+that parameter. Injection also propagates to background tools. Register this
+function in the Agent's `tools` list to let the model inspect the README and Git
+status using that project's workspace.
+
+The same object can be used directly by application code:
+
+```python
+workspace.write_text("notes.txt", "Initial notes\n")
+workspace.edit_text("notes.txt", "Initial", "Updated")
+print(workspace.read_text("notes.txt"))
+result = workspace.run("git status --short", timeout=10)
+```
+
+These operations use one filesystem and executor. A string command runs through
+Bash; a list or tuple runs as argv without shell parsing. Nonzero process exits
+are returned in `result.returncode`; permission and validation failures raise.
+
+| Methods | Purpose |
+|---------|---------|
+| `read_text`, `read_bytes` | Read a complete file with a byte limit (default: 1 MB). |
+| `read_prefix`, `read_lines` | Read bounded prefixes or paginated text bytes. |
+| `listdir`, `scandir` | List directory names or bounded entry metadata. |
+| `write_text`, `edit_text`, `delete`, `mkdir` | Modify files or create/remove empty directories. |
+| `run` | Execute a command with a deadline and bounded output. |
+| `with_cwd`, `resolve` | Select a virtual working directory or resolve a path. |
+
+Each I/O method also has an async form prefixed with `a`, such as `aread_text`,
+`awrite_text` and `arun`. File writes use cooperative comparison against the
+reviewed contents; this does not provide a transaction against other host
+processes. Paths reject traversal through `..`; local file access retains the
+existing backend's symlink and hardlink restrictions.
+
+Builtin mutation tools retain the approval preview and recovery mechanism
+[described below](#write-edit-and-delete-tools-with-agent-previews). Custom tools
+calling mutation methods during an active approval batch are rejected without a
+reviewed proposal; use the builtin mutation tools for approval-managed changes.
+Application calls outside such a batch do not create a confirmation UI.
+
+For advanced setup, `AgentWorkspace.from_environment(environment)` wraps an existing
+`ExecutionEnvironment` while keeping its backend and permission checks. Tools declare `workspace` for file and command access. Workspace
+handles are live runtime resources and are not stored in checkpoints; supply the
+workspace again when constructing an Agent after a process restart.
+
 ## Execution Scope
 
 Use `ExecutionScope` when you need stable runtime identity.
@@ -1579,7 +1678,7 @@ With memory or another backend, the same extension uses that backend's descripti
 The section contains backend-declared storage behavior and guidance, virtual path
 rules, the required write guarantee and declared write capabilities, and a bounded
 list of exact filesystem grants for the current workspace. Relative paths use
-each tool's configured `cwd`; there is no invented global working directory.
+the injected workspace cwd; every tool uses that same directory.
 When a process executor exists, its declared isolation mechanisms and the live
 `process.execute` grant are reported separately from required isolation. This is
 not proof of sandboxing or a description of network policy, including host traffic
@@ -1814,9 +1913,9 @@ Local enumeration never follows symbolic links. Links, multiply-linked files,
 special files and cross-mount entries are classified as `other`, not safe files
 to traverse. These checks do not turn the local backend into an OS sandbox.
 
-`WriteTool(cwd="/")` exposes only `path` and `content`; `EditTool(cwd="/")`
+`WriteTool()` exposes only `path` and `content`; `EditTool()`
 exposes only `path`, `old` and `new`. Both are class-based tools with explicit
-public annotations and `Write`/`Edit` display names. `DeleteTool(cwd="/")`
+public annotations and `Write`/`Edit` display names. `DeleteTool()`
 exposes only `path`, with display name `Delete`. It deletes one UTF-8 file or
 one empty directory; binary files and recursive directory deletion are not
 supported. The workspace root and symlinks are always rejected. Removed text
@@ -1825,8 +1924,7 @@ Directory previews have `target_kind="empty_directory"`, an opaque
 `directory_token`, `before=None`, `after=None`, and a human-readable `diff`.
 The token is checkpointed with the proposal and binds approval to that directory
 incarnation. Replacement or newly added contents prevent deletion.
-The filesystem is injected
-from the live environment, and cwd is a constructor-only virtual path. Outputs
+The workspace is injected from the live scope and owns the virtual cwd. Outputs
 are compact JSON objects such as `{"status":"completed"}`; previews and old
 file contents are not added to model history. No automatic retries are enabled.
 
@@ -1838,7 +1936,7 @@ from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
 agent = Agent(
     name="editor",
     model=model,  # your configured chat-completion model
-    tools=[WriteTool(cwd="/"), EditTool(cwd="/"), DeleteTool(cwd="/")],
+    tools=[WriteTool(), EditTool(), DeleteTool()],
     checkpoint_store=checkpoints,  # an atomic checkpoint store
     approvals=AgentApprovals(
         journal,
@@ -1938,7 +2036,7 @@ An adapter missing any abstract method cannot be instantiated.
 
 ### Apply patch with OpenAI Responses
 
-`ApplyPatchTool(cwd="/")` creates, updates or deletes **one file per call** using
+`ApplyPatchTool()` creates, updates or deletes **one file per call** using
 a V4A diff. It inherits the same WorkspaceChangeTool contract, so approval previews,
 live filesystem grants and the environment-selected write guarantee work exactly
 as for write/edit.
@@ -2016,7 +2114,7 @@ update-existing preparation. The transform is a trusted host-owned pure function
 not a callable supplied by the model or restored from checkpoints. Async variants
 `aprepare_create` and `aprepare_transform` preserve execution context.
 
-### Injecting a filesystem into tools
+### Injecting a workspace into tools
 
 Declare runtime inputs explicitly, so they remain outside the model-facing schema:
 
@@ -2024,10 +2122,10 @@ Declare runtime inputs explicitly, so they remain outside the model-facing schem
 from msgflux.nn import ToolLibrary
 from msgflux.tools.config import tool_config
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
-async def read_file(path: str, *, filesystem) -> str:
+@tool_config(runtime_inputs=["workspace"], retry=False)
+async def read_file(path: str, *, workspace) -> str:
     """Read an authorized file in the virtual workspace."""
-    return await filesystem.aread_text(path)
+    return await workspace.aread_text(path)
 
 tools = ToolLibrary("files", [read_file])
 with execution_context(scope=scope):
@@ -2036,7 +2134,7 @@ with execution_context(scope=scope):
 
 This is an application-defined example, not a shipped `read_file` builtin. The
 same tool can be passed to an Agent invoked with this live scope. The runtime
-supplies `filesystem`; model arguments and `vars` cannot supply a substitute.
+supplies `workspace`; model arguments and `vars` cannot supply a substitute.
 Missing bindings fail before tool execution. The VFS checks the actual `path`
 when called and raises `PermissionError` on denial. It also checks an already
 aborted scope before attempting an operation. Cancelling an async await cannot
@@ -2068,8 +2166,8 @@ with execution_context(scope=process_scope):
         pass  # No executor configured; nothing was launched on the host.
 ```
 
-The builtin `bash` declares `runtime_inputs=["environment"]` and calls
-`environment.arun(...)`. It receives the same workspace as `read_file` and does
+The builtin `bash` declares `workspace` in `runtime_inputs` and calls
+`workspace.arun(...)`. It receives the same workspace as `read_file` and does
 not fall back to `subprocess` when the backend cannot use that workspace.
 
 Before calling a backend, the environment checks `process.execute`, declared
@@ -2132,7 +2230,7 @@ async def main():
         permissions=PermissionSet(grants={"process.execute"}),
     )
     with execution_context(scope=scope):
-        result = await BashTool().acall("pwd", environment=environment)
+        result = await BashTool().acall("pwd")
         print(result)
 
 
@@ -2253,8 +2351,13 @@ rejected before execution. Their UI labels are `Read` and `Bash`.
 ### Reading a window and configuring the working directory
 
 ```python
-reader = ReadFileTool(cwd="/project")
-shell = BashTool(cwd="/project")
+from msgflux import AgentWorkspace
+
+scope = scope.with_overrides(
+    workspace=AgentWorkspace.from_environment(scope.environment, cwd="/project")
+)
+reader = ReadFileTool()
+shell = BashTool()
 tools = ToolLibrary("workspace_tools", [reader, shell])
 
 with execution_context(scope=scope):
@@ -2280,13 +2383,13 @@ positions and slices only the requested window. It does not split or decode the
 whole file, but does not promise bounded backend I/O for legacy implementations.
 Backends must enforce storage quotas and coherent reads as appropriate.
 
-`cwd` is constructor configuration, never a model argument or the host process's
-working directory. Relative read paths are resolved under it; absolute virtual
+`cwd` belongs to `AgentWorkspace`, never a tool constructor, model argument or the
+host process's working directory. Relative read paths are resolved under it; absolute virtual
 paths remain allowed when authorized. Traversal (`..`) is still rejected. This
 cwd is not a security root: permissions and the sandbox define accessible paths.
 When changing constructor configuration for an approval-protected tool, update
 its host-owned implementation revision. A generic Agent resource container is
-not introduced; live resources still come from `ExecutionScope.environment`.
+not introduced; tools receive their live workspace through `ExecutionScope.workspace`.
 
 `BashTool` is exposed as `bash(command, timeout_ms=None)` through function calling.
 Output budgets are internal execution controls, not model arguments. It requests
@@ -2905,7 +3008,7 @@ async with await backend.open("project") as binding:
         ),
     )
     with execution_context(scope=scope):
-        result = await BashTool().acall("printf 'hello'", environment=environment)
+        result = await BashTool().acall("printf 'hello'")
 ```
 
 This runs an actual process in an ephemeral container and returns the same

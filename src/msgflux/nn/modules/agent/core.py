@@ -57,6 +57,7 @@ from msgflux.runtime.context import (
     execution_context,
 )
 from msgflux.runtime.skills import SkillsConfig
+from msgflux.runtime.workspace_api import AgentWorkspace
 
 if TYPE_CHECKING:
     from msgflux.data.stores import CheckpointStore
@@ -145,6 +146,7 @@ class Agent(
         checkpoint_store: Optional["CheckpointStore"] = None,
         agent_inbox: Optional[AgentInbox] = None,
         approvals: Optional[AgentApprovals] = None,
+        workspace: Optional[AgentWorkspace] = None,
     ):
         """Initialize the Agent module.
 
@@ -290,6 +292,9 @@ class Agent(
             Store used to persist and resume agent execution snapshots. A store
             configured directly on the agent takes precedence over one inherited
             from `execution_context(...)`.
+        workspace:
+            Default live workspace for tool dependency injection. A workspace
+            supplied through ExecutionScope overrides this default.
         approvals:
             Optional host-owned AgentApprovals policy for foreground tool calls.
             Requires atomic checkpoints and an explicit live principal. Pending
@@ -342,6 +347,9 @@ class Agent(
         if approvals is not None and not isinstance(approvals, AgentApprovals):
             raise TypeError("approvals must be AgentApprovals or None")
         self.approvals = approvals
+        if workspace is not None and not isinstance(workspace, AgentWorkspace):
+            raise TypeError("workspace must be AgentWorkspace or None")
+        self.workspace = workspace
         if agent_inbox is None:
             self.agent_inbox = AgentInbox(
                 verbose=config.get("verbose", False) if config else False,
@@ -524,6 +532,7 @@ class Agent(
         """
         approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
+        kwargs["scope"] = requested_scope
         resumed = self._try_resume_from_checkpoint(
             kwargs.get("messages"),
             scope=requested_scope,
@@ -604,6 +613,7 @@ class Agent(
         """Async version of forward."""
         approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
+        kwargs["scope"] = requested_scope
         resumed = await self._atry_resume_from_checkpoint(
             kwargs.get("messages"),
             scope=requested_scope,

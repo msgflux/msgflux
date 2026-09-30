@@ -9,8 +9,10 @@ from msgflux.runtime import (
     InMemoryWorkspace,
     LocalWorkspace,
     PermissionSet,
+    AgentWorkspace,
     WorkspaceConflictError,
     execution_context,
+    get_execution_scope,
 )
 from msgflux.tools.builtin import DeleteTool
 from msgflux.tools.workspace_changes import workspace_change_execution
@@ -52,18 +54,20 @@ def scope(workspace, *, delete=True):
 @pytest.mark.parametrize("asynchronous", [False, True])
 async def test_delete_is_backend_neutral(workspace, asynchronous):
     fs, _ = workspace
-    tool = DeleteTool(cwd="/dir")
+    tool = DeleteTool()
     definition = ToolLibrary("files", [tool]).get_tool_definition("delete")
     assert set(definition.input_schema["properties"]) == {"path"}
-    with execution_context(scope=scope(workspace)):
-        preview = tool.prepare_workspace_change({"path": "a"}, fs)
+    selected = scope(workspace)
+    selected = selected.with_overrides(
+        workspace=AgentWorkspace.from_environment(selected.environment, cwd="/dir")
+    )
+    with execution_context(scope=selected):
+        preview = tool.prepare_workspace_change(
+            {"path": "a"}, get_execution_scope().workspace
+        )
         assert preview.after is None and "-old" in preview.diff
         assert fs.read_text("/dir/a") == "old\n"
-        result = (
-            await tool.acall("a", filesystem=fs)
-            if asynchronous
-            else tool("a", filesystem=fs)
-        )
+        result = await tool.acall("a") if asynchronous else tool("a")
         assert result == {"status": "completed"}
         with pytest.raises(FileNotFoundError):
             fs.read_text("/dir/a")
@@ -74,14 +78,16 @@ def test_delete_denied_and_stale_proposals_leave_file_intact(workspace):
     tool = DeleteTool()
     with execution_context(scope=scope(workspace, delete=False)):
         with pytest.raises(PermissionError):
-            tool("/dir/a", filesystem=fs)
+            tool("/dir/a")
         assert fs.read_text("/dir/a") == "old\n"
     with execution_context(scope=scope(workspace)):
-        preview = tool.prepare_workspace_change({"path": "/dir/a"}, fs)
+        preview = tool.prepare_workspace_change(
+            {"path": "/dir/a"}, get_execution_scope().workspace
+        )
         fs.write_text("/dir/a", "concurrent")
         with workspace_change_execution(tool, preview):
             with pytest.raises(WorkspaceConflictError):
-                tool("/dir/a", filesystem=fs)
+                tool("/dir/a")
         assert fs.read_text("/dir/a") == "concurrent"
 
 
@@ -90,9 +96,9 @@ def test_delete_rejects_directories_binary_and_traversal(workspace):
     tool = DeleteTool()
     with execution_context(scope=scope(workspace)):
         with pytest.raises((IsADirectoryError, PermissionError)):
-            tool("/dir", filesystem=fs)
+            tool("/dir")
         with pytest.raises(UnicodeDecodeError):
-            tool("/dir/binary", filesystem=fs)
+            tool("/dir/binary")
         with pytest.raises(ValueError):
-            tool("/dir/../a", filesystem=fs)
+            tool("/dir/../a")
         assert fs.read_bytes("/dir/binary") == b"\xff"

@@ -41,28 +41,34 @@ The tool call publishes a progress message before the Agent's final answer;
 ## Workspace tools
 
 `ReadFileTool`, `WriteTool`, `EditTool`, `DeleteTool` and `ApplyPatchTool`
-operate through the live workspace binding, not directly on host paths.
+operate through an injected `AgentWorkspace` with shared file and command paths.
+For a local project, pass `workspace=AgentWorkspace.local(".")` to the Agent; no
+context manager is required. See the [workspace API](../runtime.md#workspace)
+for configuration, custom tools and read-only scopes.
 `DeleteTool` removes one UTF-8 file or one empty directory and uses the same
 review and approval mechanism as write/edit. It does not implement recursive
 `rm`, follow symlinks or remove the workspace root. A directory review records
 its identity and requires it to remain the same empty directory at execution.
 
 ```python
+from msgflux import AgentWorkspace
 from msgflux.tools.builtin import DeleteTool, EditTool, ReadFileTool, WriteTool
 
-tools = [ReadFileTool(cwd="/project"), WriteTool(cwd="/project"),
-         EditTool(cwd="/project"), DeleteTool(cwd="/project")]
+workspace = AgentWorkspace.local(".")
+tools = [ReadFileTool(), WriteTool(),
+         EditTool(), DeleteTool()]
 ```
 
-This creates tools whose relative paths start at virtual `/project`. Pass them
-to an Agent with an execution environment and exact resource grants. Configure
+Pass these tools and `workspace=workspace` to an Agent. Relative paths start
+at the workspace cwd, initially virtual `/` for the local factory. To select
+another directory, use `workspace.with_cwd("src")`. Configure
 `AgentApprovals` when changes require user confirmation; a standalone tool call
 does not create a confirmation UI. See the
 [runtime guide](../runtime.md#write-edit-and-delete-tools-with-agent-previews)
 for configuration, review previews and checkpoint recovery.
 
-For example, a model call `delete(path="build-empty")` with `cwd="/project"`
-removes virtual `/project/build-empty` only if it is empty. Grant
+For example, a model call `delete(path="build-empty")` from workspace cwd `/`
+removes virtual `/build-empty` only if it is empty. Grant
 `filesystem.list` and `filesystem.delete` on that directory; no file-read grant
 is needed. If content appears after approval, deletion fails and the content is
 preserved. A local backend uses cooperative comparison, not a transaction
@@ -78,16 +84,17 @@ backends, without invoking shell commands:
 from msgflux.tools.builtin import GlobTool, GrepTool, LsTool
 
 tools = [
-    LsTool(cwd="/project", max_entries=10_000),
-    GlobTool(cwd="/project", max_results=1_000),
-    GrepTool(cwd="/project", max_results=100, max_file_bytes=1_000_000),
+    LsTool(max_entries=10_000),
+    GlobTool(max_results=1_000),
+    GrepTool(max_results=100, max_file_bytes=1_000_000),
 ]
 ```
 
 This configures host-side limits without adding budget parameters to every model
 call. The model sees `ls(path)`, `glob(pattern, path)` and `grep(pattern, path)`.
-`path` defaults to `.` and identifies a directory; `cwd` is a virtual path, not
-a host path and not a security boundary.
+`path` defaults to `.` and identifies a directory relative to the workspace
+cwd. Configure that cwd on the workspace; the tools have no independent cwd.
+The virtual cwd is not a security boundary.
 
 `ls` returns `{"path": ..., "entries": [{"name": ..., "kind": ...}]}` for one
 directory. `glob` returns `{"matches": [{"path": ..., "kind": ...}],

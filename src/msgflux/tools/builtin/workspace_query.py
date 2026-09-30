@@ -12,8 +12,8 @@ from typing import Any
 
 import msgspec
 
-from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
-from msgflux.tools.builtin.workspace import _tool_path
+from msgflux.runtime import AgentWorkspace
+from msgflux.runtime.workspace_api import resolve_workspace
 from msgflux.tools.config import tool_config
 from msgflux.tools.types import Hidden
 
@@ -31,9 +31,9 @@ class _IgnoreRule(msgspec.Struct, frozen=True, kw_only=True):
     spec: Any
 
 
-def _load_ignore(filesystem: WorkspaceFilesystem, directory: str) -> _IgnoreRule | None:
+def _load_ignore(workspace: AgentWorkspace, directory: str) -> _IgnoreRule | None:
     try:
-        prefix = filesystem.read_prefix(
+        prefix = workspace.read_prefix(
             f"{directory.rstrip('/')}/.gitignore", max_bytes=_IGNORE_LIMIT + 1
         )
     except FileNotFoundError:
@@ -63,7 +63,7 @@ def _ignored(path: str, rules: tuple[_IgnoreRule, ...], *, directory: bool) -> b
 
 
 def _walk(  # noqa: C901
-    filesystem: WorkspaceFilesystem,
+    workspace: AgentWorkspace,
     root: str,
     *,
     max_depth: int,
@@ -82,12 +82,12 @@ def _walk(  # noqa: C901
         if deadline is not None and time.monotonic() > deadline:
             raise TimeoutError("workspace traversal exceeded its time limit")
         local_rules = rules
-        entries = filesystem.scandir(directory, max_entries=max(1, max_nodes - seen))
+        entries = workspace.scandir(directory, max_entries=max(1, max_nodes - seen))
         ignore_entries = [item for item in entries if item.name == ".gitignore"]
         if ignore_entries:
             if ignore_entries[0].kind != "file":
                 raise PermissionError("Workspace .gitignore is not a regular file")
-            rule = _load_ignore(filesystem, directory)
+            rule = _load_ignore(workspace, directory)
             if rule is not None:
                 local_rules = (*rules, rule)
         for entry in entries:
@@ -151,13 +151,11 @@ class _WorkspaceQuery:
     def __init__(
         self,
         *,
-        cwd: str,
         max_depth: int,
         max_nodes: int,
         max_results: int,
         max_seconds: float = 5.0,
     ):
-        self.cwd = workspace_path(cwd)
         if type(max_depth) is not int or max_depth < 0:
             raise ValueError("max_depth must be a non-negative integer")
         _positive(max_nodes, "max_nodes")
@@ -174,7 +172,7 @@ class _WorkspaceQuery:
         self.max_seconds = float(max_seconds)
 
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
+@tool_config(runtime_inputs=["workspace"], retry=False)
 class LsTool(_WorkspaceQuery):
     """List one authorized directory without exposing host paths.
 
@@ -186,24 +184,34 @@ class LsTool(_WorkspaceQuery):
     display_name = "List"
     annotations = {"path": str, "return": dict[str, Any]}
 
-    def __init__(self, *, cwd: str = "/", max_entries: int = 10_000):
-        self.cwd = workspace_path(cwd)
+    def __init__(self, *, max_entries: int = 10_000):
         _positive(max_entries, "max_entries")
         self.max_entries = max_entries
 
-    def __call__(self, path: str = ".", *, filesystem: Hidden[WorkspaceFilesystem]):
-        target = _tool_path(path, self.cwd)
-        entries = filesystem.scandir(target, max_entries=self.max_entries)
+    def __call__(
+        self,
+        path: str = ".",
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
+    ):
+        selected = resolve_workspace(workspace)
+        target = selected.resolve(path)
+        entries = selected.scandir(target, max_entries=self.max_entries)
         return {
             "path": target,
             "entries": [{"name": item.name, "kind": item.kind} for item in entries],
         }
 
-    async def acall(self, path: str = ".", *, filesystem: Hidden[WorkspaceFilesystem]):
-        return await asyncio.to_thread(self, path, filesystem=filesystem)
+    async def acall(
+        self,
+        path: str = ".",
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
+    ):
+        return await asyncio.to_thread(self, path, workspace=workspace)
 
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
+@tool_config(runtime_inputs=["workspace"], retry=False)
 class GlobTool(_WorkspaceQuery):
     """Find bounded virtual paths using shell-independent glob matching.
 
@@ -219,14 +227,12 @@ class GlobTool(_WorkspaceQuery):
     def __init__(
         self,
         *,
-        cwd: str = "/",
         max_depth: int = 32,
         max_nodes: int = 10_000,
         max_results: int = 1_000,
         max_seconds: float = 5.0,
     ):
         super().__init__(
-            cwd=cwd,
             max_depth=max_depth,
             max_nodes=max_nodes,
             max_results=max_results,
@@ -238,7 +244,7 @@ class GlobTool(_WorkspaceQuery):
         pattern: str,
         path: str = ".",
         *,
-        filesystem: Hidden[WorkspaceFilesystem],
+        workspace: Hidden[AgentWorkspace] = None,
     ):
         if (
             not isinstance(pattern, str)
@@ -249,11 +255,12 @@ class GlobTool(_WorkspaceQuery):
             or pattern.count("/") > 256
         ):
             raise ValueError("pattern exceeds bounded complexity")
-        root = _tool_path(path, self.cwd)
+        selected = resolve_workspace(workspace)
+        root = selected.resolve(path)
         matches = []
         deadline = time.monotonic() + self.max_seconds
         for candidate, entry in _walk(
-            filesystem,
+            selected,
             root,
             max_depth=self.max_depth,
             max_nodes=self.max_nodes,
@@ -270,11 +277,11 @@ class GlobTool(_WorkspaceQuery):
                     return {"matches": matches, "truncated": True}
         return {"matches": matches, "truncated": False}
 
-    async def acall(self, pattern, path=".", *, filesystem):
-        return await asyncio.to_thread(self, pattern, path, filesystem=filesystem)
+    async def acall(self, pattern, path=".", *, workspace=None):
+        return await asyncio.to_thread(self, pattern, path, workspace=workspace)
 
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
+@tool_config(runtime_inputs=["workspace"], retry=False)
 class GrepTool(_WorkspaceQuery):
     """Search bounded UTF-8 workspace files with a timed regex engine.
 
@@ -290,7 +297,6 @@ class GrepTool(_WorkspaceQuery):
     def __init__(
         self,
         *,
-        cwd: str = "/",
         max_depth: int = 32,
         max_nodes: int = 10_000,
         max_results: int = 1_000,
@@ -299,7 +305,6 @@ class GrepTool(_WorkspaceQuery):
         max_seconds: float = 5.0,
     ):
         super().__init__(
-            cwd=cwd,
             max_depth=max_depth,
             max_nodes=max_nodes,
             max_results=max_results,
@@ -315,7 +320,7 @@ class GrepTool(_WorkspaceQuery):
         pattern: str,
         path: str = ".",
         *,
-        filesystem: Hidden[WorkspaceFilesystem],
+        workspace: Hidden[AgentWorkspace] = None,
     ):
         if not isinstance(pattern, str) or "\x00" in pattern or len(pattern) > 4096:
             raise ValueError("pattern exceeds bounded complexity")
@@ -329,7 +334,8 @@ class GrepTool(_WorkspaceQuery):
             compiled = regex.compile(pattern)
         except Exception as exc:
             raise ValueError("Invalid grep pattern") from exc
-        root = _tool_path(path, self.cwd)
+        selected = resolve_workspace(workspace)
+        root = selected.resolve(path)
         matches, skipped = [], []
         output_bytes = 0
 
@@ -344,7 +350,7 @@ class GrepTool(_WorkspaceQuery):
 
         deadline = time.monotonic() + self.max_seconds
         for candidate, entry in _walk(
-            filesystem,
+            selected,
             root,
             max_depth=self.max_depth,
             max_nodes=self.max_nodes,
@@ -354,7 +360,7 @@ class GrepTool(_WorkspaceQuery):
                 raise TimeoutError("grep exceeded its time limit")
             if entry.kind != "file":
                 continue
-            data = filesystem.read_prefix(candidate, max_bytes=self.max_file_bytes + 1)
+            data = selected.read_prefix(candidate, max_bytes=self.max_file_bytes + 1)
             reason = None
             if len(data) > self.max_file_bytes:
                 reason = "oversized"
@@ -398,8 +404,8 @@ class GrepTool(_WorkspaceQuery):
                         }
         return {"matches": matches, "skipped": skipped, "truncated": False}
 
-    async def acall(self, pattern, path=".", *, filesystem):
-        return await asyncio.to_thread(self, pattern, path, filesystem=filesystem)
+    async def acall(self, pattern, path=".", *, workspace=None):
+        return await asyncio.to_thread(self, pattern, path, workspace=workspace)
 
 
 __all__ = ["GlobTool", "GrepTool", "LsTool"]

@@ -359,7 +359,6 @@ async def test_batch_limits_and_timeout_do_not_escape_environment():
         result = await BashTool().acall(
             ["first", "second"],
             timeout_ms=999999,
-            environment=environment,
         )
     assert result.results[0].status == "timed_out"
     assert result.results[1].returncode == 3
