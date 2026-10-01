@@ -162,6 +162,17 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             self._conn.commit()
             return bool(updated)
 
+    def release_worker(self, task_id: str, owner_id: str) -> bool:
+        with self._lock:
+            now = self._clock()
+            updated = self._conn.execute(
+                "UPDATE task_worker_leases SET expires_at = MIN(expires_at, ?) "
+                "WHERE task_id = ? AND owner_id = ?",
+                (now - 1, task_id, owner_id),
+            ).rowcount
+            self._conn.commit()
+            return bool(updated)
+
     @staticmethod
     def _serialize(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, default=str)

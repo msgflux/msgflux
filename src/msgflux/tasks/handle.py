@@ -63,6 +63,7 @@ class TaskHandle:
         if lease is None:
             raise TaskLeaseLostError(self.task_id)
         self._owner_id = owner_id
+        self._lease_lost = False
         record = self._store.get(self.task_id)
         if record is None:
             raise TaskLeaseLostError(self.task_id)
@@ -78,6 +79,15 @@ class TaskHandle:
         if not renewed:
             self._lease_lost = True
         return renewed
+
+    def release_worker(self) -> bool:
+        """Release this owner's lease while leaving the task recoverable."""
+        if self._owner_id is None:
+            return False
+        released = self._store.release_worker(self.task_id, self._owner_id)
+        if released:
+            self._lease_lost = True
+        return released
 
     def _owned_record(self, record: TaskRecord | None) -> TaskRecord | None:
         if self._owner_id is not None and record is None:

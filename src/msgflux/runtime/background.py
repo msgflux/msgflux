@@ -20,6 +20,7 @@ from msgflux.runtime.context import (
     ExecutionScope,
     execution_context,
     get_execution_context,
+    get_execution_scope,
     new_run_id,
     new_thread_id,
 )
@@ -33,6 +34,10 @@ from msgflux.runtime.events import (
 )
 from msgflux.runtime.permissions import require_permissions
 from msgflux.runtime.task_leases import TaskLeaseHeartbeats
+from msgflux.runtime.workspace.references import (
+    encode_workspace_reference,
+    validate_workspace_reference,
+)
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
 from msgflux.tools.builtin.task_tool import (
     build_background_dispatch_result,
@@ -128,6 +133,31 @@ class BackgroundTaskDispatcher:
             return configured
         return get_execution_context().get("checkpoint_store")
 
+    def _task_agent(self, *, tool: Any, resume_params: Mapping[str, Any]) -> Any:
+        """Resolve the Agent whose workspace/checkpoint behavior a bucket targets."""
+        impl = getattr(tool, "impl", None)
+        if isinstance(impl, ToolBucket):
+            child_param = getattr(impl, "task_checkpoint_namespace_param", None)
+            child_name = resume_params.get(child_param) if child_param else None
+            if isinstance(child_name, str):
+                child = self.library_handle.get_tool_definition(child_name).executor
+                impl = getattr(child, "impl", None)
+        return impl
+
+    def validate_task_workspace(
+        self, task: Any, *, tool: Any, resume_params: Mapping[str, Any]
+    ) -> Any:
+        """Validate a durable task workspace reference against the host binding."""
+        agent = self._task_agent(tool=tool, resume_params=resume_params)
+        scope = get_execution_scope()
+        # Agent lifecycle gives an inherited live workspace precedence over its
+        # configured default. Keep that rule here without invoking Agent code.
+        workspace = scope.workspace or getattr(agent, "workspace", None)
+        validate_workspace_reference(
+            task.metadata.get("workspace_reference"), workspace
+        )
+        return workspace
+
     @staticmethod
     def _validate_checkpoint_binding(task: Any, store: Any | None) -> None:
         expected = task.metadata.get("checkpoint_store_id")
@@ -146,8 +176,8 @@ class BackgroundTaskDispatcher:
         thread_id: str,
         run_id: str,
     ) -> Mapping[str, Any] | None:
-        if task.status != "running":
-            raise RuntimeError(f"Task `{task.task_id}` is not running.")
+        if task.status not in {"queued", "running"}:
+            raise RuntimeError(f"Task `{task.task_id}` is not queued or running.")
         checkpoint = (
             checkpoint_store.load_state(namespace, thread_id, run_id)
             if checkpoint_store is not None
@@ -161,6 +191,53 @@ class BackgroundTaskDispatcher:
                 "to recover."
             )
         return checkpoint
+
+    @staticmethod
+    def _verify_claimed_checkpoint(
+        task: Any, before: Mapping[str, Any] | None, after: Mapping[str, Any] | None
+    ) -> None:
+        if before is None or after is None:
+            if before is not after:
+                raise RuntimeError(
+                    f"Task `{task.task_id}` checkpoint changed during recovery."
+                )
+        else:
+            before_revision = before.get("_checkpoint", {}).get("revision")
+            after_revision = after.get("_checkpoint", {}).get("revision")
+            if (
+                type(before_revision) is not int
+                or type(after_revision) is not int
+                or before_revision != after_revision
+                or before.get("status") != after.get("status")
+            ):
+                raise RuntimeError(
+                    f"Task `{task.task_id}` checkpoint changed during recovery."
+                )
+        if after is not None:
+            pending = (
+                after.get("runtime", {}).get("extensions", {}).get("pending_approvals")
+            )
+            if pending is not None:
+                if (
+                    not isinstance(pending, Mapping)
+                    or pending.get("schema_version") != 1
+                ):
+                    raise RuntimeError(
+                        f"Task `{task.task_id}` has an approval batch requiring "
+                        "host reconciliation before recovery."
+                    )
+                phase = pending.get("phase")
+                if phase is None:
+                    phase = "awaiting_decision"
+                if phase not in {
+                    "awaiting_decision",
+                    "awaiting-decision",
+                    "approved",
+                }:
+                    raise RuntimeError(
+                        f"Task `{task.task_id}` has an approval batch requiring "
+                        "host reconciliation before recovery."
+                    )
 
     @staticmethod
     def _durable_initial_params(visible_params: Mapping[str, Any]) -> dict | None:
@@ -282,7 +359,13 @@ class BackgroundTaskDispatcher:
         message: str,
         recover_expired: bool = False,
         reconcile_terminal: bool = False,
+        worker_stopped: bool = False,
     ) -> str:
+        if recover_expired and not reconcile_terminal and worker_stopped is not True:
+            raise RuntimeError(
+                "Confirm that the previous worker has stopped before recovering "
+                "this task."
+            )
         task_store = self.library_handle.get_task_store()
         tool_name = task.tool_name
         tool = self.library_handle.get_tool(tool_name)
@@ -303,6 +386,9 @@ class BackgroundTaskDispatcher:
             resume_params=task.metadata.get("task_resume_params") or {},
         )
         self._validate_checkpoint_binding(task, checkpoint_store)
+        selected_workspace = self.validate_task_workspace(
+            task, tool=tool, resume_params=task.metadata.get("task_resume_params") or {}
+        )
         thread_id = task.metadata.get("checkpoint_thread_id")
         if not isinstance(thread_id, str) or not thread_id:
             thread_id = new_thread_id()
@@ -373,6 +459,14 @@ class BackgroundTaskDispatcher:
                 lease_seconds=self.lease_seconds,
                 recover_expired=True,
             )
+            try:
+                latest = checkpoint_store.load_state(
+                    checkpoint_namespace, thread_id, run_id
+                )
+                self._verify_claimed_checkpoint(task, checkpoint, latest)
+            except BaseException:
+                task_handle.release_worker()
+                raise
             emit_event(
                 EventType.TASK_START,
                 {
@@ -391,6 +485,14 @@ class BackgroundTaskDispatcher:
             )
             return "Completed background agent result reconciled from checkpoint."
         execution_scope = {
+            "scope": ExecutionScope(
+                thread_id=thread_id,
+                namespace=checkpoint_namespace,
+                run_id=run_id,
+                parent_run_id=task.metadata.get("parent_run_id"),
+                root_run_id=task.metadata.get("root_run_id"),
+                workspace=selected_workspace,
+            ),
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
             else None,
@@ -418,6 +520,7 @@ class BackgroundTaskDispatcher:
                 run_id=run_id,
                 parent_run_id=task.metadata.get("parent_run_id"),
                 root_run_id=task.metadata.get("root_run_id"),
+                workspace=selected_workspace,
             ),
         }
         if recover_expired and checkpoint is None:
@@ -437,6 +540,21 @@ class BackgroundTaskDispatcher:
                 lease_seconds=self.lease_seconds,
                 recover_expired=True,
             )
+            try:
+                self.validate_task_workspace(
+                    task,
+                    tool=tool,
+                    resume_params=task.metadata.get("task_resume_params") or {},
+                )
+                latest = (
+                    checkpoint_store.load_state(checkpoint_namespace, thread_id, run_id)
+                    if checkpoint_store is not None
+                    else None
+                )
+                self._verify_claimed_checkpoint(task, checkpoint, latest)
+            except BaseException:
+                task_handle.release_worker()
+                raise
             emit_event(
                 EventType.TASK_START,
                 {
@@ -550,6 +668,10 @@ class BackgroundTaskDispatcher:
             tool=tool,
             resume_params=task_resume_params,
         )
+        target_agent = self._task_agent(tool=tool, resume_params=task_resume_params)
+        selected_workspace = context.get("workspace") or getattr(
+            target_agent, "workspace", None
+        )
         root_agent_inbox = context.get("agent_inbox")
         if root_agent_inbox is None:
             root_agent_inbox = self.library_handle.get_agent_inbox()
@@ -563,6 +685,11 @@ class BackgroundTaskDispatcher:
             "checkpoint_store_id": (
                 checkpoint_store.routing_id
                 if is_agent_task and checkpoint_store is not None
+                else None
+            ),
+            "workspace_reference": (
+                encode_workspace_reference(selected_workspace)
+                if is_agent_task
                 else None
             ),
             "task_resume_params": task_resume_params,
@@ -624,6 +751,7 @@ class BackgroundTaskDispatcher:
                     if isinstance(root_run_id, str) and root_run_id
                     else task.task_id
                 ),
+                workspace=selected_workspace,
             )
         runner_params["tool_call_id"] = tool_id
         activity_recorder = TaskActivityRecorder(task.task_id, task_store)
@@ -634,6 +762,22 @@ class BackgroundTaskDispatcher:
             agent_inbox=root_agent_inbox,
         )
         execution_scope = {
+            "scope": ExecutionScope(
+                thread_id=thread_id,
+                namespace=checkpoint_namespace,
+                run_id=task.task_id,
+                parent_run_id=(
+                    parent_run_id
+                    if isinstance(parent_run_id, str) and parent_run_id
+                    else None
+                ),
+                root_run_id=(
+                    root_run_id
+                    if isinstance(root_run_id, str) and root_run_id
+                    else None
+                ),
+                workspace=selected_workspace,
+            ),
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
             else None,

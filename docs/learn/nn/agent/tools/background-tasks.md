@@ -311,12 +311,17 @@ with mf.execution_context(
     task_store=task_store, checkpoint_store=checkpoint_store
 ):
     result = agent.tool_library.recover_agent_task(
-        "ab12cd34", message="Continue the interrupted investigation."
+        "ab12cd34",
+        message="Continue the interrupted investigation.",
+        worker_stopped=True,
     )
 ```
 
-The call schedules the replacement worker and returns immediately. It only
-accepts an agent task whose prior worker lease has expired. When a checkpoint
+Before asserting `worker_stopped=True`, establish that the previous worker and
+its commands have stopped and inspect uncertain external effects. Lease expiry
+alone does not establish that condition. The call schedules the replacement
+worker and returns immediately. It only accepts an agent task whose prior worker
+lease has expired. When a checkpoint
 exists, the worker continues that run. If the process fell before the first
 checkpoint, msgFlux replays the JSON-serializable initial tool input saved at
 dispatch and queues the recovery message for the agent inbox. A live worker,
@@ -351,10 +356,73 @@ transformation made only by `after_run_end` is not guaranteed to survive a
 crash in this window. Reconciliation does not provide exactly-once delivery
 of external effects.
 
+### Inspecting and coordinating recovery
+
+For an application restart, reconnect the workspace and reconstruct the same
+Agent, tool library, and persistent task/inbox/checkpoint bindings first. The
+host coordinator inspects these dependencies without dispatching work:
+
+```python
+from msgflux.runtime import AgentTaskRecovery
+
+recovery = AgentTaskRecovery(agent.tool_library, workspace=reconnected_workspace)
+report = recovery.inspect("ab12cd34")
+print(report.classification, report.reasons)
+```
+
+The immutable `TaskRecoveryReport` uses `msgspec.Struct` and includes task,
+checkpoint, lease, workspace, inbox and permission status. It describes a
+snapshot, not a reservation. Neither inspection nor stored references authorize
+work or reconstruct credentials and grants.
+
+| Classification | Meaning |
+| --- | --- |
+| `completed` | The task result is already committed. |
+| `terminal_result` | A completed Agent checkpoint contains a result that can be copied to the task store without another model call. |
+| `active` | A valid worker lease exists; recovery cannot take it over. |
+| `recoverable` | An expired worker has compatible dependencies and durable input/checkpoint state. Confirm quiescence before resuming. |
+| `uncertain` | Pending execution needs explicit host reconciliation before resume. |
+| `blocked` | A dependency, route, grant or recoverable state is missing or incompatible. Inspect `reasons`. |
+
+When a terminal result is available, reconcile it through the same coordinator:
+
+```python
+if report.classification == "terminal_result":
+    recovery.recover("ab12cd34", message="")
+```
+
+For a resumable task, first establish that the old worker stopped and resolve any
+uncertain effects; then explicitly attest that condition:
+
+```python
+if report.classification == "recoverable":
+    # Application code has verified the old worker and commands are stopped.
+    recovery.recover(
+        "ab12cd34",
+        message="Continue the interrupted investigation.",
+        worker_stopped=True,
+    )
+```
+
+These calls require no user context manager. The coordinator re-inspects before
+acting, and the dispatcher claims through the existing task store and rereads
+the checkpoint after claiming. If the checkpoint changed, it refuses dispatch
+and expires only its own lease, retaining the ownership marker for a later
+attempt. Old owners cannot publish a task result under a new lease. Store
+fencing does not stop arbitrary operating-system effects of a surviving command.
+
+An executing approval batch remains uncertain until the host uses the Agent's
+approval reconciliation API. A batch waiting for a decision can retain its
+reviewed request and pause safely until approval. Restored workspace identity
+and cwd must match, and current permissions, tool and policy versions are still
+validated when execution resumes.
+
 Custom task stores can implement the structural `TaskStoreProtocol` from
 `msgflux.tasks`. In addition to lifecycle, activity, messages, and conditional
-`requeue`, the contract includes atomic `claim_worker` and `renew_worker`
-operations with owner-checked status updates. The shared
+`requeue`, the contract includes atomic `claim_worker`, `renew_worker` and
+owner-conditional `release_worker` operations with owner-checked status updates.
+`release_worker` expires the lease while retaining its owner marker; it does not
+remove the fence or change task status. The shared
 conformance tests cover these semantics for memory and SQLite providers.
 
 The SQLite inbox and checkpoint stores persist their `routing_id` in their

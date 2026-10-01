@@ -10,6 +10,7 @@ import time
 import pytest
 
 from msgflux.runtime.task_leases import TaskLeaseHeartbeats
+from msgflux.exceptions import TaskLeaseLostError
 from msgflux.tasks import (
     InMemoryTaskStore,
     SQLiteTaskStore,
@@ -139,6 +140,42 @@ def test_task_store_contract_worker_lease_and_fencing(task_store):
         task_store.complete("task-1", "current", owner_id="owner-b").result == "current"
     )
     assert task_store.get_worker_lease("task-1") is None
+
+
+def test_task_store_contract_release_worker_is_owner_conditional(task_store):
+    current_time = [100.0]
+    task_store._clock = lambda: current_time[0]
+    task_store.create("worker", task_id="task-1")
+    assert task_store.claim_worker("task-1", "owner-a", lease_seconds=5)
+
+    current_time[0] = 106.0
+    assert task_store.claim_worker(
+        "task-1", "owner-b", lease_seconds=30, recover_expired=True
+    )
+    assert not task_store.release_worker("task-1", "owner-a")
+    assert task_store.get_worker_lease("task-1").owner_id == "owner-b"
+    assert task_store.release_worker("task-1", "owner-b")
+    released = task_store.get_worker_lease("task-1")
+    assert released is not None
+    assert released.owner_id == "owner-b"
+    assert released.expires_at <= current_time[0]
+    assert task_store.get("task-1").status == "running"
+
+
+def test_released_task_handle_is_fenced_and_task_remains_reclaimable(task_store):
+    current_time = [100.0]
+    task_store._clock = lambda: current_time[0]
+    task_store.create("worker", task_id="task-1")
+    old_handle = TaskHandle("task-1", task_store)
+    old_handle.start_worker(lease_seconds=30)
+    assert old_handle.release_worker()
+
+    with pytest.raises(TaskLeaseLostError):
+        old_handle.complete("stale")
+
+    replacement = TaskHandle("task-1", task_store)
+    replacement.start_worker(lease_seconds=30, recover_expired=True)
+    assert replacement.complete("recovered").result == "recovered"
 
 
 def test_sqlite_worker_lease_claims_are_shared_across_instances(tmp_path):

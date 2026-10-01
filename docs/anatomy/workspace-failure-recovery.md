@@ -89,6 +89,13 @@ prove the old worker stopped. Reconnect files, establish quiescence, inspect
 committed state and actual effects, then use explicit recovery/reconciliation.
 There is no implicit command replay, automatic reaper or exactly-once guarantee.
 
-The next stages in the workspace reconnection plan compose these primitives into
-host recovery and add command receipts/orphan reconciliation. They are separate
-from persistent resource reconnection.
+The host-facing `AgentTaskRecovery` coordinator now inspects existing stores
+without dispatching tools, validates restored workspace and inbox dependencies,
+and recovers queued or expired-owner tasks with explicit worker quiescence.
+After claiming, recovery checks the checkpoint revision again. Terminal
+checkpoints reconcile without another model call; uncertain approvals require
+host reconciliation. Refused recovery expires its own lease while preserving
+the ownership fence. See the [background task examples](../learn/nn/agent/tools/background-tasks.md).
+
+Command receipts and orphan reconciliation remain the next stage. Workspace
+reconnection and task recovery alone cannot establish a command outcome.
