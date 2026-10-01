@@ -109,10 +109,7 @@ class AgentWorkspace:
         The workspace keeps only the binding returned by this one open. Cwd
         views share its environment, while ``from_environment`` stays borrowed.
         """
-        from msgflux.runtime.workspace.backend import (  # noqa: PLC0415
-            WorkspaceBackend,
-            WorkspaceBinding,
-        )
+        from msgflux.runtime.workspace.backend import WorkspaceBackend  # noqa: PLC0415
 
         if not isinstance(backend, WorkspaceBackend):
             raise TypeError("backend must be a WorkspaceBackend")
@@ -122,9 +119,82 @@ class AgentWorkspace:
             raise TypeError("permissions must be a PermissionSet or None")
 
         binding = await backend.open(workspace_id, abort_signal=abort_signal)
+        return await cls._from_binding(
+            binding,
+            cwd=cwd,
+            permissions=permissions,
+            requirements=requirements,
+            write_guarantee=write_guarantee,
+            max_edit_bytes=max_edit_bytes,
+            expected_workspace_id=workspace_id,
+            validate_cwd=False,
+        )
+
+    @classmethod
+    async def reconnect(
+        cls,
+        backend,
+        workspace_id: str,
+        identity: WorkspaceIdentity,
+        *,
+        permissions: PermissionSet | None = None,
+        cwd: str = "/",
+        requirements: SandboxRequirements | None = None,
+        write_guarantee="atomic_compare",
+        max_edit_bytes: int = 1_000_000,
+        abort_signal: AbortSignal | None = None,
+    ) -> AgentWorkspace:
+        """Reconnect to an existing resource with freshly supplied authority."""
+        from msgflux.runtime.workspace.backend import WorkspaceBackend  # noqa: PLC0415
+
+        if not isinstance(backend, WorkspaceBackend):
+            raise TypeError("backend must be a WorkspaceBackend")
+        if not isinstance(workspace_id, str):
+            raise TypeError("workspace_id must be a string")
+        if not isinstance(identity, WorkspaceIdentity):
+            raise TypeError("identity must be a WorkspaceIdentity")
+        if permissions is not None and not isinstance(permissions, PermissionSet):
+            raise TypeError("permissions must be a PermissionSet or None")
+        binding = await backend.reconnect(
+            workspace_id, identity, abort_signal=abort_signal
+        )
+        return await cls._from_binding(
+            binding,
+            cwd=cwd,
+            permissions=permissions,
+            requirements=requirements,
+            write_guarantee=write_guarantee,
+            max_edit_bytes=max_edit_bytes,
+            expected_workspace_id=workspace_id,
+            expected_identity=identity,
+            validate_cwd=True,
+        )
+
+    @classmethod
+    async def _from_binding(
+        cls,
+        binding,
+        *,
+        cwd,
+        permissions,
+        requirements,
+        write_guarantee,
+        max_edit_bytes,
+        expected_workspace_id=None,
+        expected_identity=None,
+        validate_cwd=False,
+    ):
+        from msgflux.runtime.workspace.backend import WorkspaceBinding  # noqa: PLC0415
+
         if not isinstance(binding, WorkspaceBinding):
-            raise TypeError("backend.open must return a WorkspaceBinding")
+            raise TypeError("backend must return a WorkspaceBinding")
         try:
+            if expected_workspace_id is not None and (
+                binding.filesystem.workspace_id != expected_workspace_id
+            ):
+                raise ValueError("Backend returned a different workspace resource")
+            if expected_identity is not None and binding.identity != expected_identity:
+                raise ValueError("Backend returned a different workspace identity")
             environment = ExecutionEnvironment.from_binding(
                 binding,
                 requirements=requirements,
@@ -132,6 +202,8 @@ class AgentWorkspace:
                 max_edit_bytes=max_edit_bytes,
             )
             workspace = cls(environment, cwd=cwd, permissions=permissions)
+            if validate_cwd:
+                cls._validate_cwd(environment.filesystem, workspace.cwd)
         except BaseException as failure:
             # Once open() has returned, a constructor error must not leak the
             # binding. Shield release so a concurrent cancellation cannot
@@ -151,6 +223,12 @@ class AgentWorkspace:
             raise
         workspace._owned_binding = binding
         return workspace
+
+    @staticmethod
+    def _validate_cwd(filesystem, cwd: str) -> None:
+        """Check cwd through trusted backend hooks without granting permissions."""
+        if cwd != "/" and filesystem._trusted_is_directory(cwd) is not True:
+            raise NotADirectoryError(cwd)
 
     @classmethod
     def from_environment(

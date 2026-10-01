@@ -163,6 +163,105 @@ checks. Its permission ceiling defaults to empty. The scope stores only
 resources and are not stored in checkpoints; supply the workspace again when
 constructing an Agent after a process restart.
 
+
+### Reconnecting after a process restart
+
+Use an explicit registry when a local or Docker workspace must keep its resource
+identity across application restarts. The registry belongs to the application;
+store it outside the project that tools can edit:
+
+```python
+from pathlib import Path
+
+from msgflux.runtime import (
+    AgentWorkspace,
+    LocalWorkspaceBackend,
+    PermissionSet,
+    SQLiteWorkspaceRegistry,
+)
+
+state_dir = Path.home() / ".msgflux"
+root = Path(".").resolve()
+registry = SQLiteWorkspaceRegistry(state_dir / "workspaces.sqlite3")
+backend = LocalWorkspaceBackend(root, registry=registry)
+workspace = await AgentWorkspace.open(
+    backend,
+    "project",
+    permissions=PermissionSet(["filesystem.read", "filesystem.write"]),
+    write_guarantee="cooperative_compare",
+)
+workspace.write_text("notes.txt", "Saved before restart\n")
+await workspace.aclose()
+registry.close()
+```
+
+This registers the selected root and retains its generation. Closing detaches
+this binding; it leaves the files and registry entry available. Without a
+registry, `LocalWorkspaceBackend` retains identities only during the lifetime of
+that backend instance. `AgentWorkspace.local()` remains a convenient ephemeral
+factory. The local backend in this example provides files; it does not add a
+command executor.
+
+After restarting the application, reconstruct the dependencies and request the
+registered identity explicitly:
+
+```python
+registry = SQLiteWorkspaceRegistry(state_dir / "workspaces.sqlite3")
+identity = registry.get("project")
+workspace = await AgentWorkspace.reconnect(
+    LocalWorkspaceBackend(root, registry=registry),
+    "project",
+    identity,
+    permissions=PermissionSet(["filesystem.read"]),
+    write_guarantee="cooperative_compare",
+)
+print(workspace.read_text("notes.txt"))
+await workspace.aclose()
+registry.close()
+```
+
+The new backend verifies the registered root and configuration before binding.
+The permissions are supplied again by the application: the second example
+allows reads and denies writes. Omitting `permissions` produces an empty
+permission ceiling. The registry and checkpoint reference contain no credentials
+or grants. The application owns the registry connection and closes it separately
+from workspace bindings.
+
+`reconnect()` also validates the selected cwd as an existing directory. Missing
+resources, changed roots or configuration, unknown schemas and mismatched
+identities fail without adopting a replacement. A directory fingerprint uses
+POSIX device and inode information; it detects ordinary directory replacement
+but does not establish protection against every inode-reuse or copied-filesystem
+scenario. This remains host-trusted storage, not an operating-system sandbox.
+
+Replacing an existing registration is an explicit host operation. Inspect its
+immutable record with `registry.get_record(workspace_id)` and use
+`registry.replace(..., expected_revision=record.revision)` with the verified new
+resource fields. Replacement creates a new generation and rejects stale
+revisions; old approval references do not authorize the new generation. Drain
+commands and close all old bindings first: updating registry metadata does not
+revoke live handles or stop processes. Reconstruct the backend after replacement.
+
+Agent checkpoints record a versioned workspace reference with its identity and
+cwd. Resuming the same nonterminal run requires a matching live workspace;
+reconstruct it before calling the Agent with the saved thread/run IDs. This
+check does not grant permissions or resume an external command. Starting a new
+run can use a different workspace while retaining conversation history.
+
+For Docker, pass the registry to `DockerWorkspaceBackend(root, image=..., registry=...)`
+and use the same explicit `open()` / `reconnect()` lifecycle. Persistent Docker
+workspaces require an immutable image ID (`sha256:` followed by the full hash)
+or an image reference pinned by digest. Resolve a trusted, locally installed
+image before registering; images are not pulled automatically. The configuration
+fingerprint also includes the daemon socket identity, user, isolation policy and
+limits. Replacing the daemon socket invalidates reconnection deliberately.
+
+Workspace reconnection recovers files and compatible bindings. Docker commands
+still use per-command containers, and local subprocess handles remain in memory.
+An expired task lease does not prove an old command stopped. Reconcile uncertain
+external work before replaying it; neither reconnection nor checkpoints promise
+exactly-once command execution.
+
 ## Execution Scope
 
 Use `ExecutionScope` when you need stable runtime identity.

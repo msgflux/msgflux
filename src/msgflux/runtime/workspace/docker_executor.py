@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
+import re
 import shutil
 from uuid import uuid4
 
@@ -287,11 +290,51 @@ class DockerWorkspaceBackend(LocalWorkspaceBackend):
         image: str,
         limits: DockerLimits | None = None,
         socket_path: str = "/var/run/docker.sock",
+        registry=None,
     ):
-        super().__init__(root)
+        super().__init__(root, registry=registry)
         self.image = image
-        self.limits = limits
+        self.limits = limits or DockerLimits()
         self.socket_path = socket_path
+
+    def _backend_kind(self):
+        return "docker-local-posix"
+
+    def _configuration_revision(self):
+        if self._persistent_registry is None:
+            # Identity is process-local without a registry; no daemon probe needed.
+            return super()._configuration_revision()
+        if not (
+            re.fullmatch(r"sha256:[0-9a-fA-F]{64}", self.image)
+            or re.search(r"@sha256:[0-9a-fA-F]{64}$", self.image)
+        ):
+            raise ValueError(
+                "Persistent Docker workspaces require a pinned image digest"
+            )
+        if not os.path.isabs(self.socket_path) or "\0" in self.socket_path:
+            raise ValueError("Docker requires an absolute local Unix socket")
+        socket_stat = os.stat(self.socket_path)
+        limits = self.limits
+        config = {
+            "schema": 1,
+            "image": self.image,
+            "daemon_endpoint": os.path.realpath(self.socket_path),
+            "daemon_device": socket_stat.st_dev,
+            "daemon_inode": socket_stat.st_ino,
+            "mount_policy": "bind-recursive-disabled:rprivate:read-only-rootfs",
+            "network": "none",
+            "uid": os.getuid(),
+            "gid": os.getgid(),
+            "limits": {
+                "memory_bytes": limits.memory_bytes,
+                "pids": limits.pids,
+                "cpus": limits.cpus,
+                "tmp_bytes": limits.tmp_bytes,
+            },
+        }
+        return hashlib.sha256(
+            json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
 
     def _bind(self, filesystem):
         executor = DockerProcessExecutor(

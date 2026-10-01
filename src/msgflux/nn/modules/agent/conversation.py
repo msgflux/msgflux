@@ -1214,11 +1214,27 @@ class AgentConversationMixin:
         scope = context.get("scope") or get_execution_context()["scope"]
         if run is not None:
             run.head_item_id = messages[-1].get("item_id") if messages else None
+        from msgflux.runtime.workspace.references import (  # noqa: PLC0415
+            encode_workspace_reference,
+        )
+
+        workspace_scope = self._workspace_scope(scope)
+        workspace_reference = encode_workspace_reference(workspace_scope.workspace)
+        runtime_state = run.durable_state() if run is not None else {}
+        if workspace_reference is not None:
+            if run is not None:
+                run.set_extension("workspace_reference", workspace_reference)
+                runtime_state = run.durable_state()
+            else:
+                runtime_state = {
+                    "schema_version": 1,
+                    "extensions": {"workspace_reference": workspace_reference},
+                }
         state = {
             "schema_version": 1,
             "status": status,
             "messages": messages._to_state(),
-            "runtime": run.durable_state() if run is not None else {},
+            "runtime": runtime_state,
             "scope": scope.to_dict(),
             "model_preference": context.get("model_preference"),
             "metadata": {
@@ -1377,6 +1393,8 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        self._validate_checkpoint_workspace(state, scope=scope)
+
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
         restored._hydrate_state(state.get("messages", {}))
@@ -1436,6 +1454,8 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        self._validate_checkpoint_workspace(state, scope=scope)
+
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
         restored._hydrate_state(state.get("messages", {}))
@@ -1455,6 +1475,27 @@ class AgentConversationMixin:
             "model_preference": state.get("model_preference"),
             "scope": effective_scope,
         }
+
+    def _validate_checkpoint_workspace(self, state, *, scope=None) -> None:
+        from msgflux.exceptions import TaskPauseRequestedError  # noqa: PLC0415
+        from msgflux.runtime.workspace.references import (  # noqa: PLC0415
+            WorkspaceCwdMismatchError,
+            validate_workspace_reference,
+        )
+
+        reference = (
+            state.get("runtime", {}).get("extensions", {}).get("workspace_reference")
+        )
+        active = scope
+        if active is None:
+            active = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self), {}).get("scope")
+        if active is None:
+            active = get_execution_context().get("scope")
+        effective = self._workspace_scope(active)
+        try:
+            validate_workspace_reference(reference, effective.workspace)
+        except WorkspaceCwdMismatchError as error:
+            raise TaskPauseRequestedError(message=str(error)) from error
 
     def _restore_agent_run(self, state, thread_id, run_id) -> None:
         current = get_agent_run()

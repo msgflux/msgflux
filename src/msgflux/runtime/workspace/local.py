@@ -7,6 +7,8 @@ is deliberately not an OS sandbox: writers outside this backend can race it.
 from __future__ import annotations
 
 import errno
+import hashlib
+import json
 import os
 import secrets
 import stat
@@ -27,6 +29,7 @@ from msgflux.runtime.workspace.filesystem import (
     WorkspaceFilesystem,
     workspace_path,
 )
+from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 _UNSET = object()
 
@@ -82,9 +85,10 @@ class LocalWorkspace(WorkspaceFilesystem):
         root: str | os.PathLike[str],
         *,
         read_only: bool = False,
+        identity: WorkspaceIdentity | None = None,
     ):
         _check_posix()
-        super().__init__(workspace_id)
+        super().__init__(workspace_id, identity=identity)
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
         self.read_only = read_only
@@ -395,7 +399,11 @@ class LocalWorkspace(WorkspaceFilesystem):
     def _checked_rmdir(self, path, expected):
         self._directory_deletion(path, expected)
 
-    def _scandir(self, path, max_entries):  # noqa: C901
+    def _scandir(self, path, max_entries):
+        self._authorize("list", path)
+        return self._scandir_trusted(path, max_entries)
+
+    def _scandir_trusted(self, path, max_entries):  # noqa: C901
         with self._lock:
             self._authorize("list", path)
             root = self._open_root()
@@ -447,6 +455,25 @@ class LocalWorkspace(WorkspaceFilesystem):
                     os.close(parent)
                 os.close(root)
 
+    def _trusted_is_directory(self, path):
+        with self._lock:
+            root = self._open_root()
+            parent = root
+            try:
+                if path == "/":
+                    return True
+                parent, name = self._parent(root, path)
+                st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                    raise NotADirectoryError(path)
+                if st.st_dev != self._root_stat.st_dev:
+                    raise PermissionError("Workspace mount crossing")
+                return True
+            finally:
+                if parent != root:
+                    os.close(parent)
+                os.close(root)
+
     @staticmethod
     def _select_lines(stream, offset, limit, max_bytes):
         for _ in range(offset - 1):
@@ -485,23 +512,64 @@ class LocalWorkspaceBackend(WorkspaceBackend):
     def __init__(
         self,
         root: str | os.PathLike[str],
+        *,
+        registry: SQLiteWorkspaceRegistry | None = None,
     ):
         _check_posix()
         self._root = os.fspath(root)
+        if registry is not None and not isinstance(registry, SQLiteWorkspaceRegistry):
+            raise TypeError("registry must be a SQLiteWorkspaceRegistry")
+        self._persistent_registry = registry
         self._resources: dict[str, LocalWorkspace] = {}
         self._registry_lock = RLock()
         self._filesystem_lock = RLock()
+
+    def _registry_arguments(self, workspace_id, filesystem):
+        # Pin and revalidate this very filesystem object; never fingerprint one
+        # root and then construct a different object from the path afterward.
+        os.close(filesystem._open_root())
+        st = filesystem._root_stat
+        config = self._configuration_revision()
+        return {
+            "backend": self._backend_kind(),
+            "resource_id": workspace_id,
+            "config_revision": config,
+            "root": filesystem.host_root,
+            "root_device": st.st_dev,
+            "root_inode": st.st_ino,
+        }
+
+    def _backend_kind(self):
+        return "local-posix"
+
+    def _configuration_revision(self):
+        config = {"schema": 1, "read_only": False}
+        return hashlib.sha256(
+            json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
 
     async def open(self, workspace_id: str, *, abort_signal: AbortSignal | None = None):
         if abort_signal is not None:
             abort_signal.raise_if_aborted()
         with self._registry_lock:
             filesystem = self._resources.get(workspace_id)
+            created = filesystem is None
             if filesystem is None:
                 filesystem = LocalWorkspace(workspace_id, self._root)
+            if self._persistent_registry is not None:
+                args = self._registry_arguments(workspace_id, filesystem)
+                identity = self._persistent_registry.register_or_verify(
+                    workspace_id, **args
+                )
+                if created:
+                    filesystem._identity = identity
+                elif filesystem.identity != identity:
+                    raise PermissionError("Workspace registry identity changed")
+            # Catch replacement between initial pin/registration and binding.
+            os.close(filesystem._open_root())
+            if created:
                 filesystem._lock = self._filesystem_lock
                 self._resources[workspace_id] = filesystem
-            os.close(filesystem._open_root())
             return self._bind(filesystem)
 
     async def reconnect(self, workspace_id, identity, *, abort_signal=None):
@@ -511,11 +579,27 @@ class LocalWorkspaceBackend(WorkspaceBackend):
             raise TypeError("identity must be a WorkspaceIdentity")
         with self._registry_lock:
             filesystem = self._resources.get(workspace_id)
+            created = filesystem is None
+            if created and self._persistent_registry is not None:
+                filesystem = LocalWorkspace(workspace_id, self._root, identity=identity)
+            if self._persistent_registry is not None:
+                args = self._registry_arguments(workspace_id, filesystem)
+                persisted = self._persistent_registry.verify(workspace_id, **args)
+                if persisted != identity:
+                    raise FileNotFoundError(
+                        "Workspace resource is unavailable or identity changed"
+                    )
+                if created:
+                    filesystem._identity = persisted
             if filesystem is None or filesystem.identity != identity:
                 raise FileNotFoundError(
                     "Workspace resource is unavailable or identity changed"
                 )
+            # Check the pinned root again just before exposing this binding.
             os.close(filesystem._open_root())
+            if created:
+                filesystem._lock = self._filesystem_lock
+                self._resources[workspace_id] = filesystem
             return self._bind(filesystem)
 
     def _bind(self, filesystem):

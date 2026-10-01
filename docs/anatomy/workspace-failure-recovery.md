@@ -51,18 +51,44 @@ An executing/consumed batch with an unknown result is therefore not automaticall
 reexecuted. The host must ensure its old worker is stopped, inspect actual effects
 and reconcile the batch. Exactly-once external execution is not guaranteed.
 
-## Current reconnection limitation
+## Workspace reconnection
 
 Workspace handles, permissions and bindings are not serialized in checkpoints.
-A restarted application must construct its live dependencies again. Restoring
-conversation history alone does not reconnect a backend or authorize a command.
+A restarted application reconstructs its live dependencies and supplies current
+permissions. A checkpoint stores a versioned workspace reference, including its
+identity and cwd, and validates a matching live workspace before resuming a
+nonterminal run. Reading saved history does not reconnect or authorize tools.
 
-The current local/Docker backend resource registry belongs to a backend instance;
-it is not persisted across processes. The in-memory backend is also process-local.
-A new process does not automatically recover the old workspace generation, even
-when given the same local directory. Pending reviewed changes require matching
-resource identity and will be blocked when that identity cannot be reproduced.
-There is no implicit adoption of a new resource under an old approval.
+Local and Docker backends optionally use `SQLiteWorkspaceRegistry` outside the
+model-writable project. Registration retains a resource generation across
+processes; reconnect verifies the existing registered root, device/inode
+fingerprint and configuration before creating an independent binding. It never
+registers a missing resource or silently adopts a replacement. Configuration
+identity uses stable backend names, independent of Python package paths.
 
-Persistent resource identity/reconnection and host-level worker/container
-reconciliation are subsequent improvements, separate from file organization.
+The local fingerprint detects ordinary root replacement; it cannot establish
+protection against every inode-reuse or copied-filesystem scenario. Docker's
+persistent configuration also checks a pinned image digest, daemon socket
+identity, user, isolation policy and limits. Replacing the socket invalidates
+reconnection. Persistent registry state is not authority or credential storage.
+
+Without a registry, local/Docker identities still belong to the backend instance.
+The in-memory backend remains process-local. Old approvals cannot authorize a
+new resource just because its pathname or workspace ID matches.
+
+## Remaining execution recovery limitations
+
+Workspace reconnection does not attach to a running command. Local subprocess
+handles and dispatcher futures remain process-local. Docker still creates and
+removes ephemeral containers per command and does not retain durable output.
+An abrupt failure can leave external work alive or its outcome unrecorded.
+
+Existing task store leases, committed terminal checkpoints and approval
+reconciliation remain the available recovery primitives. Lease expiry does not
+prove the old worker stopped. Reconnect files, establish quiescence, inspect
+committed state and actual effects, then use explicit recovery/reconciliation.
+There is no implicit command replay, automatic reaper or exactly-once guarantee.
+
+The next stages in the workspace reconnection plan compose these primitives into
+host recovery and add command receipts/orphan reconciliation. They are separate
+from persistent resource reconnection.
