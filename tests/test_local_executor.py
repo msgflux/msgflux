@@ -48,8 +48,10 @@ def _environment(root, *, grants=("process.execute",), requirements=None):
 
 def _pid_program(pid_path):
     return (
-        "import os,time; "
-        f"open({str(pid_path)!r}, 'w').write(str(os.getpid())); "
+        "import os,time,pathlib; "
+        f"pid_path=pathlib.Path({str(pid_path)!r}); "
+        "temporary=pid_path.with_suffix('.tmp'); "
+        "temporary.write_text(str(os.getpid())); temporary.replace(pid_path); "
         "time.sleep(30)"
     )
 
