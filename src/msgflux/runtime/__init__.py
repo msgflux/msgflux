@@ -114,6 +114,7 @@ from msgflux.runtime.workspace.process_capture import (
     ProcessOutputLimitError,
     drain_subprocess,
 )
+from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 __all__ = [
     "AgentWorkspace",
@@ -137,6 +138,7 @@ __all__ = [
     "LocalWorkspace",
     "LocalProcessExecutor",
     "LocalWorkspaceBackend",
+    "SQLiteWorkspaceRegistry",
     "InMemoryWorkspaceBackend",
     "WorkspaceBackend",
     "WorkspaceBinding",

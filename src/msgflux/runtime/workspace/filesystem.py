@@ -284,6 +284,10 @@ class WorkspaceFilesystem(ABC):
     def _scandir(self, path: str, max_entries: int) -> tuple[WorkspaceEntry, ...]:
         raise NotImplementedError
 
+    def _trusted_is_directory(self, path: str) -> bool:
+        """Check a host validated cwd without consulting user permission grants."""
+        raise NotImplementedError("Backend does not support trusted cwd validation")
+
     def mkdir(self, path: str) -> None:
         self._perform("mkdir", path)
 
@@ -443,6 +447,10 @@ class InMemoryWorkspace(WorkspaceFilesystem):
     def _scandir(self, path, max_entries):
         with self._lock:
             self._authorize("list", path)
+            return self._scandir_trusted(path, max_entries)
+
+    def _scandir_trusted(self, path, max_entries):
+        with self._lock:
             if path not in self._directories:
                 raise NotADirectoryError(path)
             entries = []
@@ -458,6 +466,12 @@ class InMemoryWorkspace(WorkspaceFilesystem):
                 if len(entries) > max_entries:
                     raise ValueError("Workspace directory exceeds max_entries")
             return tuple(sorted(entries, key=lambda entry: entry.name))
+
+    def _trusted_is_directory(self, path):
+        with self._lock:
+            if path not in self._directories:
+                raise NotADirectoryError(path)
+            return True
 
     def _compare_exchange(self, path, expected, replacement):
         with self._lock:
