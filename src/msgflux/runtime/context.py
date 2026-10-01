@@ -11,12 +11,14 @@ from __future__ import annotations
 import contextvars
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from uuid import uuid4
 
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.environment import ExecutionEnvironment
-from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.permissions import PermissionSet, intersect_permissions
+
+if TYPE_CHECKING:
+    from msgflux.runtime.workspace.api import AgentWorkspace
 
 DEFAULT_NAMESPACE = "default_namespace"
 
@@ -41,15 +43,16 @@ class ExecutionScope:
     abort_signal: AbortSignal | None = None
     principal: str | None = None
     permissions: PermissionSet | None = None
-    environment: ExecutionEnvironment | None = None
+    workspace: AgentWorkspace | None = None
 
     def __post_init__(self) -> None:
-        if self.environment is not None and not isinstance(
-            self.environment, ExecutionEnvironment
-        ):
-            raise TypeError(
-                "ExecutionScope.environment must be ExecutionEnvironment or None"
-            )
+        from msgflux.runtime.workspace.api import AgentWorkspace  # noqa: PLC0415
+
+        if self.workspace is not None:
+            if not isinstance(self.workspace, AgentWorkspace):
+                raise TypeError(
+                    "ExecutionScope.workspace must be AgentWorkspace or None"
+                )
         if self.permissions is not None and not isinstance(
             self.permissions, PermissionSet
         ):
@@ -74,9 +77,10 @@ class ExecutionScope:
         abort_signal: AbortSignal | None = None,
         principal: str | None = None,
         permissions: PermissionSet | None = None,
-        environment: ExecutionEnvironment | None = None,
+        workspace: AgentWorkspace | None = None,
     ) -> ExecutionScope:
         resolved_run_id = run_id if run_id is not None else self.run_id
+        resolved_workspace = workspace if workspace is not None else self.workspace
         return ExecutionScope(
             thread_id=thread_id if thread_id is not None else self.thread_id,
             namespace=namespace if namespace is not None else self.namespace,
@@ -94,7 +98,7 @@ class ExecutionScope:
             ),
             principal=principal if principal is not None else self.principal,
             permissions=permissions if permissions is not None else self.permissions,
-            environment=environment if environment is not None else self.environment,
+            workspace=resolved_workspace,
         )
 
     def to_dict(self) -> dict[str, str | None]:
@@ -190,20 +194,27 @@ def execution_context(
     base_scope = scope or current_scope
     principal = base_scope.principal
     permissions = base_scope.permissions
-    environment = base_scope.environment
+    workspace = base_scope.workspace
     if _CURRENT_SCOPE.get() is not None:
-        if environment is not None and environment is not current_scope.environment:
-            raise ValueError("Nested execution cannot replace its environment")
-        environment = current_scope.environment
+        if workspace is not None and (
+            current_scope.workspace is None
+            or not workspace.shares_environment(current_scope.workspace)
+        ):
+            raise ValueError("Nested execution cannot replace its workspace driver")
+        workspace = workspace or current_scope.workspace
         if principal is not None and principal != current_scope.principal:
             raise ValueError("Nested execution cannot change its principal")
         principal = current_scope.principal
         inherited = current_scope.permissions or PermissionSet()
-        permissions = (
-            inherited.intersect(permissions) if permissions is not None else inherited
+        permissions = intersect_permissions(
+            inherited,
+            permissions if permissions is not None else inherited,
+            workspace_id=(workspace.workspace_id if workspace is not None else None),
         )
     elif permissions is None:
-        permissions = PermissionSet()
+        permissions = (
+            workspace.permissions if workspace is not None else PermissionSet()
+        )
 
     current_thread_id = _CURRENT_THREAD_ID.get()
     resolved_thread_id = (
@@ -247,6 +258,11 @@ def execution_context(
         else base_scope.abort_signal or current_abort_signal
     )
 
+    permissions = (
+        workspace.effective_permissions(permissions)
+        if workspace is not None
+        else permissions
+    )
     resolved_scope = ExecutionScope(
         thread_id=resolved_thread_id,
         namespace=resolved_namespace,
@@ -256,9 +272,8 @@ def execution_context(
         abort_signal=resolved_abort_signal,
         principal=principal,
         permissions=permissions,
-        environment=environment,
+        workspace=workspace,
     )
-
     current_checkpoint_store = _CURRENT_CHECKPOINT_STORE.get()
     resolved_checkpoint_store = (
         checkpoint_store if checkpoint_store is not None else current_checkpoint_store
@@ -345,7 +360,7 @@ def get_execution_context() -> Mapping[str, Any | None]:
         "abort_signal": _CURRENT_ABORT_SIGNAL.get(),
         "principal": scope.principal,
         "permissions": scope.permissions,
-        "environment": scope.environment,
+        "workspace": scope.workspace,
     }
 
 

@@ -330,6 +330,9 @@ class AgentLifecycleMixin:
                 self._cleanup_extension(name)
 
     def _call_impl_with_hooks(self, *args, **kwargs):
+        scope = self._workspace_scope(kwargs.get("scope"))
+        if scope is not None:
+            kwargs["scope"] = scope
         with self._extension_run_snapshot():
             with (
                 execution_context(scope=kwargs.get("scope")),
@@ -342,6 +345,9 @@ class AgentLifecycleMixin:
                 return super()._call_impl_with_hooks(*args, **kwargs)
 
     async def _acall_impl_with_hooks(self, *args, **kwargs):
+        scope = self._workspace_scope(kwargs.get("scope"))
+        if scope is not None:
+            kwargs["scope"] = scope
         with self._extension_run_snapshot():
             with (
                 execution_context(scope=kwargs.get("scope")),
@@ -591,13 +597,20 @@ class AgentLifecycleMixin:
         self, kwargs: Mapping[str, Any]
     ) -> Optional[ExecutionScope]:
         scope = kwargs.get("scope")
-        if scope is None:
-            return None
-        if not isinstance(scope, ExecutionScope):
+        if scope is not None and not isinstance(scope, ExecutionScope):
             raise TypeError(
                 f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
             )
-        return scope
+        return self._workspace_scope(scope)
+
+    def _workspace_scope(self, scope):
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("scope must be ExecutionScope or None")
+        current = get_execution_context()["scope"]
+        base = scope or current
+        if base.workspace is not None or self.workspace is None:
+            return scope
+        return base.with_overrides(workspace=self.workspace)
 
     def watch(
         self, thread_id: str, *, approvals=_UNSET, event_buffer_limit: int | None = None
@@ -635,7 +648,10 @@ class AgentLifecycleMixin:
     def _prepare_event_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Give an event stream a cancellable, fully identified Agent scope."""
         prepared = dict(kwargs)
-        scope = prepared.get("scope") or get_execution_context()["scope"]
+        scope = (
+            self._workspace_scope(prepared.get("scope"))
+            or get_execution_context()["scope"]
+        )
         abort_signal = scope.abort_signal or AbortSignal()
         messages = prepared.get("messages")
         thread_id = self._resolve_thread_id(

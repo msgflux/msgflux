@@ -3,15 +3,15 @@
 import asyncio
 from typing import Literal, Optional
 
-from msgflux.runtime.workspace import WorkspaceFilesystem
-from msgflux.tools.builtin.workspace import _tool_path
+from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
+from msgflux.tools.builtin.workspace_tools import _tool_path
 from msgflux.tools.config import tool_config
 from msgflux.tools.patch import apply_diff
 from msgflux.tools.types import Hidden
 from msgflux.tools.workspace_changes import WorkspaceChangeTool
 
 
-@tool_config(tool_kind="apply_patch", runtime_inputs=["filesystem"], retry=False)
+@tool_config(tool_kind="apply_patch", runtime_inputs=["workspace"], retry=False)
 class ApplyPatchTool(WorkspaceChangeTool):
     """Create, update or delete one UTF-8 file using a V4A diff.
 
@@ -31,20 +31,24 @@ class ApplyPatchTool(WorkspaceChangeTool):
         "return": dict[str, str],
     }
 
-    def prepare_workspace_change(self, arguments, filesystem):
+    def prepare_workspace_change(self, arguments, workspace):
+        workspace = resolve_workspace(workspace)
         operation, diff = arguments["operation"], arguments.get("diff")
-        path = _tool_path(arguments["path"], self.cwd)
-        editor = self._editor(filesystem)
+        path = _tool_path(arguments["path"], workspace)
         if operation == "delete":
             if diff is not None:
                 raise ValueError("Delete operations must not contain a diff")
-            return editor.prepare_delete(path)
+            return workspace.editor.prepare_delete(path)
         if not isinstance(diff, str):
             raise ValueError("Create and update require a text diff")
         if operation == "create":
-            return editor.prepare_create(path, apply_diff("", diff, mode="create"))
+            return workspace.editor.prepare_create(
+                path, apply_diff("", diff, mode="create")
+            )
         if operation == "update":
-            return editor.prepare_transform(path, lambda text: apply_diff(text, diff))
+            return workspace.editor.prepare_transform(
+                path, lambda text: apply_diff(text, diff)
+            )
         raise ValueError("Unknown patch operation")
 
     def __call__(
@@ -53,10 +57,11 @@ class ApplyPatchTool(WorkspaceChangeTool):
         path: str,
         diff: Optional[str] = None,
         *,
-        filesystem: Hidden[WorkspaceFilesystem],
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
         return self._apply(
-            {"operation": operation, "path": path, "diff": diff}, filesystem
+            {"operation": operation, "path": path, "diff": diff},
+            resolve_workspace(workspace),
         )
 
     async def acall(
@@ -65,8 +70,6 @@ class ApplyPatchTool(WorkspaceChangeTool):
         path: str,
         diff: Optional[str] = None,
         *,
-        filesystem: Hidden[WorkspaceFilesystem],
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return await asyncio.to_thread(
-            self, operation, path, diff, filesystem=filesystem
-        )
+        return await asyncio.to_thread(self, operation, path, diff, workspace=workspace)

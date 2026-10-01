@@ -307,7 +307,7 @@ from msgflux.nn.extensions import ToolOutputOffloadExtension
 from msgflux.tools.builtin import BashTool
 
 library = ToolLibrary(
-    "workspace", [BashTool(cwd="/")],
+    "workspace", [BashTool()],
     extensions=[ToolOutputOffloadExtension(
         results,
         max_inline_bytes=32 * 1024,

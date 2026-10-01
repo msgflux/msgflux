@@ -5,8 +5,8 @@ from copy import deepcopy
 from typing import Optional, Union
 
 from msgflux.data.types import Image
-from msgflux.runtime.environment import ExecutionEnvironment, ProcessRequest
-from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
+from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
+from msgflux.runtime.workspace.environment import ProcessRequest
 from msgflux.tools.config import tool_config
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.shell import ShellCommandResult, ShellResult
@@ -16,13 +16,13 @@ from msgflux.tools.workspace_changes import WorkspaceChangeTool
 from msgflux.utils.inspect import get_mime_type
 
 
-def _tool_path(path: str, cwd: str) -> str:
+def _tool_path(path: str, workspace: AgentWorkspace) -> str:
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
-    return workspace_path(path if path.startswith("/") else f"{cwd.rstrip('/')}/{path}")
+    return workspace.resolve(path)
 
 
-@tool_config(runtime_inputs=["filesystem", "handle"], retry=False)
+@tool_config(runtime_inputs=["workspace", "handle"], retry=False)
 class ReadFileTool:
     """Read text lines or publish an image from the authorized workspace.
 
@@ -51,7 +51,6 @@ class ReadFileTool:
         self,
         *,
         supports_vision: bool = False,
-        cwd: str = "/",
         max_image_bytes: int = 1_000_000,
     ):
         if not isinstance(supports_vision, bool):
@@ -60,7 +59,6 @@ class ReadFileTool:
         if type(max_image_bytes) is not int or max_image_bytes <= 0:
             raise ValueError("max_image_bytes must be a positive integer")
         self.max_image_bytes = max_image_bytes
-        self.cwd = workspace_path(cwd)
         self.tool_config = deepcopy(self.tool_config)
         guidance = self.tool_config.get("usage_guidance")
         self.tool_config["usage_guidance"] = (
@@ -75,15 +73,16 @@ class ReadFileTool:
         offset: Optional[int] = None,
         limit: Optional[int] = None,
         *,
-        filesystem: Hidden[WorkspaceFilesystem],
+        workspace: Hidden[AgentWorkspace] = None,
         handle: Hidden[ToolLibraryHandle] = None,
     ) -> str:
-        path = _tool_path(path, self.cwd)
         first, count, is_image = self._read_options(path, offset, limit)
+        workspace = resolve_workspace(workspace)
+        path = _tool_path(path, workspace)
         data = (
-            filesystem.read_prefix(path, max_bytes=self.max_image_bytes + 1)
+            workspace.read_prefix(path, max_bytes=self.max_image_bytes + 1)
             if is_image
-            else filesystem.read_lines(path, offset=first, limit=count)
+            else workspace.read_lines(path, offset=first, limit=count)
         )
         return self._result(path, data, handle)
 
@@ -93,15 +92,16 @@ class ReadFileTool:
         offset: Optional[int] = None,
         limit: Optional[int] = None,
         *,
-        filesystem: Hidden[WorkspaceFilesystem],
+        workspace: Hidden[AgentWorkspace] = None,
         handle: Hidden[ToolLibraryHandle] = None,
     ) -> str:
-        path = _tool_path(path, self.cwd)
         first, count, is_image = self._read_options(path, offset, limit)
+        workspace = resolve_workspace(workspace)
+        path = _tool_path(path, workspace)
         data = (
-            await filesystem.aread_prefix(path, max_bytes=self.max_image_bytes + 1)
+            await workspace.aread_prefix(path, max_bytes=self.max_image_bytes + 1)
             if is_image
-            else await filesystem.aread_lines(path, offset=first, limit=count)
+            else await workspace.aread_lines(path, offset=first, limit=count)
         )
         return self._result(path, data, handle)
 
@@ -142,7 +142,7 @@ class ReadFileTool:
 @tool_config(
     tool_kind="shell",
     runtime_inputs=[
-        "environment",
+        "workspace",
         ContextBinding(source="shell_capture", required=False),
     ],
     required_permissions=["process.execute"],
@@ -151,7 +151,7 @@ class ReadFileTool:
 class BashTool:
     """Run Bash using the host-configured process executor.
 
-    Use an absolute virtual workspace cwd. Execution is limited to 30 seconds
+    Use the injected workspace working directory. Execution is limited to 30 seconds
     and, by default, 1,000,000 combined stdout/stderr bytes. The host may override
     the capture budget. Requires a configured executor
     with Bash and the required execution permission. Isolation and filesystem
@@ -170,8 +170,7 @@ class BashTool:
         "return": ShellResult,
     }
 
-    def __init__(self, *, cwd: str = "/"):
-        self.cwd = workspace_path(cwd)
+    def __init__(self):
         self.tool_config = deepcopy(self.tool_config)
 
     def __call__(
@@ -179,7 +178,7 @@ class BashTool:
         command: Union[str, list[str]],
         timeout_ms: Optional[int] = None,
         *,
-        environment: Hidden[ExecutionEnvironment],
+        workspace: Hidden[AgentWorkspace] = None,
         shell_capture: Hidden[object] = None,
     ) -> ShellResult:
         from msgflux.nn.functional import wait_for  # noqa: PLC0415
@@ -188,7 +187,7 @@ class BashTool:
             self.acall,
             command=command,
             timeout_ms=timeout_ms,
-            environment=environment,
+            workspace=workspace,
             shell_capture=shell_capture,
         )
 
@@ -197,9 +196,10 @@ class BashTool:
         command: Union[str, list[str]],
         timeout_ms: Optional[int] = None,
         *,
-        environment: Hidden[ExecutionEnvironment],
+        workspace: Hidden[AgentWorkspace] = None,
         shell_capture: Hidden[object] = None,
     ) -> ShellResult:
+        workspace = resolve_workspace(workspace)
         commands = [command] if isinstance(command, str) else command
         if (
             not isinstance(commands, list)
@@ -219,14 +219,14 @@ class BashTool:
         requests = [
             ProcessRequest(
                 ("bash", "--noprofile", "--norc", "-c", item),
-                cwd=self.cwd,
+                cwd=workspace.resolve("."),
                 timeout_seconds=timeout,
                 max_output_bytes=remaining,
             )
             for item in commands
         ]
         if shell_capture is not None:
-            return await shell_capture.run(environment, requests)
+            return await shell_capture.run(workspace, requests)
         for prepared_request in requests:
             if remaining <= 0:
                 outputs.append(
@@ -243,7 +243,7 @@ class BashTool:
                 max_output_bytes=remaining,
             )
             try:
-                result = await environment.arun(request)
+                result = await workspace.arun(request)
             except asyncio.TimeoutError:
                 outputs.append(
                     ShellCommandResult(status="timed_out", stderr="Command timed out.")
@@ -261,7 +261,7 @@ class BashTool:
         return ShellResult(results=tuple(outputs))
 
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
+@tool_config(runtime_inputs=["workspace"], retry=False)
 class WriteTool(WorkspaceChangeTool):
     """Create or overwrite a UTF-8 file in the authorized workspace.
 
@@ -274,23 +274,35 @@ class WriteTool(WorkspaceChangeTool):
     display_name = "Write"
     annotations = {"path": str, "content": str, "return": dict[str, str]}
 
-    def prepare_workspace_change(self, arguments, filesystem):
-        return self._editor(filesystem).prepare_write(
-            _tool_path(arguments["path"], self.cwd), arguments["content"]
+    def prepare_workspace_change(self, arguments, workspace):
+        workspace = resolve_workspace(workspace)
+        return workspace.editor.prepare_write(
+            _tool_path(arguments["path"], workspace), arguments["content"]
         )
 
     def __call__(
-        self, path: str, content: str, *, filesystem: Hidden[WorkspaceFilesystem]
+        self,
+        path: str,
+        content: str,
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return self._apply({"path": path, "content": content}, filesystem)
+        return self._apply(
+            {"path": path, "content": content},
+            resolve_workspace(workspace),
+        )
 
     async def acall(
-        self, path: str, content: str, *, filesystem: Hidden[WorkspaceFilesystem]
+        self,
+        path: str,
+        content: str,
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return await asyncio.to_thread(self, path, content, filesystem=filesystem)
+        return await asyncio.to_thread(self, path, content, workspace=workspace)
 
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
+@tool_config(runtime_inputs=["workspace"], retry=False)
 class EditTool(WorkspaceChangeTool):
     """Replace one exact, unambiguous text occurrence in a UTF-8 file.
 
@@ -304,23 +316,37 @@ class EditTool(WorkspaceChangeTool):
     display_name = "Edit"
     annotations = {"path": str, "old": str, "new": str, "return": dict[str, str]}
 
-    def prepare_workspace_change(self, arguments, filesystem):
-        return self._editor(filesystem).prepare_edit(
-            _tool_path(arguments["path"], self.cwd), arguments["old"], arguments["new"]
+    def prepare_workspace_change(self, arguments, workspace):
+        workspace = resolve_workspace(workspace)
+        return workspace.editor.prepare_edit(
+            _tool_path(arguments["path"], workspace), arguments["old"], arguments["new"]
         )
 
     def __call__(
-        self, path: str, old: str, new: str, *, filesystem: Hidden[WorkspaceFilesystem]
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return self._apply({"path": path, "old": old, "new": new}, filesystem)
+        return self._apply(
+            {"path": path, "old": old, "new": new},
+            resolve_workspace(workspace),
+        )
 
     async def acall(
-        self, path: str, old: str, new: str, *, filesystem: Hidden[WorkspaceFilesystem]
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return await asyncio.to_thread(self, path, old, new, filesystem=filesystem)
+        return await asyncio.to_thread(self, path, old, new, workspace=workspace)
 
 
-@tool_config(runtime_inputs=["filesystem"], retry=False)
+@tool_config(runtime_inputs=["workspace"], retry=False)
 class DeleteTool(WorkspaceChangeTool):
     """Delete one UTF-8 file or empty directory using the workspace review policy.
 
@@ -335,20 +361,30 @@ class DeleteTool(WorkspaceChangeTool):
     display_name = "Delete"
     annotations = {"path": str, "return": dict[str, str]}
 
-    def prepare_workspace_change(self, arguments, filesystem):
-        return self._editor(filesystem).prepare_delete_target(
-            _tool_path(arguments["path"], self.cwd)
+    def prepare_workspace_change(self, arguments, workspace):
+        workspace = resolve_workspace(workspace)
+        return workspace.editor.prepare_delete_target(
+            _tool_path(arguments["path"], workspace)
         )
 
     def __call__(
-        self, path: str, *, filesystem: Hidden[WorkspaceFilesystem]
+        self,
+        path: str,
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return self._apply({"path": path}, filesystem)
+        return self._apply(
+            {"path": path},
+            resolve_workspace(workspace),
+        )
 
     async def acall(
-        self, path: str, *, filesystem: Hidden[WorkspaceFilesystem]
+        self,
+        path: str,
+        *,
+        workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return await asyncio.to_thread(self, path, filesystem=filesystem)
+        return await asyncio.to_thread(self, path, workspace=workspace)
 
 
 __all__ = ["ReadFileTool", "BashTool", "WriteTool", "EditTool", "DeleteTool"]

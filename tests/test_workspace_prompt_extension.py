@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 import json
 import os
@@ -67,8 +68,9 @@ def _section(prompt: str) -> dict[str, Any]:
 
 def _scope(environment, resources=(), grants=()):
     return ExecutionScope(
-        environment=environment,
-        permissions=PermissionSet(grants, resources=resources),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(grants, resources=resources)
+        ),
     )
 
 

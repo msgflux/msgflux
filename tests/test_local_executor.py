@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 import os
 import sys
@@ -39,16 +40,19 @@ def _environment(root, *, grants=("process.execute",), requirements=None):
         thread_id="local-executor",
         run_id="local-executor",
         principal="test-user",
-        environment=environment,
-        permissions=PermissionSet(grants=grants),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(grants=grants)
+        ),
     )
     return filesystem, executor, environment, scope
 
 
 def _pid_program(pid_path):
     return (
-        "import os,time; "
-        f"open({str(pid_path)!r}, 'w').write(str(os.getpid())); "
+        "import os,time,pathlib; "
+        f"pid_path=pathlib.Path({str(pid_path)!r}); "
+        "temporary=pid_path.with_suffix('.tmp'); "
+        "temporary.write_text(str(os.getpid())); temporary.replace(pid_path); "
         "time.sleep(30)"
     )
 
@@ -133,8 +137,9 @@ async def test_local_executor_rejects_foreign_workspace_and_isolation(tmp_path):
     foreign_scope = ExecutionScope(
         namespace="test",
         thread_id="foreign",
-        environment=foreign_environment,
-        permissions=scope.permissions,
+        workspace=AgentWorkspace.from_environment(
+            foreign_environment, permissions=scope.workspace.permissions
+        ),
     )
     isolated_environment = ExecutionEnvironment(
         filesystem=filesystem,
@@ -145,8 +150,9 @@ async def test_local_executor_rejects_foreign_workspace_and_isolation(tmp_path):
     isolated_scope = ExecutionScope(
         namespace="test",
         thread_id="isolated",
-        environment=isolated_environment,
-        permissions=scope.permissions,
+        workspace=AgentWorkspace.from_environment(
+            isolated_environment, permissions=scope.workspace.permissions
+        ),
     )
     request = ProcessRequest((sys.executable, "-c", "print('should not run')"))
 
@@ -201,8 +207,9 @@ async def test_local_executor_timeout_and_abort_reap_children(tmp_path):
     abort_scope = ExecutionScope(
         namespace="test",
         thread_id="abort",
-        environment=environment,
-        permissions=scope.permissions,
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=scope.workspace.permissions
+        ),
         abort_signal=abort_signal,
     )
 

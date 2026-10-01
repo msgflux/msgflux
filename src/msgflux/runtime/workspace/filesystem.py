@@ -13,7 +13,7 @@ from typing import Mapping
 from uuid import uuid4
 
 from msgflux.runtime.permissions import ResourcePermission, require_permissions
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.contracts import (
     WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
@@ -94,15 +94,10 @@ class WorkspaceFilesystem(ABC):
         )
 
     def _authorize(self, operation, path):
-        from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
 
         canonical = workspace_path(path)
-        scope = get_execution_scope()
-        if scope.environment is None or scope.environment.filesystem is not self:
-            raise PermissionError("Filesystem is not bound to the live environment")
-        scope.environment.require_active()
-        if scope.abort_signal is not None:
-            scope.abort_signal.raise_if_aborted()
+        require_workspace_authority(filesystem=self)
         require_permissions(
             (), (self.permission(canonical, f"filesystem.{operation}"),)
         )

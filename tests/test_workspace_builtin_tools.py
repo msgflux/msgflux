@@ -15,6 +15,7 @@ from msgflux.runtime import (
     ProcessExecutor,
     ProcessResult,
     SandboxCapabilities,
+    AgentWorkspace,
     execution_context,
 )
 from msgflux.tools.builtin import BashTool, ReadFileTool
@@ -50,9 +51,11 @@ async def test_reader_image_agent_trajectory():
         namespace="viewer",
         thread_id="t",
         run_id="r",
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[fs.permission("/image.png", "filesystem.read")]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[fs.permission("/image.png", "filesystem.read")]
+            ),
         ),
     )
     assert await agent.acall("Inspect the image", scope=scope) == "done"
@@ -115,11 +118,13 @@ async def test_reader_image_publication(asynchronous, mode):
     fs = InMemoryWorkspace("images", {"/image.png": PNG})
     inbox = AgentInbox(store=InMemoryAgentInboxStore())
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[]
-            if mode == "denied"
-            else [fs.permission("/image.png", "filesystem.read")]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[]
+                if mode == "denied"
+                else [fs.permission("/image.png", "filesystem.read")]
+            ),
         ),
     )
     reader = ReadFileTool(supports_vision=mode != "disabled")
@@ -198,13 +203,15 @@ def workspace_tools():
     executor.supports_workspace.return_value = True
     executor.execute.return_value = ProcessResult(7, b"output\xff", b"error")
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs, executor),
-        permissions=PermissionSet(
-            ["process.execute"],
-            [
-                fs.permission(path, "filesystem.read")
-                for path in ("/input", "/binary", "/large")
-            ],
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs, executor),
+            permissions=PermissionSet(
+                ["process.execute"],
+                [
+                    fs.permission(path, "filesystem.read")
+                    for path in ("/input", "/binary", "/large")
+                ],
+            ),
         ),
     )
     return ToolLibrary("workspace", [ReadFileTool(), BashTool()]), scope, executor
@@ -238,9 +245,12 @@ async def test_workspace_tools_invocation(workspace_tools, asynchronous):
     assert request.timeout_seconds == 30
     assert request.max_output_bytes == 1_000_000
     assert (
-        executor.execute.call_args.kwargs["filesystem"] is scope.environment.filesystem
+        executor.execute.call_args.kwargs["filesystem"]
+        is scope.workspace._environment.filesystem
     )
-    assert executor.execute.call_args.kwargs["permissions"] is scope.permissions
+    assert (
+        executor.execute.call_args.kwargs["permissions"] == scope.workspace.permissions
+    )
     executor.execute.assert_awaited_once()
 
 
@@ -248,8 +258,8 @@ async def test_workspace_tools_invocation(workspace_tools, asynchronous):
 @pytest.mark.parametrize(
     "name,binding,args",
     [
-        ("read", "filesystem", {"path": "/input"}),
-        ("bash", "environment", {"command": "true"}),
+        ("read", "workspace", {"path": "/input"}),
+        ("bash", "workspace", {"command": "true"}),
     ],
 )
 async def test_runtime_dependencies_not_model_arguments(
@@ -272,7 +282,7 @@ async def test_runtime_dependencies_not_model_arguments(
         assert result.results[0].returncode == 7
         assert (
             executor.execute.call_args.kwargs["filesystem"]
-            is scope.environment.filesystem
+            is scope.workspace._environment.filesystem
         )
 
 
@@ -302,9 +312,13 @@ async def test_missing_live_context_cannot_be_supplied_by_vars(workspace_tools):
         await library.arun(
             "read",
             {"path": "/input"},
-            vars={"filesystem": scope.environment.filesystem},
+            vars={"filesystem": scope.workspace._environment.filesystem},
         )
-    with execution_context(scope=ExecutionScope(environment=scope.environment)):
+    with execution_context(
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(scope.workspace._environment)
+        )
+    ):
         with pytest.raises(RuntimeError, match=r"process\.execute"):
             await library.arun("bash", {"command": "true"})
     executor.execute.assert_not_called()
@@ -315,8 +329,10 @@ async def test_bash_requires_executor_and_never_retries(workspace_tools):
     library, scope, executor = workspace_tools
     with execution_context(
         scope=ExecutionScope(
-            environment=ExecutionEnvironment(scope.environment.filesystem),
-            permissions=scope.permissions,
+            workspace=AgentWorkspace.from_environment(
+                ExecutionEnvironment(scope.workspace._environment.filesystem),
+                permissions=scope.workspace.permissions,
+            ),
         )
     ):
         with pytest.raises(PermissionError, match="No process executor"):
@@ -366,12 +382,15 @@ async def test_reader_line_windows_and_configured_cwd(asynchronous):
     content = "first\r\n ação 🐍\r\nlast".encode()
     fs = InMemoryWorkspace("lines", {"/repo/file.txt": content})
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[fs.permission("/repo/file.txt", "filesystem.read")]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[fs.permission("/repo/file.txt", "filesystem.read")]
+            ),
         ),
     )
-    library = ToolLibrary("reader", [ReadFileTool(cwd="/repo")])
+    scope = scope.with_overrides(workspace=scope.workspace.with_cwd("/repo"))
+    library = ToolLibrary("reader", [ReadFileTool()])
     with execution_context(scope=scope):
         for arguments, expected in (
             ({"path": "file.txt"}, content.decode()),
@@ -400,11 +419,11 @@ async def test_reader_line_windows_and_configured_cwd(asynchronous):
     ],
 )
 def test_read_invalid_paging_before_io(arguments):
-    filesystem = Mock()
+    workspace = Mock()
     with pytest.raises(ValueError):
-        ReadFileTool()("/file", filesystem=filesystem, **arguments)
-    filesystem.read_lines.assert_not_called()
-    filesystem.read_bytes.assert_not_called()
+        ReadFileTool()("/file", workspace=workspace, **arguments)
+    workspace.read_lines.assert_not_called()
+    workspace.read_bytes.assert_not_called()
 
 
 def test_read_selected_window_not_whole_file_size_or_encoding():
@@ -412,41 +431,45 @@ def test_read_selected_window_not_whole_file_size_or_encoding():
         "large", {"/large": b"ok\n" + b"\xff" * 2_000_000, "/many": b"x\n" * 3000}
     )
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission(path, "filesystem.read") for path in ("/large", "/many")
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission(path, "filesystem.read")
+                    for path in ("/large", "/many")
+                ]
+            ),
         ),
     )
     with execution_context(scope=scope):
-        assert ReadFileTool()("/large", limit=1, filesystem=fs) == "ok\n"
-        assert ReadFileTool()("/many", filesystem=fs) == "x\n" * 2000
+        assert ReadFileTool()("/large", limit=1) == "ok\n"
+        assert ReadFileTool()("/many") == "x\n" * 2000
         with pytest.raises(ValueError, match="byte limit"):
-            ReadFileTool()("/large", offset=2, limit=1, filesystem=fs)
+            ReadFileTool()("/large", offset=2, limit=1)
 
 
 def test_image_paging_rejected_before_publication():
-    fs, handle = Mock(), Mock()
+    workspace, handle = Mock(), Mock()
     with pytest.raises(ValueError, match="text files"):
         ReadFileTool(supports_vision=True)(
-            "/image.png", limit=1, filesystem=fs, handle=handle
+            "/image.png", limit=1, workspace=workspace, handle=handle
         )
-    fs.read_bytes.assert_not_called()
+    workspace.read_bytes.assert_not_called()
     handle.get_notification.assert_not_called()
 
 
-@pytest.mark.parametrize("tool_class", [ReadFileTool, BashTool])
-def test_cwd_is_virtual_and_constructor_owned(tool_class):
+def test_workspace_cwd_is_virtual_and_host_owned():
+    environment = ExecutionEnvironment(InMemoryWorkspace("cwd"))
     for cwd in ("relative", "/../host", "//host", "/a\\b"):
         with pytest.raises(ValueError):
-            tool_class(cwd=cwd)
+            AgentWorkspace.from_environment(environment, cwd=cwd)
 
 
 @pytest.mark.asyncio
 async def test_bash_configured_cwd_cannot_be_overridden_by_model(workspace_tools):
     _, scope, executor = workspace_tools
-    library = ToolLibrary("bash", [BashTool(cwd="/project")])
+    scope = scope.with_overrides(workspace=scope.workspace.with_cwd("/project"))
+    library = ToolLibrary("bash", [BashTool()])
     with execution_context(scope=scope):
         with pytest.raises(TypeError, match="cwd"):
             await library.arun("bash", {"command": "true", "cwd": "/elsewhere"})

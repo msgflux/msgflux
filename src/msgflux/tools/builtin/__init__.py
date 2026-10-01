@@ -26,14 +26,14 @@ from msgflux.tools.builtin.tool_search import ToolSearchTool
 from msgflux.tools.builtin.weather import WeatherTool
 from msgflux.tools.builtin.web_fetch import WebFetchTool
 from msgflux.tools.builtin.web_search import WebSearchTool
-from msgflux.tools.builtin.workspace import (
+from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
+from msgflux.tools.builtin.workspace_tools import (
     BashTool,
     DeleteTool,
     EditTool,
     ReadFileTool,
     WriteTool,
 )
-from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
 
 __all__ = [
     "ApplyPatchTool",

@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import os
 import time
 from io import BytesIO
@@ -19,7 +20,7 @@ from msgflux.runtime import (
     execution_context,
 )
 from msgflux.exceptions import AbortRequestedError
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
 
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX backend")
@@ -31,17 +32,17 @@ def scope(fs, paths=("/a",), actions=("read", "write", "delete"), binding=None):
         thread_id="thread",
         run_id="run",
         principal="user",
-        environment=(
+        workspace=AgentWorkspace.from_environment(
             ExecutionEnvironment(fs)
             if binding is None
-            else ExecutionEnvironment.from_binding(binding)
-        ),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission(path, f"filesystem.{action}")
-                for path in paths
-                for action in actions
-            ]
+            else ExecutionEnvironment.from_binding(binding),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission(path, f"filesystem.{action}")
+                    for path in paths
+                    for action in actions
+                ]
+            ),
         ),
     )
 
@@ -245,7 +246,7 @@ def test_replace_failure_preserves_original_and_cleans_temporary(tmp_path, monke
 
 
 def test_temp_collision_never_removes_an_existing_file(tmp_path, monkeypatch):
-    import msgflux.runtime.workspace_local as local
+    from msgflux.runtime.workspace import local
 
     fs = LocalWorkspace("project", tmp_path)
     temporary = tmp_path / ".msgflux-collision"

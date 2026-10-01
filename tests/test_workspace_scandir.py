@@ -1,6 +1,7 @@
 """Contract tests for bounded workspace enumeration and prefix reads."""
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 import os
 from pathlib import Path
@@ -14,9 +15,9 @@ from msgflux.runtime import (
     PermissionSet,
     execution_context,
 )
-from msgflux.runtime.workspace import InMemoryWorkspace
-from msgflux.runtime.workspace_contracts import WorkspaceEntry
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.filesystem import InMemoryWorkspace
+from msgflux.runtime.workspace.contracts import WorkspaceEntry
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
 
 
 def _filesystem(request, tmp_path: Path):
@@ -41,11 +42,13 @@ def filesystem(request, tmp_path):
 def _authorized(filesystem, *permissions):
     environment = ExecutionEnvironment(filesystem)
     scope = ExecutionScope(
-        environment=environment,
-        permissions=PermissionSet(
-            resources=[
-                filesystem.permission(path, action) for path, action in permissions
-            ]
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                resources=[
+                    filesystem.permission(path, action) for path, action in permissions
+                ]
+            ),
         ),
     )
     return execution_context(scope=scope)
@@ -183,7 +186,11 @@ async def test_closed_local_binding_rejects_operations(tmp_path):
     )
     await binding.aclose()
     with execution_context(
-        scope=ExecutionScope(environment=environment, permissions=permissions)
+        scope=ExecutionScope(
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=permissions
+            ),
+        )
     ):
         with pytest.raises(PermissionError):
             filesystem.scandir("/")

@@ -329,7 +329,7 @@ class ToolLibraryExecutionMixin:
         sync_dispatch: bool,
     ) -> ToolRuntimeContext:
         execution = get_execution_context()
-        environment = execution.get("environment")
+        workspace = execution.get("workspace")
         handle = self.get_handle().for_tool(
             tool_name=tool_name,
             agent_inbox=execution.get("agent_inbox"),
@@ -353,8 +353,10 @@ class ToolLibraryExecutionMixin:
                 "background_dispatcher": _ToolBackgroundScheduler(self),
                 "sync_dispatch": sync_dispatch,
                 **(
-                    {"environment": environment, "filesystem": environment.filesystem}
-                    if environment is not None
+                    {
+                        "workspace": workspace,
+                    }
+                    if workspace is not None
                     else {}
                 ),
             }

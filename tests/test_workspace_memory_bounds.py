@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import tracemalloc
 from unittest.mock import Mock
 
@@ -20,14 +21,16 @@ def test_sparse_real_file_rejected_without_full_allocation(tmp_path, kind):
         stream.truncate(1024 * 1024 * 1024)
     fs = LocalWorkspace("bounded", tmp_path)
     scope = ExecutionScope(
-        environment=ExecutionEnvironment(
-            fs, write_guarantee="cooperative_compare", max_edit_bytes=4096
-        ),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/" + name, "filesystem.read"),
-                fs.permission("/" + name, "filesystem.write"),
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(
+                fs, write_guarantee="cooperative_compare", max_edit_bytes=4096
+            ),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/" + name, "filesystem.read"),
+                    fs.permission("/" + name, "filesystem.write"),
+                ]
+            ),
         ),
     )
     tool = (
@@ -40,9 +43,9 @@ def test_sparse_real_file_rejected_without_full_allocation(tmp_path, kind):
         try:
             with pytest.raises(ValueError, match=r"limit|max_edit_bytes"):
                 if kind == "image":
-                    tool(name, filesystem=fs)
+                    tool(name)
                 else:
-                    tool(name, "replacement", filesystem=fs)
+                    tool(name, "replacement")
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
@@ -51,11 +54,11 @@ def test_sparse_real_file_rejected_without_full_allocation(tmp_path, kind):
 
 
 def test_disabled_vision_fails_before_reading():
-    fs = Mock()
+    workspace = Mock()
     with pytest.raises(ValueError, match="disabled"):
-        ReadFileTool()("image.png", filesystem=fs)
-    fs.read_prefix.assert_not_called()
-    fs.read_bytes.assert_not_called()
+        ReadFileTool()("image.png", workspace=workspace)
+    workspace.read_prefix.assert_not_called()
+    workspace.read_bytes.assert_not_called()
 
 
 def test_unicode_new_content_rejected_before_filesystem_read(tmp_path):

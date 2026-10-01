@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 from copy import deepcopy
 from unittest.mock import AsyncMock, Mock
 
@@ -76,12 +77,14 @@ def scope(fs):
         thread_id="t",
         run_id="r",
         principal="user",
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/a", f"filesystem.{action}")
-                for action in ("read", "write", "delete")
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/a", f"filesystem.{action}")
+                    for action in ("read", "write", "delete")
+                ]
+            ),
         ),
     )
 

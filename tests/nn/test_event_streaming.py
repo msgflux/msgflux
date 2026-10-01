@@ -202,6 +202,85 @@ def test_tool_turn_replays_visible_commentary_before_function_call(marker):
     assert messages[0][marker] == "commentary"
 
 
+@pytest.mark.parametrize("native_tool", ["apply_patch", "shell"])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_agent_history_keeps_native_tool_call_paired_with_native_output(
+    native_tool, streaming
+):
+    from msgflux.models.tool_adapters.openai_patch import OpenAIApplyPatchAdapter
+    from msgflux.models.tool_adapters.openai_shell import OpenAIShellAdapter
+    from msgflux.tools.runtime import ToolOutcome
+    from msgflux.tools.shell import ShellCommandResult, ShellResult
+
+    if native_tool == "apply_patch":
+        adapter = OpenAIApplyPatchAdapter()
+        item = {
+            "type": "apply_patch_call",
+            "id": "apc_1",
+            "call_id": "call_native",
+            "status": "completed",
+            "operation": {
+                "type": "create_file",
+                "path": "new.txt",
+                "diff": "+hello",
+            },
+        }
+        name = "apply_patch"
+        result = {"status": "completed"}
+    else:
+        adapter = OpenAIShellAdapter()
+        item = {
+            "type": "shell_call",
+            "id": "sh_1",
+            "call_id": "call_native",
+            "status": "completed",
+            "action": {"commands": ["echo hello"]},
+        }
+        name = "bash"
+        result = ShellResult(
+            results=(
+                ShellCommandResult(status="exited", returncode=0, stdout="hello\n"),
+            )
+        )
+
+    calls = ToolCallAggregator(api_mode="responses")
+    calls.process_native(0, item, adapter, name)
+    response = ModelStreamResponse() if streaming else ModelResponse()
+    response.set_response_type("tool_call")
+    response.data = calls
+    if streaming:
+        response.chat_accumulator.add_item(item)
+    else:
+        response.history_items = [item]
+
+    agent, _ = make_agent()
+    messages = ChatMessages()
+    agent._append_tool_model_history(messages, response)
+    intent = calls.get_intents()[0]
+    outputs = response.render_tool_outcomes([ToolOutcome.completed(intent, result)])
+    agent._extend_tool_response_history(
+        messages,
+        [
+            *outputs,
+            {
+                "type": "function_call",
+                "call_id": intent.id,
+                "name": intent.name,
+                "arguments": "{}",
+            },
+        ],
+    )
+
+    assert [entry["type"] for entry in messages] == [
+        adapter.item_type,
+        adapter.output_type,
+    ]
+    assert [entry["type"] for entry in messages.to_responses_input()] == [
+        adapter.item_type,
+        adapter.output_type,
+    ]
+
+
 @pytest.mark.asyncio
 async def test_stream_events_yields_ordered_message_lifecycle():
     events = [event async for event in EchoModule().stream_events("hello")]

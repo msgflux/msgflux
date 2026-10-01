@@ -1,6 +1,7 @@
 """Workspace navigation tools across authorized filesystem backends."""
 
 from __future__ import annotations
+from msgflux.runtime import AgentWorkspace
 
 from pathlib import Path
 
@@ -13,8 +14,8 @@ from msgflux.runtime import (
     PermissionSet,
     execution_context,
 )
-from msgflux.runtime.workspace import InMemoryWorkspace
-from msgflux.runtime.workspace_local import LocalWorkspace
+from msgflux.runtime.workspace.filesystem import InMemoryWorkspace
+from msgflux.runtime.workspace.local import LocalWorkspace
 from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
 
 
@@ -22,8 +23,10 @@ def _scope(filesystem, paths):
     resources = [filesystem.permission(path, action) for path, action in paths]
     return execution_context(
         scope=ExecutionScope(
-            environment=ExecutionEnvironment(filesystem),
-            permissions=PermissionSet(resources=resources),
+            workspace=AgentWorkspace.from_environment(
+                ExecutionEnvironment(filesystem),
+                permissions=PermissionSet(resources=resources),
+            ),
         )
     )
 
@@ -92,11 +95,7 @@ def test_schemas_expose_only_visible_query_arguments():
 async def test_ls_is_structured_sorted_and_async(filesystem, tool_cls, asynchronous):
     tool = tool_cls()
     with _all_grants(filesystem):
-        result = (
-            await tool.acall("/src", filesystem=filesystem)
-            if asynchronous
-            else tool("/src", filesystem=filesystem)
-        )
+        result = await tool.acall("/src") if asynchronous else tool("/src")
     assert [entry["name"] for entry in result["entries"]] == [
         "ignored",
         "main.py",
@@ -109,7 +108,7 @@ async def test_ls_is_structured_sorted_and_async(filesystem, tool_cls, asynchron
 async def test_glob_supports_recursive_segments_and_prunes_git(filesystem):
     tool = GlobTool(max_depth=8, max_nodes=100)
     with _all_grants(filesystem):
-        result = await tool.acall("**/*.py", "/", filesystem=filesystem)
+        result = await tool.acall("**/*.py", "/")
     assert [item["path"] for item in result["matches"]] == [
         "/src/ignored/keep.py",
         "/src/main.py",
@@ -123,7 +122,7 @@ async def test_grep_honors_nested_ignore_negation_and_returns_bounded_matches(
 ):
     tool = GrepTool(max_depth=8, max_nodes=100, max_results=10, max_file_bytes=200)
     with _all_grants(filesystem):
-        result = await tool.acall("needle", "/", filesystem=filesystem)
+        result = await tool.acall("needle", "/")
     paths = [item["path"] for item in result["matches"]]
     assert paths == ["/src/ignored/keep.py", "/src/main.py", "/src/readme.txt"]
     assert "/src/ignored/drop.py" not in paths
@@ -136,7 +135,7 @@ async def test_grep_honors_nested_ignore_negation_and_returns_bounded_matches(
 def test_query_budget_exhaustion_fails_closed(filesystem, tool_cls, kwargs):
     tool = tool_cls(**kwargs)
     with _all_grants(filesystem), pytest.raises(ValueError):
-        tool("needle" if tool_cls is GrepTool else "**", "/", filesystem=filesystem)
+        tool("needle" if tool_cls is GrepTool else "**", "/")
 
 
 def test_grep_reports_binary_and_oversized_without_reading_unbounded_data(tmp_path):
@@ -154,14 +153,14 @@ def test_grep_reports_binary_and_oversized_without_reading_unbounded_data(tmp_pa
             ("/large", "filesystem.read"),
         ],
     ):
-        result = tool("needle", "/", filesystem=filesystem)
+        result = tool("needle", "/")
     assert result["matches"] == []
     assert {item["reason"] for item in result["skipped"]} == {"binary", "oversized"}
 
 
 def test_query_denied_io_is_not_silently_ignored(filesystem):
     with _scope(filesystem, [("/", "filesystem.list")]), pytest.raises(PermissionError):
-        GrepTool()("needle", "/", filesystem=filesystem)
+        GrepTool()("needle", "/")
 
 
 @pytest.mark.parametrize(
@@ -178,7 +177,7 @@ def test_glob_segments(pattern, expected):
 @pytest.mark.parametrize("pattern", ["", "a\\b", "x" * 4097])
 def test_invalid_glob_is_rejected_before_filesystem_access(pattern):
     with pytest.raises(ValueError):
-        GlobTool()(pattern, filesystem=None)
+        GlobTool()(pattern)
 
 
 def test_search_caps_records_including_skipped_metadata():
@@ -187,7 +186,7 @@ def test_search_caps_records_including_skipped_metadata():
         (f"/{index:03}", "filesystem.read") for index in range(100)
     ]
     with _scope(fs, grants):
-        result = GrepTool(max_output_bytes=100)("a", filesystem=fs)
+        result = GrepTool(max_output_bytes=100)("a")
     assert result["truncated"]
     assert 0 < len(result["skipped"]) < 100
 
@@ -195,9 +194,9 @@ def test_search_caps_records_including_skipped_metadata():
 def test_grep_caps_unicode_match_bytes_and_marks_long_lines():
     fs = InMemoryWorkspace("caps", {"/a": ("á" * 5000 + "\n").encode()})
     with _scope(fs, [("/", "filesystem.list"), ("/a", "filesystem.read")]):
-        result = GrepTool(max_output_bytes=100)("á", filesystem=fs)
+        result = GrepTool(max_output_bytes=100)("á")
         assert result["truncated"] and result["matches"] == []
-        result = GrepTool()("á", filesystem=fs)
+        result = GrepTool()("á")
         assert len(result["matches"][0]["text"]) == 4096
         assert result["matches"][0]["truncated"]
 
@@ -206,13 +205,13 @@ def test_depth_and_elapsed_limits_are_not_silent(monkeypatch):
     fs = InMemoryWorkspace("limits", {"/a/b": b"text"})
     with _scope(fs, [("/", "filesystem.list")]):
         with pytest.raises(ValueError, match="max_depth"):
-            GlobTool(max_depth=0)("**", filesystem=fs)
+            GlobTool(max_depth=0)("**")
         ticks = iter([0.0, 10.0])
         monkeypatch.setattr(
             "msgflux.tools.builtin.workspace_query.time.monotonic", lambda: next(ticks)
         )
         with pytest.raises(TimeoutError):
-            GlobTool(max_seconds=1)("**", filesystem=fs)
+            GlobTool(max_seconds=1)("**")
 
 
 def test_ignored_directory_is_pruned_without_grants_to_its_contents():
@@ -220,7 +219,7 @@ def test_ignored_directory_is_pruned_without_grants_to_its_contents():
         "ignore", {"/.gitignore": b"hidden/\n", "/hidden/secret": b"secret"}
     )
     with _scope(fs, [("/", "filesystem.list"), ("/.gitignore", "filesystem.read")]):
-        assert GrepTool()("secret", filesystem=fs)["matches"] == []
+        assert GrepTool()("secret")["matches"] == []
 
 
 def test_grep_regex_timeout_is_reported(monkeypatch):
@@ -235,4 +234,4 @@ def test_grep_regex_timeout_is_reported(monkeypatch):
     fs = InMemoryWorkspace("regex", {"/a": b"text"})
     with _scope(fs, [("/", "filesystem.list"), ("/a", "filesystem.read")]):
         with pytest.raises(ValueError, match="time limit"):
-            GrepTool()("a", filesystem=fs)
+            GrepTool()("a")

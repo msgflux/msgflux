@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 import math
 import os
@@ -20,7 +21,7 @@ from msgflux.runtime import (
     SandboxCapabilities,
     execution_context,
 )
-from msgflux.runtime.process_capture import (
+from msgflux.runtime.workspace.process_capture import (
     ProcessOutputLimitError,
     drain_subprocess,
 )
@@ -71,8 +72,9 @@ async def test_execute_adapter_collects_streaming_chunks(streaming):
     environment = ExecutionEnvironment(InMemoryWorkspace("stream"), StreamingExecutor())
     seen = []
     scope = ExecutionScope(
-        environment=environment,
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
 
     async def collect(channel, data):
@@ -105,8 +107,9 @@ async def test_environment_rejects_duplicate_streamed_buffers():
         InMemoryWorkspace("stream"), DuplicateStreamingExecutor()
     )
     scope = ExecutionScope(
-        environment=environment,
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
 
     async def ignore(channel, data):
@@ -204,7 +207,7 @@ async def test_drain_subprocess_kills_and_reaps_on_limit():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["callback", "timeout", "cancel"])
 async def test_drain_failure_stops_callbacks_and_reaps_child(failure, monkeypatch):
-    import msgflux.runtime.process_capture as module
+    import msgflux.runtime.workspace.process_capture as module
 
     process = await asyncio.create_subprocess_exec(
         sys.executable,

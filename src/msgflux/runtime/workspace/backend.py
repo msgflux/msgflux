@@ -8,9 +8,9 @@ from collections.abc import Mapping
 from typing import Literal
 
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.environment import ProcessExecutor
-from msgflux.runtime.workspace import InMemoryWorkspace, WorkspaceFilesystem
-from msgflux.runtime.workspace_contracts import WorkspaceIdentity
+from msgflux.runtime.workspace.contracts import WorkspaceIdentity
+from msgflux.runtime.workspace.environment import ProcessExecutor
+from msgflux.runtime.workspace.filesystem import InMemoryWorkspace, WorkspaceFilesystem
 
 
 class WorkspaceBackend(ABC):

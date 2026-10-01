@@ -21,7 +21,7 @@ from msgflux._private.tool_result_reference import (
 from msgflux._private.tool_result_reference import (
     validate_result_id as _validate_id,
 )
-from msgflux.runtime.workspace_local import _check_posix, _root_directory
+from msgflux.runtime.workspace.local import _check_posix, _root_directory
 
 
 def _positive(value: int, name: str) -> None:

@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 import asyncio
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
@@ -24,7 +25,7 @@ from msgflux.runtime import (
     execution_context,
     get_execution_scope,
 )
-from msgflux.runtime.workspace import workspace_path
+from msgflux.runtime.workspace.filesystem import workspace_path
 from msgflux.tools.config import tool_config
 
 
@@ -32,14 +33,16 @@ def authorized(filesystem, *requirements, executor=None, signal=None):
     environment = ExecutionEnvironment(filesystem, process_executor=executor)
     scope = ExecutionScope(
         principal="user",
-        environment=environment,
-        abort_signal=signal,
-        permissions=PermissionSet(
-            ["process.execute"],
-            resources=[
-                filesystem.permission(path, action) for path, action in requirements
-            ],
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                ["process.execute"],
+                resources=[
+                    filesystem.permission(path, action) for path, action in requirements
+                ],
+            ),
         ),
+        abort_signal=signal,
     )
     return execution_context(scope=scope)
 
@@ -66,29 +69,36 @@ async def test_environment_editor_factory_preserves_policy_and_lifecycle():
     environment = ExecutionEnvironment.from_binding(
         binding, write_guarantee="cooperative_compare"
     )
-    editor = environment.workspace_editor()
-    assert editor.filesystem is binding.filesystem
-    assert editor.write_guarantee == "cooperative_compare"
-    assert editor.require_approval is True
-    assert (
-        environment.workspace_editor(require_approval=False).require_approval is False
-    )
-    assert (
-        ExecutionEnvironment.from_binding(binding).write_guarantee == "atomic_compare"
-    )
-    await binding.aclose()
-    with pytest.raises(PermissionError):
-        environment.workspace_editor()
+    with execution_context(
+        scope=ExecutionScope(workspace=AgentWorkspace.from_environment(environment))
+    ):
+        editor = environment.workspace_editor()
+        assert editor.filesystem is binding.filesystem
+        assert editor.write_guarantee == "cooperative_compare"
+        assert editor.require_approval is True
+        assert (
+            environment.workspace_editor(require_approval=False).require_approval
+            is False
+        )
+        assert (
+            ExecutionEnvironment.from_binding(binding).write_guarantee
+            == "atomic_compare"
+        )
+        await binding.aclose()
+        with pytest.raises(PermissionError):
+            environment.workspace_editor()
 
 
 def test_nested_scope_cannot_downgrade_environment_write_guarantee():
     environment = ExecutionEnvironment(InMemoryWorkspace("files"))
-    with execution_context(scope=ExecutionScope(environment=environment)):
-        with pytest.raises(ValueError, match="replace its environment"):
+    with execution_context(
+        scope=ExecutionScope(workspace=AgentWorkspace.from_environment(environment))
+    ):
+        with pytest.raises(ValueError, match="replace its workspace driver"):
             with execution_context(
                 scope=ExecutionScope(
-                    environment=replace(
-                        environment, write_guarantee="cooperative_compare"
+                    workspace=AgentWorkspace.from_environment(
+                        replace(environment, write_guarantee="cooperative_compare")
                     )
                 )
             ):
@@ -159,13 +169,18 @@ def test_workspace_identity_and_nested_authority():
     with authorized(fs, ("/a", "filesystem.read")) as scope:
         with pytest.raises(PermissionError, match="bound"):
             other.read_text("/a")
-        with pytest.raises(ValueError, match="environment"):
+        with pytest.raises(ValueError, match="workspace"):
             with execution_context(
-                scope=replace(scope, environment=ExecutionEnvironment(other))
+                scope=replace(
+                    scope,
+                    workspace=AgentWorkspace.from_environment(
+                        ExecutionEnvironment(other)
+                    ),
+                )
             ):
                 pass
         with execution_context(scope=ExecutionScope(permissions=PermissionSet())):
-            assert get_execution_scope().environment is scope.environment
+            assert get_execution_scope().workspace is scope.workspace
             with pytest.raises(PermissionError):
                 fs.read_text("/a")
         serialized = scope.to_dict()
@@ -177,30 +192,28 @@ def test_workspace_identity_and_nested_authority():
 
 
 @pytest.mark.asyncio
-async def test_injected_filesystem_has_dynamic_authorization_sync_and_async():
+async def test_injected_workspace_has_dynamic_authorization_sync_and_async():
     fs = InMemoryWorkspace("w", {"/allowed": b"yes", "/denied": b"no"})
 
-    @tool_config(runtime_inputs=["filesystem"], retry=False)
-    async def read_file(path: str, *, filesystem) -> str:
+    @tool_config(runtime_inputs=["workspace"], retry=False)
+    async def read_file(path: str, *, workspace) -> str:
         """Read an authorized virtual file."""
-        return await filesystem.aread_text(path)
+        return await workspace.aread_text(path)
 
     library = ToolLibrary("files", [read_file])
     assert (
-        "filesystem"
+        "workspace"
         not in library.get_tool_definition("read_file").input_schema["properties"]
     )
     with authorized(fs, ("/allowed", "filesystem.read")):
         assert await library.arun("read_file", {"path": "/allowed"}) == "yes"
         assert library.run("read_file", {"path": "/allowed"}) == "yes"
         with pytest.raises(ValueError, match="both visible and runtime"):
-            await library.arun(
-                "read_file", {"path": "/allowed", "filesystem": "forged"}
-            )
+            await library.arun("read_file", {"path": "/allowed", "workspace": "forged"})
         with pytest.raises(PermissionError, match="resource permissions"):
             await library.arun("read_file", {"path": "/denied"})
     with pytest.raises(RuntimeError, match="unavailable"):
-        await library.arun("read_file", {"path": "/allowed"}, vars={"filesystem": fs})
+        await library.arun("read_file", {"path": "/allowed"}, vars={"workspace": fs})
 
 
 @pytest.mark.asyncio
@@ -278,10 +291,10 @@ async def test_process_preflight_never_falls_back_to_host(mode):
         if mode == "no_grants":
             with execution_context(scope=replace(scope, permissions=PermissionSet())):
                 with pytest.raises(PermissionError):
-                    await scope.environment.arun(ProcessRequest(["bash"]))
+                    await scope.workspace._environment.arun(ProcessRequest(["bash"]))
         else:
             with pytest.raises(PermissionError):
-                await scope.environment.arun(ProcessRequest(["bash"]))
+                await scope.workspace._environment.arun(ProcessRequest(["bash"]))
     if executor is not None:
         assert not executor.calls
 
@@ -290,12 +303,14 @@ async def test_process_preflight_never_falls_back_to_host(mode):
 async def test_process_gets_same_workspace_and_live_authority():
     fs, executor = InMemoryWorkspace("w"), FakeExecutor()
     with authorized(fs, ("/a", "filesystem.read"), executor=executor) as scope:
-        result = await scope.environment.arun(ProcessRequest(["program"], cwd="/"))
+        result = await scope.workspace._environment.arun(
+            ProcessRequest(["program"], cwd="/")
+        )
         assert result.stdout == b"done"
         _, context = executor.calls[0]
         assert context["filesystem"] is fs
         assert context["permissions"] is scope.permissions
-        assert context["requirements"] is scope.environment.requirements
+        assert context["requirements"] is scope.workspace._environment.requirements
 
 
 @pytest.mark.asyncio
@@ -308,7 +323,7 @@ async def test_process_cancellation_cleanup(mode):
     )
     with authorized(fs, executor=executor, signal=signal) as scope:
         task = asyncio.create_task(
-            scope.environment.arun(
+            scope.workspace._environment.arun(
                 ProcessRequest(
                     ["program"],
                     timeout_seconds=0.02 if mode == "timeout" else 5,
@@ -342,23 +357,23 @@ def test_request_validation_and_initial_file_conflicts():
 
 
 @pytest.mark.asyncio
-async def test_environment_injection_and_output_limit():
+async def test_workspace_injection_and_output_limit():
     fs, executor = InMemoryWorkspace("w"), FakeExecutor()
 
-    @tool_config(runtime_inputs=["environment"], retry=False)
-    async def run_program(*, environment) -> str:
+    @tool_config(runtime_inputs=["workspace"], retry=False)
+    async def run_program(*, workspace) -> str:
         """Demonstrate process context injection using a test executor."""
-        result = await environment.arun(ProcessRequest(["program"]))
+        result = await workspace.arun(ProcessRequest(["program"]))
         return result.stdout.decode()
 
     library = ToolLibrary("processes", [run_program])
     with authorized(fs, executor=executor) as scope:
         with pytest.raises(ValueError, match="both visible and runtime"):
-            await library.arun("run_program", {"environment": "forged"})
+            await library.arun("run_program", {"workspace": "forged"})
         assert executor.calls == []
         assert await library.arun("run_program", {}) == "done"
         with pytest.raises(RuntimeError, match="output limit"):
-            await scope.environment.arun(
+            await scope.workspace._environment.arun(
                 ProcessRequest(["program"], max_output_bytes=1)
             )
 
@@ -368,11 +383,11 @@ async def test_agent_resumes_with_live_workspace_not_checkpoint_authority():
     fs = InMemoryWorkspace("w", {"/report": b"report"})
     observed = []
 
-    @tool_config(runtime_inputs=["filesystem"], retry=False)
-    async def read_file(path: str, *, filesystem) -> str:
+    @tool_config(runtime_inputs=["workspace"], retry=False)
+    async def read_file(path: str, *, workspace) -> str:
         """Read a file after host approval."""
-        observed.append(filesystem)
-        return await filesystem.aread_text(path)
+        observed.append(workspace)
+        return await workspace.aread_text(path)
 
     checkpoint, journal = InMemoryCheckpointStore(), InMemoryApprovalStore()
     model = Mock(model_type="chat_completion")
@@ -396,9 +411,11 @@ async def test_agent_resumes_with_live_workspace_not_checkpoint_authority():
         thread_id="t",
         run_id="r",
         principal="user",
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[fs.permission("/report", "filesystem.read")]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[fs.permission("/report", "filesystem.read")]
+            ),
         ),
     )
     with pytest.raises(TaskPauseRequestedError):
@@ -410,5 +427,6 @@ async def test_agent_resumes_with_live_workspace_not_checkpoint_authority():
     request = journal.pending("reader", "t", "r")[0]
     agent.decide_approval(request.request_id, approved=True, decided_by="host")
     assert await agent.acall("", scope=scope) == "done"
-    assert observed == [fs]
+    assert len(observed) == 1
+    assert observed[0]._environment.filesystem is fs
     assert agent.generator.aforward.call_count == 2

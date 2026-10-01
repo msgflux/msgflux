@@ -47,18 +47,6 @@ from msgflux.runtime.context_scopes import (
     ContextScopeController,
     ScopeTransition,
 )
-from msgflux.runtime.docker_executor import (
-    DockerLimits,
-    DockerProcessExecutor,
-    DockerWorkspaceBackend,
-)
-from msgflux.runtime.environment import (
-    ExecutionEnvironment,
-    ProcessExecutor,
-    ProcessOutputCallback,
-    ProcessRequest,
-    ProcessResult,
-)
 from msgflux.runtime.event_hub import (
     BackgroundTaskSnapshot,
     LiveRunSnapshot,
@@ -68,9 +56,7 @@ from msgflux.runtime.event_hub import (
 )
 from msgflux.runtime.events import EventType, ExecutionEvent
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
-from msgflux.runtime.local_executor import LocalProcessExecutor
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
-from msgflux.runtime.process_capture import ProcessOutputLimitError, drain_subprocess
 from msgflux.runtime.resources import RuntimeResources
 from msgflux.runtime.skills import (
     AgentSkill,
@@ -91,27 +77,46 @@ from msgflux.runtime.tool_results import (
     ToolResultUsage,
     get_tool_result_reference,
 )
-from msgflux.runtime.workspace import (
-    InMemoryWorkspace,
-    WorkspaceConflictError,
-    WorkspaceFilesystem,
-)
-from msgflux.runtime.workspace_backend import (
+from msgflux.runtime.workspace.api import AgentWorkspace
+from msgflux.runtime.workspace.backend import (
     InMemoryWorkspaceBackend,
     WorkspaceBackend,
     WorkspaceBinding,
 )
-from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.changes import PreparedFileChange, WorkspaceEditor
+from msgflux.runtime.workspace.contracts import (
     WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
     WriteGuarantee,
 )
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.docker_executor import (
+    DockerLimits,
+    DockerProcessExecutor,
+    DockerWorkspaceBackend,
+)
+from msgflux.runtime.workspace.environment import (
+    ExecutionEnvironment,
+    ProcessExecutor,
+    ProcessOutputCallback,
+    ProcessRequest,
+    ProcessResult,
+)
+from msgflux.runtime.workspace.filesystem import (
+    InMemoryWorkspace,
+    WorkspaceConflictError,
+    WorkspaceFilesystem,
+)
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.local_executor import LocalProcessExecutor
+from msgflux.runtime.workspace.process_capture import (
+    ProcessOutputLimitError,
+    drain_subprocess,
+)
 
 __all__ = [
+    "AgentWorkspace",
     "DockerLimits",
     "DockerProcessExecutor",
     "DockerWorkspaceBackend",
