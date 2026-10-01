@@ -9,22 +9,22 @@ from contextlib import contextmanager
 from uuid import uuid4
 
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.environment import (
-    ExecutionEnvironment,
-    ProcessRequest,
-    ProcessResult,
-)
 from msgflux.runtime.isolation import SandboxRequirements
-from msgflux.runtime.local_executor import LocalProcessExecutor
 from msgflux.runtime.permissions import (
     PermissionSet,
     ResourcePermission,
     intersect_permissions,
 )
-from msgflux.runtime.workspace import workspace_path
-from msgflux.runtime.workspace_changes import PreparedFileChange
-from msgflux.runtime.workspace_contracts import WorkspaceEntry, WorkspaceIdentity
-from msgflux.runtime.workspace_local import LocalWorkspace
+from msgflux.runtime.workspace.changes import PreparedFileChange
+from msgflux.runtime.workspace.contracts import WorkspaceEntry, WorkspaceIdentity
+from msgflux.runtime.workspace.environment import (
+    ExecutionEnvironment,
+    ProcessRequest,
+    ProcessResult,
+)
+from msgflux.runtime.workspace.filesystem import workspace_path
+from msgflux.runtime.workspace.local import LocalWorkspace
+from msgflux.runtime.workspace.local_executor import LocalProcessExecutor
 
 
 class AgentWorkspace:
@@ -109,7 +109,7 @@ class AgentWorkspace:
         The workspace keeps only the binding returned by this one open. Cwd
         views share its environment, while ``from_environment`` stays borrowed.
         """
-        from msgflux.runtime.workspace_backend import (  # noqa: PLC0415
+        from msgflux.runtime.workspace.backend import (  # noqa: PLC0415
             WorkspaceBackend,
             WorkspaceBinding,
         )

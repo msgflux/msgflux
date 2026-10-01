@@ -13,7 +13,7 @@ from typing import Any
 import msgspec
 
 from msgflux.runtime import AgentWorkspace
-from msgflux.runtime.workspace_api import resolve_workspace
+from msgflux.runtime.workspace.api import resolve_workspace
 from msgflux.tools.config import tool_config
 from msgflux.tools.types import Hidden
 

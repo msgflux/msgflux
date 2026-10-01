@@ -17,12 +17,12 @@ from msgflux.runtime import (
     ProcessRequest,
     execution_context,
 )
-from msgflux.runtime.docker_executor import (
+from msgflux.runtime.workspace.docker_executor import (
     DockerLimits,
     DockerProcessExecutor,
     DockerWorkspaceBackend,
 )
-from msgflux.runtime.process_capture import ProcessOutputLimitError
+from msgflux.runtime.workspace.process_capture import ProcessOutputLimitError
 
 
 def _container_exists(executor, name):
@@ -115,7 +115,9 @@ async def test_real_container_requires_workspace_grant_and_is_removed(
     executor = scope.workspace._environment.process_executor
     container_id = uuid4()
     container_name = f"msgflux-{container_id.hex}"
-    monkeypatch.setattr("msgflux.runtime.docker_executor.uuid4", lambda: container_id)
+    monkeypatch.setattr(
+        "msgflux.runtime.workspace.docker_executor.uuid4", lambda: container_id
+    )
     monkeypatch.setenv("MSGFLUX_DOCKER_HOST_ONLY_SENTINEL", "not-for-container")
     request = ProcessRequest(
         (
@@ -158,7 +160,9 @@ async def test_real_container_failure_cleanup(docker_scope, mode, monkeypatch):
     executor = scope.workspace._environment.process_executor
     container_id = uuid4()
     container_name = f"msgflux-{container_id.hex}"
-    monkeypatch.setattr("msgflux.runtime.docker_executor.uuid4", lambda: container_id)
+    monkeypatch.setattr(
+        "msgflux.runtime.workspace.docker_executor.uuid4", lambda: container_id
+    )
     ready = asyncio.Event()
     code = (
         "import subprocess,time; "

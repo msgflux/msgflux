@@ -57,7 +57,7 @@ from msgflux.runtime.context import (
     execution_context,
 )
 from msgflux.runtime.skills import SkillsConfig
-from msgflux.runtime.workspace_api import AgentWorkspace
+from msgflux.runtime.workspace.api import AgentWorkspace
 
 if TYPE_CHECKING:
     from msgflux.data.stores import CheckpointStore

@@ -20,7 +20,7 @@ from msgflux.runtime import (
     execution_context,
 )
 from msgflux.exceptions import AbortRequestedError
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
 
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX backend")
@@ -246,7 +246,7 @@ def test_replace_failure_preserves_original_and_cleans_temporary(tmp_path, monke
 
 
 def test_temp_collision_never_removes_an_existing_file(tmp_path, monkeypatch):
-    import msgflux.runtime.workspace_local as local
+    from msgflux.runtime.workspace import local
 
     fs = LocalWorkspace("project", tmp_path)
     temporary = tmp_path / ".msgflux-collision"

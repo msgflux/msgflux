@@ -15,17 +15,17 @@ from threading import RLock
 
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.permissions import require_permissions
-from msgflux.runtime.workspace import (
-    WorkspaceConflictError,
-    WorkspaceFilesystem,
-    workspace_path,
-)
-from msgflux.runtime.workspace_backend import WorkspaceBackend, WorkspaceBinding
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.backend import WorkspaceBackend, WorkspaceBinding
+from msgflux.runtime.workspace.contracts import (
     WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
+)
+from msgflux.runtime.workspace.filesystem import (
+    WorkspaceConflictError,
+    WorkspaceFilesystem,
+    workspace_path,
 )
 
 _UNSET = object()
@@ -103,7 +103,7 @@ class LocalWorkspace(WorkspaceFilesystem):
             self._root_stat = os.fstat(fd)
 
     def _authorize(self, operation, path):
-        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
 
         canonical = workspace_path(path)
         require_workspace_authority(filesystem=self)

@@ -5,8 +5,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 
-from msgflux.runtime.workspace_api import AgentWorkspace, resolve_workspace
-from msgflux.runtime.workspace_changes import PreparedFileChange
+from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
+from msgflux.runtime.workspace.changes import PreparedFileChange
 
 _PREPARED_CHANGE = ContextVar("msgflux_prepared_workspace_change", default=None)
 

@@ -7,15 +7,15 @@ import os
 
 from msgflux.exceptions import AbortRequestedError
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.environment import (
+from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
+from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.workspace.environment import (
     ProcessExecutor,
     ProcessRequest,
     ProcessResult,
 )
-from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
-from msgflux.runtime.permissions import PermissionSet
-from msgflux.runtime.process_capture import drain_subprocess
-from msgflux.runtime.workspace_local import LocalWorkspace
+from msgflux.runtime.workspace.local import LocalWorkspace
+from msgflux.runtime.workspace.process_capture import drain_subprocess
 
 
 class LocalProcessExecutor(ProcessExecutor):

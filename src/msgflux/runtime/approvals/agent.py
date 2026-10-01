@@ -23,7 +23,7 @@ from msgflux.runtime.approvals.records import (
 from msgflux.runtime.context import get_execution_scope
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.runtime.permissions import require_permissions
-from msgflux.runtime.workspace_changes import PreparedFileChange
+from msgflux.runtime.workspace.changes import PreparedFileChange
 from msgflux.tools.runtime import ToolOutcome
 from msgflux.tools.workspace_changes import (
     workspace_change_execution,

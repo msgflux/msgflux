@@ -13,7 +13,7 @@ from typing import Mapping
 from uuid import uuid4
 
 from msgflux.runtime.permissions import ResourcePermission, require_permissions
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.contracts import (
     WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
@@ -94,7 +94,7 @@ class WorkspaceFilesystem(ABC):
         )
 
     def _authorize(self, operation, path):
-        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
 
         canonical = workspace_path(path)
         require_workspace_authority(filesystem=self)

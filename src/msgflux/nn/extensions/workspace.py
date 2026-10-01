@@ -5,11 +5,11 @@ from msgflux.nn.extensions.prompt import _append_section
 from msgflux.nn.hooks import Hook, ModelContext
 from msgflux.runtime.context import get_execution_scope
 from msgflux.runtime.permissions import PermissionSet
-from msgflux.runtime.workspace import workspace_path
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.contracts import (
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
 )
+from msgflux.runtime.workspace.filesystem import workspace_path
 from msgflux.utils.msgspec import msgspec_dumps
 
 

@@ -25,7 +25,7 @@ from msgflux.runtime import (
     execution_context,
     get_execution_scope,
 )
-from msgflux.runtime.workspace import workspace_path
+from msgflux.runtime.workspace.filesystem import workspace_path
 from msgflux.tools.config import tool_config
 
 

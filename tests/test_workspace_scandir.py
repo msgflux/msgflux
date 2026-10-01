@@ -15,9 +15,9 @@ from msgflux.runtime import (
     PermissionSet,
     execution_context,
 )
-from msgflux.runtime.workspace import InMemoryWorkspace
-from msgflux.runtime.workspace_contracts import WorkspaceEntry
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.filesystem import InMemoryWorkspace
+from msgflux.runtime.workspace.contracts import WorkspaceEntry
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
 
 
 def _filesystem(request, tmp_path: Path):

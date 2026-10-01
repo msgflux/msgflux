@@ -26,7 +26,7 @@ from msgflux.runtime.approvals.reconciliation import inspect_batch, reconcile_ba
 from msgflux.runtime.approvals.records import _digest
 from msgflux.runtime.context import ExecutionScope
 from msgflux.runtime.events import EventType, _hub_event_sink
-from msgflux.runtime.workspace_changes import PreparedFileChange
+from msgflux.runtime.workspace.changes import PreparedFileChange
 from msgflux.utils.msgspec import msgspec_dumps
 
 _KEY = "pending_approvals"

@@ -21,7 +21,7 @@ from msgflux.runtime import (
     SandboxCapabilities,
     execution_context,
 )
-from msgflux.runtime.process_capture import (
+from msgflux.runtime.workspace.process_capture import (
     ProcessOutputLimitError,
     drain_subprocess,
 )
@@ -207,7 +207,7 @@ async def test_drain_subprocess_kills_and_reaps_on_limit():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["callback", "timeout", "cancel"])
 async def test_drain_failure_stops_callbacks_and_reaps_child(failure, monkeypatch):
-    import msgflux.runtime.process_capture as module
+    import msgflux.runtime.workspace.process_capture as module
 
     process = await asyncio.create_subprocess_exec(
         sys.executable,

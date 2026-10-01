@@ -11,12 +11,12 @@ import msgspec
 from msgflux.runtime.approvals.base import ApprovalStore
 from msgflux.runtime.approvals.records import ApprovalBinding, ApprovalRecord
 from msgflux.runtime.context import get_execution_scope
-from msgflux.runtime.workspace import (
+from msgflux.runtime.workspace.contracts import WorkspaceIdentity, WriteGuarantee
+from msgflux.runtime.workspace.filesystem import (
     WorkspaceConflictError,
     WorkspaceFilesystem,
     workspace_path,
 )
-from msgflux.runtime.workspace_contracts import WorkspaceIdentity, WriteGuarantee
 
 
 class PreparedFileChange(
@@ -262,7 +262,7 @@ class WorkspaceEditor:
             )
         if change.write_guarantee != self.write_guarantee:
             raise PermissionError("Prepared change write guarantee changed")
-        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
 
         require_workspace_authority(filesystem=self.filesystem)
         self.filesystem._authorize(

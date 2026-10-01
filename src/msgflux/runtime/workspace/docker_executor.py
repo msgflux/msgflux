@@ -9,11 +9,11 @@ from uuid import uuid4
 
 import msgspec
 
-from msgflux.runtime.environment import ProcessExecutor, ProcessResult
 from msgflux.runtime.isolation import SandboxCapabilities
-from msgflux.runtime.process_capture import drain_subprocess
-from msgflux.runtime.workspace_backend import WorkspaceBinding
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.backend import WorkspaceBinding
+from msgflux.runtime.workspace.environment import ProcessExecutor, ProcessResult
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.process_capture import drain_subprocess
 
 
 class DockerLimits(msgspec.Struct, frozen=True, kw_only=True):

@@ -3,7 +3,7 @@
 import asyncio
 from typing import Literal, Optional
 
-from msgflux.runtime.workspace_api import AgentWorkspace, resolve_workspace
+from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
 from msgflux.tools.builtin.workspace_tools import _tool_path
 from msgflux.tools.config import tool_config
 from msgflux.tools.patch import apply_diff

@@ -18,7 +18,7 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.permissions import PermissionSet, intersect_permissions
 
 if TYPE_CHECKING:
-    from msgflux.runtime.workspace_api import AgentWorkspace
+    from msgflux.runtime.workspace.api import AgentWorkspace
 
 DEFAULT_NAMESPACE = "default_namespace"
 
@@ -46,7 +46,7 @@ class ExecutionScope:
     workspace: AgentWorkspace | None = None
 
     def __post_init__(self) -> None:
-        from msgflux.runtime.workspace_api import AgentWorkspace  # noqa: PLC0415
+        from msgflux.runtime.workspace.api import AgentWorkspace  # noqa: PLC0415
 
         if self.workspace is not None:
             if not isinstance(self.workspace, AgentWorkspace):

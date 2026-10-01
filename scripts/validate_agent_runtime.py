@@ -55,7 +55,7 @@ from msgflux.runtime import (
     execution_context,
 )
 from msgflux.runtime.isolation import SandboxRequirements
-from msgflux.runtime.workspace import WorkspaceFilesystem
+from msgflux.runtime.workspace.filesystem import WorkspaceFilesystem
 from msgflux.tools.builtin import (
     ApplyPatchTool,
     BashTool,

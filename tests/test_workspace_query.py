@@ -14,8 +14,8 @@ from msgflux.runtime import (
     PermissionSet,
     execution_context,
 )
-from msgflux.runtime.workspace import InMemoryWorkspace
-from msgflux.runtime.workspace_local import LocalWorkspace
+from msgflux.runtime.workspace.filesystem import InMemoryWorkspace
+from msgflux.runtime.workspace.local import LocalWorkspace
 from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
 
 

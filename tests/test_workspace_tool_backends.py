@@ -21,7 +21,7 @@ from msgflux.runtime import (
     AgentWorkspace,
     execution_context,
 )
-from msgflux.runtime.workspace_local import LocalWorkspace
+from msgflux.runtime.workspace.local import LocalWorkspace
 from msgflux.tools.builtin import ApplyPatchTool, EditTool, ReadFileTool, WriteTool
 from msgflux.tools.workspace_changes import workspace_change_execution
 from msgflux.utils.msgspec import msgspec_dumps

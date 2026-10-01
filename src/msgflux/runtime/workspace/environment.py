@@ -13,15 +13,15 @@ from typing import TYPE_CHECKING, Literal
 from msgflux.runtime.abort import AbortSignal, await_with_abort
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, require_permissions
-from msgflux.runtime.workspace import WorkspaceFilesystem, workspace_path
-from msgflux.runtime.workspace_contracts import WriteGuarantee
+from msgflux.runtime.workspace.contracts import WriteGuarantee
+from msgflux.runtime.workspace.filesystem import WorkspaceFilesystem, workspace_path
 
 ProcessOutputCallback = Callable[[Literal["stdout", "stderr"], bytes], Awaitable[None]]
 MAX_PROCESS_OUTPUT_CHUNK = 65_536
 
 if TYPE_CHECKING:
-    from msgflux.runtime.workspace_backend import WorkspaceBinding
-    from msgflux.runtime.workspace_changes import WorkspaceEditor
+    from msgflux.runtime.workspace.backend import WorkspaceBinding
+    from msgflux.runtime.workspace.changes import WorkspaceEditor
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,7 @@ class ExecutionEnvironment:
         if self.filesystem.requires_binding and self.binding is None:
             raise ValueError("Managed filesystem requires a workspace binding")
         if self.binding is not None:
-            from msgflux.runtime.workspace_backend import (  # noqa: PLC0415
+            from msgflux.runtime.workspace.backend import (  # noqa: PLC0415
                 WorkspaceBinding,
             )
 
@@ -195,7 +195,7 @@ class ExecutionEnvironment:
         write_guarantee: WriteGuarantee = "atomic_compare",
         max_edit_bytes: int = 1_000_000,
     ) -> ExecutionEnvironment:
-        from msgflux.runtime.workspace_backend import WorkspaceBinding  # noqa: PLC0415
+        from msgflux.runtime.workspace.backend import WorkspaceBinding  # noqa: PLC0415
 
         if not isinstance(binding, WorkspaceBinding):
             raise TypeError("binding must be a WorkspaceBinding")
@@ -215,8 +215,8 @@ class ExecutionEnvironment:
         Capabilities are checked here, not when constructing the environment,
         so a strictly configured environment can still read a cooperative backend.
         """
-        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
-        from msgflux.runtime.workspace_changes import WorkspaceEditor  # noqa: PLC0415
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
+        from msgflux.runtime.workspace.changes import WorkspaceEditor  # noqa: PLC0415
 
         require_workspace_authority(environment=self)
         self.filesystem.require_write_guarantee(self.write_guarantee)
@@ -239,7 +239,7 @@ class ExecutionEnvironment:
         *,
         on_output: ProcessOutputCallback | None = None,
     ) -> ProcessResult:
-        from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
 
         if not isinstance(request, ProcessRequest):
             raise TypeError("Expected ProcessRequest")

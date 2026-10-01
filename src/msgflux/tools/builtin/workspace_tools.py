@@ -5,8 +5,8 @@ from copy import deepcopy
 from typing import Optional, Union
 
 from msgflux.data.types import Image
-from msgflux.runtime.environment import ProcessRequest
-from msgflux.runtime.workspace_api import AgentWorkspace, resolve_workspace
+from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
+from msgflux.runtime.workspace.environment import ProcessRequest
 from msgflux.tools.config import tool_config
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.shell import ShellCommandResult, ShellResult
