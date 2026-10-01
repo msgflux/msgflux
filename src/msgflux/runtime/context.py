@@ -161,6 +161,12 @@ _CURRENT_ABORT_SIGNAL: contextvars.ContextVar[AbortSignal | None] = (
         default=None,
     )
 )
+_CURRENT_TOOL_CALL_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "msgflux_tool_call_id", default=None
+)
+_CURRENT_TOOL_CALL_MESSAGE_OFFSET: contextvars.ContextVar[int | None] = (
+    contextvars.ContextVar("msgflux_tool_call_message_offset", default=None)
+)
 
 
 @contextmanager
@@ -178,6 +184,8 @@ def execution_context(
     task_handle: Any = None,
     task_activity_recorder: Any = None,
     abort_signal: AbortSignal | None = None,
+    tool_call_id: str | None = None,
+    tool_call_message_offset: int | None = None,
 ):
     """Set execution identity for the enclosed scope.
 
@@ -309,6 +317,14 @@ def execution_context(
         resolved_task_activity_recorder
     )
     abort_token = _CURRENT_ABORT_SIGNAL.set(resolved_abort_signal)
+    tool_call_token = _CURRENT_TOOL_CALL_ID.set(
+        tool_call_id if tool_call_id is not None else _CURRENT_TOOL_CALL_ID.get()
+    )
+    offset_token = _CURRENT_TOOL_CALL_MESSAGE_OFFSET.set(
+        tool_call_message_offset
+        if tool_call_message_offset is not None
+        else _CURRENT_TOOL_CALL_MESSAGE_OFFSET.get()
+    )
     try:
         yield resolved_scope
     finally:
@@ -324,6 +340,8 @@ def execution_context(
         _CURRENT_TASK_HANDLE.reset(task_handle_token)
         _CURRENT_TASK_ACTIVITY_RECORDER.reset(activity_token)
         _CURRENT_ABORT_SIGNAL.reset(abort_token)
+        _CURRENT_TOOL_CALL_ID.reset(tool_call_token)
+        _CURRENT_TOOL_CALL_MESSAGE_OFFSET.reset(offset_token)
 
 
 @contextmanager
@@ -358,6 +376,8 @@ def get_execution_context() -> Mapping[str, Any | None]:
         "task_handle": _CURRENT_TASK_HANDLE.get(),
         "task_activity_recorder": _CURRENT_TASK_ACTIVITY_RECORDER.get(),
         "abort_signal": _CURRENT_ABORT_SIGNAL.get(),
+        "tool_call_id": _CURRENT_TOOL_CALL_ID.get(),
+        "tool_call_message_offset": _CURRENT_TOOL_CALL_MESSAGE_OFFSET.get(),
         "principal": scope.principal,
         "permissions": scope.permissions,
         "workspace": scope.workspace,

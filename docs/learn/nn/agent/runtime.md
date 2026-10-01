@@ -262,6 +262,121 @@ An expired task lease does not prove an old command stopped. Reconcile uncertain
 external work before replaying it; neither reconnection nor checkpoints promise
 exactly-once command execution.
 
+### Durable command evidence
+
+When an Agent has a persistent checkpoint store, workspace commands record an
+intent before launch and a receipt as the executor advances. Foreground receipts
+live in the checkpoint's `runtime.extensions.command_receipts`. Background
+commands use the existing task activity store as their canonical journal; they
+do not create another queue or database. A receipt contains a host-generated
+execution ID, workspace reference, run/task/tool ownership and backend resource
+identity. Inherited environment variables and credentials are not serialized.
+
+A persistent local workspace can explicitly enable host commands:
+
+```python
+from msgflux.runtime import SandboxRequirements
+
+backend = LocalWorkspaceBackend(
+    root, registry=registry, allow_processes=True,
+)
+workspace = await AgentWorkspace.open(
+    backend,
+    "local-commands",
+    permissions=PermissionSet(["process.execute"]),
+    requirements=SandboxRequirements(),
+    write_guarantee="cooperative_compare",
+)
+```
+
+This selects ordinary host process execution, without an operating-system
+sandbox. The explicit process option participates in the workspace configuration
+identity. Use the same option, requirements and current permissions when
+reconnecting. The files-only default remains available.
+
+Load a foreground receipt from host-controlled checkpoint storage and inspect
+its resource through the reconnected workspace:
+
+```python
+from msgflux.runtime.workspace.receipts import decode_command_receipt
+
+state = checkpoints.load_state("main", thread_id, run_id)
+records = state["runtime"]["extensions"].get("command_receipts", [])
+for record in records:
+    receipt = decode_command_receipt(record)
+    observation = await workspace.ainspect_command(receipt)
+    print(receipt.execution_id, observation.classification, observation.reasons)
+```
+
+The example observes existing evidence; it does not launch the saved command.
+Inspection reports `running`, `completed`, `unknown` or `blocked`. A local PID
+requires matching boot and process-start identity. Missing local exit status
+remains unknown, even when the PID has disappeared. Docker inspection checks the
+exact container ID and ownership on the selected daemon; names and labels alone
+do not authorize adopting or removing another container.
+
+The host can request termination explicitly:
+
+```python
+observation = await workspace.aterminate_command(receipt)
+```
+
+Termination requires current process permissions and verified resource
+ownership. Local termination additionally requires Python/kernel pidfd support;
+without it, the executor reports blocked rather than signaling by PID alone.
+Establish quiescence of any other external work before resuming an
+interrupted Agent. Inspection and termination do not themselves append a tool
+result to the saved conversation or make an unknown result safe to replay.
+
+After inspecting effects and ensuring the worker **and its commands** have
+stopped, commit host-confirmed tool output with a checkpoint revision check:
+
+```python
+from msgflux.runtime.workspace.reconciliation import reconcile_command_results
+
+state = checkpoints.load_state("main", thread_id, run_id)
+report = reconcile_command_results(
+    checkpoints, "main", thread_id, run_id,
+    expected_revision=state["_checkpoint"]["revision"],
+    decision_id="review-command-1",
+    decided_by="application-host",
+    reason="Reviewed command outcome and confirmed quiescence",
+    worker_stopped=True,
+    results={receipt.tool_call_id: confirmed_tool_output},
+    workspace=workspace,
+)
+```
+
+`confirmed_tool_output` is the application's verified output in the original
+tool's format; a truncated receipt excerpt is not automatically a complete
+result. The function adds confirmed outputs and records an audited decision
+without invoking tools or the model. Cover the unfinished tool batch required
+by the saved checkpoint. Reusing a decision ID with the same inputs is
+idempotent; changed inputs or stale revisions are rejected.
+
+For a background Agent, additionally pass its `task_store` and `task_id`.
+The checkpoint retains the host decision bound to exact execution IDs while
+the task activity journal remains canonical command evidence. These databases
+are not one transaction. For an executing protected batch, use the existing
+`Agent.reconcile_approvals()` API to preserve its approval decisions and native
+call/output pairs. For a background protected batch, follow approval reconciliation
+with `reconcile_command_results()` to record the decision for its task execution
+IDs. Reconciliation records observations; it never restores
+permission grants.
+
+Receipts keep bounded output excerpts. Foreground retention preserves unresolved
+records and up to 64 resolved terminal records; background activities follow the
+application's task-store retention policy. Recorded Docker commands use bounded
+container logs and commit terminal evidence before routine container removal.
+After a controller crash, surviving resources require explicit host cleanup.
+Commands outside a durable Agent/task context retain their ordinary ephemeral
+execution behavior.
+
+A command intent and an external effect are not one transaction. Recovery
+refuses unresolved command evidence, including a terminal receipt whose tool
+output has not reached the conversation checkpoint. Reconcile the saved result
+before resuming; there is no automatic command retry or live pipe attachment.
+
 ## Execution Scope
 
 Use `ExecutionScope` when you need stable runtime identity.

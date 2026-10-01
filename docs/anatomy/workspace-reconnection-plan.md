@@ -2,7 +2,8 @@
 
 Status: approved follow-up to merged PR #201. Stage 1 is committed as
 `3b25780a` on `feat/workspace-reconnection`. Stage 2 is implemented on
-`feat/agent-task-recovery`; stage 3 remains planned. The developer authorized
+`feat/agent-task-recovery` as `ca512b20`; stage 3 is implemented on
+`feat/command-recovery`, validated and ready for review. The developer authorized
 continuing the stages on dependent branches before review. Merge order remains
 stage 1, then stage 2, then stage 3. This specification is outside PR #201.
 
@@ -207,6 +208,15 @@ locking separately and do not upgrade advertised guarantees prematurely.
   duplicating completed results or granting authority from persisted metadata.
 - Inspection performs no tool calls and can report incompatible dependencies.
 
+Stage 2 validation: 3,705 offline tests passed (33 skipped), the 148-test
+CONTRIBUTING durability gate passed, and 104 focused recovery/store/workspace
+tests passed. The opt-in Docker integration recovered an actually dispatched
+queued Agent using reopened SQLite stores, registry, workspace and inbox; its
+Bash call and terminal checkpoint passed against the installed pinned image.
+Spawned-process tests cover pre-claim and terminal-checkpoint crashes, recovery
+contention and stale-owner fencing. No live model request is needed for these
+ownership tests.
+
 ## PR 3: Command receipts and orphan reconciliation for existing executors
 
 Depends on PR 2. This stage improves evidence and cleanup; live pipe attachment
@@ -243,13 +253,41 @@ work can cause conflicting external effects.
 
 ### Affected files
 
+- New `runtime/workspace/receipts.py`: versioned records and narrow recording
+  callbacks, bounded retention, unresolved-outcome checks.
 - `runtime/workspace/environment.py`: execution identity/receipt plumbing.
+- `runtime/workspace/local.py`: explicit `allow_processes` opt-in for a persistent
+  local binding; include the option in configuration identity. Local commands
+  still have ordinary host access and require live process grants.
+- `runtime/workspace/api.py`: explicit command inspection/termination delegated
+  to the selected executor; saved records do not grant authority.
 - `runtime/workspace/local_executor.py`, `docker_executor.py`,
   `process_capture.py`: lifecycle evidence, cleanup and backend inspection.
 - `runtime/background.py`, task activity and checkpoint extension plumbing.
 - Existing approval reconciliation APIs for protected uncertain batches.
 - New spawned-process executor recovery tests; existing local/Docker integration
   tests and `docs/anatomy/workspace-failure-recovery.md`.
+
+### Implementation details
+
+Versioned immutable command receipts use `msgspec.Struct`. Foreground records
+commit through the Agent's existing checkpoint builder and a per-run lock;
+background records append to existing task activity. The checkpoint records an
+explicit host reconciliation decision for exact background execution IDs, so
+cross-database recovery does not pretend to have a shared transaction. Current
+permissions come from the reconnected workspace, never from those decisions.
+
+Host reconciliation uses revision checks, actor/reason audit metadata and
+idempotent decision IDs. Native outputs keep their original transport. Executing
+protected batches use approval reconciliation first. Command cwd is recorded
+as evidence; resource identity checks distinguish it from the Agent's restored
+cwd. Unresolved outcomes also prevent a later launch in the same live Agent,
+while independent commands in a normal parallel batch remain allowed.
+
+Docker receipts include the exact container/image and socket identity. Bounded
+logs permit observation after controller loss; created containers do not have
+an established command exit status. Local termination requires pidfd support;
+without it, the API reports blocked rather than signaling a reused PID.
 
 ### Required tests and acceptance
 
@@ -260,6 +298,21 @@ work can cause conflicting external effects.
 - Reused/mismatched local PID or unrelated container is never killed/adopted.
 - Unknown outcome remains explicit and is never automatically retried.
 - No unbounded logs, automatic image pulls or leftover workers from the tests.
+
+### Stage 3 validation
+
+- Complete offline suite: 3,738 passed, 33 skipped (two existing warnings).
+- Required durability gate: 148 passed.
+- Final Docker executor and real recovery/reconnection suite: 20 passed,
+  including controller loss before start and after exit, separate stdout/stderr,
+  exact container ownership, cancellation and ordinary executor cleanup.
+- Final Agent/host reconciliation checks: 12 passed. Spawned-process crash tests
+  additionally cover local execution and interruption during model generation.
+- Ruff checks/format and strict MkDocs build passed.
+- Local termination cannot safely signal by PID alone. This Python build lacks
+  pidfd APIs, so termination reports blocked; inspection and explicit host
+  reconciliation remain available. External effects are never automatically
+  replayed when the outcome is unresolved.
 
 ## Verification for every implementation PR
 

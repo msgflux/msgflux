@@ -385,6 +385,7 @@ class AgentLifecycleMixin:
             run.root_run_id = state["scope"].root_run_id
             messages = inputs.get("messages")
             if isinstance(messages, ChatMessages):
+                state["messages"] = messages
                 branch = (
                     messages.metadata.get("runtime", {})
                     .get("context_scopes", {})

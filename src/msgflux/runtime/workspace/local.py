@@ -514,9 +514,13 @@ class LocalWorkspaceBackend(WorkspaceBackend):
         root: str | os.PathLike[str],
         *,
         registry: SQLiteWorkspaceRegistry | None = None,
+        allow_processes: bool = False,
     ):
         _check_posix()
+        if type(allow_processes) is not bool:
+            raise TypeError("allow_processes must be a boolean")
         self._root = os.fspath(root)
+        self.allow_processes = allow_processes
         if registry is not None and not isinstance(registry, SQLiteWorkspaceRegistry):
             raise TypeError("registry must be a SQLiteWorkspaceRegistry")
         self._persistent_registry = registry
@@ -543,7 +547,11 @@ class LocalWorkspaceBackend(WorkspaceBackend):
         return "local-posix"
 
     def _configuration_revision(self):
-        config = {"schema": 1, "read_only": False}
+        config = {
+            "schema": 1,
+            "read_only": False,
+            "allow_processes": self.allow_processes,
+        }
         return hashlib.sha256(
             json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -603,7 +611,14 @@ class LocalWorkspaceBackend(WorkspaceBackend):
             return self._bind(filesystem)
 
     def _bind(self, filesystem):
-        return WorkspaceBinding(self, filesystem, ownership="borrowed")
+        executor = None
+        if self.allow_processes:
+            from msgflux.runtime.workspace.local_executor import (  # noqa: PLC0415
+                LocalProcessExecutor,
+            )
+
+            executor = LocalProcessExecutor(filesystem)
+        return WorkspaceBinding(self, filesystem, executor, ownership="borrowed")
 
     async def _release(self, binding):
         if binding.backend is not self:

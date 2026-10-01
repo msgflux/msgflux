@@ -5,13 +5,17 @@
 from __future__ import annotations
 
 import contextvars
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Union
 
 from msgflux.chat_messages import ChatMessages
 from msgflux.nn.hooks.events import BeforeResume
 from msgflux.runtime.agent_run import AgentRun, agent_run_context
 from msgflux.runtime.context import ExecutionScope
+from msgflux.runtime.workspace.receipts import (
+    bind_command_receipt_persist,
+    retain_command_receipts,
+)
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.agent.core import Agent
@@ -121,15 +125,62 @@ def _agent_context(agent: Agent, *, scope, vars):
         thread_id=scope.thread_id,
         run_id=scope.run_id,
     )
-    state = {"scope": scope, "vars": vars or {}, "run": run}
+    state = {"scope": scope, "vars": vars or {}, "run": run, "agent": agent}
     updated = dict(current)
     updated[agent_id] = state
     token = _CURRENT_AGENT_CONTEXT.set(updated)
+    receipt_context = (
+        bind_command_receipt_persist(
+            lambda receipt: _persist_command_receipt(state, receipt)
+        )
+        if agent._get_effective_checkpoint_store() is not None
+        else nullcontext()
+    )
     try:
-        with agent_run_context(run):
+        with agent_run_context(run), receipt_context:
             yield state
     finally:
         _CURRENT_AGENT_CONTEXT.reset(token)
+
+
+def _persist_command_receipt(state, receipt) -> None:
+    """Atomically checkpoint a command update without running lifecycle hooks."""
+    agent = state["agent"]
+    run = state["run"]
+    messages = state.get("messages")
+    store = agent._get_effective_checkpoint_store()
+    if not isinstance(messages, ChatMessages) or store is None:
+        raise RuntimeError(
+            "Cannot persist command receipt without Agent checkpoint state"
+        )
+    if not getattr(store, "supports_atomic_commit", False):
+        raise RuntimeError("Command receipts require atomic checkpoint commits")
+    thread_id = messages.thread_id or run.thread_id
+    run_id = run.run_id
+    namespace = agent.get_module_name()
+    if not all(
+        isinstance(value, str) and value for value in (thread_id, run_id, namespace)
+    ):
+        raise RuntimeError("Command receipt requires a durable Agent run identity")
+    with run._command_receipt_lock:
+        state_snapshot = agent._build_checkpoint_state(messages, status="running")
+        extensions = dict(run.extension_state)
+        extensions["command_receipts"] = retain_command_receipts(
+            extensions.get("command_receipts", []), receipt
+        )
+        committed = store.commit_state(
+            namespace,
+            thread_id,
+            run_id,
+            state_snapshot,
+            expected_revision=run.revision,
+            extension_state=extensions,
+            branch_id=run.branch_id,
+            head_item_id=run.head_item_id,
+            event={"event_type": "command_receipt", "state": receipt.state},
+        )
+        run.extension_state = extensions
+        run.revision = committed.revision
 
 
 def _prepare_agent_guard_input(model_execution_params):

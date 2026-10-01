@@ -14,8 +14,10 @@ from msgflux.runtime.permissions import (
     PermissionSet,
     ResourcePermission,
     intersect_permissions,
+    require_permissions,
 )
 from msgflux.runtime.workspace.changes import PreparedFileChange
+from msgflux.runtime.workspace.command_inspection import CommandInspection
 from msgflux.runtime.workspace.contracts import WorkspaceEntry, WorkspaceIdentity
 from msgflux.runtime.workspace.environment import (
     ExecutionEnvironment,
@@ -25,6 +27,7 @@ from msgflux.runtime.workspace.environment import (
 from msgflux.runtime.workspace.filesystem import workspace_path
 from msgflux.runtime.workspace.local import LocalWorkspace
 from msgflux.runtime.workspace.local_executor import LocalProcessExecutor
+from msgflux.runtime.workspace.receipts import CommandReceipt
 
 
 class AgentWorkspace:
@@ -451,6 +454,58 @@ class AgentWorkspace:
         from msgflux._private.executor import Executor  # noqa: PLC0415
 
         return Executor.get_instance().submit(self.arun, command, **kwargs).result()
+
+    async def ainspect_command(self, receipt: CommandReceipt) -> CommandInspection:
+        """Inspect a host-loaded command receipt against this live workspace."""
+        self.require_active()
+        executor = self._environment.process_executor
+        inspect_command = getattr(executor, "inspect_command", None)
+        if not callable(inspect_command):
+            raise PermissionError("Workspace has no command inspection executor")
+        with self._bound():
+            require_permissions(("process.execute",))
+            if getattr(executor, "requires_workspace_process_grant", False):
+                require_permissions(
+                    (),
+                    (
+                        self._environment.filesystem.permission(
+                            "/", "process.workspace"
+                        ),
+                    ),
+                )
+            return await inspect_command(receipt)
+
+    def inspect_command(self, receipt: CommandReceipt) -> CommandInspection:
+        """Synchronously inspect a command receipt from a host control path."""
+        from msgflux._private.executor import Executor  # noqa: PLC0415
+
+        return Executor.get_instance().submit(self.ainspect_command, receipt).result()
+
+    async def aterminate_command(self, receipt: CommandReceipt) -> CommandInspection:
+        """Explicitly signal a still-owned command after identity validation."""
+        self.require_active()
+        executor = self._environment.process_executor
+        terminate_command = getattr(executor, "terminate_command", None)
+        if not callable(terminate_command):
+            raise PermissionError("Workspace has no command termination executor")
+        with self._bound():
+            require_permissions(("process.execute",))
+            if getattr(executor, "requires_workspace_process_grant", False):
+                require_permissions(
+                    (),
+                    (
+                        self._environment.filesystem.permission(
+                            "/", "process.workspace"
+                        ),
+                    ),
+                )
+            return await terminate_command(receipt)
+
+    def terminate_command(self, receipt: CommandReceipt) -> CommandInspection:
+        """Synchronously request termination from a host control path."""
+        from msgflux._private.executor import Executor  # noqa: PLC0415
+
+        return Executor.get_instance().submit(self.aterminate_command, receipt).result()
 
     async def aread_prefix(self, path: str, **kwargs) -> bytes:
         return await asyncio.to_thread(self.read_prefix, path, **kwargs)

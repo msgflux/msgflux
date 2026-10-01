@@ -193,6 +193,38 @@ class BackgroundTaskDispatcher:
         return checkpoint
 
     @staticmethod
+    def _validate_recovery_command_receipts(
+        task: Any, task_store: Any, checkpoint: Mapping[str, Any] | None
+    ) -> None:
+        from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+            decode_command_receipt,
+            mark_tool_outputs_recorded,
+            resolved_command_execution_ids,
+            task_command_receipts,
+            unresolved_command_receipts,
+        )
+
+        receipts = task_command_receipts(task_store, task.task_id)
+        extensions = (
+            checkpoint.get("runtime", {}).get("extensions", {})
+            if checkpoint is not None
+            else {}
+        )
+        reconciled = resolved_command_execution_ids(extensions, receipts=receipts)
+        if checkpoint is not None:
+            messages = checkpoint.get("messages", {}).get("items", [])
+            receipt_data = mark_tool_outputs_recorded(receipts, messages)
+            receipts = tuple(decode_command_receipt(item) for item in receipt_data)
+        if any(
+            receipt.execution_id not in reconciled
+            for receipt in unresolved_command_receipts(receipts)
+        ):
+            raise RuntimeError(
+                f"Task `{task.task_id}` has a command receipt requiring host "
+                "reconciliation before recovery."
+            )
+
+    @staticmethod
     def _verify_claimed_checkpoint(
         task: Any, before: Mapping[str, Any] | None, after: Mapping[str, Any] | None
     ) -> None:
@@ -402,6 +434,8 @@ class BackgroundTaskDispatcher:
             checkpoint = self._validate_recovery_checkpoint(
                 task, checkpoint_store, checkpoint_namespace, thread_id, run_id
             )
+            if not reconcile_terminal:
+                self._validate_recovery_command_receipts(task, task_store, checkpoint)
             if reconcile_terminal:
                 if checkpoint is None or checkpoint.get("status") != "completed":
                     raise RuntimeError(
@@ -464,6 +498,7 @@ class BackgroundTaskDispatcher:
                     checkpoint_namespace, thread_id, run_id
                 )
                 self._verify_claimed_checkpoint(task, checkpoint, latest)
+                self._validate_recovery_command_receipts(task, task_store, latest)
             except BaseException:
                 task_handle.release_worker()
                 raise
