@@ -39,13 +39,15 @@ def scope(workspace, *, delete=True):
     fs, environment = workspace
     actions = ["read", "write"] + (["delete"] if delete else [])
     return ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission(path, f"filesystem.{action}")
-                for path in ("/dir", "/dir/a", "/dir/binary")
-                for action in actions
-            ]
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission(path, f"filesystem.{action}")
+                    for path in ("/dir", "/dir/a", "/dir/binary")
+                    for action in actions
+                ]
+            ),
         ),
     )
 
@@ -58,11 +60,7 @@ async def test_delete_is_backend_neutral(workspace, asynchronous):
     definition = ToolLibrary("files", [tool]).get_tool_definition("delete")
     assert set(definition.input_schema["properties"]) == {"path"}
     selected = scope(workspace)
-    selected = selected.with_overrides(
-        workspace=AgentWorkspace.from_environment(
-            selected.workspace._environment, cwd="/dir"
-        )
-    )
+    selected = selected.with_overrides(workspace=selected.workspace.with_cwd("/dir"))
     with execution_context(scope=selected):
         preview = tool.prepare_workspace_change(
             {"path": "a"}, get_execution_scope().workspace

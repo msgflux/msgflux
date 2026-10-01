@@ -169,9 +169,11 @@ def _scope(fs, *, thread: str, run: str, full: bool = True) -> ExecutionScope:
         thread_id=thread,
         run_id=run,
         principal="offline-harness",
-        workspace=AgentWorkspace(ExecutionEnvironment(fs, FakeProcessExecutor())),
-        permissions=PermissionSet(
-            ["process.execute"] if full else [], resources=resources
+        workspace=AgentWorkspace(
+            ExecutionEnvironment(fs, FakeProcessExecutor()),
+            permissions=PermissionSet(
+                ["process.execute"] if full else [], resources=resources
+            ),
         ),
     )
 
@@ -651,7 +653,7 @@ async def run_live(
             ),
         )
         resources = list(
-            _scope(fs, thread="unused", run="unused").permissions.resources
+            _scope(fs, thread="unused", run="unused").workspace.permissions.resources
         )
         thread = uuid4().hex
         prompt = (
@@ -667,8 +669,10 @@ async def run_live(
                 thread_id=thread,
                 run_id=uuid4().hex,
                 principal="local-user",
-                workspace=AgentWorkspace(ExecutionEnvironment(fs)),
-                permissions=PermissionSet(resources=resources),
+                workspace=AgentWorkspace(
+                    ExecutionEnvironment(fs),
+                    permissions=PermissionSet(resources=resources),
+                ),
             )
             await drive_agent(
                 agent,

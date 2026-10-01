@@ -77,12 +77,14 @@ def scope(fs):
         thread_id="t",
         run_id="r",
         principal="user",
-        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/a", f"filesystem.{action}")
-                for action in ("read", "write", "delete")
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/a", f"filesystem.{action}")
+                    for action in ("read", "write", "delete")
+                ]
+            ),
         ),
     )
 

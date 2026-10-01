@@ -146,8 +146,9 @@ async def test_borrowed_release_retains_resource_contents():
     )
     with execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=permissions,
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=permissions
+            ),
         )
     ):
         assert filesystem.read_bytes("/a") == b"kept"
@@ -189,8 +190,9 @@ async def test_closed_environment_blocks_filesystem_access():
     )
     with execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=permissions,
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=permissions
+            ),
         )
     ):
         await binding.aclose()
@@ -293,9 +295,11 @@ async def test_reconnected_binding_survives_other_binding_close():
     environment = ExecutionEnvironment.from_binding(second)
     with execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=PermissionSet(
-                resources=[fs.permission("/a", "filesystem.read")]
+            workspace=AgentWorkspace.from_environment(
+                environment,
+                permissions=PermissionSet(
+                    resources=[fs.permission("/a", "filesystem.read")]
+                ),
             ),
         )
     ):
@@ -323,8 +327,9 @@ async def test_managed_filesystem_cannot_escape_binding_lifecycle():
             replace(environment, binding=None)
         with execution_context(
             scope=ExecutionScope(
-                workspace=AgentWorkspace.from_environment(old_environment),
-                permissions=permissions,
+                workspace=AgentWorkspace.from_environment(
+                    old_environment, permissions=permissions
+                ),
             )
         ):
             with pytest.raises(PermissionError, match="requires a workspace binding"):

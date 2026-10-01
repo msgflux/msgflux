@@ -82,8 +82,9 @@ async def _capture(capture, environment, requests):
         namespace="capture",
         thread_id="capture",
         run_id="run",
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
     with execution_context(scope=scope):
         return await capture.run(environment, requests)

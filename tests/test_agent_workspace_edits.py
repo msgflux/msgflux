@@ -32,8 +32,8 @@ def test_empty_directory_approval_survives_checkpoint_restart(tmp_path, mutate):
     )
     checkpoints, journal = SQLiteCheckpointStore(cp_path), SQLiteApprovalStore(ap_path)
     fs = InMemoryWorkspace("directories")
-    current_scope = replace(
-        scope(fs),
+    current_scope = scope(
+        fs,
         permissions=PermissionSet(
             resources=[
                 fs.permission(path, f"filesystem.{action}")
@@ -77,19 +77,23 @@ def test_empty_directory_approval_survives_checkpoint_restart(tmp_path, mutate):
         journal.close()
 
 
-def scope(fs):
+def scope(fs, *, permissions=None):
     return ExecutionScope(
         namespace="editor",
         thread_id="t",
         run_id="r",
         principal="user",
-        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/a", "filesystem.read"),
-                fs.permission("/a", "filesystem.write"),
-                fs.permission("/a", "filesystem.delete"),
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=permissions
+            if permissions is not None
+            else PermissionSet(
+                resources=[
+                    fs.permission("/a", "filesystem.read"),
+                    fs.permission("/a", "filesystem.write"),
+                    fs.permission("/a", "filesystem.delete"),
+                ]
+            ),
         ),
     )
 
@@ -245,7 +249,7 @@ async def test_full_access_public_schemas_and_live_denial():
         assert library.run("edit", {"path": "a", "old": "new", "new": "last"}) == {
             "status": "completed"
         }
-    with execution_context(scope=replace(scope(fs), permissions=PermissionSet())):
+    with execution_context(scope=scope(fs, permissions=PermissionSet())):
         with pytest.raises(PermissionError):
             await library.arun("write", {"path": "a", "content": "forbidden"})
 
@@ -274,9 +278,7 @@ def test_changed_execution_cannot_escape_review(mode):
         ).register(current)
     elif mode == "cwd":
         current_scope = current_scope.with_overrides(
-            workspace=AgentWorkspace.from_environment(
-                current_scope.workspace._environment, cwd="/other"
-            )
+            workspace=current_scope.workspace.with_cwd("/other")
         )
     elif mode == "permissions":
         current_scope = replace(current_scope, permissions=PermissionSet())
@@ -370,8 +372,8 @@ async def test_parallel_calls_share_tool_but_not_prepared_context():
     first = response("write", {"path": "a", "content": "new a"})
     first.data.process(1, "second", "write", '{"path":"b","content":"new b"}')
     current.generator.aforward = AsyncMock(side_effect=[first, response()])
-    current_scope = replace(
-        scope(fs),
+    current_scope = scope(
+        fs,
         permissions=PermissionSet(
             resources=[
                 fs.permission(path, action)

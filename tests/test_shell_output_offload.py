@@ -210,8 +210,9 @@ async def test_builtin_bash_event_contains_preview_and_retrievable_reference(tmp
     )
     with execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=PermissionSet(["process.execute"]),
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=PermissionSet(["process.execute"])
+            ),
         )
     ):
         events = [

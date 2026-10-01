@@ -112,9 +112,9 @@ def test_approval_binds_workspace_and_static_resources():
         thread_id="t",
         run_id="r",
         principal="user",
-        permissions=PermissionSet(resources=[READ]),
         workspace=AgentWorkspace.from_environment(
-            ExecutionEnvironment(InMemoryWorkspace("one"))
+            ExecutionEnvironment(InMemoryWorkspace("one")),
+            permissions=PermissionSet(resources=[READ]),
         ),
     )
     with execution_context(scope=first):
@@ -125,7 +125,8 @@ def test_approval_binds_workspace_and_static_resources():
     second = replace(
         first,
         workspace=AgentWorkspace.from_environment(
-            ExecutionEnvironment(InMemoryWorkspace("two"))
+            ExecutionEnvironment(InMemoryWorkspace("two")),
+            permissions=PermissionSet(resources=[READ]),
         ),
     )
     with execution_context(scope=second):

@@ -52,16 +52,18 @@ async def test_agent_navigates_searches_and_deletes_with_compact_checkpointed_ou
         namespace="navigation",
         thread_id="thread",
         run_id="run",
-        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(filesystem)),
-        permissions=PermissionSet(
-            resources=[
-                filesystem.permission("/", "filesystem.list"),
-                filesystem.permission("/src", "filesystem.list"),
-                filesystem.permission("/.gitignore", "filesystem.read"),
-                filesystem.permission("/src/main.py", "filesystem.read"),
-                filesystem.permission("/src/readme.txt", "filesystem.read"),
-                filesystem.permission("/src/main.py", "filesystem.delete"),
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(filesystem),
+            permissions=PermissionSet(
+                resources=[
+                    filesystem.permission("/", "filesystem.list"),
+                    filesystem.permission("/src", "filesystem.list"),
+                    filesystem.permission("/.gitignore", "filesystem.read"),
+                    filesystem.permission("/src/main.py", "filesystem.read"),
+                    filesystem.permission("/src/readme.txt", "filesystem.read"),
+                    filesystem.permission("/src/main.py", "filesystem.delete"),
+                ]
+            ),
         ),
     )
     agent = Agent(

@@ -8,6 +8,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from uuid import uuid4
 
+from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.environment import (
     ExecutionEnvironment,
     ProcessRequest,
@@ -15,7 +16,11 @@ from msgflux.runtime.environment import (
 )
 from msgflux.runtime.isolation import SandboxRequirements
 from msgflux.runtime.local_executor import LocalProcessExecutor
-from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.permissions import (
+    PermissionSet,
+    ResourcePermission,
+    intersect_permissions,
+)
 from msgflux.runtime.workspace import workspace_path
 from msgflux.runtime.workspace_changes import PreparedFileChange
 from msgflux.runtime.workspace_contracts import WorkspaceEntry, WorkspaceIdentity
@@ -31,15 +36,32 @@ class AgentWorkspace:
     persistent connection is required for the local factory.
     """
 
-    def __init__(self, environment: ExecutionEnvironment, *, cwd: str = "/"):
+    def __init__(
+        self,
+        environment: ExecutionEnvironment,
+        *,
+        cwd: str = "/",
+        permissions: PermissionSet | None = None,
+    ):
         if not isinstance(environment, ExecutionEnvironment):
             raise TypeError("AgentWorkspace requires an ExecutionEnvironment")
         self._environment = environment
+        # Only AgentWorkspace.open sets this. Environments passed by callers
+        # remain borrowed, even when they happen to carry a live binding.
+        self._owned_binding = None
         self._cwd = workspace_path(cwd)
-        self._default_permissions = None
+        if permissions is not None and not isinstance(permissions, PermissionSet):
+            raise TypeError("permissions must be a PermissionSet or None")
+        self._permissions = permissions or PermissionSet()
 
     @classmethod
-    def local(cls, root, *, read_only: bool = False) -> AgentWorkspace:
+    def local(
+        cls,
+        root,
+        *,
+        read_only: bool = False,
+        permissions: PermissionSet | None = None,
+    ) -> AgentWorkspace:
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
         grants = {"filesystem.read", "filesystem.list"}
@@ -53,11 +75,13 @@ class AgentWorkspace:
                 }
             )
         defaults = PermissionSet(grants)
+        if permissions is not None and not isinstance(permissions, PermissionSet):
+            raise TypeError("permissions must be a PermissionSet or None")
+        ceiling = defaults if permissions is None else permissions
         filesystem = LocalWorkspace(
             f"local-{uuid4().hex}",
             os.path.realpath(os.fspath(root)),
             read_only=read_only,
-            capabilities=defaults,
         )
         environment = ExecutionEnvironment(
             filesystem,
@@ -65,15 +89,87 @@ class AgentWorkspace:
             requirements=SandboxRequirements(),
             write_guarantee="cooperative_compare",
         )
-        workspace = cls(environment)
-        workspace._default_permissions = defaults
+        return cls(environment, permissions=ceiling)
+
+    @classmethod
+    async def open(
+        cls,
+        backend,
+        workspace_id: str,
+        *,
+        permissions: PermissionSet | None = None,
+        cwd: str = "/",
+        requirements: SandboxRequirements | None = None,
+        write_guarantee="atomic_compare",
+        max_edit_bytes: int = 1_000_000,
+        abort_signal: AbortSignal | None = None,
+    ) -> AgentWorkspace:
+        """Open a backend resource and own its connection until ``aclose``.
+
+        The workspace keeps only the binding returned by this one open. Cwd
+        views share its environment, while ``from_environment`` stays borrowed.
+        """
+        from msgflux.runtime.workspace_backend import (  # noqa: PLC0415
+            WorkspaceBackend,
+            WorkspaceBinding,
+        )
+
+        if not isinstance(backend, WorkspaceBackend):
+            raise TypeError("backend must be a WorkspaceBackend")
+        if not isinstance(workspace_id, str):
+            raise TypeError("workspace_id must be a string")
+        if permissions is not None and not isinstance(permissions, PermissionSet):
+            raise TypeError("permissions must be a PermissionSet or None")
+
+        binding = await backend.open(workspace_id, abort_signal=abort_signal)
+        if not isinstance(binding, WorkspaceBinding):
+            raise TypeError("backend.open must return a WorkspaceBinding")
+        try:
+            environment = ExecutionEnvironment.from_binding(
+                binding,
+                requirements=requirements,
+                write_guarantee=write_guarantee,
+                max_edit_bytes=max_edit_bytes,
+            )
+            workspace = cls(environment, cwd=cwd, permissions=permissions)
+        except BaseException as failure:
+            # Once open() has returned, a constructor error must not leak the
+            # binding. Shield release so a concurrent cancellation cannot
+            # interrupt cleanup; keep the original failure as the exception.
+            cleanup = asyncio.create_task(binding.aclose())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            try:
+                cleanup.result()
+            except BaseException as cleanup_error:
+                failure.add_note(f"Workspace binding cleanup failed: {cleanup_error}")
+            raise
+        workspace._owned_binding = binding
         return workspace
 
     @classmethod
     def from_environment(
-        cls, environment: ExecutionEnvironment, *, cwd: str = "/"
+        cls,
+        environment: ExecutionEnvironment,
+        *,
+        cwd: str = "/",
+        permissions: PermissionSet | None = None,
     ) -> AgentWorkspace:
-        return cls(environment, cwd=cwd)
+        return cls(environment, cwd=cwd, permissions=permissions)
+
+    async def aclose(self) -> None:
+        """Close the binding opened by this workspace, if it owns one."""
+        if self._owned_binding is not None:
+            await self._owned_binding.aclose()
+
+    def permission(self, path: str, action: str) -> ResourcePermission:
+        """Describe an exact cwd-relative resource grant; does not authorize it."""
+        return self._environment.filesystem.permission(self.resolve(path), action)
 
     @property
     def cwd(self) -> str:
@@ -88,8 +184,40 @@ class AgentWorkspace:
         return self._environment.process_executor is not None
 
     @property
-    def default_permissions(self) -> PermissionSet | None:
-        return self._default_permissions
+    def permissions(self) -> PermissionSet:
+        return self._permissions
+
+    def effective_permissions(self, requested: PermissionSet | None) -> PermissionSet:
+        """Apply this workspace's immutable ceiling to live scope permissions."""
+        if requested is None:
+            requested = self._permissions
+        if not isinstance(requested, PermissionSet):
+            raise TypeError("permissions must be a PermissionSet or None")
+        grants = {
+            grant
+            for grant in requested.grants
+            if not grant.startswith(("filesystem.", "process."))
+        }
+        grants.update(requested.grants & self._permissions.grants)
+        resources = {
+            resource
+            for resource in requested.resources
+            if not resource.resource.startswith("workspace:")
+        }
+        resources.update(
+            intersect_permissions(
+                self._permissions,
+                requested,
+                workspace_id=self.workspace_id,
+            ).resources
+        )
+        if "process.workspace" in grants:
+            # Executors receive concrete resource grants; this explicit capability
+            # authorizes the whole mount of this workspace, never another root.
+            resources.add(
+                self._environment.filesystem.permission("/", "process.workspace")
+            )
+        return PermissionSet(frozenset(grants), frozenset(resources))
 
     @property
     def identity(self) -> WorkspaceIdentity:
@@ -117,8 +245,11 @@ class AgentWorkspace:
         return AgentWorkspaceEditor(self)
 
     def with_cwd(self, cwd: str) -> AgentWorkspace:
-        view = AgentWorkspace(self._environment, cwd=self.resolve(cwd))
-        view._default_permissions = self._default_permissions
+        view = AgentWorkspace(
+            self._environment, cwd=self.resolve(cwd), permissions=self._permissions
+        )
+        # Views borrow the owner's connection. Closing any binding still gates
+        # every view through the shared environment.
         return view
 
     def resolve(self, path: str) -> str:
@@ -140,8 +271,11 @@ class AgentWorkspace:
             with execution_context(scope=ExecutionScope(workspace=self)):
                 yield
         else:
-            require_workspace_authority(self)
-            yield
+            live_scope = require_workspace_authority(self)
+            with execution_context(
+                scope=ExecutionScope(workspace=self, permissions=live_scope.permissions)
+            ):
+                yield
 
     def _read(self, method, path, **kwargs):
         with self._bound():

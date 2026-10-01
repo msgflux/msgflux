@@ -5,6 +5,9 @@ credentials available to ``Model``. The test uses a temporary project and makes
 a bounded, multiround billable request. Override the model with
 ``MSGFLUX_LIVE_WORKSPACE_MODEL`` and the provider with
 ``MSGFLUX_LIVE_WORKSPACE_PROVIDER`` (``openai`` or ``openrouter``).
+Select a real Docker workspace with ``MSGFLUX_LIVE_WORKSPACE_BACKEND=docker``;
+the image must already exist locally (``MSGFLUX_LIVE_WORKSPACE_IMAGE`` defaults
+to ``python:3.12-slim``). The default backend is local host execution.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from msgflux.models.chat_transport import HTTPChatTransport
 from msgflux.nn import Agent
 from msgflux.nn.extensions import ToolTurnLimitExtension
 from msgflux.runtime.events import EventType
+from msgflux.runtime import DockerWorkspaceBackend, PermissionSet
 from msgflux.tools.builtin import ApplyPatchTool, BashTool, ReadFileTool
 
 
@@ -46,7 +50,28 @@ async def test_live_agent_reads_edits_and_executes_in_temporary_workspace(tmp_pa
         "openrouter": "openrouter/openai/gpt-6-luna",
     }
     (tmp_path / "status.txt").write_text("status: BLUE-ORBIT-42\n")
-    workspace = mf.AgentWorkspace.local(tmp_path)
+    backend = os.getenv("MSGFLUX_LIVE_WORKSPACE_BACKEND", "local")
+    if backend == "local":
+        workspace = mf.AgentWorkspace.local(tmp_path)
+    elif backend == "docker":
+        workspace = await mf.AgentWorkspace.open(
+            DockerWorkspaceBackend(
+                tmp_path,
+                image=os.getenv("MSGFLUX_LIVE_WORKSPACE_IMAGE", "python:3.12-slim"),
+            ),
+            "live-project",
+            permissions=PermissionSet(
+                [
+                    "filesystem.read",
+                    "filesystem.write",
+                    "process.execute",
+                    "process.workspace",
+                ]
+            ),
+            write_guarantee="cooperative_compare",
+        )
+    else:
+        raise ValueError("MSGFLUX_LIVE_WORKSPACE_BACKEND must be local or docker")
 
     model = mf.Model.chat_completion(
         os.getenv(_MODEL_OVERRIDE, defaults.get(provider, defaults["openai"])),
@@ -85,7 +110,10 @@ async def test_live_agent_reads_edits_and_executes_in_temporary_workspace(tmp_pa
                 )
             ]
     finally:
-        await model.aclose()
+        try:
+            await model.aclose()
+        finally:
+            await workspace.aclose()
 
     starts = [
         event.data["tool_name"]

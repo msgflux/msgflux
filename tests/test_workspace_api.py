@@ -6,8 +6,14 @@ import pytest
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
+from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.runtime import (
+    AgentApprovals,
+    ExecutionEnvironment,
     ExecutionScope,
+    InMemoryApprovalStore,
+    InMemoryWorkspace,
     PermissionSet,
     AgentWorkspace,
 )
@@ -340,3 +346,208 @@ def test_builtin_tools_share_workspace_cwd_and_allow_workspace_views(tmp_path):
         result = BashTool()("cat note.txt", workspace=workspace)
         assert result.results[0].stdout == "shared"
     assert (tmp_path / "src" / "note.txt").read_text() == "shared"
+
+
+@pytest.mark.asyncio
+async def test_agent_scope_cannot_escalate_workspace_ceiling_or_catalog_grant(
+    tmp_path,
+):
+    workspace = AgentWorkspace.local(
+        tmp_path, permissions=PermissionSet(["filesystem.read"])
+    )
+    observed = []
+
+    @tool_config(runtime_inputs=["workspace"], required_permissions=["catalog.write"])
+    async def attempt_changes(*, workspace: Hidden[AgentWorkspace]) -> str:
+        """Try file and process operations against the injected workspace."""
+        for operation in (
+            lambda: workspace.write_text("blocked.txt", "no"),
+            lambda: workspace.run(["true"]),
+        ):
+            with pytest.raises(PermissionError):
+                operation()
+            observed.append("denied")
+        return "workspace operations denied"
+
+    model = _WorkspaceModel("attempt_changes", "{}")
+    agent = Agent(
+        name="workspace-ceiling-agent",
+        model=model,
+        tools=[attempt_changes],
+        workspace=workspace,
+    )
+    generous_scope = ExecutionScope(
+        permissions=PermissionSet(
+            ["catalog.write", "filesystem.read", "filesystem.write", "process.execute"]
+        )
+    )
+
+    assert (
+        await agent.acall("Try the available changes", scope=generous_scope)
+        == "complete"
+    )
+    assert observed == ["denied", "denied"]
+    assert not (tmp_path / "blocked.txt").exists()
+
+    # Direct host calls receive the same ceiling as tools dispatched by Agent.
+    with execution_context(
+        scope=ExecutionScope(
+            workspace=workspace, permissions=generous_scope.permissions
+        )
+    ):
+        with pytest.raises(PermissionError):
+            workspace.write_text("direct.txt", "no")
+        with pytest.raises(PermissionError):
+            workspace.run(["true"])
+
+
+def test_workspace_scope_can_narrow_broad_local_ceiling_to_exact_file(tmp_path):
+    workspace = AgentWorkspace.local(tmp_path)
+    workspace.write_text("allowed.txt", "allowed")
+    workspace.write_text("private.txt", "private")
+    scope = ExecutionScope(
+        workspace=workspace,
+        permissions=PermissionSet(
+            resources=[workspace.permission("allowed.txt", "filesystem.read")]
+        ),
+    )
+
+    with execution_context(scope=scope):
+        assert workspace.read_text("allowed.txt") == "allowed"
+        with pytest.raises(PermissionError):
+            workspace.read_text("private.txt")
+
+
+def test_same_environment_handle_cannot_escape_its_own_narrow_ceiling(tmp_path):
+    writable = AgentWorkspace.local(tmp_path)
+    narrow = AgentWorkspace.from_environment(
+        writable._environment, permissions=PermissionSet(["filesystem.read"])
+    )
+    scope = ExecutionScope(workspace=writable)
+
+    with execution_context(scope=scope):
+        with pytest.raises(PermissionError):
+            narrow.write_text("blocked.txt", "no")
+
+    assert not (tmp_path / "blocked.txt").exists()
+
+
+def test_background_tool_cannot_expand_live_workspace_ceiling(tmp_path):
+    workspace = AgentWorkspace.local(
+        tmp_path, permissions=PermissionSet(["filesystem.read"])
+    )
+    completed = Event()
+    outcomes = []
+
+    @tool_config(runtime_inputs=["workspace"], background=True)
+    def write_later(*, workspace: Hidden[AgentWorkspace]) -> str:
+        """Try to write from a background worker."""
+        try:
+            workspace.write_text("background.txt", "no")
+        except PermissionError:
+            outcomes.append("denied")
+        else:
+            outcomes.append("written")
+        finally:
+            completed.set()
+        return outcomes[-1]
+
+    library = ToolLibrary(name="workspace", tools=[write_later])
+    with execution_context(
+        scope=ExecutionScope(
+            workspace=workspace,
+            permissions=PermissionSet(["filesystem.read", "filesystem.write"]),
+        )
+    ):
+        library([("background-call", "write_later", {})])
+
+    assert completed.wait(timeout=5)
+    assert outcomes == ["denied"]
+    assert not (tmp_path / "background.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_approved_write_resume_is_rejected_when_workspace_is_narrowed(tmp_path):
+    from msgflux.tools.builtin import WriteTool
+
+    filesystem = InMemoryWorkspace("approval-ceiling", {"/note.txt": b"before"})
+    environment = ExecutionEnvironment(filesystem)
+    writable = AgentWorkspace.from_environment(
+        environment,
+        permissions=PermissionSet(
+            resources=[
+                filesystem.permission("/note.txt", "filesystem.read"),
+                filesystem.permission("/note.txt", "filesystem.write"),
+            ]
+        ),
+    )
+    read_only = AgentWorkspace.from_environment(
+        environment,
+        permissions=PermissionSet(
+            resources=[filesystem.permission("/note.txt", "filesystem.read")]
+        ),
+    )
+    journal = InMemoryApprovalStore()
+    model = _WorkspaceModel("write", '{"path":"note.txt","content":"after"}')
+    agent = Agent(
+        name="approval-ceiling-agent",
+        model=model,
+        tools=[WriteTool()],
+        checkpoint_store=InMemoryCheckpointStore(),
+        approvals=AgentApprovals(journal, {"write": "v1"}, "p1"),
+    )
+    initial_scope = ExecutionScope(
+        namespace="approval-ceiling-agent",
+        thread_id="approval-thread",
+        run_id="approval-run",
+        principal="user:1",
+        workspace=writable,
+    )
+
+    with pytest.raises(TaskPauseRequestedError):
+        await agent.acall("Write after", scope=initial_scope)
+    record = journal.pending(
+        "approval-ceiling-agent", "approval-thread", "approval-run"
+    )[0]
+    agent.decide_approval(record.request_id, approved=True, decided_by="host")
+
+    narrowed_scope = initial_scope.with_overrides(workspace=read_only)
+    with pytest.raises(TaskPauseRequestedError):
+        await agent.acall("Resume", scope=narrowed_scope)
+
+    assert read_only.read_text("note.txt") == "before"
+    assert journal.get("approval-ceiling-agent", record.request_id).status != "consumed"
+
+
+def test_consumed_approval_does_not_override_read_only_workspace(tmp_path):
+    from msgflux.runtime.approvals.agent import ApprovalBatch
+
+    filesystem = InMemoryWorkspace("consumed-ceiling", {"/note.txt": b"before"})
+    environment = ExecutionEnvironment(filesystem)
+    writable = AgentWorkspace.from_environment(
+        environment,
+        permissions=PermissionSet(
+            resources=[
+                filesystem.permission("/note.txt", "filesystem.read"),
+                filesystem.permission("/note.txt", "filesystem.write"),
+            ]
+        ),
+    )
+    read_only = AgentWorkspace.from_environment(
+        environment,
+        permissions=PermissionSet(
+            resources=[filesystem.permission("/note.txt", "filesystem.read")]
+        ),
+    )
+
+    with execution_context(scope=ExecutionScope(workspace=writable)):
+        change = writable.editor.prepare_write("note.txt", "after")
+
+    batch = ApprovalBatch(None, None, {}, changes={"approved-call": change})
+    batch.consumed.add("approved-call")
+    with execution_context(scope=ExecutionScope(workspace=read_only)):
+        with batch.activate():
+            with pytest.raises(PermissionError):
+                read_only.editor.apply(change)
+
+    assert read_only.read_text("note.txt") == "before"

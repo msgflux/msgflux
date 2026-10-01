@@ -80,18 +80,82 @@ class PermissionSet:
         return not self.missing(required)
 
 
+def intersect_permissions(
+    parent: PermissionSet,
+    child: PermissionSet,
+    *,
+    workspace_id: str | None = None,
+) -> PermissionSet:
+    """Intersect delegated grants, allowing broad/exact workspace narrowing.
+
+    Exact resource grants remain exact. For resources belonging to the active
+    workspace, a broad operation grant on either side can admit the exact
+    resource selected by the other side. Resource IDs outside that workspace
+    continue to require an exact grant on both sides.
+    """
+    if not isinstance(parent, PermissionSet) or not isinstance(child, PermissionSet):
+        raise TypeError("Permission intersection requires PermissionSet values")
+
+    if workspace_id is None:
+        resources = set(parent.resources & child.resources)
+    else:
+        if not isinstance(workspace_id, str) or not workspace_id:
+            raise ValueError("workspace_id must be non-empty text or None")
+        prefix = f"workspace:{workspace_id}:"
+        resources = {
+            item
+            for item in parent.resources & child.resources
+            if not item.resource.startswith("workspace:")
+            or item.resource.startswith(prefix)
+        }
+        for item in child.resources:
+            if (
+                item.resource.startswith(prefix)
+                and item.action.startswith(("filesystem.", "process."))
+                and item.action in parent.grants
+            ):
+                resources.add(item)
+        for item in parent.resources:
+            if (
+                item.resource.startswith(prefix)
+                and item.action.startswith(("filesystem.", "process."))
+                and item.action in child.grants
+            ):
+                resources.add(item)
+    return PermissionSet(parent.grants & child.grants, frozenset(resources))
+
+
 def require_permissions(required: Iterable[str], resources=()) -> None:
     """Check live authority, never arguments or persisted execution identity."""
     # Context imports PermissionSet; resolve the live reader only at invocation.
     from msgflux.runtime.context import get_execution_scope  # noqa: PLC0415
 
-    permissions = get_execution_scope().permissions or PermissionSet()
+    scope = get_execution_scope()
+    permissions = scope.permissions or PermissionSet()
     missing = permissions.missing(required)
     if missing:
         raise PermissionError(f"Missing tool permissions: {', '.join(missing)}")
-    if permissions.missing_resources(resources):
+    missing_resources = []
+    workspace = scope.workspace
+    for resource in normalize_resources(resources):
+        if resource in permissions.resources:
+            continue
+        # Workspace-wide grants admit the backend's exact path check only for
+        # the currently bound workspace. Other resource identities stay exact.
+        workspace_prefix = (
+            f"workspace:{workspace.workspace_id}:" if workspace is not None else None
+        )
+        if (
+            workspace_prefix is not None
+            and resource.resource.startswith(workspace_prefix)
+            and resource.action.startswith(("filesystem.", "process."))
+            and permissions.allows((resource.action,))
+        ):
+            continue
+        missing_resources.append(resource)
+    if missing_resources:
         # Resource IDs can contain private paths; do not put them in events/errors.
         raise PermissionError("Missing tool resource permissions")
 
 
-__all__ = ["PermissionSet", "ResourcePermission"]
+__all__ = ["PermissionSet", "ResourcePermission", "intersect_permissions"]

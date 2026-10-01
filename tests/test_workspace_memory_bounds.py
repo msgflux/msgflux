@@ -24,13 +24,13 @@ def test_sparse_real_file_rejected_without_full_allocation(tmp_path, kind):
         workspace=AgentWorkspace.from_environment(
             ExecutionEnvironment(
                 fs, write_guarantee="cooperative_compare", max_edit_bytes=4096
-            )
-        ),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/" + name, "filesystem.read"),
-                fs.permission("/" + name, "filesystem.write"),
-            ]
+            ),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/" + name, "filesystem.read"),
+                    fs.permission("/" + name, "filesystem.write"),
+                ]
+            ),
         ),
     )
     tool = (

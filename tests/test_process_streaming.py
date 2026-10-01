@@ -72,8 +72,9 @@ async def test_execute_adapter_collects_streaming_chunks(streaming):
     environment = ExecutionEnvironment(InMemoryWorkspace("stream"), StreamingExecutor())
     seen = []
     scope = ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
 
     async def collect(channel, data):
@@ -106,8 +107,9 @@ async def test_environment_rejects_duplicate_streamed_buffers():
         InMemoryWorkspace("stream"), DuplicateStreamingExecutor()
     )
     scope = ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
 
     async def ignore(channel, data):

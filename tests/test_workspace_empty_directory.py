@@ -31,13 +31,15 @@ def workspace(request, tmp_path):
         guarantee = "atomic_compare"
     environment = ExecutionEnvironment(fs, write_guarantee=guarantee)
     scope = ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission(path, f"filesystem.{action}")
-                for path in ("/", "/empty", "/empty/item")
-                for action in ("list", "mkdir", "read", "write", "delete")
-            ]
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission(path, f"filesystem.{action}")
+                    for path in ("/", "/empty", "/empty/item")
+                    for action in ("list", "mkdir", "read", "write", "delete")
+                ]
+            ),
         ),
     )
     with execution_context(scope=scope):
@@ -98,12 +100,14 @@ def test_empty_directory_requires_list_and_delete_not_read(workspace):
     fs, original = workspace
     for actions in [("delete",), ("list",), ("delete", "list")]:
         scope = ExecutionScope(
-            workspace=AgentWorkspace.from_environment(original.workspace._environment),
-            permissions=PermissionSet(
-                resources=[
-                    fs.permission("/empty", f"filesystem.{action}")
-                    for action in actions
-                ]
+            workspace=AgentWorkspace.from_environment(
+                original.workspace._environment,
+                permissions=PermissionSet(
+                    resources=[
+                        fs.permission("/empty", f"filesystem.{action}")
+                        for action in actions
+                    ]
+                ),
             ),
         )
         with execution_context(scope=scope):
@@ -133,13 +137,13 @@ def test_local_symlink_directory_is_not_followed(tmp_path):
     fs = LocalWorkspace("links", tmp_path)
     scope = ExecutionScope(
         workspace=AgentWorkspace.from_environment(
-            ExecutionEnvironment(fs, write_guarantee="cooperative_compare")
-        ),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/alias", f"filesystem.{action}")
-                for action in ("delete", "list")
-            ]
+            ExecutionEnvironment(fs, write_guarantee="cooperative_compare"),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/alias", f"filesystem.{action}")
+                    for action in ("delete", "list")
+                ]
+            ),
         ),
     )
     with execution_context(scope=scope), pytest.raises(PermissionError):
@@ -153,13 +157,13 @@ def test_local_rmdir_refuses_content_added_after_last_check(tmp_path, monkeypatc
     fs = LocalWorkspace("race", tmp_path)
     scope = ExecutionScope(
         workspace=AgentWorkspace.from_environment(
-            ExecutionEnvironment(fs, write_guarantee="cooperative_compare")
-        ),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/empty", f"filesystem.{action}")
-                for action in ("delete", "list")
-            ]
+            ExecutionEnvironment(fs, write_guarantee="cooperative_compare"),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/empty", f"filesystem.{action}")
+                    for action in ("delete", "list")
+                ]
+            ),
         ),
     )
     original = os.rmdir

@@ -33,14 +33,16 @@ def authorized(filesystem, *requirements, executor=None, signal=None):
     environment = ExecutionEnvironment(filesystem, process_executor=executor)
     scope = ExecutionScope(
         principal="user",
-        workspace=AgentWorkspace.from_environment(environment),
-        abort_signal=signal,
-        permissions=PermissionSet(
-            ["process.execute"],
-            resources=[
-                filesystem.permission(path, action) for path, action in requirements
-            ],
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                ["process.execute"],
+                resources=[
+                    filesystem.permission(path, action) for path, action in requirements
+                ],
+            ),
         ),
+        abort_signal=signal,
     )
     return execution_context(scope=scope)
 
@@ -409,9 +411,11 @@ async def test_agent_resumes_with_live_workspace_not_checkpoint_authority():
         thread_id="t",
         run_id="r",
         principal="user",
-        workspace=AgentWorkspace.from_environment(ExecutionEnvironment(fs)),
-        permissions=PermissionSet(
-            resources=[fs.permission("/report", "filesystem.read")]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[fs.permission("/report", "filesystem.read")]
+            ),
         ),
     )
     with pytest.raises(TaskPauseRequestedError):

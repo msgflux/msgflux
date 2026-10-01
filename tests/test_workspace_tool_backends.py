@@ -40,12 +40,14 @@ def _scope(environment, filesystem, *, read=True, write=True, delete=True):
         thread_id="thread",
         run_id="run",
         principal="user",
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(
-            resources=[
-                filesystem.permission("/a", f"filesystem.{action}")
-                for action in actions
-            ]
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                resources=[
+                    filesystem.permission("/a", f"filesystem.{action}")
+                    for action in actions
+                ]
+            ),
         ),
     )
 

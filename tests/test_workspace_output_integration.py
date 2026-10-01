@@ -100,8 +100,9 @@ def setup_capture(tmp_path, blocks):
         namespace="fixture",
         thread_id="fixture",
         run_id="run",
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
     return resources, results, executor, extension, scope
 

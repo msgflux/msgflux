@@ -35,14 +35,14 @@ def scope(fs, paths=("/a",), actions=("read", "write", "delete"), binding=None):
         workspace=AgentWorkspace.from_environment(
             ExecutionEnvironment(fs)
             if binding is None
-            else ExecutionEnvironment.from_binding(binding)
-        ),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission(path, f"filesystem.{action}")
-                for path in paths
-                for action in actions
-            ]
+            else ExecutionEnvironment.from_binding(binding),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission(path, f"filesystem.{action}")
+                    for path in paths
+                    for action in actions
+                ]
+            ),
         ),
     )
 

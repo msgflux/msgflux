@@ -141,8 +141,9 @@ async def test_live_provider_shell_output_offload_and_followup(
         namespace=agent.name,
         thread_id="offload-live",
         run_id="initial",
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(["process.execute"]),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
     )
 
     try:
@@ -186,8 +187,9 @@ async def test_live_provider_shell_output_offload_and_followup(
                         namespace=agent.name,
                         thread_id="offload-live",
                         run_id="followup",
-                        workspace=AgentWorkspace.from_environment(environment),
-                        permissions=PermissionSet(["process.execute"]),
+                        workspace=AgentWorkspace.from_environment(
+                            environment, permissions=PermissionSet(["process.execute"])
+                        ),
                     ),
                 )
             ]

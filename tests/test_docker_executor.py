@@ -17,7 +17,11 @@ from msgflux.runtime import (
     ProcessRequest,
     execution_context,
 )
-from msgflux.runtime.docker_executor import DockerLimits, DockerProcessExecutor
+from msgflux.runtime.docker_executor import (
+    DockerLimits,
+    DockerProcessExecutor,
+    DockerWorkspaceBackend,
+)
 from msgflux.runtime.process_capture import ProcessOutputLimitError
 
 
@@ -66,9 +70,11 @@ def docker_scope(tmp_path):
         fs, executor, write_guarantee="cooperative_compare"
     )
     scope = ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(
-            ["process.execute"], [fs.permission("/", "process.workspace")]
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                ["process.execute"], [fs.permission("/", "process.workspace")]
+            ),
         ),
     )
     return scope, root
@@ -245,10 +251,12 @@ async def test_real_backend_bash_output_can_be_offloaded(tmp_path):
             binding, write_guarantee="cooperative_compare"
         )
         scope = ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=PermissionSet(
-                ["process.execute"],
-                [binding.filesystem.permission("/", "process.workspace")],
+            workspace=AgentWorkspace.from_environment(
+                environment,
+                permissions=PermissionSet(
+                    ["process.execute"],
+                    [binding.filesystem.permission("/", "process.workspace")],
+                ),
             ),
         )
         with execution_context(scope=scope):
@@ -276,9 +284,11 @@ async def test_individual_file_grants_do_not_authorize_mount(tmp_path, monkeypat
     with (
         execution_context(
             scope=ExecutionScope(
-                workspace=AgentWorkspace.from_environment(environment),
-                permissions=PermissionSet(
-                    ["process.execute"], [fs.permission("/", "filesystem.read")]
+                workspace=AgentWorkspace.from_environment(
+                    environment,
+                    permissions=PermissionSet(
+                        ["process.execute"], [fs.permission("/", "filesystem.read")]
+                    ),
                 ),
             )
         ),
@@ -343,3 +353,37 @@ async def test_real_agent_stream_checkpoints_only_offload_reference(
         assert events[-1].type == "run.end"
     finally:
         checkpoints.close()
+
+
+@pytest.mark.asyncio
+async def test_opened_workspace_shares_files_and_docker_execution_without_context(
+    docker_scope,
+):
+    configured, root = docker_scope
+    image = configured.workspace._environment.process_executor.image
+    workspace = await AgentWorkspace.open(
+        DockerWorkspaceBackend(root, image=image),
+        "opened-project",
+        permissions=PermissionSet(
+            [
+                "filesystem.read",
+                "filesystem.write",
+                "process.execute",
+                "process.workspace",
+            ]
+        ),
+        write_guarantee="cooperative_compare",
+    )
+    try:
+        await workspace.awrite_text("note.txt", "from file tool\n")
+        result = await workspace.arun(
+            "cat note.txt && printf 'from container\\n' > result.txt"
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == b"from file tool\n"
+        assert await workspace.aread_text("result.txt") == "from container\n"
+    finally:
+        await workspace.aclose()
+    await workspace.aclose()
+    with pytest.raises(PermissionError, match="binding"):
+        await workspace.aread_text("note.txt")

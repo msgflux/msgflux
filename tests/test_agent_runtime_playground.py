@@ -171,15 +171,19 @@ async def test_concurrent_workspace_runs_isolate_approvals_and_effects(
             thread, {"/note.txt": f"original-{thread}".encode()}
         )
         filesystems[thread] = fs
+        permissions = harness.PermissionSet(
+            resources=[
+                fs.permission("/note.txt", "filesystem.read"),
+                fs.permission("/note.txt", "filesystem.write"),
+                fs.permission(f"/{thread}-only", "filesystem.read"),
+            ]
+        )
         scopes[thread] = replace(
             harness._scope(fs, thread=thread, run="shared-run"),
             principal=thread,
-            permissions=harness.PermissionSet(
-                resources=[
-                    fs.permission("/note.txt", "filesystem.read"),
-                    fs.permission("/note.txt", "filesystem.write"),
-                    fs.permission(f"/{thread}-only", "filesystem.read"),
-                ]
+            workspace=AgentWorkspace.from_environment(
+                harness.ExecutionEnvironment(fs, harness.FakeProcessExecutor()),
+                permissions=permissions,
             ),
         )
 
@@ -540,12 +544,14 @@ async def test_terminal_budget_survives_approval_resume(harness, tmp_path, deny,
             thread_id="t",
             run_id="r",
             principal="host",
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=harness.PermissionSet(
-                resources=[
-                    fs.permission("/note.txt", action)
-                    for action in ("filesystem.read", "filesystem.write")
-                ]
+            workspace=AgentWorkspace.from_environment(
+                environment,
+                permissions=harness.PermissionSet(
+                    resources=[
+                        fs.permission("/note.txt", action)
+                        for action in ("filesystem.read", "filesystem.write")
+                    ]
+                ),
             ),
         )
         previews = []

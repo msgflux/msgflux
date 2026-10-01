@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 from uuid import uuid4
 
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.permissions import PermissionSet, intersect_permissions
 
 if TYPE_CHECKING:
     from msgflux.runtime.workspace_api import AgentWorkspace
@@ -52,10 +52,6 @@ class ExecutionScope:
             if not isinstance(self.workspace, AgentWorkspace):
                 raise TypeError(
                     "ExecutionScope.workspace must be AgentWorkspace or None"
-                )
-            if self.permissions is None:
-                object.__setattr__(
-                    self, "permissions", self.workspace.default_permissions
                 )
         if self.permissions is not None and not isinstance(
             self.permissions, PermissionSet
@@ -210,11 +206,15 @@ def execution_context(
             raise ValueError("Nested execution cannot change its principal")
         principal = current_scope.principal
         inherited = current_scope.permissions or PermissionSet()
-        permissions = (
-            inherited.intersect(permissions) if permissions is not None else inherited
+        permissions = intersect_permissions(
+            inherited,
+            permissions if permissions is not None else inherited,
+            workspace_id=(workspace.workspace_id if workspace is not None else None),
         )
     elif permissions is None:
-        permissions = PermissionSet()
+        permissions = (
+            workspace.permissions if workspace is not None else PermissionSet()
+        )
 
     current_thread_id = _CURRENT_THREAD_ID.get()
     resolved_thread_id = (
@@ -258,6 +258,11 @@ def execution_context(
         else base_scope.abort_signal or current_abort_signal
     )
 
+    permissions = (
+        workspace.effective_permissions(permissions)
+        if workspace is not None
+        else permissions
+    )
     resolved_scope = ExecutionScope(
         thread_id=resolved_thread_id,
         namespace=resolved_namespace,
@@ -269,7 +274,6 @@ def execution_context(
         permissions=permissions,
         workspace=workspace,
     )
-
     current_checkpoint_store = _CURRENT_CHECKPOINT_STORE.get()
     resolved_checkpoint_store = (
         checkpoint_store if checkpoint_store is not None else current_checkpoint_store

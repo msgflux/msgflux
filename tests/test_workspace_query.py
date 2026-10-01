@@ -23,8 +23,10 @@ def _scope(filesystem, paths):
     resources = [filesystem.permission(path, action) for path, action in paths]
     return execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(ExecutionEnvironment(filesystem)),
-            permissions=PermissionSet(resources=resources),
+            workspace=AgentWorkspace.from_environment(
+                ExecutionEnvironment(filesystem),
+                permissions=PermissionSet(resources=resources),
+            ),
         )
     )
 

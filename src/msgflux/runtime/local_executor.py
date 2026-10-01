@@ -7,7 +7,11 @@ import os
 
 from msgflux.exceptions import AbortRequestedError
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.environment import ProcessExecutor, ProcessRequest, ProcessResult
+from msgflux.runtime.environment import (
+    ProcessExecutor,
+    ProcessRequest,
+    ProcessResult,
+)
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.process_capture import drain_subprocess

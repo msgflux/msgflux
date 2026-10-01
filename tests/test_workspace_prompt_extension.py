@@ -68,8 +68,9 @@ def _section(prompt: str) -> dict[str, Any]:
 
 def _scope(environment, resources=(), grants=()):
     return ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(grants, resources=resources),
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(grants, resources=resources)
+        ),
     )
 
 

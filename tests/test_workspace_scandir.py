@@ -42,11 +42,13 @@ def filesystem(request, tmp_path):
 def _authorized(filesystem, *permissions):
     environment = ExecutionEnvironment(filesystem)
     scope = ExecutionScope(
-        workspace=AgentWorkspace.from_environment(environment),
-        permissions=PermissionSet(
-            resources=[
-                filesystem.permission(path, action) for path, action in permissions
-            ]
+        workspace=AgentWorkspace.from_environment(
+            environment,
+            permissions=PermissionSet(
+                resources=[
+                    filesystem.permission(path, action) for path, action in permissions
+                ]
+            ),
         ),
     )
     return execution_context(scope=scope)
@@ -185,8 +187,9 @@ async def test_closed_local_binding_rejects_operations(tmp_path):
     await binding.aclose()
     with execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=permissions,
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=permissions
+            ),
         )
     ):
         with pytest.raises(PermissionError):

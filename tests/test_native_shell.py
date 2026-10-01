@@ -223,9 +223,9 @@ async def test_native_approval_resume_uses_same_executor(model, name, approval_m
         thread_id="t",
         run_id="r",
         workspace=AgentWorkspace.from_environment(
-            ExecutionEnvironment(workspace, executor)
+            ExecutionEnvironment(workspace, executor),
+            permissions=PermissionSet(["process.execute"]),
         ),
-        permissions=PermissionSet(["process.execute"]),
     )
     store, journal = InMemoryCheckpointStore(), InMemoryApprovalStore()
     tool = BashTool()
@@ -356,8 +356,9 @@ async def test_batch_limits_and_timeout_do_not_escape_environment():
     environment = ExecutionEnvironment(InMemoryWorkspace("shell"), executor)
     with execution_context(
         scope=ExecutionScope(
-            workspace=AgentWorkspace.from_environment(environment),
-            permissions=PermissionSet(["process.execute"]),
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=PermissionSet(["process.execute"])
+            ),
         )
     ):
         result = await BashTool().acall(

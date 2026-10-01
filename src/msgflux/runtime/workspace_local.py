@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from threading import RLock
 
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.permissions import PermissionSet, require_permissions
+from msgflux.runtime.permissions import require_permissions
 from msgflux.runtime.workspace import (
     WorkspaceConflictError,
     WorkspaceFilesystem,
@@ -82,16 +82,12 @@ class LocalWorkspace(WorkspaceFilesystem):
         root: str | os.PathLike[str],
         *,
         read_only: bool = False,
-        capabilities: PermissionSet | None = None,
     ):
         _check_posix()
         super().__init__(workspace_id)
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
-        if capabilities is not None and not isinstance(capabilities, PermissionSet):
-            raise TypeError("capabilities must be a PermissionSet or None")
         self.read_only = read_only
-        self.capabilities = capabilities
         root_path = os.fspath(root)
         if (
             not isinstance(root_path, str)
@@ -110,17 +106,9 @@ class LocalWorkspace(WorkspaceFilesystem):
         from msgflux.runtime.workspace_api import require_workspace_authority  # noqa: PLC0415, I001
 
         canonical = workspace_path(path)
-        scope = require_workspace_authority(filesystem=self)
+        require_workspace_authority(filesystem=self)
         if self.read_only and operation in {"write", "delete", "mkdir"}:
             raise PermissionError("Workspace is read-only")
-        capability = f"filesystem.{operation}"
-        if (
-            self.capabilities is not None
-            and self.capabilities.allows((capability,))
-            and (scope.permissions or PermissionSet()).allows((capability,))
-        ):
-            require_permissions((capability,))
-            return canonical
         require_permissions(
             (), (self.permission(canonical, f"filesystem.{operation}"),)
         )
