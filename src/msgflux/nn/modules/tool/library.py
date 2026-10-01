@@ -115,9 +115,13 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             self._handle = ToolLibraryHandle(self)
         return self._handle
 
-    def recover_agent_task(self, task_id: str, *, message: str) -> str:
-        """Explicitly resume an agent whose worker lease has expired."""
-        return self.get_handle().recover_background_agent_task(task_id, message=message)
+    def recover_agent_task(
+        self, task_id: str, *, message: str, worker_stopped: bool = False
+    ) -> str:
+        """Resume an expired Agent after the host confirms its worker stopped."""
+        return self.get_handle().recover_background_agent_task(
+            task_id, message=message, worker_stopped=worker_stopped
+        )
 
     def reconcile_agent_task(self, task_id: str) -> str:
         """Record a completed background Agent result from its checkpoint."""

@@ -1721,16 +1721,22 @@ def test_expired_agent_recovery_requires_checkpoint_or_initial_input_and_expired
     assert tasks.claim_worker(task.task_id, "old", lease_seconds=30)
 
     with execution_context(checkpoint_store=checkpoints):
+        with pytest.raises(RuntimeError, match="previous worker has stopped"):
+            library.recover_agent_task(task.task_id, message="Continue")
         with pytest.raises(
             RuntimeError, match="no checkpoint or durable initial input"
         ):
-            library.recover_agent_task(task.task_id, message="Continue")
+            library.recover_agent_task(
+                task.task_id, message="Continue", worker_stopped=True
+            )
 
         checkpoints.save_state(
             "worker", "orphaned-thread", "orphaned-task", {"status": "running"}
         )
         with pytest.raises(TaskLeaseLostError):
-            library.recover_agent_task(task.task_id, message="Continue")
+            library.recover_agent_task(
+                task.task_id, message="Continue", worker_stopped=True
+            )
 
     assert tasks.get(task.task_id).status == "running"
     assert tasks.get_worker_lease(task.task_id).owner_id == "old"
@@ -1758,11 +1764,16 @@ def test_terminal_checkpoint_reconciliation_requires_result_but_accepts_none():
     )
     assert tasks.claim_worker(task.task_id, "old", lease_seconds=1)
     checkpoints.save_state(
-        "worker", "orphaned-thread", "orphaned-task", {"status": "completed"}
+        "worker",
+        "orphaned-thread",
+        "orphaned-task",
+        {"status": "completed", "_checkpoint": {"revision": 0}},
     )
     with execution_context(checkpoint_store=checkpoints):
         with pytest.raises(RuntimeError, match="terminal checkpoint"):
-            library.recover_agent_task(task.task_id, message="Continue")
+            library.recover_agent_task(
+                task.task_id, message="Continue", worker_stopped=True
+            )
         with pytest.raises(RuntimeError, match="no recorded result"):
             library.reconcile_agent_task(task.task_id)
     assert tasks.get_worker_lease(task.task_id).owner_id == "old"
@@ -1770,7 +1781,11 @@ def test_terminal_checkpoint_reconciliation_requires_result_but_accepts_none():
         "worker",
         "orphaned-thread",
         "orphaned-task",
-        {"status": "completed", "task_result": {"value": None}},
+        {
+            "status": "completed",
+            "task_result": {"value": None},
+            "_checkpoint": {"revision": 0},
+        },
     )
     tasks._clock = lambda: time.time() + 2
     with execution_context(checkpoint_store=checkpoints):
@@ -1864,7 +1879,9 @@ def test_expired_agent_recovery_replays_initial_input_before_first_checkpoint(
     now[0] = 111.0
 
     with execution_context(checkpoint_store=checkpoints):
-        library.recover_agent_task(task.task_id, message="Extra instruction")
+        library.recover_agent_task(
+            task.task_id, message="Extra instruction", worker_stopped=True
+        )
         _wait_until(lambda: tasks.get(task.task_id).status == "completed")
 
     assert tasks.get(task.task_id).result == "replayed"
@@ -2026,7 +2043,9 @@ def test_expired_agent_recovery_reuses_task_and_checkpoint():
         tasks._clock = lambda: now[0]
         assert tasks.claim_worker(task_id, "crashed", lease_seconds=10)
         now[0] = 111.0
-        assert "recovered" in library.recover_agent_task(task_id, message="Continue")
+        assert "recovered" in library.recover_agent_task(
+            task_id, message="Continue", worker_stopped=True
+        )
         _wait_until(lambda: tasks.get(task_id).status == "completed")
 
     assert tasks.get(task_id).result == "recovered"

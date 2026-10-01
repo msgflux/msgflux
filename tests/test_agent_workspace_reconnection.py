@@ -94,3 +94,17 @@ def test_checkpoint_workspace_reference_is_persisted_and_checked():
             agent._validate_checkpoint_workspace(state)
     asyncio.run(binding.aclose())
     asyncio.run(changed_binding.aclose())
+
+
+def test_explicit_lineage_scope_inherits_live_workspace_before_agent_default(tmp_path):
+    inherited = AgentWorkspace.local(tmp_path)
+    configured = AgentWorkspace.local(tmp_path)
+    agent = _Agent(configured)
+    root = ExecutionScope(workspace=inherited, thread_id="root")
+    child = ExecutionScope(thread_id="child", run_id="child-run")
+    with execution_context(scope=root):
+        selected = agent._workspace_scope(child)
+        assert selected.workspace is inherited
+        assert selected.thread_id == "child"
+        with execution_context(scope=selected):
+            assert selected.workspace.shares_environment(inherited)

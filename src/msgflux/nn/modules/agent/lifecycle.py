@@ -608,9 +608,11 @@ class AgentLifecycleMixin:
             raise TypeError("scope must be ExecutionScope or None")
         current = get_execution_context()["scope"]
         base = scope or current
-        if base.workspace is not None or self.workspace is None:
-            return scope
-        return base.with_overrides(workspace=self.workspace)
+        if base.workspace is None:
+            workspace = current.workspace or self.workspace
+            if workspace is not None:
+                return base.with_overrides(workspace=workspace)
+        return scope
 
     def watch(
         self, thread_id: str, *, approvals=_UNSET, event_buffer_limit: int | None = None

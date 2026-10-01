@@ -57,6 +57,7 @@ from msgflux.runtime.event_hub import (
 from msgflux.runtime.events import EventType, ExecutionEvent
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
+from msgflux.runtime.recovery import AgentTaskRecovery, TaskRecoveryReport
 from msgflux.runtime.resources import RuntimeResources
 from msgflux.runtime.skills import (
     AgentSkill,
@@ -128,6 +129,8 @@ __all__ = [
     "ProcessOutputLimitError",
     "drain_subprocess",
     "RuntimeResources",
+    "AgentTaskRecovery",
+    "TaskRecoveryReport",
     "LocalToolResultStore",
     "ToolResultIntegrityError",
     "ToolResultRef",

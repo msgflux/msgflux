@@ -93,6 +93,16 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
             return True
 
+    def release_worker(self, task_id: str, owner_id: str) -> bool:
+        with self._lock:
+            lease = self._worker_leases.get(task_id)
+            if lease is None or lease.owner_id != owner_id:
+                return False
+            self._worker_leases[task_id] = TaskLease(
+                task_id, owner_id, min(lease.expires_at, self._clock() - 1)
+            )
+            return True
+
     def _owns_worker_locked(self, task_id: str, owner_id: str | None) -> bool:
         if owner_id is None:
             return task_id not in self._worker_leases

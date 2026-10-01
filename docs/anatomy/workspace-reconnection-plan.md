@@ -1,9 +1,10 @@
 # Workspace reconnection and recovery plan
 
-Status: approved follow-up to merged PR #201. Stage 1 is implemented in the
-working tree on `feat/workspace-reconnection`; stages 2 and 3 remain planned.
-This specification is intentionally outside PR #201. Implement each stage in a
-new branch from updated main after its dependencies merge.
+Status: approved follow-up to merged PR #201. Stage 1 is committed as
+`3b25780a` on `feat/workspace-reconnection`. Stage 2 is implemented on
+`feat/agent-task-recovery`; stage 3 remains planned. The developer authorized
+continuing the stages on dependent branches before review. Merge order remains
+stage 1, then stage 2, then stage 3. This specification is outside PR #201.
 
 Stage 1 validation includes independent-process crash/restart, concurrent first
 registration, approval recovery with changed file/grants/policy/tool revisions,
