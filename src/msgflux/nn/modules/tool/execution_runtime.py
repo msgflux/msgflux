@@ -15,6 +15,7 @@ from msgflux.exceptions import (
     AbortRequestedError,
     TaskError,
     TaskInterruptRequestedError,
+    TaskPauseRequestedError,
 )
 from msgflux.nn.hooks.events import AfterTool, BeforeTool, BeforeToolDispatch
 from msgflux.nn.modules.tool.implementations import Tool
@@ -32,7 +33,7 @@ from msgflux.nn.modules.tool.runtime import (
 )
 from msgflux.runtime.abort import await_with_abort
 from msgflux.runtime.approvals.agent import approved_tool_execution, guard_approved_plan
-from msgflux.runtime.context import get_execution_context
+from msgflux.runtime.context import execution_context, get_execution_context
 from msgflux.runtime.events import EventType, emit_event, event_source
 from msgflux.runtime.permissions import require_permissions
 from msgflux.tools.helpers import (
@@ -430,7 +431,11 @@ class ToolLibraryExecutionMixin:
                 ),
                 context.get("abort_signal"),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return self._failed_intent(
@@ -461,7 +466,11 @@ class ToolLibraryExecutionMixin:
                 ),
                 context.get("abort_signal"),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return self._failed_intent(
@@ -610,7 +619,11 @@ class ToolLibraryExecutionMixin:
                 ),
             )
             return event
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return replace(
@@ -640,7 +653,11 @@ class ToolLibraryExecutionMixin:
                 ),
             )
             return event
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return replace(
@@ -670,7 +687,11 @@ class ToolLibraryExecutionMixin:
                     expected_type=BeforeTool,
                 ),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return BeforeTool(
@@ -702,7 +723,11 @@ class ToolLibraryExecutionMixin:
                     expected_type=BeforeTool,
                 ),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return BeforeTool(
@@ -870,7 +895,11 @@ class ToolLibraryExecutionMixin:
                             "transform_tool_output must return AfterTool or None"
                         )
             return current
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as error:
             return self._tool_output_failure(outcome, error)
@@ -890,7 +919,11 @@ class ToolLibraryExecutionMixin:
                             "transform_tool_output must return AfterTool or None"
                         )
             return current
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as error:
             return self._tool_output_failure(outcome, error)
@@ -907,7 +940,11 @@ class ToolLibraryExecutionMixin:
             if not isinstance(outcome, AfterTool):
                 raise TypeError("after_tool handlers must return AfterTool or None")
             return outcome
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             emit_event(
@@ -928,7 +965,11 @@ class ToolLibraryExecutionMixin:
             if not isinstance(outcome, AfterTool):
                 raise TypeError("after_tool handlers must return AfterTool or None")
             return outcome
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             emit_event(
@@ -1479,7 +1520,7 @@ class ToolLibraryExecutionMixin:
         ):
             raise ValueError("Dispatch cannot replace the executing tool intent")
 
-    async def _adispatch_runtime_plan(
+    async def _adispatch_runtime_plan(  # noqa: C901
         self,
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
@@ -1505,7 +1546,18 @@ class ToolLibraryExecutionMixin:
             if denied is not None:
                 execution_denial = denied
                 return denied
-            with approved_tool_execution(current):
+            context_messages = context.values.get("messages")
+            try:
+                message_offset = len(context_messages)
+            except TypeError:
+                message_offset = None
+            with (
+                execution_context(
+                    tool_call_id=current.intent.id,
+                    tool_call_message_offset=message_offset,
+                ),
+                approved_tool_execution(current),
+            ):
                 result = await self._aexecute_prepared_tool(
                     current.definition.executor,
                     current.call_arguments,
@@ -1557,7 +1609,11 @@ class ToolLibraryExecutionMixin:
                 ),
                 context.get("abort_signal"),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception:
             return outcome
@@ -1620,7 +1676,11 @@ class ToolLibraryExecutionMixin:
                 elif isinstance(result, TaskError):
                     if isinstance(
                         result.exception,
-                        (AbortRequestedError, TaskInterruptRequestedError),
+                        (
+                            AbortRequestedError,
+                            TaskInterruptRequestedError,
+                            TaskPauseRequestedError,
+                        ),
                     ):
                         raise result.exception
                     outcomes[index] = self._failed_intent(
@@ -1692,7 +1752,11 @@ class ToolLibraryExecutionMixin:
                 elif isinstance(result, TaskError):
                     if isinstance(
                         result.exception,
-                        (AbortRequestedError, TaskInterruptRequestedError),
+                        (
+                            AbortRequestedError,
+                            TaskInterruptRequestedError,
+                            TaskPauseRequestedError,
+                        ),
                     ):
                         raise result.exception
                     outcomes[index] = self._failed_intent(

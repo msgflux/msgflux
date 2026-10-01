@@ -1221,6 +1221,20 @@ class AgentConversationMixin:
         workspace_scope = self._workspace_scope(scope)
         workspace_reference = encode_workspace_reference(workspace_scope.workspace)
         runtime_state = run.durable_state() if run is not None else {}
+        if run is not None:
+            from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+                mark_tool_outputs_recorded,
+            )
+
+            receipts = run.get_extension("command_receipts", [])
+            if receipts:
+                run.set_extension(
+                    "command_receipts",
+                    mark_tool_outputs_recorded(
+                        receipts, messages._to_state().get("items", [])
+                    ),
+                )
+                runtime_state = run.durable_state()
         if workspace_reference is not None:
             if run is not None:
                 run.set_extension("workspace_reference", workspace_reference)
@@ -1393,6 +1407,7 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        self._validate_checkpoint_command_receipts(state)
         self._validate_checkpoint_workspace(state, scope=scope)
 
         self._restore_agent_run(state, effective_thread_id, run_id)
@@ -1454,6 +1469,7 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        self._validate_checkpoint_command_receipts(state)
         self._validate_checkpoint_workspace(state, scope=scope)
 
         self._restore_agent_run(state, effective_thread_id, run_id)
@@ -1475,6 +1491,38 @@ class AgentConversationMixin:
             "model_preference": state.get("model_preference"),
             "scope": effective_scope,
         }
+
+    @staticmethod
+    def _validate_checkpoint_command_receipts(state) -> None:
+        from msgflux.exceptions import TaskPauseRequestedError  # noqa: PLC0415
+        from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+            decode_command_receipt,
+            mark_tool_outputs_recorded,
+            resolved_command_execution_ids,
+            unresolved_command_receipts,
+        )
+
+        extensions = state.get("runtime", {}).get("extensions", {})
+        receipts = extensions.get("command_receipts", [])
+        if not receipts:
+            return
+        receipts = [decode_command_receipt(item) for item in receipts]
+        reconciled = resolved_command_execution_ids(extensions, receipts=receipts)
+        messages = state.get("messages", {}).get("items", [])
+        receipts = [
+            decode_command_receipt(item)
+            for item in mark_tool_outputs_recorded(receipts, messages)
+        ]
+        if any(
+            receipt.execution_id not in reconciled
+            for receipt in unresolved_command_receipts(receipts)
+        ):
+            raise TaskPauseRequestedError(
+                message=(
+                    "Workspace command outcome requires host reconciliation before "
+                    "this Agent run can resume."
+                )
+            )
 
     def _validate_checkpoint_workspace(self, state, *, scope=None) -> None:
         from msgflux.exceptions import TaskPauseRequestedError  # noqa: PLC0415

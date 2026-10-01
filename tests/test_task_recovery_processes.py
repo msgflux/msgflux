@@ -37,6 +37,23 @@ class _FixedModel:
         return response
 
 
+class _BlockingGenerationModel:
+    """Signal model entry through a filesystem marker, then block indefinitely."""
+
+    model_type = "chat_completion"
+
+    def __init__(self, marker):
+        self.marker = marker
+
+    def __call__(self, **_kwargs):
+        with open(self.marker, "w", encoding="utf-8") as stream:
+            stream.write("entered generation")
+            stream.flush()
+            os.fsync(stream.fileno())
+        while True:
+            time.sleep(0.05)
+
+
 def _workspace(paths):
     registry = SQLiteWorkspaceRegistry(paths[3])
     backend = LocalWorkspaceBackend(paths[4], registry=registry)
@@ -119,6 +136,70 @@ def _crash_before_worker_claim(paths, connection, gate):
         connection.send(task_id)
         connection.close()
     gate.wait(timeout=15)
+
+
+def _crash_during_model_generation(paths, marker, connection):
+    checkpoints = SQLiteCheckpointStore(paths[0])
+    tasks = SQLiteTaskStore(paths[1])
+    inbox_store = SQLiteAgentInboxStore(paths[2])
+    _registry, _backend, workspace = _workspace(paths)
+    worker = Agent(
+        name="worker",
+        model=_BlockingGenerationModel(marker),
+        checkpoint_store=checkpoints,
+        workspace=workspace,
+    )
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+    library.set_agent_inbox(AgentInbox(owner="root", store=inbox_store))
+    library.get_background_dispatcher().lease_seconds = 0.2
+    with execution_context(
+        scope=ExecutionScope(
+            thread_id="thread", run_id="root", root_run_id="root", workspace=workspace
+        )
+    ):
+        dispatch = library([("start", "worker", {"task": "Start"})])
+        task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
+        connection.send(task_id)
+        connection.close()
+    while True:
+        time.sleep(1)
+
+
+def _recover_generation_crash(paths, task_id, output):
+    checkpoints = SQLiteCheckpointStore(paths[0])
+    tasks = SQLiteTaskStore(paths[1])
+    inbox_store = SQLiteAgentInboxStore(paths[2])
+    registry, _backend, workspace = _workspace(paths)
+    model = _FixedModel()
+    worker = Agent(name="worker", model=model, workspace=workspace)
+    worker.tool_config = {"background": True}
+    library = ToolLibrary(name="lib", tools=[worker], task_store=tasks)
+    library.set_agent_inbox(AgentInbox(owner="root", store=inbox_store))
+    library.get_background_dispatcher().lease_seconds = 2
+    with execution_context(
+        scope=ExecutionScope(workspace=workspace), checkpoint_store=checkpoints
+    ):
+        recovery = AgentTaskRecovery(library)
+        report = recovery.inspect(task_id)
+        if report.classification != "recoverable":
+            output.put(
+                ("inspect_failed", report.classification, report.reasons, model.calls)
+            )
+            return
+        recovery.recover(task_id, "Continue", worker_stopped=True)
+        deadline = time.monotonic() + 15
+        while tasks.get(task_id).status in {"queued", "running"}:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Recovered generation task did not finish")
+            time.sleep(0.01)
+        task = tasks.get(task_id)
+        output.put((report.classification, task.status, task.result, model.calls))
+    asyncio.run(workspace.aclose())
+    registry.close()
+    checkpoints.close()
+    tasks.close()
+    inbox_store.close()
 
 
 def _inspect_in_fresh_process(paths, task_id, output):
@@ -404,6 +485,101 @@ def test_two_recovery_processes_contend_for_queued_task_before_worker_claim(tmp_
                 if child.is_alive():
                     child.kill()
                     child.join(timeout=5)
+                child.close()
+
+
+def test_generation_crash_is_recoverable_without_command_side_effects(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    root = tmp_path / "workspace"
+    root.mkdir()
+    paths = tuple(
+        str(path)
+        for path in (
+            tmp_path / "checkpoint.sqlite",
+            tmp_path / "tasks.sqlite",
+            tmp_path / "inbox.sqlite",
+            tmp_path / "registry.sqlite",
+            root,
+        )
+    )
+    marker = str(tmp_path / "model-generation-entered")
+    receive, send = context.Pipe(duplex=False)
+    owner = context.Process(
+        target=_crash_during_model_generation, args=(paths, marker, send)
+    )
+    recovery = None
+    output = context.Queue()
+    old_owner_id = None
+    try:
+        owner.start()
+        assert receive.poll(20)
+        task_id = receive.recv()
+        deadline = time.monotonic() + 20
+        while not os.path.exists(marker):
+            assert time.monotonic() < deadline, "model did not enter generation"
+            time.sleep(0.01)
+
+        tasks = SQLiteTaskStore(paths[1])
+        try:
+            assert tasks.get(task_id).status == "running"
+            lease = tasks.get_worker_lease(task_id)
+            assert lease is not None
+            old_owner_id = lease.owner_id
+        finally:
+            tasks.close()
+
+        # Kill the whole controller while its model request is blocked. The
+        # model wrote only the external readiness marker; Bash never ran.
+        owner.kill()
+        owner.join(timeout=10)
+        assert owner.exitcode == -9
+        assert list(root.iterdir()) == []
+
+        tasks = SQLiteTaskStore(paths[1])
+        try:
+            deadline = time.monotonic() + 5
+            while tasks.get_worker_lease(task_id).expires_at > time.time():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+        finally:
+            tasks.close()
+
+        recovery = context.Process(
+            target=_recover_generation_crash, args=(paths, task_id, output)
+        )
+        recovery.start()
+        outcome = output.get(timeout=25)
+        recovery.join(timeout=15)
+        assert recovery.exitcode == 0
+        assert outcome == (
+            "recoverable",
+            "completed",
+            "durable result",
+            1,
+        )
+
+        tasks = SQLiteTaskStore(paths[1])
+        try:
+            task = tasks.get(task_id)
+            assert task.status == "completed"
+            assert task.result == "durable result"
+            if old_owner_id is not None:
+                assert (
+                    tasks.complete(
+                        task_id, "stale generation result", owner_id=old_owner_id
+                    )
+                    is None
+                )
+        finally:
+            tasks.close()
+    finally:
+        receive.close()
+        send.close()
+        for child in (owner, recovery):
+            if child is not None:
+                if child.is_alive():
+                    child.kill()
+                child.join(timeout=5)
                 child.close()
 
 

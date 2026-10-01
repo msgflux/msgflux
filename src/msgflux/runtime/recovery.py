@@ -15,6 +15,13 @@ from msgflux.runtime.context import (
     get_execution_scope,
 )
 from msgflux.runtime.permissions import require_permissions
+from msgflux.runtime.workspace.receipts import (
+    decode_command_receipt,
+    mark_tool_outputs_recorded,
+    resolved_command_execution_ids,
+    task_command_receipts,
+    unresolved_command_receipts,
+)
 
 if TYPE_CHECKING:
     from msgflux.nn.modules.tool import ToolLibrary
@@ -124,6 +131,14 @@ class AgentTaskRecovery:
                     envelope = checkpoint.get("_checkpoint", {})
                     checkpoint_revision = envelope.get("revision")
                     extensions = checkpoint.get("runtime", {}).get("extensions", {})
+                    foreground_receipts = unresolved_command_receipts(
+                        extensions.get("command_receipts", [])
+                    )
+                    if foreground_receipts:
+                        uncertain = True
+                        reasons.append(
+                            "command execution outcome requires host reconciliation"
+                        )
                     pending = extensions.get("pending_approvals") or checkpoint.get(
                         "pending_approvals"
                     )
@@ -151,6 +166,33 @@ class AgentTaskRecovery:
             else:
                 incompatible = True
                 reasons.append("checkpoint store or route is unavailable")
+
+            background_receipts = task_command_receipts(task_store, task_id)
+            extensions = (
+                checkpoint.get("runtime", {}).get("extensions", {})
+                if checkpoint is not None
+                else {}
+            )
+            reconciled = resolved_command_execution_ids(
+                extensions, receipts=background_receipts
+            )
+            checkpoint_messages = (
+                checkpoint.get("messages", {}).get("items", [])
+                if checkpoint is not None
+                else []
+            )
+            background_receipts = mark_tool_outputs_recorded(
+                background_receipts, checkpoint_messages
+            )
+            background_receipts = tuple(
+                decode_command_receipt(item) for item in background_receipts
+            )
+            if any(
+                receipt.execution_id not in reconciled
+                for receipt in unresolved_command_receipts(background_receipts)
+            ):
+                uncertain = True
+                reasons.append("command execution outcome requires host reconciliation")
 
             with self._host_scope():
                 try:

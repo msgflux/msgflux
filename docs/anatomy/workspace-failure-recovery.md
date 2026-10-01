@@ -25,9 +25,10 @@ removing a mandatory user context manager does not remove that cleanup.
 
 SIGKILL, interpreter crashes and machine failure cannot run Python `finally`
 blocks. Local processes may outlive the host agent. Docker containers may also
-remain active; the daemon is independent of the agent process. Owned containers
-carry the label `msgflux.executor=ephemeral`, but no automatic reaper or durable
-process lease is implemented. The host must inspect and reconcile them.
+remain active; the daemon is independent of the agent process. Owned containers carry executor and execution labels. Durable command receipts
+identify the exact container or local process when launch evidence reached the
+store. The host inspects and reconciles these records; no automatic reaper or
+persistent local process supervisor is implemented.
 
 Filesystem writes are real. Completed effects are not rolled back by checkpoint
 restoration, permission denial or approval expiration. The same applies to other
@@ -76,26 +77,53 @@ Without a registry, local/Docker identities still belong to the backend instance
 The in-memory backend remains process-local. Old approvals cannot authorize a
 new resource just because its pathname or workspace ID matches.
 
-## Remaining execution recovery limitations
+## Task recovery
 
-Workspace reconnection does not attach to a running command. Local subprocess
-handles and dispatcher futures remain process-local. Docker still creates and
-removes ephemeral containers per command and does not retain durable output.
-An abrupt failure can leave external work alive or its outcome unrecorded.
+`AgentTaskRecovery` inspects existing task/checkpoint/inbox stores without
+launching tools. It validates the restored workspace and live permissions,
+observes an active worker, and distinguishes recoverable and uncertain work.
+Queued tasks with durable initial input can recover after a crash before their
+first worker claim. A committed terminal Agent checkpoint reconciles into the
+task result without another model call.
 
-Existing task store leases, committed terminal checkpoints and approval
-reconciliation remain the available recovery primitives. Lease expiry does not
-prove the old worker stopped. Reconnect files, establish quiescence, inspect
-committed state and actual effects, then use explicit recovery/reconciliation.
-There is no implicit command replay, automatic reaper or exactly-once guarantee.
+A nonterminal recovery requires explicit confirmation that the previous worker
+stopped. After an atomic claim, it rereads the checkpoint revision and checks
+pending approvals. Refused recovery expires its own lease while retaining the
+ownership fence. A stale worker cannot publish a task result through that store.
+Lease expiry alone never proves command quiescence or fences external effects.
+See the [background task examples](../learn/nn/agent/tools/background-tasks.md).
 
-The host-facing `AgentTaskRecovery` coordinator now inspects existing stores
-without dispatching tools, validates restored workspace and inbox dependencies,
-and recovers queued or expired-owner tasks with explicit worker quiescence.
-After claiming, recovery checks the checkpoint revision again. Terminal
-checkpoints reconcile without another model call; uncertain approvals require
-host reconciliation. Refused recovery expires its own lease while preserving
-the ownership fence. See the [background task examples](../learn/nn/agent/tools/background-tasks.md).
+## Command receipts and surviving resources
 
-Command receipts and orphan reconciliation remain the next stage. Workspace
-reconnection and task recovery alone cannot establish a command outcome.
+Foreground command receipts belong to the Agent checkpoint extension;
+background receipts belong to task activity. Intent commits before launch;
+launch evidence records an exact backend resource; terminal evidence commits
+before routine Docker removal. Existing stores remain canonical. There is no
+separate task queue or shared transaction between the store and the OS/daemon.
+
+A crash between intent and launch, launch and identity persistence, or terminal
+completion and receipt commit can leave an unknown outcome. A terminal receipt
+without its conversation tool output also requires reconciliation. Recovery
+does not rerun these commands automatically. Partial output is bounded evidence,
+not a complete recovered stream.
+
+Docker commands with recording use deterministic execution names, ownership
+labels and bounded logs. Host inspection verifies the exact saved container ID
+against the workspace and configured daemon. A stopped owned container can
+provide an exit code and retained log excerpt. A missing container without a
+committed terminal receipt remains unknown; an unavailable daemon is blocked.
+Host-requested termination/removal verifies ownership first. If terminal receipt
+persistence fails, the container is retained for explicit reconciliation.
+
+Local records capture boot and PID-start identity where Linux exposes them.
+PID reuse or a different boot prevents adoption or signaling. A restarted host
+cannot recover the old subprocess pipes or an absent exit status. Signaling the
+verified leader does not establish that escaped descendants or other external
+work have stopped; the host must establish quiescence before replacement work.
+
+Workspace closure detaches its binding; it does not stop surviving commands.
+Drain operations before normal closure, inspect remaining resources after an
+abrupt failure, and explicitly reconcile saved effects/results. Live attachment,
+automatic cleanup, automatic replay and exactly-once external execution remain
+outside this API. Process restart tests do not establish machine power-loss
+durability.

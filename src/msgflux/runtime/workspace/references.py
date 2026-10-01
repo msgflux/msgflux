@@ -41,7 +41,9 @@ def encode_workspace_reference(workspace) -> dict | None:
     return msgspec.to_builtins(record)
 
 
-def validate_workspace_reference(reference, workspace) -> None:
+def validate_workspace_reference(
+    reference, workspace, *, match_cwd: bool = True
+) -> None:
     """Require a live workspace to match a durable reference; legacy is allowed."""
     if reference is None:
         return
@@ -60,7 +62,7 @@ def validate_workspace_reference(reference, workspace) -> None:
         for field in ("version", "workspace_id", "identity")
     ):
         raise ValueError("Checkpoint workspace reference does not match live workspace")
-    if actual.get("cwd") != expected.get("cwd"):
+    if match_cwd and actual.get("cwd") != expected.get("cwd"):
         raise WorkspaceCwdMismatchError(
             "Checkpoint workspace cwd does not match the live workspace"
         )

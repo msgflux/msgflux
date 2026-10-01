@@ -85,6 +85,7 @@ from msgflux.runtime.workspace.backend import (
     WorkspaceBinding,
 )
 from msgflux.runtime.workspace.changes import PreparedFileChange, WorkspaceEditor
+from msgflux.runtime.workspace.command_inspection import CommandInspection
 from msgflux.runtime.workspace.contracts import (
     WorkspaceEntry,
     WorkspaceIdentity,
@@ -115,10 +116,13 @@ from msgflux.runtime.workspace.process_capture import (
     ProcessOutputLimitError,
     drain_subprocess,
 )
+from msgflux.runtime.workspace.receipts import CommandReceipt
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 __all__ = [
     "AgentWorkspace",
+    "CommandInspection",
+    "CommandReceipt",
     "DockerLimits",
     "DockerProcessExecutor",
     "DockerWorkspaceBackend",

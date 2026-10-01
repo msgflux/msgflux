@@ -6,15 +6,28 @@ import asyncio
 import inspect
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from msgflux.runtime.abort import AbortSignal, await_with_abort
+from msgflux.runtime.agent_run import get_agent_run
+from msgflux.runtime.context import get_execution_context
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, require_permissions
 from msgflux.runtime.workspace.contracts import WriteGuarantee
 from msgflux.runtime.workspace.filesystem import WorkspaceFilesystem, workspace_path
+from msgflux.runtime.workspace.receipts import (
+    CommandExecution,
+    bind_command_execution,
+    decode_command_receipt,
+    get_command_receipt_persist,
+    new_command_receipt,
+    resolved_command_execution_ids,
+    task_command_receipts,
+)
+from msgflux.runtime.workspace.references import encode_workspace_reference
 
 ProcessOutputCallback = Callable[[Literal["stdout", "stderr"], bytes], Awaitable[None]]
 MAX_PROCESS_OUTPUT_CHUNK = 65_536
@@ -255,6 +268,8 @@ class ExecutionEnvironment:
             scope.abort_signal.raise_if_aborted()
         if on_output is not None and not callable(on_output):
             raise TypeError("on_output must be callable")
+        execution_context = get_execution_context()
+        receipt_execution = await _begin_command_receipt(execution_context, self, scope)
         streamed_bytes = 0
         output_lock = asyncio.Lock()
 
@@ -277,28 +292,42 @@ class ExecutionEnvironment:
                         raise TypeError("on_output must return an awaitable")
                     await value
 
-        operation = (
-            executor.execute_stream(
-                request,
-                filesystem=self.filesystem,
-                permissions=scope.permissions,
-                requirements=self.requirements,
-                abort_signal=scope.abort_signal,
-                on_output=deliver,
-            )
-            if on_output is not None
-            else executor.execute(
-                request,
-                filesystem=self.filesystem,
-                permissions=scope.permissions,
-                requirements=self.requirements,
-                abort_signal=scope.abort_signal,
-            )
+        bind = (
+            bind_command_execution(receipt_execution)
+            if receipt_execution is not None
+            else nullcontext()
         )
-        result = await asyncio.wait_for(
-            await_with_abort(operation, scope.abort_signal),
-            timeout=request.timeout_seconds,
-        )
+        try:
+            with bind:
+                operation = (
+                    executor.execute_stream(
+                        request,
+                        filesystem=self.filesystem,
+                        permissions=scope.permissions,
+                        requirements=self.requirements,
+                        abort_signal=scope.abort_signal,
+                        on_output=deliver,
+                    )
+                    if on_output is not None
+                    else executor.execute(
+                        request,
+                        filesystem=self.filesystem,
+                        permissions=scope.permissions,
+                        requirements=self.requirements,
+                        abort_signal=scope.abort_signal,
+                    )
+                )
+                result = await asyncio.wait_for(
+                    await_with_abort(operation, scope.abort_signal),
+                    timeout=request.timeout_seconds,
+                )
+        except BaseException:
+            if receipt_execution is not None and receipt_execution.receipt.state in {
+                "intent",
+                "launched",
+            }:
+                await receipt_execution.update("unknown")
+            raise
         if not isinstance(result, ProcessResult):
             raise TypeError("Process executor must return ProcessResult")
         if on_output is not None and (result.stdout or result.stderr):
@@ -309,4 +338,88 @@ class ExecutionEnvironment:
             raise RuntimeError("Process executor violated its output limit")
         if on_output is not None and streamed_bytes > request.max_output_bytes:
             raise RuntimeError("Process executor violated its output limit")
+        if receipt_execution is not None and receipt_execution.receipt.state in {
+            "intent",
+            "launched",
+        }:
+            await receipt_execution.update(
+                "completed",
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
         return result
+
+
+async def _begin_command_receipt(execution, environment, scope):
+    """Persist a command intent before handing control to a process adapter."""
+    recorder = execution.get("task_activity_recorder")
+    task_handle = execution.get("task_handle")
+    task_id = getattr(task_handle, "task_id", None)
+    agent_persist = get_command_receipt_persist()
+    if recorder is None and agent_persist is None:
+        return None
+    _reject_unknown_prior_command(execution, scope, recorder=recorder)
+    identity = environment.filesystem.identity
+    receipt = new_command_receipt(
+        workspace_reference=encode_workspace_reference(scope.workspace),
+        backend=identity.backend,
+        owner_id=getattr(task_handle, "_owner_id", None) or scope.principal,
+        run_id=scope.run_id,
+        task_id=task_id,
+        tool_call_id=execution.get("tool_call_id"),
+        message_offset=execution.get("tool_call_message_offset"),
+    )
+
+    def persist(current):
+        if recorder is not None:
+            activity = recorder.add(
+                kind="command_receipt",
+                summary=f"Workspace command {current.state}",
+                metadata={"receipt": current.to_dict()},
+            )
+            if activity is None:
+                raise RuntimeError("Could not persist workspace command receipt")
+            return
+        agent_persist(current)
+
+    command = CommandExecution(receipt, persist)
+    await command.update("intent")
+    return command
+
+
+def _reject_unknown_prior_command(execution, scope, *, recorder) -> None:
+    """Prevent a live Agent from starting another command after an unknown result."""
+    if recorder is not None:
+        receipts = task_command_receipts(recorder._store, recorder.task_id)
+    else:
+        run = get_agent_run()
+        raw = run.get_extension("command_receipts", []) if run is not None else []
+        receipts = tuple(decode_command_receipt(item) for item in raw)
+    if not receipts:
+        return
+    state = None
+    store = execution.get("checkpoint_store")
+    if store is not None and all(
+        isinstance(value, str) and value
+        for value in (scope.namespace, scope.thread_id, scope.run_id)
+    ):
+        state = store.load_state(scope.namespace, scope.thread_id, scope.run_id)
+    extensions = (
+        state.get("runtime", {}).get("extensions", {})
+        if isinstance(state, Mapping)
+        else {}
+    )
+    resolved = resolved_command_execution_ids(extensions, receipts=receipts)
+    if any(
+        receipt.state == "unknown" and receipt.execution_id not in resolved
+        for receipt in receipts
+    ):
+        from msgflux.exceptions import TaskPauseRequestedError  # noqa: PLC0415
+
+        raise TaskPauseRequestedError(
+            message=(
+                "A previous workspace command outcome is unknown; host "
+                "reconciliation is required before another command can start."
+            )
+        )
