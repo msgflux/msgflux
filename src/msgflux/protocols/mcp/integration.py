@@ -1,7 +1,10 @@
 """Integration utilities for MCP with msgflux tool system."""
 
+import json
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
+from msgflux.protocols.mcp.exceptions import MCPInputRequiredError
 from msgflux.protocols.mcp.types import MCPTool, MCPToolResult
 
 
@@ -82,6 +85,8 @@ def extract_tool_result_text(result: Any) -> str:
         Extracted text content
     """
     if isinstance(result, MCPToolResult):
+        if result.resultType == "input_required":
+            raise MCPInputRequiredError(result.inputRequests, result.requestState)
         output = []
         for content in result.content:
             if content.type == "text" and content.text:
@@ -89,7 +94,16 @@ def extract_tool_result_text(result: Any) -> str:
             elif content.type == "resource" and content.data:
                 output.append(content.data)
 
-        return "\n".join(output) if output else "Tool executed successfully"
+        if output:
+            return "\n".join(output)
+        if result.structuredContent is not None:
+            return json.dumps(result.structuredContent, ensure_ascii=False)
+        if result.content:
+            return json.dumps(
+                [content.raw or asdict(content) for content in result.content],
+                ensure_ascii=False,
+            )
+        return "Tool executed successfully"
 
     # Fallback for other types
     return str(result)
