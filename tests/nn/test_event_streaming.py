@@ -100,25 +100,66 @@ async def test_commentary_stream_event_is_distinct_from_answer_and_reasoning():
 
 
 def test_send_user_message_requires_an_event_stream():
-    from msgflux.tools.builtin import send_user_message
+    from msgflux.tools.builtin import SendUserMessageTool
 
     with pytest.raises(RuntimeError, match="active event stream"):
-        send_user_message("Checking inventory.")
+        SendUserMessageTool()("Checking inventory.")
 
 
 def test_send_user_message_emits_commentary_event():
     from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
-    from msgflux.tools.builtin import send_user_message
+    from msgflux.tools.builtin import SendUserMessageTool
 
     events = []
     token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
     try:
-        assert send_user_message("Checking inventory.").startswith("Message sent")
+        assert SendUserMessageTool()("Checking inventory.").startswith("Message sent")
     finally:
         _CURRENT_EVENT_SINK.reset(token)
-    assert [(event.type, event.data["delta"]) for event in events] == [
-        (EventType.COMMENTARY_DELTA, "Checking inventory.")
-    ]
+    assert [
+        (event.type, event.data["delta"])
+        for event in events
+        if event.type == EventType.COMMENTARY_DELTA
+    ] == [(EventType.COMMENTARY_DELTA, "Checking inventory.")]
+
+
+def test_send_user_message_tool_library_schema_and_execution():
+    from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
+    from msgflux.tools.builtin import SendUserMessageTool
+    from msgflux.tools.runtime import ToolIntent
+
+    library = ToolLibrary(name="progress", tools=[SendUserMessageTool()])
+    schema = library.get_tool_json_schemas()[0]["function"]
+    assert schema["name"] == "send_user_message"
+    assert schema["parameters"]["required"] == ["message"]
+    assert schema["parameters"]["properties"]["message"]["type"] == "string"
+    assert (
+        "Progress text for the user"
+        in schema["parameters"]["properties"]["message"]["description"]
+    )
+
+    events = []
+    token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
+    try:
+        outcome = library.execute_intents(
+            [
+                ToolIntent(
+                    id="call_1",
+                    name="send_user_message",
+                    arguments={"message": "Checking inventory."},
+                )
+            ]
+        )[0]
+    finally:
+        _CURRENT_EVENT_SINK.reset(token)
+
+    assert outcome.status == "completed"
+    assert outcome.result.startswith("Message sent")
+    assert [
+        (event.type, event.data["delta"])
+        for event in events
+        if event.type == EventType.COMMENTARY_DELTA
+    ] == [(EventType.COMMENTARY_DELTA, "Checking inventory.")]
 
 
 def test_nonstream_model_commentary_emits_separate_runtime_event():
