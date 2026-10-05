@@ -50,6 +50,7 @@ from msgflux.models.reasoning import (
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.timing import ModelRequestTimer
 from msgflux.models.tool_call_agg import ToolCallAggregator
+from msgflux.models.tool_search_events import ToolSearchEvents
 from msgflux.models.tool_transport import native_item_types
 from msgflux.models.types import (
     ChatCompletionModel,
@@ -1387,6 +1388,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         commentary: list[str] = []
         unphased_tool_messages: list[tuple[dict[str, Any], str]] = []
         seen_tool_call = False
+        search_events = ToolSearchEvents(self.provider, self.api_mode)
+        events = []
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
 
         for output_index, item in enumerate(output_items):
@@ -1463,6 +1466,13 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 continue
 
             if item_type in {"tool_search_call", "tool_search_output"}:
+                events.extend(
+                    search_events.observe(
+                        self._serialize_openai_value(item),
+                        index=output_index,
+                        done=True,
+                    )
+                )
                 history_items.append(self._responses_native_history_item(item))
                 continue
 
@@ -1594,6 +1604,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             if reasoning_summary_chunks and self.return_reasoning
             else None
         )
+        events.extend(search_events.close("Tool search ended without an output"))
+        response.events = events
         response.history_items = history_items
         response.commentary = commentary
         return response
@@ -2158,6 +2170,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     )
             return
 
+        if event_type in {"response.output_item.added", "response.output_item.done"}:
+            item = self._response_value(event, "item")
+            if self._response_value(item, "type") in {
+                "tool_search_call",
+                "tool_search_output",
+            }:
+                for search_event in state["tool_search_events"].observe(
+                    self._serialize_openai_value(item),
+                    index=self._response_value(event, "output_index", 0),
+                    done=event_type == "response.output_item.done",
+                ):
+                    stream_response._add_event(search_event)
+
         if event_type == "response.output_item.added":
             item = self._response_value(event, "item")
             item_type = self._response_value(item, "type")
@@ -2340,6 +2365,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
     ) -> dict[str, Any]:
         return {
             "metadata": self._build_response_metadata(None),
+            "tool_search_events": ToolSearchEvents(self.provider, self.api_mode),
             "request_timer": request_timer,
             "reasoning": "",
             "reasoning_summary": "",
@@ -2442,6 +2468,10 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
                 stream_response._response_type_event.set()
+            for search_event in state["tool_search_events"].close(
+                str(stream_response.error or "Tool search ended without an output")
+            ):
+                stream_response._add_event(search_event)
             state["metadata"].timing = request_timer.finish()
             stream_response.set_metadata(state["metadata"])
             stream_response.finish(status=final_status)
@@ -2488,6 +2518,10 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
                 stream_response._response_type_event.set()
+            for search_event in state["tool_search_events"].close(
+                str(stream_response.error or "Tool search ended without an output")
+            ):
+                stream_response._add_event(search_event)
             state["metadata"].timing = request_timer.finish()
             stream_response.set_metadata(state["metadata"])
             stream_response.finish(status=final_status)
