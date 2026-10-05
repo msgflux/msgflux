@@ -40,6 +40,7 @@ class EventType:
     TOOL_START = "tool.start"
     TOOL_UPDATE = "tool.update"
     TOOL_END = "tool.end"
+    TOOLS_UPDATED = "tools.updated"
     TOOL_BLOCKED = "tool.blocked"
     TOOL_PERMISSION_DENIED = "tool.permission_denied"
     TOOL_APPROVAL_REQUIRED = "tool.approval_required"

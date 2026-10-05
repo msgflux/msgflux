@@ -1888,15 +1888,19 @@ class Module:
                             delta = output_transformer.feed(delta)
                         if delta:
                             emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
-                elif event.type == "reasoning.delta":
-                    emit_event(EventType.REASONING_DELTA, {"delta": event.data})
-                elif event.type == "commentary.delta":
-                    emit_event(EventType.COMMENTARY_DELTA, {"delta": event.data})
-                elif event.type == "reasoning_summary.delta":
-                    emit_event(
-                        EventType.REASONING_SUMMARY_DELTA,
-                        {"delta": event.data},
-                    )
+                elif event.type in {
+                    "tool.start",
+                    "tool.update",
+                    "tool.end",
+                    "tools.updated",
+                }:
+                    emit_event(event.type, event.data)
+                elif event.type in {
+                    "reasoning.delta",
+                    "commentary.delta",
+                    "reasoning_summary.delta",
+                }:
+                    emit_event(event.type, {"delta": event.data})
         finally:
             if not response._is_finalized():
                 response.finish(status="interrupted")

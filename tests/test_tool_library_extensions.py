@@ -413,3 +413,78 @@ def test_before_dispatch_cannot_promote_foreground_to_detached():
         "before_dispatch hook failed closed: before_dispatch may only keep the "
         "selected mode or reduce `background`/`detached` dispatch to `foreground`"
     )
+
+
+def test_loading_tools_emits_only_successful_new_additions():
+    from msgflux.chat_messages import ChatMessages
+    from msgflux.runtime.events import _capture_events, _EventSink
+
+    def lookup(query: str) -> str:
+        """Look up a value."""
+        return query
+
+    lookup.tool_config = {"defer_loading": True}
+    library = ToolLibrary("search", [lookup])
+    messages = ChatMessages(thread_id="discovery")
+    events = []
+    with _capture_events(_EventSink(events.append)):
+        with pytest.raises(ValueError):
+            library.load_tools(messages, ["missing"])
+        assert library.load_tools(messages, ["lookup"]) == ["lookup"]
+        assert library.load_tools(messages, ["lookup"]) == ["lookup"]
+    assert [(event.type, event.data) for event in events] == [
+        (
+            "tools.updated",
+            {
+                "catalog_id": library.name,
+                "loaded_tools": ["lookup"],
+                "execution": "client",
+            },
+        )
+    ]
+    assert messages.get_loaded_tools(library.name) == {"lookup"}
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_portable_search_loading_and_execution_event_order(asynchronous):
+    from msgflux.chat_messages import ChatMessages
+    from msgflux.runtime.events import _capture_events, _EventSink
+    from msgflux.tools.runtime import ToolIntent
+
+    def lookup(query: str) -> str:
+        """Look up a value."""
+        return query.upper()
+
+    lookup.tool_config = {"defer_loading": True}
+    library = ToolLibrary("search", [lookup])
+    messages = ChatMessages(thread_id="discovery")
+    events = []
+    execute = library.aexecute_intents if asynchronous else library.execute_intents
+
+    async def run(name, arguments, call_id):
+        result = execute(
+            [ToolIntent(id=call_id, name=name, arguments=arguments)], messages=messages
+        )
+        return await result if asynchronous else result
+
+    with _capture_events(_EventSink(events.append)):
+        searched = await run("tool_search", {"query": "lookup"}, "find")
+        assert searched[0].result["matches"] == ["lookup"]
+        assert not messages.get_loaded_tools(library.name)
+        loaded = await run("tool_search", {"select": ["lookup"]}, "load")
+        assert loaded[0].result["loaded"] == ["lookup"]
+        assert "lookup" in {
+            entry.name
+            for entry in library.get_tool_catalog_view(messages).visible_entries()
+        }
+        assert (await run("lookup", {"query": "value"}, "use"))[0].result == "VALUE"
+    assert [event.type for event in events] == [
+        "tool.start",
+        "tool.end",
+        "tool.start",
+        "tools.updated",
+        "tool.end",
+        "tool.start",
+        "tool.end",
+    ]

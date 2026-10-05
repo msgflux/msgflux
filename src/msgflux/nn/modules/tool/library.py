@@ -50,6 +50,7 @@ from msgflux.runtime.agent_inbox import (
 )
 from msgflux.runtime.background import BackgroundTaskDispatcher
 from msgflux.runtime.context import get_execution_context
+from msgflux.runtime.events import EventType, emit_event
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.tools.definitions import ToolCatalog
 from msgflux.tools.handles import ToolLibraryHandle
@@ -745,7 +746,15 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"Deferred tools are not available: {names}")
-        return messages.load_tools(self.name, tool_names)
+        previous = messages.get_loaded_tools(self.name)
+        loaded = messages.load_tools(self.name, tool_names)
+        added = sorted(set(loaded) - previous)
+        if added:
+            emit_event(
+                EventType.TOOLS_UPDATED,
+                {"catalog_id": self.name, "loaded_tools": added, "execution": "client"},
+            )
+        return loaded
 
     def get_tool_annotations(self) -> Dict[str, Dict[str, Any]]:
         """Return local tool annotations keyed by tool name."""

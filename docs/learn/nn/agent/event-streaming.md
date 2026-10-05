@@ -257,10 +257,11 @@ them. All following events remain correlatable through `run_id` and
 | `reasoning.delta` | Reasoning content chunk, when exposed by the provider |
 | `reasoning_summary.delta` | Provider reasoning-summary chunk |
 | `message.end` | Complete assistant output |
-| `tool.start` | A validated tool call is starting |
+| `tool.start` | A validated local tool call or an observed provider search is starting |
 | `tool.blocked` | A tool policy rejected the call before execution; includes the public arguments and reason |
 | `tool.update` | Intermediate tool progress |
 | `tool.end` | Tool execution completed or failed |
+| `tools.updated` | Deferred tool schemas were loaded locally or discovered through the provider |
 | `task.start` | A background task was dispatched |
 | `task.update` | Background task status or progress changed |
 | `task.end` | A background task completed, failed, paused, or was interrupted |
@@ -269,6 +270,44 @@ them. All following events remain correlatable through `run_id` and
 | `turn.end` | The turn reached a terminal boundary; it has no output payload |
 | `run.end` | The run completed and reports its outcome |
 | `run.error` | Execution failed; the iterator raises after this event |
+
+## Tool Discovery
+
+Portable `tool_search` calls emit the usual `tool.start` and `tool.end` events.
+Selecting deferred tools also emits `tools.updated` after the thread's loading
+state changes. Re-selecting already loaded tools does not emit another update.
+Searching without selecting does not change the available schemas.
+
+OpenAI Responses and OpenAI Codex also expose provider search items through
+`tool.start`, optional `tool.update` for completed arguments, and `tool.end`.
+These events have `tool_name="tool_search"`, a shared `tool_call_id`,
+`execution="provider"`, `provider`, and `api_mode`. The native protocol items
+remain in conversation history for replay. Observing them does not dispatch a
+local tool. A failed or interrupted search ends with an `error` and does not
+report tools as loaded.
+
+A successful provider search reports names in `tools.updated` and in the
+`tool.end` result as `{"loaded_tools": [...]}`. Namespace tools use qualified
+names such as `crm.lookup`. Full parameter schemas are not copied into events.
+Provider loading describes native discovery; it does not mutate the portable
+catalog's loading state. These events add visibility without changing request
+schemas or cache behavior.
+
+```python
+async for event in agent.stream_events("Find a tool to fetch a web page"):
+    if event.type == "tools.updated":
+        origin = event.data["execution"]  # "client" or "provider"
+        print(origin, event.data["loaded_tools"])
+    elif event.type == "tool.end" and event.data["tool_name"] == "tool_search":
+        print("Search finished:", event.data.get("error") or event.data["result"])
+```
+
+This example displays loading changes and the search outcome. Local loading
+updates include `catalog_id`; provider updates include `tool_call_id` for
+association with the search. Both ordinary and streamed model responses expose
+these execution events. Streamed providers preserve their order relative to
+assistant deltas. Direct model consumers can inspect `ModelResponse.events` or
+iterate `ModelStreamResponse.consume_events()` to observe native discovery.
 
 ## Model Metrics
 

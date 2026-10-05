@@ -27,6 +27,10 @@ class LMStreamEvent:
     """One provider-ordered event produced by a streaming language model."""
 
     type: Literal[
+        "tool.start",
+        "tool.update",
+        "tool.end",
+        "tools.updated",
         "output.delta",
         "commentary.delta",
         "reasoning.delta",
@@ -69,6 +73,7 @@ class BaseResponse(CoreResponse):
         self.reasoning_summary = None
         self.commentary = []
         self.history_items = []
+        self.events: list[LMStreamEvent] = []
         self.metadata = None
         self.response_type = None
 
