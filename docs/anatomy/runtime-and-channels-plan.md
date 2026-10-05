@@ -1,6 +1,7 @@
 # Runtime compartilhado e channels
 
-Status: proposta para discussão; nenhuma implementação autorizada por este documento.
+Status: aprovado em 2026-10-05. Implementação incremental iniciada no PR 1.
+Tecnologia da etapa HTTP: Litestar como extra opcional.
 Data: 2026-10-05.
 
 ## Objetivo
@@ -421,5 +422,6 @@ que a mudança de ownership não altera streaming nem tools.
 Proposta usa conversas separadas por canal por padrão, vínculo explícito para
 compartilhar uma thread, HTTP/SSE como primeiro transporte, backend iniciado sob
 demanda, autoridade do workspace no host e follow-up da TUI na interface.
-São escolhas revisáveis. A implementação começa somente após discutir e aprovar
-este plano e os contratos de admissão; nenhum código de runtime foi alterado.
+São escolhas revisáveis. O desenvolvedor aprovou o plano e autorizou iniciar
+a implementação incremental. Os contratos detalhados do PR 1 e a verificação
+ficam em `agent-service-implementation-plan.md`.
