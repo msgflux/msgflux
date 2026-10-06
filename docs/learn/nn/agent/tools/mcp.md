@@ -8,6 +8,13 @@ outside an Agent.
 
 The **Model Context Protocol (MCP)** allows agents to connect to external tool servers. MCP servers expose tools that can be called by the agent, enabling integration with filesystems, databases, APIs, and other services.
 
+The client supports MCP `2026-07-28` over stdio and Streamable HTTP. It probes
+`server/discover` when connecting and falls back to the legacy initialization
+flow for older servers. In the modern revision, every request carries protocol
+metadata; HTTP requests also include the required MCP headers. The client
+collects paginated tool, resource, and prompt lists and follows server cache
+freshness hints.
+
 Configure MCP servers using the `mcp_servers` attribute:
 
 ???+ example
@@ -168,3 +175,52 @@ Configure MCP servers using the `mcp_servers` attribute:
 | `include_tools` | Allowlist of tools to expose |
 | `exclude_tools` | Blocklist of tools to hide |
 | `tool_config` | Per-tool configuration options such as `display_name`, `usage_guidance`, retry, and injection behavior |
+
+## Using the MCP client directly
+
+Use `MCPClient` when the application needs the full MCP response instead of an
+Agent tool's text result:
+
+```python
+import asyncio
+
+from msgflux.protocols.mcp import MCPClient
+
+
+async def main():
+    async with MCPClient.from_http("http://127.0.0.1:8000/mcp") as client:
+        print(client.protocol_version)
+        tools = await client.list_tools()
+        print([tool.name for tool in tools])
+        result = await client.call_tool("add", {"a": 3, "b": 4})
+        print(result.structuredContent, result.content)
+
+
+asyncio.run(main())
+```
+
+This example negotiates the server's protocol revision, fetches every page of
+tools, then prints both the structured result and content blocks returned by
+`add`. For modern servers, `MCPToolResult` also exposes `resultType`. A result
+with `resultType == "input_required"` contains `inputRequests` and an opaque
+`requestState`; the application must collect the requested input and repeat the
+original call with `input_responses` and `request_state`:
+
+```python
+async def confirm_with_user(client):
+    first = await client.call_tool("confirm_action")
+    if first.resultType == "input_required":
+        # After the application presents first.inputRequests to the user:
+        answer = {"confirm": {"action": "accept", "content": {"answer": "yes"}}}
+        return await client.call_tool(
+            "confirm_action",
+            input_responses=answer,
+            request_state=first.requestState,
+        )
+    return first
+```
+
+The second example shows the wire response shape for a form elicitation. The
+application should build `answer` from the user's actual response. Agent tool
+proxies raise `MCPInputRequiredError` if a tool needs input, so an intermediate
+result is never treated as a completed tool call.
