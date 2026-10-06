@@ -59,6 +59,16 @@ from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
 from msgflux.runtime.recovery import AgentTaskRecovery, TaskRecoveryReport
 from msgflux.runtime.resources import RuntimeResources
+from msgflux.runtime.service import (
+    AdmissionReceipt,
+    AgentService,
+    AgentSession,
+    ServiceBusyError,
+    ServiceConflictError,
+    ServiceRecoveryRequiredError,
+    ServiceThread,
+    SQLiteServiceStore,
+)
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,
@@ -120,6 +130,14 @@ from msgflux.runtime.workspace.receipts import CommandReceipt
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 __all__ = [
+    "AgentService",
+    "AgentSession",
+    "AdmissionReceipt",
+    "ServiceThread",
+    "SQLiteServiceStore",
+    "ServiceBusyError",
+    "ServiceConflictError",
+    "ServiceRecoveryRequiredError",
     "AgentWorkspace",
     "CommandInspection",
     "CommandReceipt",
