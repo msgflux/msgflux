@@ -138,6 +138,14 @@ preserves the thread and service-owned run identity. `checkpoint_store`,
 store must agree with one already configured on the Agent. The API does not
 serialize factories, resources, credentials, or grants.
 
+## Run Identity And Host Bindings
+
+`receipt_for_run(thread_id, run_id)` locates the admission associated with a saved
+execution. `session(thread_id)` resolves the factory's `AgentSession` for trusted
+in-process integrations; domain facades such as [CodingSession](coding-session.md)
+use it to share dependencies without duplicating runtime ownership. Applications
+can normally use submit/watch without accessing live dependencies.
+
 ## Reopen And Recover
 
 Use `SQLiteServiceStore("service.sqlite3")` to retain bindings and admissions.
@@ -163,6 +171,12 @@ A terminal checkpoint written before the journal settled can reconcile its
 receipt without another model call. These are separate transactions, not a
 global transaction across checkpoint, task and admission stores. Store fencing
 does not prevent a surviving old process from performing external effects.
+
+`resume_checkpoint(thread_id, run_id, worker_stopped=...)` recovers by durable run
+identity. If that checkpoint predates the admission journal, the host must first
+establish quiescence and supply `worker_stopped=True`. The service validates the
+checkpoint and records its existing identity before recovery; the original prompt
+is not reconstructed. A terminal checkpoint settles without another model call.
 
 ## Shutdown And Ownership
 

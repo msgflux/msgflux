@@ -25,6 +25,18 @@ def _claim_worker(path: str, owner_id: str, barrier, result_queue) -> None:
         store.close()
 
 
+def _adopt_worker(path: str, barrier, result_queue) -> None:
+    store = SQLiteServiceStore(path)
+    try:
+        barrier.wait(timeout=10)
+        record = store.adopt_checkpoint("thread-1", "run-1", "main")
+        result_queue.put((record.receipt.request_id, record.receipt.run_id))
+    except Exception as error:
+        result_queue.put((type(error).__name__, str(error)))
+    finally:
+        store.close()
+
+
 def _store(path: Path) -> SQLiteServiceStore:
     store = SQLiteServiceStore(path)
     store.bind_thread(ServiceThread("thread-1", "agent-1"))
@@ -172,3 +184,73 @@ def test_failed_admission_can_be_prepared_for_resume(tmp_path: Path) -> None:
         assert resumed.receipt.revision == failed.revision + 1
     finally:
         store.close()
+
+
+def test_checkpoint_adoption_is_idempotent_and_survives_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "service.sqlite3"
+    store = _store(path)
+    adopted = store.adopt_checkpoint("thread-1", "run-1", "main")
+    assert adopted.receipt.request_id == "checkpoint:run-1"
+    assert adopted.receipt.run_id == "run-1"
+    assert adopted.receipt.status == "running"
+    assert adopted.prompt == ""
+    assert adopted.owner_id == "checkpoint"
+    assert store.get_for_run("thread-1", "run-1") == adopted
+    assert store.adopt_checkpoint("thread-1", "run-1", "main") == adopted
+    store.close()
+
+    reopened = SQLiteServiceStore(path)
+    try:
+        assert reopened.get_for_run("thread-1", "run-1") == adopted
+        with pytest.raises(ServiceConflictError, match="namespace"):
+            reopened.adopt_checkpoint("thread-1", "run-1", "other")
+        with pytest.raises(ServiceBusyError):
+            reopened.admit("thread-1", "request-2", "new prompt", "main")
+    finally:
+        reopened.close()
+
+
+def test_checkpoint_adoption_rejects_reserved_request_collision_and_active_run(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "service.sqlite3")
+    try:
+        store.admit("thread-1", "checkpoint:run-1", "ordinary", "main")
+        with pytest.raises(ServiceConflictError, match="reserved"):
+            store.adopt_checkpoint("thread-1", "run-1", "main")
+        with pytest.raises(ServiceBusyError):
+            store.adopt_checkpoint("thread-1", "run-2", "main")
+        with pytest.raises(KeyError):
+            store.get_for_run("missing-thread", "run-1")
+    finally:
+        store.close()
+
+
+def test_concurrent_checkpoint_adoption_returns_one_journal_identity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "service.sqlite3"
+    _store(path).close()
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    result_queue = context.Queue()
+    workers = [
+        context.Process(target=_adopt_worker, args=(str(path), barrier, result_queue))
+        for _ in range(2)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=15)
+    try:
+        assert all(not worker.is_alive() and worker.exitcode == 0 for worker in workers)
+        assert [result_queue.get(timeout=2) for _ in workers] == [
+            ("checkpoint:run-1", "run-1"),
+            ("checkpoint:run-1", "run-1"),
+        ]
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=2)
+        result_queue.close()

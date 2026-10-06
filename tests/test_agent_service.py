@@ -683,3 +683,94 @@ def test_process_crash_after_completed_checkpoint_reconciles_without_model_retry
         asyncio.run(service.aclose())
         checkpoints.close()
         journal.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_import_requires_quiescence_and_reconciles_terminal_run():
+    checkpoints = InMemoryCheckpointStore()
+    agent = _agent("pre-service")
+    agent.checkpoint_store = checkpoints
+    scope = ExecutionScope(thread_id="old-thread", namespace="pre-service")
+    with execution_context(scope=scope, checkpoint_store=checkpoints):
+        events = [event async for event in agent.stream_events("original", scope=scope)]
+    run_id = next(event.run_id for event in events if event.type == "run.start")
+    service = _service(lambda _thread_id: AgentSession(agent))
+    await service.open_thread("main", thread_id=scope.thread_id)
+    try:
+        assert (await service.session(scope.thread_id)).agent is agent
+        with pytest.raises(ServiceRecoveryRequiredError, match="quiescence"):
+            await service.resume_checkpoint(scope.thread_id, run_id)
+        assert service.store.get_for_run(scope.thread_id, run_id) is None
+        receipt = await service.resume_checkpoint(
+            scope.thread_id, run_id, worker_stopped=True
+        )
+        assert receipt.status == "completed"
+        assert receipt.run_id == run_id
+        assert service.receipt_for_run(scope.thread_id, run_id) == receipt
+        assert agent.generator.aforward.await_count == 1
+        assert await service.resume_checkpoint(scope.thread_id, run_id) == receipt
+        with pytest.raises(ServiceRecoveryRequiredError, match="no checkpoint"):
+            await service.resume_checkpoint(
+                scope.thread_id, "missing", worker_stopped=True
+            )
+        assert service.store.get_for_run(scope.thread_id, "missing") is None
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_import_resumes_approved_tool_without_resending_input():
+    checkpoints = InMemoryCheckpointStore()
+    approvals = InMemoryApprovalStore()
+    calls = []
+
+    def lookup(query: str) -> str:
+        calls.append(query)
+        return "found"
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(
+        name="old-approval",
+        model=model,
+        tools=[lookup],
+        checkpoint_store=checkpoints,
+        approvals=AgentApprovals(approvals, {"lookup": "v1"}, "policy"),
+    )
+    tool_calls = ToolCallAggregator()
+    tool_calls.process(0, "old-call", "lookup", '{"query":"saved"}')
+    response = ModelResponse()
+    response.set_response_type("tool_call")
+    response.add(tool_calls)
+    agent.generator.aforward = AsyncMock(side_effect=[response, _response()])
+    scope = ExecutionScope(
+        thread_id="old-approval-thread", namespace="old-approval", principal="host"
+    )
+    from msgflux.exceptions import TaskPauseRequestedError
+
+    with execution_context(scope=scope, checkpoint_store=checkpoints):
+        with pytest.raises(TaskPauseRequestedError):
+            _ = [event async for event in agent.stream_events("lookup", scope=scope)]
+    state = checkpoints.load_latest_run("old-approval", scope.thread_id)
+    run_id = state["scope"]["run_id"]
+    approval = approvals.pending("old-approval", scope.thread_id, run_id)[0]
+    await agent.adecide_approval(approval.request_id, approved=True, decided_by="host")
+    service = _service(
+        lambda _thread_id: AgentSession(
+            agent, scope_factory=lambda base: base.with_overrides(principal="host")
+        )
+    )
+    await service.open_thread("main", thread_id=scope.thread_id)
+    try:
+        receipt = await service.resume_checkpoint(
+            scope.thread_id, run_id, worker_stopped=True
+        )
+        assert receipt.run_id == run_id
+        settled = await service.wait(scope.thread_id, receipt.request_id)
+        assert settled.status == "completed", settled.error
+        assert calls == ["saved"]
+        assert agent.generator.aforward.await_count == 2
+    finally:
+        await service.aclose()
+        service.store.close()
