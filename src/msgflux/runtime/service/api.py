@@ -82,7 +82,11 @@ class AgentSession:
         run_id: str | None = None,
         signal: AbortSignal | None = None,
     ) -> ExecutionScope:
-        scope = ExecutionScope(thread_id=thread_id, namespace=self.namespace)
+        scope = ExecutionScope(
+            thread_id=thread_id,
+            namespace=self.namespace,
+            workspace=getattr(self.agent, "workspace", None),
+        )
         if self.scope_factory is not None:
             scope = self.scope_factory(scope)
             if not isinstance(scope, ExecutionScope):

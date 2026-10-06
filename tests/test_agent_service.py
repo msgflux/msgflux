@@ -774,3 +774,38 @@ async def test_checkpoint_import_resumes_approved_tool_without_resending_input()
     finally:
         await service.aclose()
         service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_configured_agent_workspace_is_inherited_before_execution_context(
+    tmp_path,
+):
+    workspace = AgentWorkspace.local(tmp_path)
+    agent = _agent("configured-workspace")
+    agent.workspace = workspace
+    observed = []
+
+    async def answer(**_kwargs):
+        scope = get_execution_scope()
+        observed.append(scope)
+        assert scope.workspace is workspace
+        assert not scope.permissions.missing(("filesystem.read",))
+        return _response("workspace ready")
+
+    agent.generator.aforward = AsyncMock(side_effect=answer)
+    service = _service(lambda _thread: AgentSession(agent))
+    thread = await service.open_thread("main")
+    try:
+        assert (await service.session(thread.thread_id)).scope(
+            thread.thread_id
+        ).workspace is workspace
+        receipt = await service.prompt(
+            thread.thread_id, "hello", request_id="workspace"
+        )
+        settled = await service.wait(thread.thread_id, receipt.request_id)
+        assert settled.status == "completed", settled.error
+        assert len(observed) == 1
+    finally:
+        await service.aclose()
+        service.store.close()
+        await workspace.aclose()
