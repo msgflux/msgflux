@@ -160,7 +160,7 @@ async def test_new_session_resumes_durable_thread_and_snapshot_history():
 
 
 @pytest.mark.asyncio
-async def test_submit_with_stable_request_id_does_not_dispatch_twice():
+async def test_prompt_with_stable_request_id_does_not_dispatch_twice():
     store = InMemoryCheckpointStore()
     calls = []
 
@@ -169,9 +169,9 @@ async def test_submit_with_stable_request_id_does_not_dispatch_twice():
         return _text_response("once")
 
     session = CodingSession(_coding_agent(store, respond), checkpoint_store=store)
-    first = await session.submit("input", request_id="request-1")
+    first = await session.prompt("input", request_id="request-1")
     settled = await session.wait("request-1")
-    duplicate = await session.submit("input", request_id="request-1")
+    duplicate = await session.prompt("input", request_id="request-1")
 
     assert settled.status == "completed"
     assert duplicate.run_id == first.run_id

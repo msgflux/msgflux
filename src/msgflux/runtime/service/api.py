@@ -36,6 +36,8 @@ from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifie
 class AgentSession:
     """Live dependencies supplied by a trusted, per-thread host factory.
 
+    AgentService resolves this dependency binding for one thread. CodingSession
+    provides the application-facing conversation API over that service.
     The service borrows stores and Agent dependencies. ``on_close`` releases
     resources owned by the factory, including any delegated work it created.
     No network framework or user-writable configuration chooses these grants.
@@ -114,7 +116,7 @@ class _Worker(msgspec.Struct):
 class AgentService:
     """Own foreground executions while any number of clients observe them.
 
-    ``submit`` commits admission before scheduling work. The service consumes
+    ``prompt`` commits admission before scheduling work. The service consumes
     Agent.stream_events internally; clients use watch(), which owns no worker.
     Closing or cancelling a wait does not cancel execution. The trusted host
     supplies a fresh AgentSession per thread and explicitly owns persistent
@@ -197,7 +199,7 @@ class AgentService:
     async def session(self, thread_id: str) -> AgentSession:
         """Resolve live dependencies for a trusted in-process host.
 
-        Frontends should normally use submit/watch. This accessor lets a host
+        Frontends should normally use prompt/watch. This accessor lets a host
         build a domain-specific facade without duplicating factory ownership.
         """
         async with self._lock:
@@ -217,7 +219,7 @@ class AgentService:
                 "The latest run requires explicit recovery"
             )
 
-    async def submit(
+    async def prompt(
         self,
         thread_id: str,
         prompt: str,

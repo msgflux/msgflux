@@ -87,7 +87,7 @@ async def test_shared_facades_watch_snapshot_reopen_history_and_borrow_service()
     second = await CodingSession.from_service(service, thread.thread_id)
 
     try:
-        receipt = await first.submit("remember cobalt", request_id="first-turn")
+        receipt = await first.prompt("remember cobalt", request_id="first-turn")
         await asyncio.wait_for(entered.wait(), timeout=2)
         async with second.watch() as watcher:
             assert watcher.snapshot.thread_id == thread.thread_id
@@ -109,7 +109,7 @@ async def test_shared_facades_watch_snapshot_reopen_history_and_borrow_service()
         )
 
         await first.aclose()
-        next_receipt = await second.submit("what word?", request_id="second-turn")
+        next_receipt = await second.prompt("what word?", request_id="second-turn")
         assert (
             await asyncio.wait_for(
                 service.wait(thread.thread_id, "second-turn"), timeout=2
@@ -147,8 +147,8 @@ async def test_facade_observer_cancellation_does_not_cancel_parallel_thread_runs
     first = await CodingSession.from_service(service, one.thread_id)
     second = await CodingSession.from_service(service, two.thread_id)
     try:
-        first_receipt = await first.submit("one", request_id="req-one")
-        second_receipt = await second.submit("two", request_id="req-two")
+        first_receipt = await first.prompt("one", request_id="req-one")
+        second_receipt = await second.prompt("two", request_id="req-two")
         await asyncio.wait_for(
             asyncio.gather(entered["thread-one"].wait(), entered["thread-two"].wait()),
             timeout=2,
@@ -208,7 +208,7 @@ async def test_facade_preserves_injected_task_inbox_and_scope_dependencies():
         ),
     )
     try:
-        receipt = await session.submit("hello", request_id="dependencies-turn")
+        receipt = await session.prompt("hello", request_id="dependencies-turn")
         settled = await asyncio.wait_for(session.wait("dependencies-turn"), timeout=2)
 
         assert settled.run_id == receipt.run_id
@@ -237,7 +237,7 @@ async def test_cancelled_embedded_close_keeps_journal_open_until_worker_settles(
         _agent("coding", checkpoints, answer), checkpoint_store=checkpoints
     )
     try:
-        receipt = await session.submit("wait", request_id="close-turn")
+        receipt = await session.prompt("wait", request_id="close-turn")
         await asyncio.wait_for(entered.wait(), timeout=2)
         closer = asyncio.create_task(session.aclose())
         await asyncio.sleep(0)
@@ -323,7 +323,7 @@ async def test_attaching_facade_does_not_modify_an_active_agents_hooks():
     service = _service(lambda _thread: AgentSession(agent))
     thread = await service.open_thread("coding")
     try:
-        receipt = await service.submit(thread.thread_id, "hello", request_id="one")
+        receipt = await service.prompt(thread.thread_id, "hello", request_id="one")
         await asyncio.wait_for(entered.wait(), 2)
         assert not agent.has_extension("coding_checkpoints")
         facade = await CodingSession.from_service(service, thread.thread_id)

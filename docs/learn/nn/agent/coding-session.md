@@ -5,6 +5,12 @@
 interrupt a run, and reconnect without assembling a service factory themselves.
 It does not require a terminal interface or an HTTP framework.
 
+The session is the application-facing facade for one thread. `AgentService` owns
+its executions; `AgentSession` is the host-created binding containing the Agent
+and runtime dependencies. See [their responsibilities and lifetimes](service.md#service-agent-session-and-coding-session).
+`session.prompt(text)` returns an admission receipt; `session.stream(text)`
+observes a prompted run until its attempt settles.
+
 ## Embedded Session
 
 Configure the Agent's model, workspace, tools and permissions normally. The
@@ -59,14 +65,14 @@ for explicit interruption and `aclose()` for embedded runtime shutdown. An
 ordinary model failure raises `RuntimeError`; an approval pause raises
 `TaskPauseRequestedError` after its events have been delivered.
 
-## Submit And Reconnect
+## Prompt And Reconnect
 
 Separate admission from observation when a client may disconnect:
 
 ```python
 async with session.watch() as observer:
     print(observer.snapshot.messages)
-    receipt = await session.submit("Explain the tests", request_id="explain-tests-1")
+    receipt = await session.prompt("Explain the tests", request_id="explain-tests-1")
     event = await anext(observer)
     print(event.type)
 # Only the observer is closed here.
@@ -117,7 +123,7 @@ session = CodingSession(
     service_store=journal,
 )
 try:
-    receipt = await session.submit("Inspect the repository", request_id="inspect-1")
+    receipt = await session.prompt("Inspect the repository", request_id="inspect-1")
     print((await session.wait(receipt.request_id)).status)
 finally:
     await session.aclose()
@@ -170,7 +176,7 @@ thread = await service.open_thread("main", thread_id="my-thread")
 first = await CodingSession.from_service(service, thread.thread_id)
 second = await CodingSession.from_service(service, thread.thread_id)
 try:
-    receipt = await first.submit("Inspect the project", request_id="shared-1")
+    receipt = await first.prompt("Inspect the project", request_id="shared-1")
     print((await second.wait(receipt.request_id)).status)
 finally:
     await first.aclose()

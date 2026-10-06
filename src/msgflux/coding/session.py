@@ -27,6 +27,8 @@ TERMINAL_RUN_STATUSES = frozenset({"completed", "interrupted"})
 class CodingSession:
     """Keep a durable thread identity while observing service-owned Agent work.
 
+    AgentService owns executions; AgentSession binds their live dependencies.
+    This facade supplies the application API for one thread.
     Passing an Agent creates a small embedded service for convenience. Use
     :meth:`from_service` when a host owns the service and its lifetime.
     """
@@ -167,13 +169,13 @@ class CodingSession:
     async def wait(self, request_id: str) -> AdmissionReceipt:
         return await self.service.wait(self._thread_id, request_id)
 
-    async def submit(
+    async def prompt(
         self, prompt: str, *, request_id: str | None = None
     ) -> AdmissionReceipt:
         """Admit input without attaching an event observer."""
         if request_id is None:
             request_id = uuid4().hex
-        return await self.service.submit(
+        return await self.service.prompt(
             self._thread_id,
             prompt,
             request_id=request_id,
@@ -184,7 +186,7 @@ class CodingSession:
     ) -> AsyncIterator[ExecutionEvent]:
         """Admit a prompt and yield ordered events while the service runs it."""
         async with self.watch() as watcher:
-            receipt = await self.submit(prompt, request_id=request_id)
+            receipt = await self.prompt(prompt, request_id=request_id)
             async with aclosing(self._observe(watcher, receipt.run_id)) as events:
                 async for event in events:
                     yield event

@@ -4,7 +4,27 @@
 A TUI or application can submit an input, disconnect its watcher, and attach
 again while the run continues. No HTTP framework is required for this API.
 
-## Submit And Observe
+## Service, Agent Session, And Coding Session
+
+| Component | Responsibility | Lifetime |
+| --- | --- | --- |
+| `AgentSession` | Supplies an Agent and its live dependencies: checkpoint/task stores, inbox, scope factory, and resource cleanup callback. | Created by the trusted host factory for one service thread. |
+| `AgentService` | Owns executions across threads, persists admissions, and coordinates observation, interruption, steering, recovery, and shutdown. | Remains alive while clients attach or detach. |
+| [`CodingSession`](coding-session.md) | Provides the application's API for one coding conversation: prompt, stream, history, observation, and run controls. | Creates an embedded service or attaches to a host-owned service. |
+
+The service resolves each thread's `AgentSession` through its registered factory.
+A `CodingSession` then delegates execution to that service using its thread ID.
+Multiple coding facades can observe the same thread. They share the existing
+checkpoint history and admission journal.
+
+Both execution APIs use `prompt()`. On the service, callers supply `thread_id`
+and a stable `request_id`; a coding session already identifies its thread and
+can generate the request ID when one is omitted. Both return an admission receipt
+once the input is recorded and work is scheduled. Use `wait()` for the settled
+receipt, `watch()` for snapshot and future events, or `CodingSession.stream()`
+for a finite iterator of one run's events.
+
+## Prompt And Observe
 
 The host registers a factory that creates a separate Agent for each thread.
 `AgentSession` supplies its live dependencies; `SQLiteServiceStore` records
@@ -38,7 +58,7 @@ async def main():
     try:
         async with service.watch(thread.thread_id) as observer:
             print(observer.snapshot.messages)
-            receipt = await service.submit(
+            receipt = await service.prompt(
                 thread.thread_id,
                 "Explain this project briefly.",
                 request_id="explain-project-1",
@@ -70,7 +90,7 @@ application needs persistence. Nothing is written to the home directory by defau
 
 ## Admission And Concurrency
 
-`submit()` returns after its admission record is committed and its worker is
+`prompt()` returns after its admission record is committed and its worker is
 scheduled. The returned receipt initially has status `accepted`; `receipt()` or
 `wait()` returns the current state. A thread can have one foreground execution
 at a time, while different threads run concurrently.
@@ -94,7 +114,7 @@ Closing a watcher or cancelling `wait()` leaves execution running. A later
 process-local; this is not a persistent event replay cursor.
 
 ```python
-receipt = await service.submit(thread_id, "Run the tests", request_id="tests-1")
+receipt = await service.prompt(thread_id, "Run the tests", request_id="tests-1")
 # The client can detach while the service remains alive.
 snapshot = await service.snapshot(thread_id)
 await service.interrupt(thread_id, receipt.run_id)
@@ -144,7 +164,7 @@ serialize factories, resources, credentials, or grants.
 execution. `session(thread_id)` resolves the factory's `AgentSession` for trusted
 in-process integrations; domain facades such as [CodingSession](coding-session.md)
 use it to share dependencies without duplicating runtime ownership. Applications
-can normally use submit/watch without accessing live dependencies.
+can normally use prompt/watch without accessing live dependencies.
 
 ## Reopen And Recover
 
