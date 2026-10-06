@@ -21,7 +21,7 @@ from msgflux.logger import logger
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType
-from msgflux.runtime.service_records import (
+from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
@@ -30,7 +30,7 @@ from msgflux.runtime.service_records import (
     ServiceRecoveryRequiredError,
     ServiceThread,
 )
-from msgflux.runtime.service_store import SQLiteServiceStore, validate_identifier
+from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
 
 
 class AgentSession:

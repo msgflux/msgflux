@@ -59,15 +59,16 @@ from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
 from msgflux.runtime.recovery import AgentTaskRecovery, TaskRecoveryReport
 from msgflux.runtime.resources import RuntimeResources
-from msgflux.runtime.service import AgentService, AgentSession
-from msgflux.runtime.service_records import (
+from msgflux.runtime.service import (
     AdmissionReceipt,
+    AgentService,
+    AgentSession,
     ServiceBusyError,
     ServiceConflictError,
     ServiceRecoveryRequiredError,
     ServiceThread,
+    SQLiteServiceStore,
 )
-from msgflux.runtime.service_store import SQLiteServiceStore
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,

@@ -19,13 +19,13 @@ from msgflux.runtime.context import (
 )
 from msgflux.runtime import AgentApprovals, InMemoryApprovalStore
 from msgflux.runtime.service import AgentService, AgentSession
-from msgflux.runtime.service_records import (
+from msgflux.runtime.service.records import (
     ServiceThread,
     ServiceConflictError,
     ServiceBusyError,
     ServiceRecoveryRequiredError,
 )
-from msgflux.runtime.service_store import SQLiteServiceStore
+from msgflux.runtime.service.store import SQLiteServiceStore
 from msgflux.runtime.workspace.api import AgentWorkspace
 
 

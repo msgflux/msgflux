@@ -7,12 +7,12 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from msgflux.runtime.service_records import (
+from msgflux.runtime.service.records import (
     ServiceBusyError,
     ServiceConflictError,
     ServiceThread,
 )
-from msgflux.runtime.service_store import SQLiteServiceStore
+from msgflux.runtime.service.store import SQLiteServiceStore
 
 
 def _claim_worker(path: str, owner_id: str, barrier, result_queue) -> None:

@@ -10,7 +10,7 @@ from threading import RLock
 import msgspec
 
 from msgflux.runtime.context import new_run_id
-from msgflux.runtime.service_records import (
+from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
