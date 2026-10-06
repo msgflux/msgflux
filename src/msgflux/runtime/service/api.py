@@ -36,6 +36,8 @@ from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifie
 class AgentSession:
     """Live dependencies supplied by a trusted, per-thread host factory.
 
+    AgentService resolves this dependency binding for one thread. CodingSession
+    provides the application-facing conversation API over that service.
     The service borrows stores and Agent dependencies. ``on_close`` releases
     resources owned by the factory, including any delegated work it created.
     No network framework or user-writable configuration chooses these grants.
@@ -114,7 +116,7 @@ class _Worker(msgspec.Struct):
 class AgentService:
     """Own foreground executions while any number of clients observe them.
 
-    ``submit`` commits admission before scheduling work. The service consumes
+    ``prompt`` commits admission before scheduling work. The service consumes
     Agent.stream_events internally; clients use watch(), which owns no worker.
     Closing or cancelling a wait does not cancel execution. The trusted host
     supplies a fresh AgentSession per thread and explicitly owns persistent
@@ -194,6 +196,15 @@ class AgentService:
             self._sessions[thread_id] = session
         return self._sessions[thread_id]
 
+    async def session(self, thread_id: str) -> AgentSession:
+        """Resolve live dependencies for a trusted in-process host.
+
+        Frontends should normally use prompt/watch. This accessor lets a host
+        build a domain-specific facade without duplicating factory ownership.
+        """
+        async with self._lock:
+            return await self._session(thread_id)
+
     @staticmethod
     def _validate_new_input(session: AgentSession, thread_id: str) -> None:
         store = session.checkpoint_store
@@ -208,7 +219,7 @@ class AgentService:
                 "The latest run requires explicit recovery"
             )
 
-    async def submit(
+    async def prompt(
         self,
         thread_id: str,
         prompt: str,
@@ -309,6 +320,13 @@ class AgentService:
         record = self.store.get(thread_id, request_id)
         if record is None:
             raise KeyError(request_id)
+        return record.receipt
+
+    def receipt_for_run(self, thread_id: str, run_id: str) -> AdmissionReceipt:
+        """Look up an admission by its durable execution identity."""
+        record = self.store.get_for_run(thread_id, run_id)
+        if record is None:
+            raise KeyError(run_id)
         return record.receipt
 
     async def wait(self, thread_id: str, request_id: str) -> AdmissionReceipt:
@@ -420,6 +438,40 @@ class AgentService:
                 )
             self._schedule(record, session)
             return record.receipt
+
+    async def resume_checkpoint(
+        self,
+        thread_id: str,
+        run_id: str,
+        *,
+        worker_stopped: bool = False,
+    ) -> AdmissionReceipt:
+        """Resume by run identity, including checkpoints predating the service.
+
+        Importing a checkpoint without an admission requires a trusted host to
+        establish worker quiescence. The saved context remains authoritative;
+        no original input is reconstructed or resent as a new run.
+        """
+        if not isinstance(worker_stopped, bool):
+            raise TypeError("worker_stopped must be a host-supplied bool")
+        validate_identifier(run_id, "run_id")
+        async with self._lock:
+            session = await self._session(thread_id)
+            record = self.store.get_for_run(thread_id, run_id)
+            if record is None:
+                if not worker_stopped:
+                    raise ServiceRecoveryRequiredError(
+                        "Establish old-worker quiescence before importing a checkpoint"
+                    )
+                receipt = AdmissionReceipt(
+                    thread_id, f"checkpoint:{run_id}", run_id, "running"
+                )
+                self._recovery_checkpoint(session, receipt)
+                record = self.store.adopt_checkpoint(
+                    thread_id, run_id, session.namespace
+                )
+            request_id = record.receipt.request_id
+        return await self.resume(thread_id, request_id, worker_stopped=worker_stopped)
 
     @staticmethod
     def _recovery_checkpoint(session: AgentSession, receipt: AdmissionReceipt):

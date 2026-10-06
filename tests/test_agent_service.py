@@ -48,7 +48,7 @@ def _process_crash_after_admission(journal_path, checkpoint_path, thread_id):
     )
 
     async def run():
-        await service.submit(thread_id, "hello", request_id="admitted")
+        await service.prompt(thread_id, "hello", request_id="admitted")
         await asyncio.sleep(5)
 
     asyncio.run(run())
@@ -68,7 +68,7 @@ def _process_crash_after_checkpoint(journal_path, checkpoint_path, thread_id):
     store.finish = lambda *_args, **_kwargs: os._exit(73)
 
     async def run():
-        await service.submit(thread_id, "hello", request_id="finished-checkpoint")
+        await service.prompt(thread_id, "hello", request_id="finished-checkpoint")
         await service.wait(thread_id, "finished-checkpoint")
 
     asyncio.run(run())
@@ -103,15 +103,15 @@ async def test_duplicate_request_returns_same_run_and_conflicting_prompt_fails()
     service = _service(lambda _thread_id: AgentSession(agent))
     thread = await service.open_thread("main", thread_id="dedupe")
     try:
-        first = await service.submit(thread.thread_id, "hello", request_id="req-1")
+        first = await service.prompt(thread.thread_id, "hello", request_id="req-1")
         settled = await service.wait(thread.thread_id, "req-1")
-        duplicate = await service.submit(thread.thread_id, "hello", request_id="req-1")
+        duplicate = await service.prompt(thread.thread_id, "hello", request_id="req-1")
 
         assert duplicate.run_id == first.run_id == settled.run_id
         assert duplicate.status == "completed"
         assert agent.generator.aforward.await_count == 1
         with pytest.raises(ServiceConflictError):
-            await service.submit(thread.thread_id, "different", request_id="req-1")
+            await service.prompt(thread.thread_id, "different", request_id="req-1")
     finally:
         await service.aclose()
 
@@ -133,7 +133,7 @@ async def test_observers_and_cancelled_waiter_do_not_own_the_run():
     try:
         async with service.watch(thread.thread_id) as first_watcher:
             async with service.watch(thread.thread_id) as second_watcher:
-                receipt = await service.submit(
+                receipt = await service.prompt(
                     thread.thread_id, "hello", request_id="req-1"
                 )
                 waiter = asyncio.create_task(service.wait(thread.thread_id, "req-1"))
@@ -194,8 +194,8 @@ async def test_independent_threads_run_in_parallel_with_distinct_agents_and_scop
     one = await service.open_thread("main", thread_id="one")
     two = await service.open_thread("main", thread_id="two")
     try:
-        first = await service.submit(one.thread_id, "a", request_id="a")
-        second = await service.submit(two.thread_id, "b", request_id="b")
+        first = await service.prompt(one.thread_id, "a", request_id="a")
+        second = await service.prompt(two.thread_id, "b", request_id="b")
         await asyncio.wait_for(
             asyncio.gather(entered["one"].wait(), entered["two"].wait()), timeout=2
         )
@@ -219,7 +219,7 @@ async def test_model_failure_is_settled_as_failed():
     service = _service(lambda _thread_id: AgentSession(agent))
     thread = await service.open_thread("main", thread_id="failure")
     try:
-        await service.submit(thread.thread_id, "hello", request_id="req-1")
+        await service.prompt(thread.thread_id, "hello", request_id="req-1")
         receipt = await service.wait(thread.thread_id, "req-1")
         assert receipt.status == "failed"
         assert "offline model" in receipt.error
@@ -261,14 +261,14 @@ async def test_paused_approval_keeps_thread_busy_then_resumes_same_run():
     )
     thread = await service.open_thread("main", thread_id="approval")
     try:
-        receipt = await service.submit(thread.thread_id, "lookup", request_id="req-1")
+        receipt = await service.prompt(thread.thread_id, "lookup", request_id="req-1")
         paused = await service.wait(thread.thread_id, "req-1")
         assert paused.status == "paused", paused.error
         assert paused.run_id == receipt.run_id
         assert calls == []
         assert agent.generator.aforward.await_count == 1
         with pytest.raises(ServiceRecoveryRequiredError):
-            await service.submit(thread.thread_id, "another", request_id="req-2")
+            await service.prompt(thread.thread_id, "another", request_id="req-2")
 
         approval = approval_store.pending(
             "approval-service", thread.thread_id, receipt.run_id
@@ -316,7 +316,7 @@ async def test_steered_message_reaches_model_after_tool_round():
     service = _service(lambda _thread_id: AgentSession(agent))
     thread = await service.open_thread("main", thread_id="steering")
     try:
-        receipt = await service.submit(thread.thread_id, "start", request_id="req-1")
+        receipt = await service.prompt(thread.thread_id, "start", request_id="req-1")
         await asyncio.wait_for(tool_started.wait(), timeout=2)
         notification = await service.steer(
             thread.thread_id, receipt.run_id, "Focus on the new constraint"
@@ -333,7 +333,7 @@ async def test_steered_message_reaches_model_after_tool_round():
 
 
 @pytest.mark.asyncio
-async def test_submit_does_not_inherit_foreign_contextvars_or_run_lineage():
+async def test_prompt_does_not_inherit_foreign_contextvars_or_run_lineage():
     host_checkpoints = InMemoryCheckpointStore()
     host_task_store = object()
     agent = _agent("context-isolation")
@@ -373,7 +373,7 @@ async def test_submit_does_not_inherit_foreign_contextvars_or_run_lineage():
             agent_inbox=foreign_inbox,
             task_handle=foreign_task,
         ):
-            receipt = await service.submit(
+            receipt = await service.prompt(
                 thread.thread_id, "hello", request_id="isolated"
             )
             settled = await service.wait(thread.thread_id, "isolated")
@@ -429,7 +429,7 @@ async def test_interrupt_is_explicit_and_targets_only_the_selected_run():
     service = _service(lambda _thread_id: AgentSession(agent))
     thread = await service.open_thread("main", thread_id="interrupt")
     try:
-        receipt = await service.submit(thread.thread_id, "hello", request_id="req-1")
+        receipt = await service.prompt(thread.thread_id, "hello", request_id="req-1")
         await asyncio.wait_for(entered.wait(), timeout=2)
         assert await service.interrupt(thread.thread_id, "unrelated-run") is False
         assert await service.interrupt(thread.thread_id, receipt.run_id) is True
@@ -476,7 +476,7 @@ async def test_reopen_resume_of_terminal_receipt_does_not_call_model_again():
     )
     thread = await first_service.open_thread("main", thread_id="terminal")
     try:
-        accepted = await first_service.submit(
+        accepted = await first_service.prompt(
             thread.thread_id, "hello", request_id="req-1"
         )
         terminal = await first_service.wait(thread.thread_id, "req-1")
@@ -522,22 +522,22 @@ async def test_rejected_scope_factory_is_closed_and_explicit_agent_reuse_conflic
     second = await service.open_thread("main", thread_id="second")
     try:
         with pytest.raises(ValueError, match="preserve thread_id"):
-            await service.submit(first.thread_id, "hello", request_id="one")
+            await service.prompt(first.thread_id, "hello", request_id="one")
         assert closes == ["closed"]
         # The first invalid factory result was discarded; the second request is
         # also rejected before the same Agent can be shared between threads.
         with pytest.raises(ValueError, match="preserve thread_id"):
-            await service.submit(second.thread_id, "hello", request_id="two")
+            await service.prompt(second.thread_id, "hello", request_id="two")
     finally:
         await service.aclose()
         assert store.thread(first.thread_id).agent_id == "main"
 
     reuse_service = _service(lambda _thread_id: AgentSession(agent), store=store)
     try:
-        await reuse_service.submit(first.thread_id, "hello", request_id="reuse-1")
+        await reuse_service.prompt(first.thread_id, "hello", request_id="reuse-1")
         await reuse_service.wait(first.thread_id, "reuse-1")
         with pytest.raises(ServiceConflictError, match="isolate Agents"):
-            await reuse_service.submit(second.thread_id, "hello", request_id="reuse-2")
+            await reuse_service.prompt(second.thread_id, "hello", request_id="reuse-2")
     finally:
         await reuse_service.aclose()
         store.close()
@@ -564,7 +564,7 @@ async def test_cancelled_shutdown_waiter_still_closes_once_and_borrows_store():
         store=store,
     )
     thread = await service.open_thread("main", thread_id="shutdown")
-    await service.submit(thread.thread_id, "hello", request_id="req-1")
+    await service.prompt(thread.thread_id, "hello", request_id="req-1")
     await asyncio.wait_for(entered.wait(), timeout=2)
     shutdown_waiter = asyncio.create_task(service.aclose())
     await asyncio.sleep(0)
@@ -618,7 +618,7 @@ def test_process_crash_after_admission_redelivers_same_pending_request(tmp_path)
     )
 
     async def recover():
-        duplicate = await service.submit(
+        duplicate = await service.prompt(
             thread.thread_id, "hello", request_id="admitted"
         )
         assert duplicate.run_id == receipt.run_id
@@ -683,3 +683,94 @@ def test_process_crash_after_completed_checkpoint_reconciles_without_model_retry
         asyncio.run(service.aclose())
         checkpoints.close()
         journal.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_import_requires_quiescence_and_reconciles_terminal_run():
+    checkpoints = InMemoryCheckpointStore()
+    agent = _agent("pre-service")
+    agent.checkpoint_store = checkpoints
+    scope = ExecutionScope(thread_id="old-thread", namespace="pre-service")
+    with execution_context(scope=scope, checkpoint_store=checkpoints):
+        events = [event async for event in agent.stream_events("original", scope=scope)]
+    run_id = next(event.run_id for event in events if event.type == "run.start")
+    service = _service(lambda _thread_id: AgentSession(agent))
+    await service.open_thread("main", thread_id=scope.thread_id)
+    try:
+        assert (await service.session(scope.thread_id)).agent is agent
+        with pytest.raises(ServiceRecoveryRequiredError, match="quiescence"):
+            await service.resume_checkpoint(scope.thread_id, run_id)
+        assert service.store.get_for_run(scope.thread_id, run_id) is None
+        receipt = await service.resume_checkpoint(
+            scope.thread_id, run_id, worker_stopped=True
+        )
+        assert receipt.status == "completed"
+        assert receipt.run_id == run_id
+        assert service.receipt_for_run(scope.thread_id, run_id) == receipt
+        assert agent.generator.aforward.await_count == 1
+        assert await service.resume_checkpoint(scope.thread_id, run_id) == receipt
+        with pytest.raises(ServiceRecoveryRequiredError, match="no checkpoint"):
+            await service.resume_checkpoint(
+                scope.thread_id, "missing", worker_stopped=True
+            )
+        assert service.store.get_for_run(scope.thread_id, "missing") is None
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_import_resumes_approved_tool_without_resending_input():
+    checkpoints = InMemoryCheckpointStore()
+    approvals = InMemoryApprovalStore()
+    calls = []
+
+    def lookup(query: str) -> str:
+        calls.append(query)
+        return "found"
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(
+        name="old-approval",
+        model=model,
+        tools=[lookup],
+        checkpoint_store=checkpoints,
+        approvals=AgentApprovals(approvals, {"lookup": "v1"}, "policy"),
+    )
+    tool_calls = ToolCallAggregator()
+    tool_calls.process(0, "old-call", "lookup", '{"query":"saved"}')
+    response = ModelResponse()
+    response.set_response_type("tool_call")
+    response.add(tool_calls)
+    agent.generator.aforward = AsyncMock(side_effect=[response, _response()])
+    scope = ExecutionScope(
+        thread_id="old-approval-thread", namespace="old-approval", principal="host"
+    )
+    from msgflux.exceptions import TaskPauseRequestedError
+
+    with execution_context(scope=scope, checkpoint_store=checkpoints):
+        with pytest.raises(TaskPauseRequestedError):
+            _ = [event async for event in agent.stream_events("lookup", scope=scope)]
+    state = checkpoints.load_latest_run("old-approval", scope.thread_id)
+    run_id = state["scope"]["run_id"]
+    approval = approvals.pending("old-approval", scope.thread_id, run_id)[0]
+    await agent.adecide_approval(approval.request_id, approved=True, decided_by="host")
+    service = _service(
+        lambda _thread_id: AgentSession(
+            agent, scope_factory=lambda base: base.with_overrides(principal="host")
+        )
+    )
+    await service.open_thread("main", thread_id=scope.thread_id)
+    try:
+        receipt = await service.resume_checkpoint(
+            scope.thread_id, run_id, worker_stopped=True
+        )
+        assert receipt.run_id == run_id
+        settled = await service.wait(scope.thread_id, receipt.request_id)
+        assert settled.status == "completed", settled.error
+        assert calls == ["saved"]
+        assert agent.generator.aforward.await_count == 2
+    finally:
+        await service.aclose()
+        service.store.close()

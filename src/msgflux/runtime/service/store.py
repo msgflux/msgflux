@@ -121,6 +121,91 @@ class SQLiteServiceStore:
             ).fetchone()
         return self._record(row) if row is not None else None
 
+    def get_for_run(self, thread_id: str, run_id: str) -> AdmissionRecord | None:
+        """Find the journal entry for a checkpoint run identity."""
+        validate_identifier(thread_id, "thread_id")
+        validate_identifier(run_id, "run_id")
+        self.thread(thread_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM service_admissions WHERE thread_id=? AND run_id=?",
+                (thread_id, run_id),
+            ).fetchone()
+        return self._record(row) if row is not None else None
+
+    def adopt_checkpoint(
+        self, thread_id: str, run_id: str, namespace: str
+    ) -> AdmissionRecord:
+        """Journal an existing checkpoint identity without scheduling work.
+
+        The reserved owner marks the row as belonging to an older, untracked
+        worker. A trusted service must establish quiescence before preparing it
+        for resume.
+        """
+        validate_identifier(thread_id, "thread_id")
+        validate_identifier(run_id, "run_id")
+        validate_identifier(namespace, "namespace")
+        request_id = f"checkpoint:{run_id}"
+        fingerprint = hashlib.sha256(msgspec.json.encode([namespace, ""])).hexdigest()
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self.thread(thread_id)
+            existing_run = self._connection.execute(
+                "SELECT * FROM service_admissions WHERE thread_id=? AND run_id=?",
+                (thread_id, run_id),
+            ).fetchone()
+            if existing_run is not None:
+                existing = self._record(existing_run)
+                if existing.namespace != namespace:
+                    raise ServiceConflictError(
+                        "The checkpoint run belongs to another namespace"
+                    )
+                return existing
+
+            existing_request = self._connection.execute(
+                "SELECT * FROM service_admissions WHERE thread_id=? AND request_id=?",
+                (thread_id, request_id),
+            ).fetchone()
+            if existing_request is not None:
+                raise ServiceConflictError(
+                    "The reserved checkpoint request_id identifies another run"
+                )
+
+            active = self._connection.execute(
+                """SELECT 1 FROM service_admissions WHERE thread_id=?
+                AND status IN ('accepted', 'running', 'paused') LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+            if active is not None:
+                raise ServiceBusyError("The thread has unfinished admitted work")
+
+            try:
+                self._connection.execute(
+                    """INSERT INTO service_admissions
+                    (thread_id, request_id, run_id, namespace, prompt,
+                     fingerprint, status, owner_id, revision)
+                    VALUES (?, ?, ?, ?, '', ?, 'running', 'checkpoint', 1)""",
+                    (thread_id, request_id, run_id, namespace, fingerprint),
+                )
+            except sqlite3.IntegrityError as error:
+                active = self._connection.execute(
+                    """SELECT 1 FROM service_admissions WHERE thread_id=?
+                    AND status IN ('accepted', 'running', 'paused') LIMIT 1""",
+                    (thread_id,),
+                ).fetchone()
+                if active is not None:
+                    raise ServiceBusyError(
+                        "The thread has unfinished admitted work"
+                    ) from error
+                raise ServiceConflictError(
+                    "The checkpoint identity conflicts with an existing admission"
+                ) from error
+            row = self._connection.execute(
+                "SELECT * FROM service_admissions WHERE thread_id=? AND run_id=?",
+                (thread_id, run_id),
+            ).fetchone()
+            return self._record(row)
+
     def admit(
         self, thread_id: str, request_id: str, prompt: str, namespace: str
     ) -> AdmissionRecord:
