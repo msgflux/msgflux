@@ -1,0 +1,212 @@
+"""Focused contracts for the optional AgentService HTTP adapter."""
+
+import pytest
+import httpx2
+
+pytest.importorskip("litestar")
+from litestar.testing import AsyncTestClient
+from unittest.mock import AsyncMock, Mock
+
+from msgflux.models.response import ModelResponse
+from msgflux.nn import Agent
+from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
+from msgflux.runtime.service.http.app import create_service_app
+
+
+def _service(factory=None):
+    service = AgentService(store=SQLiteServiceStore())
+    calls = []
+
+    def make_session(thread_id):
+        calls.append(thread_id)
+        return factory(thread_id)
+
+    service.register("agent", make_session if factory is not None else lambda _: None)
+    return service, calls
+
+
+@pytest.mark.asyncio
+async def test_auth_runs_before_body_validation_or_agent_factory():
+    service, calls = _service()
+    app = create_service_app(service, token="secret")
+
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/v1/threads",
+            content=b"{ malformed",
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "code": "unauthorized",
+        "message": "Bearer token required",
+    }
+    assert calls == []
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_routes_use_strict_json_and_service_scope_error_mapping():
+    service, _ = _service()
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+
+    async with AsyncTestClient(app=app) as client:
+        assert (await client.get("/v1/agents", headers=headers)).json() == {
+            "agents": ["agent"]
+        }
+
+        malformed = await client.post(
+            "/v1/threads",
+            headers=headers,
+            json={"agent_id": "agent", "extra": True},
+        )
+        assert malformed.status_code == 422
+        assert malformed.json()["code"] == "invalid_request"
+
+        opened = await client.post(
+            "/v1/threads", headers=headers, json={"agent_id": "agent"}
+        )
+        assert opened.status_code == 201
+        thread_id = opened.json()["thread_id"]
+
+        missing = await client.get(
+            f"/v1/threads/{thread_id}/requests/unknown", headers=headers
+        )
+        assert missing.status_code == 404
+        assert missing.json()["code"] == "not_found"
+
+        replay = await client.get(
+            f"/v1/threads/{thread_id}/watch",
+            headers={**headers, "Last-Event-ID": "3"},
+        )
+        assert replay.status_code == 422
+        assert replay.json()["code"] == "invalid_request"
+
+    # The app borrows its service unless ownership is explicitly requested.
+    assert service.agents() == ("agent",)
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resume_body_rejects_network_quiescence_assertion():
+    service, _ = _service()
+    thread = await service.open_thread("agent", thread_id="resume-thread")
+    app = create_service_app(service, token="secret")
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            f"/v1/threads/{thread.thread_id}/runs/run-1/resume",
+            headers={"Authorization": "Bearer secret"},
+            json={"worker_stopped": True},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_request"
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prompt_deduplicates_request_and_receipt_tracks_settled_run():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="http-test-agent", model=model)
+    answer = ModelResponse()
+    answer.set_response_type("text_generation")
+    answer.add("ready")
+    answer.reasoning = None
+    agent.generator.aforward = AsyncMock(return_value=answer)
+
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("agent", lambda _thread_id: AgentSession(agent))
+    thread = await service.open_thread("agent", thread_id="prompt-thread")
+    app = create_service_app(service, token="secret")
+
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        headers = {"Authorization": "Bearer secret"}
+        body = {"prompt": "hello", "request_id": "stable-id"}
+        first = await client.post(
+            f"/v1/threads/{thread.thread_id}/prompt", headers=headers, json=body
+        )
+        duplicate = await client.post(
+            f"/v1/threads/{thread.thread_id}/prompt", headers=headers, json=body
+        )
+        assert first.status_code == duplicate.status_code == 202
+        assert first.json()["run_id"] == duplicate.json()["run_id"]
+
+        settled = await service.wait(thread.thread_id, "stable-id")
+        receipt = await client.get(
+            f"/v1/threads/{thread.thread_id}/requests/stable-id", headers=headers
+        )
+
+    assert settled.status == receipt.json()["status"] == "completed"
+    assert agent.generator.aforward.await_count == 1
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invalid_prompt_payloads_do_not_instantiate_agent():
+    service, calls = _service()
+    thread = await service.open_thread("agent")
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with AsyncTestClient(app=app) as client:
+            for payload in (
+                {"prompt": "hello", "request_id": 123},
+                {"prompt": ["hello"], "request_id": "one"},
+                {
+                    "prompt": "hello",
+                    "request_id": "one",
+                    "workspace": "other-workspace",
+                },
+                {"prompt": "hello", "request_id": ""},
+            ):
+                response = await client.post(
+                    f"/v1/threads/{thread.thread_id}/prompt",
+                    headers=headers,
+                    json=payload,
+                )
+                assert response.status_code == 422, response.text
+            malformed = await client.post(
+                f"/v1/threads/{thread.thread_id}/prompt",
+                headers={**headers, "Content-Type": "application/json"},
+                content=b"{ broken",
+            )
+            assert malformed.status_code == 422
+        assert calls == []
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_app_shutdown_closes_session_once_and_borrows_journal():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="owned-app", model=model)
+    close = AsyncMock()
+    journal = SQLiteServiceStore()
+    service = AgentService(store=journal)
+    service.register("agent", lambda _thread: AgentSession(agent, on_close=close))
+    thread = await service.open_thread("agent")
+    await service.session(thread.thread_id)
+    app = create_service_app(service, token="secret", close_service=True)
+    try:
+        async with AsyncTestClient(app=app):
+            pass
+        close.assert_awaited_once()
+        with pytest.raises(RuntimeError, match="closed"):
+            service.threads()
+        assert journal.thread(thread.thread_id) == thread
+        await service.aclose()
+        close.assert_awaited_once()
+    finally:
+        journal.close()

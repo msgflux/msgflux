@@ -3,6 +3,7 @@
 `AgentService` owns Agent executions independently of clients observing them.
 A TUI or application can submit an input, disconnect its watcher, and attach
 again while the run continues. No HTTP framework is required for this API.
+The optional [HTTP/SSE adapter](service-http.md) exposes it to separate processes.
 
 ## Service, Agent Session, And Coding Session
 
@@ -152,7 +153,8 @@ def create_session(thread_id):
     )
 ```
 
-The scope factory supplies current workspace, permissions and principal. It
+The base scope inherits the Agent's configured workspace. The scope factory
+can supply current workspace, permissions and principal. It
 preserves the thread and service-owned run identity. `checkpoint_store`,
 `task_store` and `agent_inbox` can also be supplied to `AgentSession`. A checkpoint
 store must agree with one already configured on the Agent. The API does not
