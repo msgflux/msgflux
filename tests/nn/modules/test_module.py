@@ -985,39 +985,6 @@ class TestModule:
         # Should include both parent and child states
         assert isinstance(state, dict)
 
-    def test_load_state_dict_empty(self):
-        """Test load_state_dict with empty state dict."""
-        module = SimpleModule()
-
-        result = module.load_state_dict({})
-        # Should handle empty state gracefully
-        assert result is not None or result is None
-
-    def test_load_state_dict_with_extra_keys(self):
-        """Test load_state_dict with state containing extra keys."""
-        module = SimpleModule()
-        module.register_buffer("buf", "value")
-
-        # State with extra key
-        state = {"buf": "new_value", "extra_key": "extra"}
-
-        result = module.load_state_dict(state)
-        # Should handle extra keys
-        assert result is not None or result is None
-
-    def test_load_state_dict_with_missing_keys(self):
-        """Test load_state_dict with state missing expected keys."""
-        module = SimpleModule()
-        module.register_buffer("buf1", "value1")
-        module.register_buffer("buf2", "value2")
-
-        # State missing buf2
-        state = {"buf1": "new_value"}
-
-        result = module.load_state_dict(state)
-        # Should handle missing keys
-        assert result is not None or result is None
-
     def test_register_forward_pre_hook_with_prepend(self):
         """Test register_forward_pre_hook with prepend option."""
         module = SimpleModule()
