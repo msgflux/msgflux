@@ -9,6 +9,14 @@ AdmissionStatus = Literal[
 ]
 
 
+class RunSummary(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Public metadata for a saved execution, without checkpoint state."""
+
+    run_id: str
+    status: str
+    updated_at: float | None = None
+
+
 class ServiceConflictError(RuntimeError):
     """A request identity, thread binding, or ownership conflicts with stored state."""
 

@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 import msgspec
 
-from msgflux.runtime.service.records import ServiceThread
+from msgflux.runtime.service.records import RunSummary, ServiceThread
 
 Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
 
@@ -34,6 +34,10 @@ class AgentsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 class ThreadsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     threads: tuple[ServiceThread, ...]
+
+
+class RunsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    runs: tuple[RunSummary, ...]
 
 
 class InterruptResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

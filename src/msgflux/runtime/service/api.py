@@ -26,6 +26,7 @@ from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
+    RunSummary,
     ServiceBusyError,
     ServiceConflictError,
     ServiceRecoveryRequiredError,
@@ -234,6 +235,29 @@ class AgentService:
         """
         async with self._lock:
             return await self._session(thread_id)
+
+    async def runs(self, thread_id: str) -> tuple[RunSummary, ...]:
+        """Return saved run metadata for a thread, newest first.
+
+        The checkpoint store remains authoritative; this projection never
+        exposes saved state or host configuration.
+        """
+        async with self._lock:
+            session = await self._session(thread_id)
+            store = session.checkpoint_store
+            list_runs = getattr(store, "list_runs", None)
+            if not callable(list_runs):
+                return ()
+            summaries = []
+            for item in list_runs(session.namespace, thread_id):
+                # msgspec's strict conversion intentionally rejects integer to
+                # float coercion, so normalize the one permitted provider form.
+                record = dict(item)
+                updated_at = record.get("updated_at")
+                if isinstance(updated_at, int) and not isinstance(updated_at, bool):
+                    record["updated_at"] = float(updated_at)
+                summaries.append(msgspec.convert(record, type=RunSummary, strict=True))
+            return tuple(summaries)
 
     @staticmethod
     def _validate_new_input(session: AgentSession, thread_id: str) -> None:

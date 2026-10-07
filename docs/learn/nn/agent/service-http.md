@@ -151,6 +151,24 @@ IDs deduplicate repeated inputs within a thread. `watch()` exposes a portable
 message dictionaries, and live tools/tasks/approvals are JSON dictionaries; the
 client does not reconstruct executable resources from serialized objects.
 
+Saved run discovery uses `await client.runs(thread_id)`, which returns a tuple
+of typed `RunSummary` records containing only `run_id`, `status`, and
+`updated_at` metadata, newest first. This includes checkpoints created before
+the service admission journal, which lets a client discover runs for resuming
+through the normal recovery API. Threads without a checkpoint store return an
+empty tuple. Saved checkpoint state, serialized config, and credentials are
+never included.
+
+```python
+saved = await client.runs(thread_id)
+for run in saved:
+    print(run.run_id, run.status, run.updated_at)
+```
+
+This lists resumable checkpoint identities without loading saved state into the
+client. Pass a selected identity to the explicit resume operation when the
+service's recovery rules allow it.
+
 ## Detach And Reconnect
 
 ```python
@@ -208,6 +226,7 @@ All routes require `Authorization: Bearer <token>`.
 | GET | `/v1/agents` | Registered agent IDs |
 | GET / POST | `/v1/threads` | List bindings / open a thread |
 | GET | `/v1/threads/{thread_id}/snapshot` | Portable thread snapshot |
+| GET | `/v1/threads/{thread_id}/runs` | Saved run metadata summaries |
 | POST | `/v1/threads/{thread_id}/prompt` | Admission receipt |
 | GET | `/v1/threads/{thread_id}/requests/{request_id}` | Current receipt |
 | GET | `/v1/threads/{thread_id}/watch` | Initial snapshot and continuous SSE events |
@@ -251,3 +270,61 @@ multiple independent conversations. The application still owns the Agent's model
 workspace and supplied stores. A future Telegram or other channel adapter can use
 the native client while keeping platform identity, authorization, message formatting
 and delivery retries in the adapter.
+
+
+## Thread-bound Client
+
+`AgentSessionClient` binds a native HTTP client to one existing service thread.
+The service host still creates the `AgentSession` and owns its Agent, workspace,
+stores, credentials, and execution lifecycle. `AgentSessionClient` is a generic remote thread facade, including for coding
+conversations. It does not construct or expose the Agent. Observation is
+separate from admission, using `watch()` rather than a producer `stream()`.
+
+Connect through local service discovery, bind the current project root, and
+observe a run:
+
+```python
+import asyncio
+from pathlib import Path
+
+from msgflux.runtime.service.http import AgentSessionClient
+from msgflux.runtime.service.local import connect_local_service
+
+
+async def main():
+    client = await connect_local_service("my_app:build_service", cwd=Path.cwd())
+    session = await AgentSessionClient.open(
+        client, agent_id="main", cwd=Path.cwd()
+    )
+    try:
+        async with session.watch() as observer:
+            print("Existing history:", observer.snapshot.messages)
+            receipt = await session.prompt(
+                "Explain the package layout", request_id="layout-1"
+            )
+            async for event in observer:
+                if event.run_id == receipt.run_id and len(event.source_path) == 1:
+                    print(event.type)
+                    if event.type in {"run.end", "run.error", "run.paused"}:
+                        break
+        settled = await session.wait(receipt.request_id)
+        print("Status:", settled.status)
+        print("Saved run summaries:", await session.runs())
+    finally:
+        await client.aclose()
+
+
+asyncio.run(main())
+```
+
+The stable request ID lets a caller safely check admission after a network
+uncertainty without silently submitting a second prompt. To reconnect after a
+watch disconnect, open another `session.watch()` context and replace the local
+view with its new `observer.snapshot`; missed event deltas are not replayed.
+`wait()` polls the receipt and does not observe events or cancel execution if
+its caller is cancelled. Use `cancel(run_id)` for an explicit interruption.
+`runs()` and `latest_run()` expose only service-provided run summaries, not
+checkpoint contents or configuration. The remote facade has no automatic
+reconnect loop. `session.aclose()` is an optional no-op because the facade
+borrows its client and owns no background tasks; a UI can close its active watch
+context on shutdown, while the host closes the shared HTTP client.
