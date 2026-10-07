@@ -140,6 +140,94 @@ def test_denial_and_conflicting_reviewers_are_final(journal):
     assert len(store.events("tools", "request")) == 2
 
 
+def test_expected_revision_is_atomic_and_same_decision_retry_is_idempotent(journal):
+    store, _ = journal
+    binding = make_binding()
+    pending = store.request(binding, request_id="request", expires_at=200)
+    approved = store.decide(
+        "tools",
+        "request",
+        approved=True,
+        decided_by="reviewer:1",
+        expected_revision=pending.revision,
+    )
+    assert approved.revision == pending.revision + 1
+    assert (
+        store.decide(
+            "tools",
+            "request",
+            approved=True,
+            decided_by="reviewer:1",
+            expected_revision=pending.revision,
+        )
+        == approved
+    )
+    with pytest.raises(ApprovalConflictError, match="revision changed"):
+        store.decide(
+            "tools",
+            "request",
+            approved=False,
+            decided_by="reviewer:1",
+            expected_revision=pending.revision,
+        )
+    assert store.events("tools", "request")[-1].revision == approved.revision
+
+
+@pytest.mark.parametrize("expected_revision", [0, -1])
+def test_expected_revision_must_be_positive(journal, expected_revision):
+    store, _ = journal
+    store.request(make_binding(), request_id="request", expires_at=200)
+    with pytest.raises(ValueError, match="positive integer"):
+        store.decide(
+            "tools",
+            "request",
+            approved=True,
+            decided_by="reviewer:1",
+            expected_revision=expected_revision,
+        )
+    assert len(store.events("tools", "request")) == 1
+
+
+@pytest.mark.parametrize("expected_revision", [True, False, 1.0, "1"])
+def test_expected_revision_rejects_non_integer_types(journal, expected_revision):
+    store, _ = journal
+    store.request(make_binding(), request_id="request", expires_at=200)
+    with pytest.raises(TypeError, match="expected_revision"):
+        store.decide(
+            "tools",
+            "request",
+            approved=True,
+            decided_by="reviewer:1",
+            expected_revision=expected_revision,
+        )
+    assert len(store.events("tools", "request")) == 1
+
+
+def test_consumed_decision_cannot_be_retried_with_expected_revision(journal):
+    store, _ = journal
+    binding = make_binding()
+    pending = store.request(binding, request_id="request", expires_at=200)
+    store.decide(
+        "tools",
+        "request",
+        approved=True,
+        decided_by="reviewer:1",
+        expected_revision=pending.revision,
+    )
+    with execution_context(scope=scope_for(binding)):
+        consumed = store.consume("request", binding=binding)
+    with pytest.raises(ApprovalConflictError):
+        store.decide(
+            "tools",
+            "request",
+            approved=True,
+            decided_by="reviewer:1",
+            expected_revision=pending.revision,
+        )
+    assert store.get("tools", "request") == consumed
+    assert len(store.events("tools", "request")) == 3
+
+
 @pytest.mark.parametrize("approved", [False, True])
 def test_expiry_is_persisted_and_does_not_revive_after_clock_rollback(
     journal, approved
@@ -212,7 +300,14 @@ async def test_async_conformance_and_one_use(journal):
     binding = make_binding()
     await store.arequest(binding, request_id="request", expires_at=200)
     assert len(await store.apending("tools", "thread", "run")) == 1
-    await store.adecide("tools", "request", approved=True, decided_by="reviewer:1")
+    decided = await store.adecide(
+        "tools",
+        "request",
+        approved=True,
+        decided_by="reviewer:1",
+        expected_revision=1,
+    )
+    assert decided.revision == 2
     with execution_context(scope=scope_for(binding)):
         results = await asyncio.gather(
             *(store.aconsume("request", binding=binding) for _ in range(8)),
@@ -315,6 +410,32 @@ def test_sqlite_competing_decisions(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(decide, range(2)))
     assert sum(isinstance(result, ApprovalConflictError) for result in results) == 1
+    assert len(stores[0].events("tools", "request")) == 2
+    for store in stores:
+        store.close()
+
+
+def test_sqlite_competing_expected_revision_decisions(tmp_path):
+    path = str(tmp_path / "approvals.db")
+    stores = [SQLiteApprovalStore(path, clock=lambda: 100) for _ in range(2)]
+    pending = stores[0].request(make_binding(), request_id="request", expires_at=200)
+
+    def decide(index):
+        try:
+            return stores[index].decide(
+                "tools",
+                "request",
+                approved=bool(index),
+                decided_by=f"reviewer:{index}",
+                expected_revision=pending.revision,
+            )
+        except ApprovalConflictError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(decide, range(2)))
+    assert sum(isinstance(result, ApprovalConflictError) for result in results) == 1
+    assert stores[0].get("tools", "request").revision == pending.revision + 1
     assert len(stores[0].events("tools", "request")) == 2
     for store in stores:
         store.close()
