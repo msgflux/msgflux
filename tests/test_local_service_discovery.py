@@ -52,6 +52,23 @@ def test_runtime_directory_record_permissions_and_redacted_repr(tmp_path):
     assert read_record(runtime) is None
 
 
+def test_record_removed_during_shutdown_before_open_is_absent(tmp_path, monkeypatch):
+    from msgflux.runtime.service.local import files
+
+    runtime = prepare_runtime_dir(tmp_path / "runtime")
+    write_record(runtime, _record())
+    original_open = files.os.open
+    record_path = runtime / RECORD_NAME
+
+    def remove_before_open(path, flags, *args, **kwargs):
+        if Path(path) == record_path:
+            record_path.unlink()
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(files.os, "open", remove_before_open)
+    assert read_record(runtime) is None
+
+
 @pytest.mark.parametrize(
     "url",
     [
