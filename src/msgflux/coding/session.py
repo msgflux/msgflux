@@ -76,7 +76,7 @@ class CodingSession:
         agent_id = self.namespace
         self.service.register(
             agent_id,
-            lambda _thread_id: AgentSession(
+            lambda _thread: AgentSession(
                 self.agent,
                 checkpoint_store=self.checkpoint_store,
                 task_store=self.task_store,

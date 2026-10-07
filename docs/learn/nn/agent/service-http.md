@@ -42,9 +42,11 @@ async def main():
     journal = SQLiteServiceStore()
     service = AgentService(store=journal)
 
-    def create_session(thread_id):
+    def create_session(thread):
+        if thread.cwd is None:
+            raise ValueError("This coding service requires a project cwd")
         model = mf.Model.chat_completion("openai/gpt-6-luna", reasoning_effort="medium")
-        workspace = AgentWorkspace.local(".")
+        workspace = AgentWorkspace.local(thread.cwd)
         agent = Agent(
             name="main",
             model=model,
@@ -78,8 +80,13 @@ asyncio.run(main())
 The factory creates a distinct Agent for each thread. The example grants a read
 tool and uses memory-backed stores; it demonstrates process-local reconnection,
 not persistence across server restarts. The host configures model credentials,
-workspace, permissions, principal and tools. Clients cannot replace those
-settings through the HTTP payload.
+permissions, principal and tools. The thread's optional `cwd` is an absolute
+canonical host path stored in its immutable service binding. A client may request
+a project location when opening the thread; the trusted factory decides whether
+to use that path and which workspace and permissions to grant. A path alone
+grants no tool access. Reopening the thread without a path returns its stored
+binding, and supplying a different path conflicts. Clients cannot replace model
+settings or grants through the HTTP payload.
 
 This adapter runs in a single process around one service. Local daemon discovery/startup is available through the [local process API](service-local.md).
 Coordination across independent server workers remains a separate integration. Do not run multiple Uvicorn workers against one in-memory service.
@@ -91,6 +98,7 @@ Save this as `client.py` and run it with the same service token:
 ```python
 import asyncio
 import os
+from pathlib import Path
 
 from msgflux.runtime.service.http import AgentServiceClient
 
@@ -100,7 +108,8 @@ async def main():
         "http://127.0.0.1:8765", token=os.environ["MSGFLUX_SERVICE_TOKEN"]
     )
     try:
-        thread = await client.open_thread("main")
+        # The thread is bound to this project path for its lifetime.
+        thread = await client.open_thread("main", cwd=Path.cwd())
         async with client.watch(thread.thread_id) as observer:
             print("Existing history:", observer.snapshot.messages)
             receipt = await client.prompt(
@@ -206,9 +215,10 @@ All routes require `Authorization: Bearer <token>`.
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/steer` | Published notification |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/resume` | Recovery receipt |
 
-Prompt bodies contain `prompt` and `request_id`; steer bodies contain `content`;
-resume bodies are empty JSON objects. Unknown fields are rejected. The native
-API is separate from any future Chat Completions compatibility adapter.
+Thread-open bodies contain `agent_id` and may include `thread_id` and an absolute
+`cwd`. Prompt bodies contain `prompt` and `request_id`; steer bodies contain
+`content`; resume bodies are empty JSON objects. Unknown fields are rejected.
+The native API is separate from any future Chat Completions compatibility adapter.
 
 Errors have the JSON shape `{"code": "...", "message": "..."}`. Missing or invalid
 authentication returns 401, unknown resources return 404, conflicts/busy threads

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -128,9 +129,17 @@ class AgentServiceClient:
         return result.threads
 
     async def open_thread(
-        self, agent_id: str, *, thread_id: str | None = None
+        self,
+        agent_id: str,
+        *,
+        thread_id: str | None = None,
+        cwd: str | Path | None = None,
     ) -> ServiceThread:
-        request = OpenThreadRequest(agent_id=agent_id, thread_id=thread_id)
+        request = OpenThreadRequest(
+            agent_id=agent_id,
+            thread_id=thread_id,
+            cwd=str(cwd) if isinstance(cwd, Path) else cwd,
+        )
         return await self._json("POST", "/v1/threads", ServiceThread, request)
 
     async def snapshot(self, thread_id: str) -> SnapshotRecord:

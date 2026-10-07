@@ -14,6 +14,8 @@ The optional [HTTP/SSE adapter](service-http.md) exposes it to separate processe
 | [`CodingSession`](coding-session.md) | Provides the application's API for one coding conversation: prompt, stream, history, observation, and run controls. | Creates an embedded service or attaches to a host-owned service. |
 
 The service resolves each thread's `AgentSession` through its registered factory.
+The factory receives the immutable `ServiceThread` binding, including its
+`thread_id`, `agent_id`, and optional project `cwd`.
 A `CodingSession` then delegates execution to that service using its thread ID.
 Multiple coding facades can observe the same thread. They share the existing
 checkpoint history and admission journal.
@@ -33,6 +35,7 @@ admission identities independently of conversation checkpoints.
 
 ```python
 import asyncio
+from pathlib import Path
 
 import msgflux as mf
 import msgflux.nn as nn
@@ -44,7 +47,7 @@ async def main():
     journal = SQLiteServiceStore()  # :memory: for this example
     service = AgentService(store=journal)
 
-    def create_session(thread_id):
+    def create_session(thread):
         model = mf.Model.chat_completion("openai/gpt-6-luna")
         agent = nn.Agent(
             name="main",
@@ -55,7 +58,7 @@ async def main():
         return AgentSession(agent, on_close=model.aclose)
 
     service.register("main", create_session)
-    thread = await service.open_thread("main")
+    thread = await service.open_thread("main", cwd=Path.cwd())
     try:
         async with service.watch(thread.thread_id) as observer:
             print(observer.snapshot.messages)
@@ -102,11 +105,22 @@ Use a stable client-generated request ID for retries; correlation IDs are not
 implicitly idempotency keys. Claims and finalization compare a journal revision
 and owner, so a late finalization cannot replace a newer attempt.
 
-`open_thread()` records its logical binding without constructing an Agent. The
-factory runs when submission or observation first needs the session. Factory
+`open_thread()` records its logical binding without constructing an Agent. Its
+optional `cwd` must be an absolute path to an existing directory; it is resolved to an
+absolute canonical host path and becomes part of the immutable thread binding.
+Reopening an existing thread without `cwd` returns its stored binding, while a
+different explicit `cwd` conflicts. The path identifies a project location; it
+does not grant filesystem or process permissions. Those remain factory-owned.
+The factory runs when submission or observation first needs the session. Factory
 failure must release resources it acquired; successful sessions remain owned
 by the service until shutdown. Registering the same mutable Agent for different
 threads is rejected.
+
+Existing SQLite journals gain the optional `cwd` column automatically. Older
+threads keep `cwd=None`; opening them does not infer a workspace from the
+frontend's current directory. A coding factory requiring a root must reject
+such a binding. Open a new thread with an explicit root to start a new coding
+conversation there.
 
 ## Disconnect, Wait, And Interrupt
 
@@ -143,9 +157,11 @@ scope factory:
 from msgflux.runtime import AgentWorkspace, AgentSession
 
 
-def create_session(thread_id):
-    workspace = AgentWorkspace.local(".")
-    agent = make_agent(thread_id)  # host-defined Agent factory
+def create_session(thread):
+    if thread.cwd is None:
+        raise ValueError("This coding service requires a project cwd")
+    workspace = AgentWorkspace.local(thread.cwd)
+    agent = make_agent(thread.thread_id)  # host-defined Agent factory
     return AgentSession(
         agent,
         scope_factory=lambda scope: scope.with_overrides(workspace=workspace),
@@ -159,6 +175,18 @@ preserves the thread and service-owned run identity. `checkpoint_store`,
 `task_store` and `agent_inbox` can also be supplied to `AgentSession`. A checkpoint
 store must agree with one already configured on the Agent. The API does not
 serialize factories, resources, credentials, or grants.
+
+The service does not construct a local workspace from `cwd` automatically.
+The factory can also use that host project directory with an existing Docker
+backend and `AgentWorkspace.open()`. Tools still receive `AgentWorkspace` through
+the same dependency injection, regardless of the chosen backend.
+
+This thread-opening API identifies a directory on the service host; it does not
+accept backend selection, connection credentials, container options, or an
+exclusively remote filesystem path. Per-thread backend profiles and remote
+locations require a future persisted workspace configuration. A host changing
+its factory's backend must explicitly address existing thread and checkpoint
+bindings rather than silently moving a conversation to another environment.
 
 ## Run Identity And Host Bindings
 

@@ -32,8 +32,8 @@ def resource_factory(runtime_dir: Path) -> AgentService:
     agent = Agent(name="local-resource-test", model=model)
     service.register(
         "agent",
-        lambda thread_id: AgentSession(
-            agent, on_close=lambda: _closed_sessions.append(thread_id)
+        lambda thread: AgentSession(
+            agent, on_close=lambda: _closed_sessions.append(thread.thread_id)
         ),
     )
     return service

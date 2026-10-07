@@ -40,7 +40,9 @@ async def connect_local_service(
     """Connect to a matching local daemon, starting one when no owner exists.
 
     The daemon is independent of this client and remains running after the
-    returned HTTP client is closed.
+    returned HTTP client is closed. ``cwd`` selects its initial launch directory;
+    a healthy daemon with the same factory is reused from other directories.
+    Select an Agent's workspace separately when opening its service thread.
     """
     _validate_factory(factory)
     if (
@@ -60,7 +62,7 @@ async def connect_local_service(
         raise NotADirectoryError("cwd must name an existing directory")
     deadline = asyncio.get_running_loop().time() + startup_timeout
     async with _StartupLock(selected_runtime, deadline):
-        client = await _reuse_running(selected_runtime, factory, selected_cwd, deadline)
+        client = await _reuse_running(selected_runtime, factory, deadline)
         if client is not None:
             return client
 
@@ -70,7 +72,6 @@ async def connect_local_service(
                 process,
                 selected_runtime,
                 factory,
-                selected_cwd,
                 deadline,
             )
         except BaseException:
@@ -87,7 +88,7 @@ async def connect_local_service(
 
 
 async def _reuse_running(
-    runtime_dir: Path, factory: str, cwd: Path, deadline: float
+    runtime_dir: Path, factory: str, deadline: float
 ) -> AgentServiceClient | None:
     while True:
         record = read_record(runtime_dir)
@@ -95,7 +96,7 @@ async def _reuse_running(
             client = await _probe(record)
             if client is not None:
                 try:
-                    _require_match(record, factory, cwd)
+                    _require_match(record, factory)
                 except BaseException:
                     await client.aclose()
                     raise
@@ -203,7 +204,6 @@ async def _wait_for_child(
     process: subprocess.Popen[bytes],
     runtime_dir: Path,
     factory: str,
-    cwd: Path,
     deadline: float,
 ) -> AgentServiceClient:
     while True:
@@ -213,7 +213,7 @@ async def _wait_for_child(
             )
         record = read_record(runtime_dir)
         if record is not None:
-            _require_match(record, factory, cwd)
+            _require_match(record, factory)
             client = await _probe(record)
             if client is not None:
                 _schedule_reaper(process)
@@ -255,11 +255,10 @@ async def _stop_owned_child(process: subprocess.Popen[bytes]) -> None:
             await asyncio.sleep(0.05)
 
 
-def _require_match(record: LocalServiceRecord, factory: str, cwd: Path) -> None:
-    if record.factory != factory or record.cwd != str(cwd):
+def _require_match(record: LocalServiceRecord, factory: str) -> None:
+    if record.factory != factory:
         raise ServiceConflictError(
-            "A local AgentService is already configured for a different "
-            "factory or working directory"
+            "A local AgentService is already configured for a different factory"
         )
 
 

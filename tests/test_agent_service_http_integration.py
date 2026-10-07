@@ -182,10 +182,12 @@ async def test_remote_interrupt_targets_one_thread_and_preserves_other_run():
     entered = {key: asyncio.Event() for key in ("one", "two")}
     release = asyncio.Event()
 
-    def factory(thread):
+    def factory(binding):
+        thread_id = binding.thread_id
+
         async def answer(**_kwargs):
-            entered[thread].set()
-            if thread == "one":
+            entered[thread_id].set()
+            if thread_id == "one":
                 signal = get_execution_scope().abort_signal
                 await signal.wait()
                 signal.raise_if_aborted()

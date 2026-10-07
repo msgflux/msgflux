@@ -24,6 +24,7 @@ class ServiceRecoveryRequiredError(RuntimeError):
 class ServiceThread(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     thread_id: str
     agent_id: str
+    cwd: str | None = None
 
 
 class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

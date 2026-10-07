@@ -7,6 +7,7 @@ import contextvars
 import inspect
 from collections.abc import Callable
 from contextlib import aclosing, asynccontextmanager
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -138,7 +139,7 @@ class AgentService:
         self._shutdown_task: asyncio.Task | None = None
 
     def register(self, agent_id: str, factory: Callable) -> None:
-        """Register code, not a shared mutable Agent instance or credentials."""
+        """Register a sync/async ServiceThread -> AgentSession host factory."""
         self._require_open()
         validate_identifier(agent_id, "agent_id")
         if not callable(factory):
@@ -159,18 +160,43 @@ class AgentService:
         agent_id: str,
         *,
         thread_id: str | None = None,
+        cwd: str | Path | None = None,
     ) -> ServiceThread:
-        """Bind a logical conversation lazily; no Agent factory runs yet."""
+        """Bind a conversation and optional absolute workspace root lazily.
+
+        Omitting cwd preserves an existing binding. An explicit root is
+        canonicalized and immutable; no factory runs or process cwd changes.
+        """
         async with self._lock:
             self._require_open()
             if agent_id not in self._factories:
                 raise KeyError(agent_id)
             if thread_id is not None:
                 validate_identifier(thread_id, "thread_id")
+            canonical_cwd = None
+            if cwd is not None:
+                if not isinstance(cwd, (str, Path)):
+                    raise ValueError("`cwd` must be an absolute existing directory")
+                requested_path = Path(cwd)
+                if not requested_path.is_absolute():
+                    raise ValueError("`cwd` must be an absolute existing directory")
+                try:
+                    canonical_path = requested_path.resolve(strict=True)
+                except (OSError, RuntimeError) as error:
+                    raise ValueError(
+                        "`cwd` must be an absolute existing directory"
+                    ) from error
+                if not canonical_path.is_dir():
+                    raise ValueError("`cwd` must be an absolute existing directory")
+                canonical_cwd = str(canonical_path)
+            resolved_thread_id = thread_id if thread_id is not None else new_thread_id()
+            if canonical_cwd is None:
+                try:
+                    canonical_cwd = self.store.thread(resolved_thread_id).cwd
+                except KeyError:
+                    pass
             return self.store.bind_thread(
-                ServiceThread(
-                    thread_id if thread_id is not None else new_thread_id(), agent_id
-                )
+                ServiceThread(resolved_thread_id, agent_id, canonical_cwd)
             )
 
     def _require_open(self) -> None:
@@ -182,7 +208,7 @@ class AgentService:
         thread = self.store.thread(thread_id)
         if thread_id not in self._sessions:
             factory = self._factories[thread.agent_id]
-            session = factory(thread_id)
+            session = factory(thread)
             if inspect.isawaitable(session):
                 session = await session
             if not isinstance(session, AgentSession):

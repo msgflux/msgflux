@@ -1,6 +1,7 @@
 """Contract tests for the native AgentService HTTP/SSE client."""
 
 import json
+from pathlib import Path
 
 import httpx2
 import pytest
@@ -23,6 +24,28 @@ def _json_response(request, payload, status=200):
 
 
 @pytest.mark.asyncio
+async def test_open_thread_sends_host_workspace_path_and_decodes_binding():
+    def handler(request):
+        assert json.loads(request.content) == {
+            "agent_id": "main",
+            "thread_id": "project",
+            "cwd": "/host/project",
+        }
+        return _json_response(
+            request,
+            {"agent_id": "main", "thread_id": "project", "cwd": "/host/project"},
+            201,
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        thread = await client.open_thread(
+            "main", thread_id="project", cwd=Path("/host/project")
+        )
+        assert thread == ServiceThread("project", "main", "/host/project")
+
+
+@pytest.mark.asyncio
 async def test_http_methods_encode_requests_and_decode_records():
     seen = []
 
@@ -39,6 +62,7 @@ async def test_http_methods_encode_requests_and_decode_records():
             assert json.loads(request.content) == {
                 "agent_id": "assistant",
                 "thread_id": "t",
+                "cwd": None,
             }
             return _json_response(request, {"thread_id": "t", "agent_id": "assistant"})
         if path.endswith("/prompt"):

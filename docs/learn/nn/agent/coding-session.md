@@ -159,20 +159,28 @@ An application managing several threads can register factories once and attach
 coding facades to existing service threads:
 
 ```python
+from pathlib import Path
+
 from msgflux.coding import CodingCheckpointExtension, CodingSession
-from msgflux.runtime import AgentService, AgentSession, SQLiteServiceStore
+from msgflux.runtime import AgentService, AgentSession, AgentWorkspace, SQLiteServiceStore
 
 
-def create_agent_session(thread_id):
-    agent = make_agent(thread_id)  # application factory
+def create_agent_session(thread):
+    if thread.cwd is None:
+        raise ValueError("This coding service requires a project cwd")
+    agent = make_agent(thread.thread_id)  # application factory
+    workspace = AgentWorkspace.local(thread.cwd)
+    agent.workspace = workspace
     agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
-    return AgentSession(agent)
+    return AgentSession(agent, on_close=workspace.aclose)
 
 
 journal = SQLiteServiceStore("service.sqlite3")
 service = AgentService(store=journal)
 service.register("main", create_agent_session)  # returns AgentSession per thread
-thread = await service.open_thread("main", thread_id="my-thread")
+thread = await service.open_thread(
+    "main", thread_id="my-thread", cwd=Path.cwd()
+)
 first = await CodingSession.from_service(service, thread.thread_id)
 second = await CodingSession.from_service(service, thread.thread_id)
 try:
@@ -192,3 +200,10 @@ facade does not close the service or interrupt its runs. The host closes the
 service and factory-owned resources when the runtime itself shuts down. Services
 are bound to one event loop. HTTP/SSE transport and terminal interfaces can consume
 this API separately.
+
+The factory receives a `ServiceThread`, not just a thread ID. Use
+`thread.thread_id` for per-thread Agent/checkpoint identity and `thread.cwd` when
+the application chooses to bind a workspace to the project's canonical host
+directory. A required project root should be rejected when it is missing. The
+stored `cwd` is immutable and does not grant workspace or tool permissions;
+factories still decide which resources and permissions to provide.

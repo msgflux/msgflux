@@ -10,9 +10,11 @@ uses POSIX locks; the native HTTP client remains usable on other platforms.
 
 ## Define The Trusted Factory
 
-The factory is application code, supplied as `module:callable`. It receives the
-runtime directory as a `Path` and returns an AgentService, directly or through an
-async function. Models, credentials, workspace grants and tools are configured by
+The factory is application code, supplied as `module:callable`. The service
+factory receives the runtime directory as a `Path` and returns an AgentService,
+directly or through an async function. Each registered Agent factory receives a
+`ServiceThread` binding with its immutable `thread_id`, `agent_id`, and optional
+project `cwd`. Models, credentials, workspace grants and tools are configured by
 that code, rather than by discovery files or remote request bodies.
 
 Save this as `my_backend.py` in your project:
@@ -30,11 +32,13 @@ from msgflux.runtime import AgentService, AgentSession, AgentWorkspace, SQLiteSe
 def create_service(runtime_dir):
     service = AgentService(store=SQLiteServiceStore(runtime_dir / "service.sqlite3"))
 
-    async def create_agent(thread_id):
+    async def create_agent(thread):
         # Application policy keeps thread IDs safe as directory names.
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", thread_id):
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", thread.thread_id):
             raise ValueError("Unsupported persistent thread ID")
-        folder = runtime_dir.parent / "threads" / thread_id
+        if thread.cwd is None:
+            raise ValueError("This coding service requires a project cwd")
+        folder = runtime_dir.parent / "threads" / thread.thread_id
         folder.mkdir(parents=True, exist_ok=True)
         model = workspace = checkpoints = None
 
@@ -48,7 +52,7 @@ def create_service(runtime_dir):
 
         try:
             model = mf.Model.chat_completion("openai/gpt-6-luna", reasoning_effort="medium")
-            workspace = AgentWorkspace.local(".")
+            workspace = AgentWorkspace.local(thread.cwd)
             checkpoints = SQLiteCheckpointStore(str(folder / "checkpoints.sqlite3"))
             agent = Agent(
                 name="main", model=model, workspace=workspace,
@@ -91,7 +95,7 @@ async def main():
     try:
         health = await client.health()
         print("Runtime:", health.instance_id)
-        thread = await client.open_thread("main")
+        thread = await client.open_thread("main", cwd=Path.cwd())
         receipt = await client.prompt(
             thread.thread_id, "Explain this project", request_id="explain-1"
         )
@@ -103,11 +107,22 @@ async def main():
 asyncio.run(main())
 ```
 
-The factory module must be importable from the selected working directory or the
-installed environment. `cwd` defaults to the caller's current directory. Existing
-healthy runtimes must match both factory and canonical cwd; a different configuration
-raises `ServiceConflictError` and preserves the current process. Use a separate
-runtime directory for separate application configurations.
+The factory module must be importable from a stable installed location or the
+selected launch working directory. `connect_local_service(..., cwd=...)` supplies
+the working directory used to import and launch the factory when a daemon needs to
+start. If a matching daemon is already healthy, a caller from another directory
+reuses it; its own launch `cwd` does not select a new Agent workspace. Pass the
+desired project path to `client.open_thread("main", cwd=Path.cwd())` instead.
+That path is canonicalized and stored in the immutable thread binding. Reopening
+without a path returns the existing binding, while a different explicit path
+conflicts. The trusted factory can reject missing or disallowed roots and decides
+whether to create a workspace there; the path grants no permissions by itself.
+The runtime does not change process working directory. Different project
+frontends can reuse the same daemon and open separate threads with their own
+`cwd`; the service factory remains registered once for the backend. Keep the
+factory module in a stable installed location, and use `thread.thread_id` for its
+checkpoint directory so project paths do not choose or collide in storage. Use a
+separate runtime directory for separate application configurations or factories.
 
 Concurrent launchers coordinate startup and return clients for the same ready
 instance. Discovery requires a matching authenticated health identity before
