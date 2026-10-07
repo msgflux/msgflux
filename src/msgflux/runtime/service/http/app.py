@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hmac
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -30,6 +30,8 @@ from msgflux.runtime.service.http.records import (
     PromptRequest,
     ResumeRequest,
     RunsResponse,
+    ShutdownRequest,
+    ShutdownResponse,
     SteerRequest,
     ThreadsResponse,
 )
@@ -97,6 +99,7 @@ def create_service_app(  # noqa: C901
     close_service: bool = False,
     event_buffer_limit: int | None = 1024,
     instance_id: str | None = None,
+    on_shutdown: Callable[[], None] | None = None,
 ) -> Litestar:
     """Create an authenticated HTTP/SSE app around an existing service.
 
@@ -125,6 +128,18 @@ def create_service_app(  # noqa: C901
         # Check service availability without invoking a configured Agent factory.
         service.threads()
         return _response(HealthRecord(instance_id))
+
+    async def shutdown(data: ShutdownRequest) -> Response:
+        if data.expected_instance_id != instance_id:
+            return _error(
+                "instance_mismatch", "Runtime instance identity did not match", 409
+            )
+        return Response(
+            content=encode_json(ShutdownResponse(instance_id)),
+            status_code=202,
+            media_type="application/json",
+            background=BackgroundTask(on_shutdown),
+        )
 
     @get("/v1/agents")
     async def list_agents() -> Response:
@@ -258,23 +273,27 @@ def create_service_app(  # noqa: C901
         stream = records()
         return ServerSentEvent(stream, background=BackgroundTask(stream.aclose))
 
+    route_handlers = [
+        health,
+        list_agents,
+        list_threads,
+        open_thread,
+        get_snapshot,
+        list_runs,
+        prompt,
+        get_receipt,
+        interrupt,
+        steer,
+        resume,
+        approval_reviews,
+        decide_approval,
+        watch,
+    ]
+    if on_shutdown is not None:
+        route_handlers.append(post("/v1/shutdown")(shutdown))
+
     return Litestar(
-        route_handlers=[
-            health,
-            list_agents,
-            list_threads,
-            open_thread,
-            get_snapshot,
-            list_runs,
-            prompt,
-            get_receipt,
-            interrupt,
-            steer,
-            resume,
-            approval_reviews,
-            decide_approval,
-            watch,
-        ],
+        route_handlers=route_handlers,
         middleware=[DefineMiddleware(_BearerAuthMiddleware, token=token)],
         lifespan=[lifespan],
         exception_handlers={

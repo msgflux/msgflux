@@ -32,6 +32,8 @@ from msgflux.runtime.service.http.records import (
     PromptRequest,
     ResumeRequest,
     RunsResponse,
+    ShutdownRequest,
+    ShutdownResponse,
     SnapshotRecord,
     SteerRequest,
     ThreadsResponse,
@@ -125,6 +127,11 @@ class AgentServiceClient:
     async def health(self) -> HealthRecord:
         """Return the authenticated runtime instance and protocol identity."""
         return await self._json("GET", "/v1/health", HealthRecord)
+
+    async def shutdown(self, *, expected_instance_id: str) -> ShutdownResponse:
+        """Request graceful shutdown of the expected runtime instance."""
+        request = ShutdownRequest(expected_instance_id=expected_instance_id)
+        return await self._json("POST", "/v1/shutdown", ShutdownResponse, request)
 
     async def agents(self) -> tuple[str, ...]:
         result = await self._json("GET", "/v1/agents", AgentsResponse)

@@ -10,6 +10,8 @@ from msgflux.runtime.service.http.factory import create_service_app
 from msgflux.runtime.service.http.records import (
     EventRecord,
     HealthRecord,
+    ShutdownRequest,
+    ShutdownResponse,
     SnapshotRecord,
 )
 from msgflux.runtime.service.http.session import AgentSessionClient
@@ -24,4 +26,6 @@ __all__ = [
     "EventRecord",
     "SnapshotRecord",
     "HealthRecord",
+    "ShutdownRequest",
+    "ShutdownResponse",
 ]

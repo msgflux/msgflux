@@ -28,6 +28,15 @@ class ResumeRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     pass
 
 
+class ShutdownRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    expected_instance_id: Identifier
+
+
+class ShutdownResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    instance_id: str
+    accepted: bool = True
+
+
 class ApprovalDecisionRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     approved: bool
     expected_revision: Annotated[int, msgspec.Meta(gt=0)]
