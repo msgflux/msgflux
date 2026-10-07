@@ -73,6 +73,9 @@ doc = [
     "pymdown-extensions>=10.16.1",
 ]
 
+[project.scripts]
+msgflux-service = "msgflux.runtime.service.local.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/msgflux/msgflux"
 Documentation = "https://github.com/msgflux/msgflux"

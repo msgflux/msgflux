@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from litestar import Litestar, Request, Response, get, post
 from litestar.background_tasks import BackgroundTask
@@ -20,6 +21,7 @@ from msgflux.runtime.service.api import AgentService
 from msgflux.runtime.service.http.records import (
     AgentsResponse,
     ErrorResponse,
+    HealthRecord,
     InterruptResponse,
     OpenThreadRequest,
     PromptRequest,
@@ -90,6 +92,7 @@ def create_service_app(  # noqa: C901
     token: str,
     close_service: bool = False,
     event_buffer_limit: int | None = 1024,
+    instance_id: str | None = None,
 ) -> Litestar:
     """Create an authenticated HTTP/SSE app around an existing service.
 
@@ -100,6 +103,11 @@ def create_service_app(  # noqa: C901
     if not isinstance(token, str) or not token:
         raise ValueError("token must be a non-empty string")
 
+    if instance_id is None:
+        instance_id = uuid4().hex
+    elif not isinstance(instance_id, str) or not instance_id.strip():
+        raise ValueError("instance_id must be a non-empty string")
+
     @asynccontextmanager
     async def lifespan(_: Litestar) -> AsyncIterator[None]:
         try:
@@ -107,6 +115,12 @@ def create_service_app(  # noqa: C901
         finally:
             if close_service:
                 await service.aclose()
+
+    @get("/v1/health")
+    async def health() -> Response:
+        # Check service availability without invoking a configured Agent factory.
+        service.threads()
+        return _response(HealthRecord(instance_id))
 
     @get("/v1/agents")
     async def list_agents() -> Response:
@@ -213,6 +227,7 @@ def create_service_app(  # noqa: C901
 
     return Litestar(
         route_handlers=[
+            health,
             list_agents,
             list_threads,
             open_thread,

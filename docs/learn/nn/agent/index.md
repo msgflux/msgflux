@@ -34,6 +34,7 @@ task to be treated in isolation.
 | [System Prompt](system-prompt.md) | Define one canonical prompt and extend it at runtime |
 | [Generation Schemas](generation-schemas.md) | Structured outputs and reasoning strategies |
 | [Task and Context](task-and-context.md) | Input handling, templates, multimodal, chat history |
+| [Local Service](service-local.md) | Shared backend discovery and on-demand process startup |
 | [Service HTTP/SSE](service-http.md) | Native backend transport, remote observation, and reconnection |
 | [Coding Session](coding-session.md) | Headless coding conversations, service-owned execution, and reconnection |
 | [Runtime](runtime.md) | Threads, runs, checkpoints, inbox controls, and abort signals |

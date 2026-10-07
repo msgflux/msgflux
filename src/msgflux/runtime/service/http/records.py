@@ -62,3 +62,8 @@ class EventRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     run_id: str | None = None
     source_path: tuple[str, ...] = ()
     version: Literal[1] = 1
+
+
+class HealthRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    instance_id: str
+    version: Literal[1] = 1

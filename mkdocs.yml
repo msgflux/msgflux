@@ -173,6 +173,7 @@ nav:
         - learn/nn/agent/event-streaming.md
         - learn/nn/agent/service.md
         - learn/nn/agent/service-http.md
+        - learn/nn/agent/service-local.md
         - learn/nn/agent/coding-session.md
         - learn/nn/agent/prompt-cache.md
         - learn/nn/agent/reasoning.md
