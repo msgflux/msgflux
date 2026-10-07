@@ -1,0 +1,192 @@
+# Local Service Discovery And Startup
+
+`connect_local_service()` connects to a matching local [HTTP/SSE backend](service-http.md)
+and starts one when no process owns the runtime. Several frontends can reuse the
+same AgentService. Closing a client or exiting its launcher leaves the daemon
+running, including while an Agent works or waits for approval.
+
+Install `msgflux[service]` for server support. The process manager in this increment
+uses POSIX locks; the native HTTP client remains usable on other platforms.
+
+## Define The Trusted Factory
+
+The factory is application code, supplied as `module:callable`. It receives the
+runtime directory as a `Path` and returns an AgentService, directly or through an
+async function. Models, credentials, workspace grants and tools are configured by
+that code, rather than by discovery files or remote request bodies.
+
+Save this as `my_backend.py` in your project:
+
+```python
+import re
+
+import msgflux as mf
+from msgflux.coding import CodingCheckpointExtension
+from msgflux.data.stores import SQLiteCheckpointStore
+from msgflux.nn import Agent
+from msgflux.runtime import AgentService, AgentSession, AgentWorkspace, SQLiteServiceStore
+
+
+def create_service(runtime_dir):
+    service = AgentService(store=SQLiteServiceStore(runtime_dir / "service.sqlite3"))
+
+    async def create_agent(thread_id):
+        # Application policy keeps thread IDs safe as directory names.
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", thread_id):
+            raise ValueError("Unsupported persistent thread ID")
+        folder = runtime_dir.parent / "threads" / thread_id
+        folder.mkdir(parents=True, exist_ok=True)
+        model = workspace = checkpoints = None
+
+        async def close():
+            if model is not None:
+                await model.aclose()
+            if workspace is not None:
+                await workspace.aclose()
+            if checkpoints is not None:
+                checkpoints.close()
+
+        try:
+            model = mf.Model.chat_completion("openai/gpt-6-luna", reasoning_effort="medium")
+            workspace = AgentWorkspace.local(".")
+            checkpoints = SQLiteCheckpointStore(str(folder / "checkpoints.sqlite3"))
+            agent = Agent(
+                name="main", model=model, workspace=workspace,
+                checkpoint_store=checkpoints, config={"stream": True},
+            )
+            agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
+            return AgentSession(agent, on_close=close)
+        except BaseException:
+            await close()
+            raise
+
+    service.register("main", create_agent)
+    return service
+```
+
+This example configures persistent admission and checkpoint stores, a workspace,
+and the coding checkpoint policy. It leaves tools empty; pass the tools and
+permissions appropriate to your application when constructing the Agent.
+Provider credentials belong in the server environment or the provider's configured
+authentication source. The daemon inherits its launcher's environment.
+
+The runner owns the returned service and closes its admission journal on shutdown.
+Factories must release resources on failure and provide cleanup callbacks for their
+successful sessions. Callbacks must drain any delegated work they own before
+closing its dependencies.
+
+## Connect On Demand
+
+```python
+import asyncio
+from pathlib import Path
+
+from msgflux.runtime.service.local import connect_local_service
+
+
+async def main():
+    client = await connect_local_service(
+        "my_backend:create_service", cwd=Path.cwd(), startup_timeout=30
+    )
+    try:
+        health = await client.health()
+        print("Runtime:", health.instance_id)
+        thread = await client.open_thread("main")
+        receipt = await client.prompt(
+            thread.thread_id, "Explain this project", request_id="explain-1"
+        )
+        print("Thread:", thread.thread_id, "Run:", receipt.run_id)
+    finally:
+        await client.aclose()
+
+
+asyncio.run(main())
+```
+
+The factory module must be importable from the selected working directory or the
+installed environment. `cwd` defaults to the caller's current directory. Existing
+healthy runtimes must match both factory and canonical cwd; a different configuration
+raises `ServiceConflictError` and preserves the current process. Use a separate
+runtime directory for separate application configurations.
+
+Concurrent launchers coordinate startup and return clients for the same ready
+instance. Discovery requires a matching authenticated health identity before
+returning a connection. Initialization and shutdown of an existing owner are waited
+for within `startup_timeout`; an owner with published metadata but an invalid
+identity/health response is reported as requiring recovery and is not replaced.
+
+The returned object is an ordinary `AgentServiceClient`. Use `watch()` to get an
+atomic snapshot and future events. Reconnecting after a server restart requires
+calling `connect_local_service()` again so the client receives the new URL/token;
+old connections are not silently redirected or retried.
+
+## Run In The Foreground
+
+For an explicitly managed persistent process:
+
+```bash
+uv run --extra service msgflux-service \
+  --factory my_backend:create_service \
+  --cwd /absolute/project/path
+```
+
+The equivalent Python entry point is
+`python -m msgflux.runtime.service.local.cli`. A foreground server and clients
+using on-demand discovery share the same lifetime lock. A competing server fails
+without overwriting the active instance's metadata.
+
+Ctrl+C or an explicit operating-system stop requests shutdown. Active SSE responses
+are given a bounded graceful shutdown interval; the service then joins its owned
+foreground work and closes factory resources. Agent interruption remains cooperative,
+so non-cooperative application code can delay resource cleanup. There is no idle
+shutdown timer and no shutdown request when a client closes.
+
+## Files And Identity
+
+The default directory is `~/.msgflux/runtime/`. Override it with `runtime_dir` in
+Python or `--runtime-dir` on the command line.
+
+```text
+~/.msgflux/runtime/
+├── daemon.json
+├── daemon.lock
+├── startup.lock
+└── daemon.log
+```
+
+| File | Purpose |
+| --- | --- |
+| `daemon.json` | Versioned instance ID, factory, cwd, loopback URL, informational PID, and private connection token |
+| `daemon.lock` | Kernel lock held for the daemon's process lifetime |
+| `startup.lock` | Coordinates frontend discovery, spawn and readiness |
+| `daemon.log` | Startup/server diagnostics for on-demand launches |
+
+The selected directory is owned by the current user and secured to mode 0700.
+Metadata and lock/log files use mode 0600; metadata is published atomically and
+symlink metadata/lock paths are rejected. The token is local runtime authentication,
+not a provider credential. Do not share the metadata file. Metadata representations
+redact the token.
+
+The backend binds only to `127.0.0.1` on an available port. `GET /v1/health` requires
+the bearer token and returns the runtime instance ID and protocol version without
+constructing an Agent. A PID from a discovery file is never used to signal or kill
+a process. Stale metadata may be replaced when no owner holds the lifetime lock;
+failed startup cleanup operates only on the child handle created by that launcher.
+
+Factory-owned conversation stores stay separate from discovery files. The example
+adds `runtime/service.sqlite3` and `threads/<thread_id>/checkpoints.sqlite3`; the
+process manager does not choose conversation storage or model credentials itself.
+
+## Failure And Recovery
+
+A launcher may exit immediately after connecting; the daemon's lifecycle is
+independent of that frontend's event loop. If startup fails or times out, inspect
+`daemon.log`. A canceled/failed startup releases the launcher's own child and startup
+lock; it does not terminate a process identified by stale metadata.
+
+A process crash releases its kernel lock. The next connection can start a new
+instance while preserving application-owned persistent stores. This does not
+implicitly retry started Agent inputs or assert quiescence of surviving external
+commands. Existing checkpoint, workspace, command-receipt and approval recovery
+checks remain authoritative. A trusted factory/host can perform explicit recovery
+before serving clients; network clients cannot manufacture `worker_stopped` evidence.

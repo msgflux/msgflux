@@ -15,6 +15,10 @@ In a repository checkout, use `uv run --extra service ...`. Litestar and Uvicorn
 belong to this extra; importing the client does not require Litestar. Request and
 response contracts use `msgspec.Struct` with strict JSON decoding.
 
+For a shared local process, [local discovery/startup](service-local.md) provides
+on-demand connection and a foreground command without creating another runtime
+when an existing instance is healthy.
+
 ## Run A Server
 
 Save this as `server.py` and set `MSGFLUX_SERVICE_TOKEN` to a secret shared with
@@ -77,9 +81,8 @@ not persistence across server restarts. The host configures model credentials,
 workspace, permissions, principal and tools. Clients cannot replace those
 settings through the HTTP payload.
 
-This adapter runs in a single process around one service. Daemon discovery,
-automatic startup and coordination across independent server workers are separate
-integrations. Do not run multiple Uvicorn workers against one in-memory service.
+This adapter runs in a single process around one service. Local daemon discovery/startup is available through the [local process API](service-local.md).
+Coordination across independent server workers remains a separate integration. Do not run multiple Uvicorn workers against one in-memory service.
 
 ## Connect And Observe
 
@@ -192,6 +195,7 @@ All routes require `Authorization: Bearer <token>`.
 
 | Method | Route | Result |
 | --- | --- | --- |
+| GET | `/v1/health` | Authenticated runtime identity and protocol version |
 | GET | `/v1/agents` | Registered agent IDs |
 | GET / POST | `/v1/threads` | List bindings / open a thread |
 | GET | `/v1/threads/{thread_id}/snapshot` | Portable thread snapshot |
