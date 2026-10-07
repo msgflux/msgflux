@@ -4,6 +4,8 @@
 A TUI or application can submit an input, disconnect its watcher, and attach
 again while the run continues. No HTTP framework is required for this API.
 The optional [HTTP/SSE adapter](service-http.md) exposes it to separate processes.
+[Agent channels](channels.md) provide an application boundary for authorization,
+commands, preprocessing, and presentation over the same service.
 
 ## Service, Agent Session, And Coding Session
 
