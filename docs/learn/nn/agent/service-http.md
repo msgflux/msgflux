@@ -91,6 +91,68 @@ settings or grants through the HTTP payload.
 This adapter runs in a single process around one service. Local daemon discovery/startup is available through the [local process API](service-local.md).
 Coordination across independent server workers remains a separate integration. Do not run multiple Uvicorn workers against one in-memory service.
 
+## Review Tool Approvals
+
+The host may expose review operations for sessions where it configures an
+`approval_reviewer`. The reviewer identity and approval policy stay on the
+server. The HTTP bearer token authenticates the service owner; the request body
+cannot choose a reviewer or grant permissions. Keep the execution principal in
+the run scope distinct from the reviewer identity:
+
+```python
+from msgflux.runtime import AgentApprovals, SQLiteApprovalStore
+from msgflux.runtime.context import ExecutionScope
+
+approval_store = SQLiteApprovalStore("approvals.sqlite3")
+policy = AgentApprovals(
+    approval_store,
+    tools={"write_file": "v3"},
+    policy_version="workspace-policy-7",
+)
+
+def create_session(thread):
+    agent = make_agent_for_thread(thread, approvals=policy)
+
+    def scope_for_run(scope: ExecutionScope) -> ExecutionScope:
+        # The execution principal describes the agent run, not its reviewer.
+        return scope.with_overrides(principal="coding-agent")
+
+    return AgentSession(
+        agent,
+        scope_factory=scope_for_run,
+        approval_reviewer="alice@example.test",
+    )
+```
+
+`make_agent_for_thread` represents the host's normal Agent construction and
+must attach the same approval store and policy used by the runtime. A session
+without `approval_reviewer` receives 403 for these routes. Review responses
+contain request and tool metadata plus a verified file diff when available;
+they omit raw arguments and checkpoint contents.
+
+The client first lists review requests, decides against the revision it
+inspected, then resumes the paused run explicitly:
+
+```python
+reviews = await session.approval_reviews(run_id)
+for review in reviews:
+    print(review.request_id, review.tool_name, review.status, review.diff)
+    decided = await session.decide_approval(
+        run_id,
+        review.request_id,
+        approved=True,
+        expected_revision=review.revision,
+    )
+    print("Recorded:", decided.status)
+
+# A decision records the human choice. It does not execute tools or resume work.
+receipt = await session.resume(run_id)
+```
+
+An expired or stale request returns HTTP 409 and must be reviewed again. A
+decision does not itself resume execution or claim exactly-once behavior; normal
+service recovery checks still govern `resume()`.
+
 ## Connect And Observe
 
 Save this as `client.py` and run it with the same service token:
@@ -206,8 +268,8 @@ resumed = await client.resume_checkpoint(thread_id, receipt.run_id)
 Steering returns the published notification as a JSON dictionary and is not a
 follow-up queue. Interruption targets an explicit run and returns a boolean.
 An unfinished run already paused or failed in this service can resume through its
-normal recovery checks. Approval decisions remain a trusted host operation in
-this increment; the HTTP resume route does not itself approve a tool invocation.
+normal recovery checks. The HTTP resume route does not itself approve a tool
+invocation; use the explicit review and decision operations described above.
 
 HTTP clients cannot assert `worker_stopped` or import uncertain executions after
 a process restart. A trusted host must establish old-worker quiescence and use
@@ -233,6 +295,8 @@ All routes require `Authorization: Bearer <token>`.
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/interrupt` | Interruption result |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/steer` | Published notification |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/resume` | Recovery receipt |
+| GET | `/v1/threads/{thread_id}/runs/{run_id}/approvals` | Verified approval reviews |
+| POST | `/v1/threads/{thread_id}/runs/{run_id}/approvals/{request_id}/decision` | Recorded decision |
 
 Thread-open bodies contain `agent_id` and may include `thread_id` and an absolute
 `cwd`. Prompt bodies contain `prompt` and `request_id`; steer bodies contain
@@ -241,7 +305,8 @@ The native API is separate from any future Chat Completions compatibility adapte
 
 Errors have the JSON shape `{"code": "...", "message": "..."}`. Missing or invalid
 authentication returns 401, unknown resources return 404, conflicts/busy threads
-and recovery requirements return 409, and invalid payloads return 422. Unexpected
+and recovery requirements return 409, review access without a configured reviewer
+returns 403, and invalid payloads return 422. Unexpected
 server errors return a generic 500 message and are logged on the host. Model
 failures settle their run receipts and appear as `run.error` events, rather than
 turning accepted prompts into transport validation errors.

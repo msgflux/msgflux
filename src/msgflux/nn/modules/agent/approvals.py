@@ -124,14 +124,24 @@ class AgentApprovalMixin:
             raise ValueError("Approval policies require canonical Agent tool calls")
 
     def decide_approval(
-        self, request_id: str, *, approved: bool, decided_by: str, approvals=_UNSET
+        self,
+        request_id: str,
+        *,
+        approved: bool,
+        decided_by: str,
+        approvals=_UNSET,
+        expected_revision: int | None = None,
     ):
         """Record an authenticated host decision without automatically resuming."""
         policy = self._get_effective_approvals(approvals)
         if policy is None:
             raise ValueError("Agent has no approval configuration")
         record = policy.store.decide(
-            self.get_module_name(), request_id, approved=approved, decided_by=decided_by
+            self.get_module_name(),
+            request_id,
+            approved=approved,
+            decided_by=decided_by,
+            expected_revision=expected_revision,
         )
         _hub_event_sink().emit(
             EventType.TOOL_APPROVAL_RESOLVED,
@@ -150,7 +160,13 @@ class AgentApprovalMixin:
         return record
 
     async def adecide_approval(
-        self, request_id: str, *, approved: bool, decided_by: str, approvals=_UNSET
+        self,
+        request_id: str,
+        *,
+        approved: bool,
+        decided_by: str,
+        approvals=_UNSET,
+        expected_revision: int | None = None,
     ):
         return await asyncio.to_thread(
             self.decide_approval,
@@ -158,6 +174,7 @@ class AgentApprovalMixin:
             approved=approved,
             decided_by=decided_by,
             approvals=approvals,
+            expected_revision=expected_revision,
         )
 
     def _load_approval_snapshot(self, thread_id, *, approvals=_UNSET):

@@ -1339,9 +1339,19 @@ request and received an actual decision, it can record that decision:
 ```python
 agent.decide_approval(
     request_id, approved=reviewer_approved, decided_by=authenticated_reviewer_id,
+    expected_revision=reviewed_request.revision,
 )
 result = agent("", scope=scope)
 ```
+
+Here `reviewed_request` is the journal record shown to the reviewer. The optional
+`expected_revision` compares its revision atomically before changing the decision.
+A conflicting revision raises `ApprovalConflictError`. Repeating the same
+decision by the same reviewer returns the existing decision without another
+revision, even if the response was lost. A consumed approval cannot be decided
+again. `adecide_approval()` and the journal's `decide()`/`adecide()` accept the
+same option. The [native service client](service-http.md#review-tool-approvals)
+requires a revision for remote decisions.
 
 Use the `request_id` returned in `requests` or a watcher snapshot. The second
 call resumes the **same** namespace, thread and run; its message is ignored.

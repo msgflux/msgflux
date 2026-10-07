@@ -11,7 +11,13 @@ import pytest
 from msgflux.runtime.service.http import AgentSessionClient
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.models.response import ModelResponse
+from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
+from msgflux.runtime import (
+    AgentApprovals,
+    ApprovalConflictError,
+    InMemoryApprovalStore,
+)
 from msgflux.runtime.service import (
     AgentService,
     AgentSession,
@@ -31,10 +37,16 @@ def _response(content: str) -> ModelResponse:
     return response
 
 
-def _agent(answer):
+def _agent(answer, *, tools=None, approvals=None):
     model = Mock()
     model.model_type = "chat_completion"
-    agent = Agent(name="main", model=model, checkpoint_store=InMemoryCheckpointStore())
+    agent = Agent(
+        name="main",
+        model=model,
+        tools=tools,
+        approvals=approvals,
+        checkpoint_store=InMemoryCheckpointStore(),
+    )
     agent.generator.aforward = AsyncMock(side_effect=answer)
     return agent
 
@@ -172,3 +184,106 @@ async def test_latest_run_is_none_when_no_summaries():
     client.runs = AsyncMock(return_value=())
     session = AgentSessionClient(client, ServiceThread("thread", "main"))
     assert await session.latest_run() is None
+
+
+@pytest.mark.asyncio
+async def test_real_http_approval_reviews_and_bound_session_client():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="remote-review", model=model)
+    service = AgentService(store=SQLiteServiceStore())
+    service.register(
+        "main",
+        lambda _thread: AgentSession(
+            agent,
+            approval_reviewer="alice@example.test",
+            scope_factory=lambda scope: scope.with_overrides(principal="coding-agent"),
+        ),
+    )
+    app = create_service_app(service, token=TOKEN)
+    transport = httpx2.ASGITransport(app=app)
+    try:
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://service"
+        ) as http:
+            client = AgentServiceClient("http://service", token=TOKEN, client=http)
+            session = await AgentSessionClient.open(client, thread_id="review-thread")
+            reviews = await client.approval_reviews(session.thread_id, "run-1")
+            assert reviews == ()
+            assert await session.approval_reviews("run-1") == ()
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_real_http_client_decides_then_resumes_approval():
+    calls = []
+
+    def write_file(path: str) -> str:
+        calls.append(path)
+        return "written"
+
+    tool_calls = ToolCallAggregator()
+    tool_calls.process(0, "call-1", "write_file", '{"path":"notes.txt"}')
+    tool_response = ModelResponse()
+    tool_response.set_response_type("tool_call")
+    tool_response.add(tool_calls)
+    done = _response("done")
+    agent = _agent(
+        None,
+        tools=[write_file],
+        approvals=AgentApprovals(
+            InMemoryApprovalStore(), {"write_file": "implementation:v1"}, "policy:v1"
+        ),
+    )
+    agent.generator.aforward = AsyncMock(side_effect=[tool_response, done])
+    service = AgentService(store=SQLiteServiceStore())
+    service.register(
+        "main",
+        lambda _thread: AgentSession(
+            agent,
+            approval_reviewer="alice@example.test",
+            scope_factory=lambda scope: scope.with_overrides(principal="coding-agent"),
+        ),
+    )
+    app = create_service_app(service, token=TOKEN)
+    transport = httpx2.ASGITransport(app=app)
+    try:
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://service"
+        ) as http:
+            client = AgentServiceClient("http://service", token=TOKEN, client=http)
+            session = await AgentSessionClient.open(client, thread_id="decision-thread")
+            receipt = await session.prompt("write the file", request_id="write-1")
+            settled = await service.wait(session.thread_id, "write-1")
+            assert settled.status == "paused", settled.error
+            reviews = await client.approval_reviews(session.thread_id, receipt.run_id)
+            assert len(reviews) == 1
+            review = reviews[0]
+            assert review.tool_name == "write_file"
+            assert "notes.txt" not in str(review)
+            decided = await session.decide_approval(
+                receipt.run_id,
+                review.request_id,
+                approved=True,
+                expected_revision=review.revision,
+            )
+            assert decided.status == "approved"
+            assert calls == []
+            with pytest.raises(ApprovalConflictError):
+                await client.decide_approval(
+                    session.thread_id,
+                    receipt.run_id,
+                    review.request_id,
+                    approved=False,
+                    expected_revision=review.revision,
+                )
+            await session.resume(receipt.run_id)
+            assert (
+                await service.wait(session.thread_id, "write-1")
+            ).status == "completed"
+            assert calls == ["notes.txt"]
+    finally:
+        await service.aclose()
+        service.store.close()

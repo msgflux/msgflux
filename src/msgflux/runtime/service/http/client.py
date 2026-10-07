@@ -10,8 +10,10 @@ from urllib.parse import quote
 import httpx2
 import msgspec
 
+from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.service import (
     AdmissionReceipt,
+    ApprovalReview,
     RunSummary,
     ServiceBusyError,
     ServiceConflictError,
@@ -20,6 +22,8 @@ from msgflux.runtime.service import (
 )
 from msgflux.runtime.service.http.records import (
     AgentsResponse,
+    ApprovalDecisionRequest,
+    ApprovalReviewsResponse,
     ErrorResponse,
     EventRecord,
     HealthRecord,
@@ -187,6 +191,35 @@ class AgentServiceClient:
         path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/resume"
         return await self._json("POST", path, AdmissionReceipt, ResumeRequest())
 
+    async def approval_reviews(
+        self, thread_id: str, run_id: str
+    ) -> tuple[ApprovalReview, ...]:
+        """List reviewable approval requests for one run."""
+        path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/approvals"
+        result = await self._json("GET", path, ApprovalReviewsResponse)
+        return result.approvals
+
+    async def decide_approval(
+        self,
+        thread_id: str,
+        run_id: str,
+        request_id: str,
+        *,
+        approved: bool,
+        expected_revision: int,
+    ) -> ApprovalReview:
+        """Record a reviewer decision without resuming the paused run."""
+        path = (
+            self._thread_path(thread_id)
+            + "/runs/"
+            + _segment(run_id)
+            + "/approvals/"
+            + _segment(request_id)
+            + "/decision"
+        )
+        request = ApprovalDecisionRequest(approved, expected_revision)
+        return await self._json("POST", path, ApprovalReview, request)
+
     @asynccontextmanager
     async def watch(self, thread_id: str):
         """Connect and yield a watcher after receiving its atomic first snapshot.
@@ -262,6 +295,10 @@ class AgentServiceClient:
             raise ServiceConflictError(message)
         if code == "recovery_required":
             raise ServiceRecoveryRequiredError(message)
+        if code == "approval_conflict":
+            raise ApprovalConflictError(message)
+        if code == "forbidden":
+            raise PermissionError(message)
         raise AgentServiceHTTPError(message, status_code=response.status_code)
 
     @staticmethod

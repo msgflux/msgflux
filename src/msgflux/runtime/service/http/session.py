@@ -10,7 +10,12 @@ from uuid import uuid4
 
 import msgspec
 
-from msgflux.runtime.service import AdmissionReceipt, RunSummary, ServiceThread
+from msgflux.runtime.service import (
+    AdmissionReceipt,
+    ApprovalReview,
+    RunSummary,
+    ServiceThread,
+)
 from msgflux.runtime.service.http.client import AgentServiceClient, RemoteThreadWatcher
 from msgflux.runtime.service.http.records import SnapshotRecord
 from msgflux.runtime.service.store import validate_identifier
@@ -114,6 +119,27 @@ class AgentSessionClient:
     async def resume(self, run_id: str) -> AdmissionReceipt:
         """Ask the service to resume a saved run through trusted recovery checks."""
         return await self._client.resume_checkpoint(self.thread_id, run_id)
+
+    async def approval_reviews(self, run_id: str) -> tuple[ApprovalReview, ...]:
+        """List approval requests that the host configured reviewer may inspect."""
+        return await self._client.approval_reviews(self.thread_id, run_id)
+
+    async def decide_approval(
+        self,
+        run_id: str,
+        request_id: str,
+        *,
+        approved: bool,
+        expected_revision: int,
+    ) -> ApprovalReview:
+        """Record an approval decision; call :meth:`resume` separately."""
+        return await self._client.decide_approval(
+            self.thread_id,
+            run_id,
+            request_id,
+            approved=approved,
+            expected_revision=expected_revision,
+        )
 
     async def runs(self) -> tuple[RunSummary, ...]:
         """List service-provided checkpoint summaries for this thread."""
