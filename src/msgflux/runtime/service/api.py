@@ -22,10 +22,12 @@ from msgflux.logger import logger
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType
+from msgflux.runtime.service.approvals import project, review_record
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
+    ApprovalReview,
     RunSummary,
     ServiceBusyError,
     ServiceConflictError,
@@ -53,6 +55,7 @@ class AgentSession:
         task_store=None,
         agent_inbox=None,
         scope_factory: Callable[[ExecutionScope], ExecutionScope] | None = None,
+        approval_reviewer: str | None = None,
         on_close: Callable[[], Any] | None = None,
     ) -> None:
         agent_store = getattr(agent, "checkpoint_store", None)
@@ -73,6 +76,11 @@ class AgentSession:
         self.task_store = task_store
         self.agent_inbox = agent_inbox
         self.scope_factory = scope_factory
+        if approval_reviewer is not None and (
+            not isinstance(approval_reviewer, str) or not approval_reviewer.strip()
+        ):
+            raise ValueError("approval_reviewer must be a non-empty string")
+        self.approval_reviewer = approval_reviewer
         self.on_close = on_close
         self.namespace = agent.get_module_name()
         validate_identifier(self.namespace, "namespace")
@@ -258,6 +266,64 @@ class AgentService:
                     record["updated_at"] = float(updated_at)
                 summaries.append(msgspec.convert(record, type=RunSummary, strict=True))
             return tuple(summaries)
+
+    async def approval_reviews(
+        self, thread_id: str, run_id: str
+    ) -> tuple[ApprovalReview, ...]:
+        """Review checkpoint-bound approvals without returning invocation args."""
+        async with self._lock:
+            session = await self._session(thread_id)
+            if session.approval_reviewer is None:
+                raise PermissionError(
+                    "This session has no configured approval reviewer"
+                )
+            with session.context(session.scope(thread_id, run_id=run_id)):
+                policy = session.agent._get_effective_approvals()
+                if policy is None:
+                    return ()
+                state = session.agent.inspect_approval_batch(thread_id, run_id)
+                request_ids = (
+                    state.get("runtime", {})
+                    .get("extensions", {})
+                    .get("pending_approvals", {})
+                    .get("requests", {})
+                    .values()
+                )
+                reviews = [
+                    review_record(session, thread_id, run_id, request_id)
+                    for request_id in request_ids
+                ]
+                return tuple(reviews)
+
+    async def decide_approval(
+        self,
+        thread_id: str,
+        run_id: str,
+        request_id: str,
+        *,
+        approved: bool,
+        expected_revision: int,
+    ) -> ApprovalReview:
+        """Record one host review; execution still requires explicit resume."""
+        if type(expected_revision) is not int or expected_revision <= 0:
+            raise ValueError("expected_revision must be a positive integer")
+        async with self._lock:
+            session = await self._session(thread_id)
+            reviewer = session.approval_reviewer
+            if reviewer is None:
+                raise PermissionError(
+                    "This session has no configured approval reviewer"
+                )
+            with session.context(session.scope(thread_id, run_id=run_id)):
+                # Validate the complete checkpoint binding before changing the journal.
+                initial_review = review_record(session, thread_id, run_id, request_id)
+                result = session.agent.decide_approval(
+                    request_id,
+                    approved=approved,
+                    decided_by=reviewer,
+                    expected_revision=expected_revision,
+                )
+                return project(result, diff=initial_review.diff)
 
     @staticmethod
     def _validate_new_input(session: AgentSession, thread_id: str) -> None:

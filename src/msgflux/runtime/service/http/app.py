@@ -16,10 +16,13 @@ from litestar.response.sse import ServerSentEvent, ServerSentEventMessage
 
 from msgflux.exceptions import EventBufferOverflowError
 from msgflux.logger import logger
+from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.event_buffer import validate_event_buffer_limit
 from msgflux.runtime.service.api import AgentService
 from msgflux.runtime.service.http.records import (
     AgentsResponse,
+    ApprovalDecisionRequest,
+    ApprovalReviewsResponse,
     ErrorResponse,
     HealthRecord,
     InterruptResponse,
@@ -182,6 +185,29 @@ def create_service_app(  # noqa: C901
             202,
         )
 
+    @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/approvals")
+    async def approval_reviews(thread_id: PathValue, run_id: PathValue) -> Response:
+        approvals = await service.approval_reviews(thread_id, run_id)
+        return _response(ApprovalReviewsResponse(approvals=approvals))
+
+    @post(
+        "/v1/threads/{thread_id:str}/runs/{run_id:str}/approvals/{request_id:str}/decision"
+    )
+    async def decide_approval(
+        thread_id: PathValue,
+        run_id: PathValue,
+        request_id: PathValue,
+        data: ApprovalDecisionRequest,
+    ) -> Response:
+        review = await service.decide_approval(
+            thread_id,
+            run_id,
+            request_id,
+            approved=data.approved,
+            expected_revision=data.expected_revision,
+        )
+        return _response(review)
+
     @get("/v1/threads/{thread_id:str}/watch")
     async def watch(request: Request, thread_id: PathValue) -> Response:
         if request.headers.get("last-event-id") is not None:
@@ -245,6 +271,8 @@ def create_service_app(  # noqa: C901
             interrupt,
             steer,
             resume,
+            approval_reviews,
+            decide_approval,
             watch,
         ],
         middleware=[DefineMiddleware(_BearerAuthMiddleware, token=token)],
@@ -253,6 +281,8 @@ def create_service_app(  # noqa: C901
             ServiceBusyError: _domain_error,
             ServiceConflictError: _domain_error,
             ServiceRecoveryRequiredError: _domain_error,
+            ApprovalConflictError: _domain_error,
+            PermissionError: _domain_error,
             KeyError: _domain_error,
             ValueError: _domain_error,
             ValidationException: _validation_error,
@@ -268,6 +298,10 @@ def _domain_error(request: Request, exc: Exception) -> Response:
 
 
 def _exception_response(exc: Exception) -> Response:
+    if isinstance(exc, ApprovalConflictError):
+        return _error("approval_conflict", str(exc), 409)
+    if isinstance(exc, PermissionError):
+        return _error("forbidden", "The configured reviewer is not authorized", 403)
     if isinstance(exc, ServiceBusyError):
         return _error("service_busy", str(exc), 409)
     if isinstance(exc, ServiceConflictError):

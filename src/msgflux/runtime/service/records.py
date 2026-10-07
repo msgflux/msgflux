@@ -17,6 +17,18 @@ class RunSummary(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     updated_at: float | None = None
 
 
+class ApprovalReview(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Safe review metadata for one host-authorized approval request."""
+
+    request_id: str
+    tool_call_id: str
+    tool_name: str
+    status: str
+    revision: int
+    expires_at: float
+    diff: str | None = None
+
+
 class ServiceConflictError(RuntimeError):
     """A request identity, thread binding, or ownership conflicts with stored state."""
 

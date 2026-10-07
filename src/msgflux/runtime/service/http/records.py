@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 import msgspec
 
-from msgflux.runtime.service.records import RunSummary, ServiceThread
+from msgflux.runtime.service.records import ApprovalReview, RunSummary, ServiceThread
 
 Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
 
@@ -28,6 +28,11 @@ class ResumeRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     pass
 
 
+class ApprovalDecisionRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    approved: bool
+    expected_revision: Annotated[int, msgspec.Meta(gt=0)]
+
+
 class AgentsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     agents: tuple[str, ...]
 
@@ -38,6 +43,10 @@ class ThreadsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 class RunsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     runs: tuple[RunSummary, ...]
+
+
+class ApprovalReviewsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    approvals: tuple[ApprovalReview, ...]
 
 
 class InterruptResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

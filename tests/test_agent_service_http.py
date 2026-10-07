@@ -192,6 +192,37 @@ async def test_resume_body_rejects_network_quiescence_assertion():
 
 
 @pytest.mark.asyncio
+async def test_approval_routes_auth_validate_payload_and_forbid_unconfigured_reviewer():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="http-approval-default", model=model)
+    service, calls = _service(lambda _thread: AgentSession(agent))
+    thread = await service.open_thread("agent", thread_id="approval-thread")
+    app = create_service_app(service, token="secret")
+    root = f"/v1/threads/{thread.thread_id}/runs/run-1/approvals"
+    try:
+        async with AsyncTestClient(app=app) as client:
+            denied = await client.get(root)
+            assert denied.status_code == 401
+            assert calls == []
+            malformed = await client.post(
+                root + "/request/decision",
+                headers={"Authorization": "Bearer secret"},
+                json={"approved": 1, "expected_revision": 0},
+            )
+            assert malformed.status_code == 422
+            assert malformed.json()["code"] == "invalid_request"
+            forbidden = await client.get(
+                root, headers={"Authorization": "Bearer secret"}
+            )
+            assert forbidden.status_code == 403
+            assert forbidden.json()["code"] == "forbidden"
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
 async def test_prompt_deduplicates_request_and_receipt_tracks_settled_run():
     model = Mock()
     model.model_type = "chat_completion"
