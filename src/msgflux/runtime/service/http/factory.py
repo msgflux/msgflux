@@ -1,5 +1,7 @@
 """Lazy loading of the optional AgentService server dependency."""
 
+from collections.abc import Callable
+
 from msgflux.runtime.service import AgentService
 
 
@@ -10,6 +12,7 @@ def create_service_app(
     close_service: bool = False,
     event_buffer_limit: int | None = 1024,
     instance_id: str | None = None,
+    on_shutdown: Callable[[], None] | None = None,
 ):
     """Create the Litestar app; install msgflux[service] for server support."""
     try:
@@ -28,4 +31,5 @@ def create_service_app(
         close_service=close_service,
         event_buffer_limit=event_buffer_limit,
         instance_id=instance_id,
+        on_shutdown=on_shutdown,
     )

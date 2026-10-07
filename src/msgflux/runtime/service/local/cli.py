@@ -1,4 +1,4 @@
-"""Command line entry point for the foreground local AgentService daemon."""
+"""Command line entry point for the local AgentService daemon."""
 
 from __future__ import annotations
 
@@ -13,12 +13,19 @@ from typing import Sequence
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="msgflux-service",
-        description="Run a local authenticated AgentService in the foreground.",
+        description="Run or restart a local authenticated AgentService.",
+    )
+    parser.add_argument(
+        "action", nargs="?", choices=("serve", "restart"), default="serve"
     )
     parser.add_argument(
         "--factory",
-        required=True,
         help="trusted factory as module:attribute; it receives runtime_dir",
+    )
+    parser.add_argument(
+        "--restart-timeout",
+        type=float,
+        help="maximum seconds to wait for graceful restart and replacement startup",
     )
     parser.add_argument(
         "--runtime-dir",
@@ -34,8 +41,35 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Parse options, set process cwd once, then run the async daemon."""
+    """Run foreground serving or gracefully restart the local daemon."""
     args = _parser().parse_args(argv)
+    if args.action == "restart":
+        if args.restart_timeout is not None and args.restart_timeout <= 0:
+            raise SystemExit("--restart-timeout must be positive")
+        from msgflux.runtime.service.local.discovery import (  # noqa: PLC0415
+            restart_local_service,
+        )
+
+        async def restart() -> None:
+            client = await restart_local_service(
+                args.factory,
+                runtime_dir=args.runtime_dir,
+                cwd=args.cwd,
+                restart_timeout=args.restart_timeout or 30,
+            )
+            try:
+                health = await client.health()
+                sys.stdout.write(
+                    f"Restarted AgentService {health.instance_id} "
+                    f"at {client.base_url}\n"
+                )
+            finally:
+                await client.aclose()
+
+        asyncio.run(restart())
+        return
+    if args.factory is None:
+        raise SystemExit("serve requires --factory MODULE:CALLABLE")
     if args.cwd is not None:
         os.chdir(args.cwd.expanduser().resolve())
     current_directory = str(Path.cwd().resolve())

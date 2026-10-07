@@ -46,6 +46,9 @@ def read_record(runtime_dir: Path) -> LocalServiceRecord | None:
             _validate_private_file(path, opened_metadata)
             content = source.read()
         return msgspec.json.decode(content, type=LocalServiceRecord)
+    except FileNotFoundError:
+        # Shutdown may remove the record between lstat and open.
+        return None
     except (msgspec.DecodeError, TypeError, ValueError) as exc:
         raise ValueError("Local service metadata is malformed") from exc
 
