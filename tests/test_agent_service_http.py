@@ -93,6 +93,48 @@ async def test_routes_use_strict_json_and_service_scope_error_mapping():
 
 
 @pytest.mark.asyncio
+async def test_thread_workspace_binding_is_exposed_and_immutable(tmp_path):
+    service, calls = _service()
+    app = create_service_app(service, token="secret")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    headers = {"Authorization": "Bearer secret"}
+    transport = httpx2.ASGITransport(app=app)
+    try:
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://testserver", headers=headers
+        ) as client:
+            body = {"agent_id": "agent", "thread_id": "project", "cwd": str(first)}
+            opened = await client.post("/v1/threads", json=body)
+            assert opened.status_code == 201
+            assert opened.json() == body
+            reopened = await client.post(
+                "/v1/threads", json={"agent_id": "agent", "thread_id": "project"}
+            )
+            assert reopened.json() == body
+            listed = await client.get("/v1/threads")
+            assert listed.json() == {"threads": [body]}
+            conflict = await client.post(
+                "/v1/threads", json={**body, "cwd": str(second)}
+            )
+            assert conflict.status_code == 409
+            assert conflict.json()["code"] == "service_conflict"
+            for path in ("relative", str(tmp_path / "missing")):
+                invalid = await client.post(
+                    "/v1/threads",
+                    json={"agent_id": "agent", "thread_id": "invalid", "cwd": path},
+                )
+                assert invalid.status_code == 422
+            assert calls == []
+            assert len(service.threads()) == 1
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
 async def test_resume_body_rejects_network_quiescence_assertion():
     service, _ = _service()
     thread = await service.open_thread("agent", thread_id="resume-thread")

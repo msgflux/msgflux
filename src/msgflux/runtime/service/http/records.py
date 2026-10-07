@@ -12,6 +12,7 @@ Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
 class OpenThreadRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     agent_id: Identifier
     thread_id: Identifier | None = None
+    cwd: str | None = None
 
 
 class PromptRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

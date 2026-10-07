@@ -179,9 +179,25 @@ async def test_connect_reuses_only_matching_authenticated_instance(
 
     assert seen and all(auth == "Bearer top-secret-token" for _, auth in seen)
 
+    # A healthy daemon is reused across frontend working directories. Its
+    # recorded cwd remains the daemon bootstrap directory, not a reuse key.
+    other_cwd = Path(__file__).resolve().parent
+    assert other_cwd.is_dir()
+    reused = await connect_local_service(
+        "myapp.agent:build", runtime_dir=runtime, cwd=other_cwd
+    )
+    try:
+        assert (await reused.health()).instance_id == "instance-123"
+    finally:
+        await reused.aclose()
+
     with pytest.raises(ServiceConflictError, match="different factory"):
         await connect_local_service(
-            "myapp.other:build", runtime_dir=runtime, cwd=Path.cwd()
+            "myapp.other:build", runtime_dir=runtime, cwd=other_cwd
+        )
+    with pytest.raises(NotADirectoryError, match="existing directory"):
+        await connect_local_service(
+            "myapp.agent:build", runtime_dir=runtime, cwd=tmp_path / "missing"
         )
     server.close()
     await server.wait_closed()

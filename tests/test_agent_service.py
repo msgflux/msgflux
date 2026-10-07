@@ -166,7 +166,8 @@ async def test_independent_threads_run_in_parallel_with_distinct_agents_and_scop
     observed_workspaces = {}
     workspaces = {}
 
-    def factory(thread_id):
+    def factory(thread):
+        thread_id = thread.thread_id
         agent = _agent()
         (tmp_path / thread_id).mkdir()
         workspace = AgentWorkspace.local(tmp_path / thread_id)
@@ -210,6 +211,74 @@ async def test_independent_threads_run_in_parallel_with_distinct_agents_and_scop
     finally:
         release.set()
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_thread_cwd_is_canonical_immutable_and_reused(tmp_path):
+    first_root = tmp_path / "workspace"
+    first_root.mkdir()
+    alias = tmp_path / "workspace-alias"
+    alias.symlink_to(first_root, target_is_directory=True)
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    service = _service(lambda _thread: AgentSession(_agent()))
+    try:
+        thread = await service.open_thread("main", thread_id="cwd", cwd=alias)
+        assert thread.cwd == str(first_root.resolve())
+        assert await service.open_thread("main", thread_id="cwd") == thread
+        assert (
+            await service.open_thread("main", thread_id="cwd", cwd=first_root) == thread
+        )
+        with pytest.raises(ServiceConflictError):
+            await service.open_thread("main", thread_id="cwd", cwd=other_root)
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invalid_thread_cwd_fails_before_journal_write_or_factory(tmp_path):
+    made = []
+    service = _service(lambda _thread: made.append(True) or AgentSession(_agent()))
+    file_path = tmp_path / "file"
+    file_path.write_text("x")
+    try:
+        for invalid in ("relative", tmp_path / "missing", file_path):
+            with pytest.raises(ValueError):
+                await service.open_thread("main", thread_id="invalid-cwd", cwd=invalid)
+        with pytest.raises(KeyError):
+            service.store.thread("invalid-cwd")
+        assert made == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_factory_receives_persisted_service_thread_after_restart(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    store = SQLiteServiceStore(tmp_path / "service.sqlite3")
+    first_bindings = []
+    first_service = _service(
+        lambda binding: first_bindings.append(binding) or AgentSession(_agent()),
+        store=store,
+    )
+    thread = await first_service.open_thread("main", thread_id="restart", cwd=root)
+    await first_service.session(thread.thread_id)
+    assert first_bindings == [thread]
+    await first_service.aclose()
+
+    second_bindings = []
+
+    async def async_factory(binding):
+        second_bindings.append(binding)
+        return AgentSession(_agent())
+
+    reopened = _service(async_factory, store=store)
+    try:
+        await reopened.session("restart")
+        assert second_bindings == [thread]
+    finally:
+        await reopened.aclose()
 
 
 @pytest.mark.asyncio

@@ -80,7 +80,7 @@ async def test_shared_facades_watch_snapshot_reopen_history_and_borrow_service()
 
     agent = _agent("coding", checkpoints, answer)
     service = _service(
-        lambda _thread_id: AgentSession(agent, checkpoint_store=checkpoints)
+        lambda _thread: AgentSession(agent, checkpoint_store=checkpoints)
     )
     thread = await service.open_thread("coding", thread_id="shared-coding-thread")
     first = await CodingSession.from_service(service, thread.thread_id)
@@ -131,7 +131,9 @@ async def test_facade_observer_cancellation_does_not_cancel_parallel_thread_runs
     release = asyncio.Event()
     agents = {}
 
-    def factory(thread_id):
+    def factory(thread):
+        thread_id = thread.thread_id
+
         async def answer(**_kwargs):
             entered[thread_id].set()
             await asyncio.wait_for(release.wait(), timeout=2)

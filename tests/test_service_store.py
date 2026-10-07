@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import multiprocessing
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import msgspec
@@ -12,7 +14,7 @@ from msgflux.runtime.service.records import (
     ServiceConflictError,
     ServiceThread,
 )
-from msgflux.runtime.service.store import SQLiteServiceStore
+from msgflux.runtime.service.store import SQLiteServiceStore, _enable_wal
 
 
 def _claim_worker(path: str, owner_id: str, barrier, result_queue) -> None:
@@ -35,6 +37,33 @@ def _adopt_worker(path: str, barrier, result_queue) -> None:
         result_queue.put((type(error).__name__, str(error)))
     finally:
         store.close()
+
+
+def _open_migrated_store(path: Path, barrier: threading.Barrier) -> ServiceThread:
+    barrier.wait(timeout=10)
+    store = SQLiteServiceStore(path)
+    try:
+        return store.thread("legacy-thread")
+    finally:
+        store.close()
+
+
+class _BusyOnceConnection:
+    def __init__(
+        self, connection: sqlite3.Connection, error_code: int = sqlite3.SQLITE_BUSY
+    ) -> None:
+        self.connection = connection
+        self.error_code = error_code
+        self.attempts = 0
+
+    def execute(self, sql: str):
+        if sql == "PRAGMA journal_mode=WAL":
+            self.attempts += 1
+            if self.attempts == 1:
+                error = sqlite3.OperationalError("simulated SQLite error")
+                error.sqlite_errorcode = self.error_code
+                raise error
+        return self.connection.execute(sql)
 
 
 def _store(path: Path) -> SQLiteServiceStore:
@@ -73,6 +102,10 @@ def test_thread_binding_and_input_validation() -> None:
         store.bind_thread(ServiceThread("thread-1", "agent-1"))
         with pytest.raises(ServiceConflictError):
             store.bind_thread(ServiceThread("thread-1", "agent-2"))
+        with pytest.raises(ServiceConflictError):
+            store.bind_thread(ServiceThread("thread-1", "agent-1", "/workspace"))
+        with pytest.raises(ValueError):
+            store.bind_thread(ServiceThread("thread-2", "agent-1", "relative"))
         with pytest.raises(ValueError):
             store.admit("thread-1", "request-1", 42, "default")
         with pytest.raises(msgspec.ValidationError):
@@ -81,6 +114,80 @@ def test_thread_binding_and_input_validation() -> None:
             )
     finally:
         store.close()
+
+
+def test_legacy_thread_table_migrates_and_preserves_bindings(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE service_threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO service_threads (thread_id, agent_id) VALUES (?, ?)",
+        ("legacy-thread", "agent-legacy"),
+    )
+    connection.commit()
+    connection.close()
+
+    store = SQLiteServiceStore(path)
+    try:
+        assert store.thread("legacy-thread") == ServiceThread(
+            "legacy-thread", "agent-legacy", None
+        )
+        assert store.threads() == (ServiceThread("legacy-thread", "agent-legacy"),)
+        columns = {
+            row["name"]
+            for row in store._connection.execute("PRAGMA table_info(service_threads)")
+        }
+        assert "cwd" in columns
+    finally:
+        store.close()
+
+
+def test_concurrent_legacy_schema_migration_serializes_openers(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-concurrent.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE service_threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO service_threads (thread_id, agent_id) VALUES (?, ?)",
+        ("legacy-thread", "agent-legacy"),
+    )
+    connection.commit()
+    connection.close()
+
+    barrier = threading.Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        openers = [
+            executor.submit(_open_migrated_store, path, barrier) for _ in range(2)
+        ]
+        assert [opener.result(timeout=15) for opener in openers] == [
+            ServiceThread("legacy-thread", "agent-legacy"),
+            ServiceThread("legacy-thread", "agent-legacy"),
+        ]
+
+
+def test_wal_setup_retries_busy_once(tmp_path: Path) -> None:
+    connection = sqlite3.connect(tmp_path / "retry.sqlite3")
+    busy_once = _BusyOnceConnection(connection)
+    try:
+        _enable_wal(busy_once)
+        assert busy_once.attempts == 2
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        connection.close()
+
+
+def test_wal_setup_does_not_retry_unrelated_operational_error(tmp_path: Path) -> None:
+    connection = sqlite3.connect(tmp_path / "no-retry.sqlite3")
+    failing = _BusyOnceConnection(connection, error_code=sqlite3.SQLITE_IOERR)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="simulated SQLite error"):
+            _enable_wal(failing)
+        assert failing.attempts == 1
+    finally:
+        connection.close()
 
 
 def test_failed_insert_rolls_back_without_acknowledging_admission(

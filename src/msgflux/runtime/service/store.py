@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 from pathlib import Path
 from threading import RLock
+from time import monotonic, sleep
 
 import msgspec
 
@@ -19,26 +20,29 @@ from msgflux.runtime.service.records import (
     ServiceThread,
 )
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS service_threads (
-    thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS service_admissions (
-    thread_id TEXT NOT NULL REFERENCES service_threads(thread_id),
-    request_id TEXT NOT NULL, run_id TEXT NOT NULL UNIQUE,
-    namespace TEXT NOT NULL, prompt TEXT NOT NULL, fingerprint TEXT NOT NULL,
-    status TEXT NOT NULL, owner_id TEXT, error TEXT,
-    revision INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (thread_id, request_id)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS service_active_thread
-ON service_admissions(thread_id) WHERE status IN ('accepted', 'running', 'paused');
-"""
-
 
 def validate_identifier(value: str, label: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"`{label}` must be a non-empty string")
+
+
+def _enable_wal(connection: sqlite3.Connection) -> None:
+    deadline = monotonic() + 30
+    while True:
+        try:
+            result = connection.execute("PRAGMA journal_mode=WAL").fetchone()
+            if result is None or str(result[0]).lower() != "wal":
+                raise sqlite3.OperationalError("SQLite did not enable WAL journal mode")
+            return
+        except sqlite3.OperationalError as error:
+            error_code = getattr(error, "sqlite_errorcode", None)
+            primary_code = error_code & 0xFF if isinstance(error_code, int) else None
+            if (
+                primary_code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                or monotonic() >= deadline
+            ):
+                raise
+            sleep(0.01)
 
 
 class SQLiteServiceStore:
@@ -52,12 +56,57 @@ class SQLiteServiceStore:
     def __init__(self, path: str | Path = ":memory:") -> None:
         self._lock = RLock()
         self._connection = sqlite3.connect(str(path), check_same_thread=False)
-        self._connection.execute("PRAGMA busy_timeout=30000")
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys=ON")
-        if str(path) != ":memory:":
-            self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.executescript(_SCHEMA)
+        try:
+            self._connection.execute("PRAGMA busy_timeout=30000")
+            self._connection.row_factory = sqlite3.Row
+            self._connection.execute("PRAGMA foreign_keys=ON")
+            # Serialize schema inspection and migration across independent processes.
+            # SQLite DDL is transactional, so a second opener sees either the old
+            # schema or the fully migrated one.
+            with self._lock:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS service_threads (
+                    thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, cwd TEXT
+                    )"""
+                )
+                columns = {
+                    row["name"]
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(service_threads)"
+                    )
+                }
+                if "cwd" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE service_threads ADD COLUMN cwd TEXT"
+                    )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS service_admissions (
+                    thread_id TEXT NOT NULL REFERENCES service_threads(thread_id),
+                    request_id TEXT NOT NULL, run_id TEXT NOT NULL UNIQUE,
+                    namespace TEXT NOT NULL, prompt TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    status TEXT NOT NULL, owner_id TEXT, error TEXT,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (thread_id, request_id)
+                    )"""
+                )
+                self._connection.execute(
+                    """CREATE UNIQUE INDEX IF NOT EXISTS service_active_thread
+                    ON service_admissions(thread_id)
+                    WHERE status IN ('accepted', 'running', 'paused')"""
+                )
+                self._connection.commit()
+                if str(path) != ":memory:":
+                    _enable_wal(self._connection)
+        except BaseException:
+            try:
+                self._connection.rollback()
+            except sqlite3.Error:
+                pass
+            finally:
+                self._connection.close()
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -70,14 +119,21 @@ class SQLiteServiceStore:
             raise ValueError(f"Invalid service thread: {error}") from error
         validate_identifier(thread.thread_id, "thread_id")
         validate_identifier(thread.agent_id, "agent_id")
+        if thread.cwd is not None:
+            validate_identifier(thread.cwd, "cwd")
+            if not Path(thread.cwd).is_absolute():
+                raise ValueError("`cwd` must be an absolute path")
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT OR IGNORE INTO service_threads VALUES (?, ?)",
-                (thread.thread_id, thread.agent_id),
+                """INSERT OR IGNORE INTO service_threads
+                (thread_id, agent_id, cwd) VALUES (?, ?, ?)""",
+                (thread.thread_id, thread.agent_id, thread.cwd),
             )
             existing = self.thread(thread.thread_id)
             if existing != thread:
-                raise ServiceConflictError("The thread belongs to another agent")
+                raise ServiceConflictError(
+                    "The thread binding conflicts with stored state"
+                )
         return thread
 
     def thread(self, thread_id: str) -> ServiceThread:
@@ -87,14 +143,16 @@ class SQLiteServiceStore:
             ).fetchone()
         if row is None:
             raise KeyError(thread_id)
-        return ServiceThread(row["thread_id"], row["agent_id"])
+        return ServiceThread(row["thread_id"], row["agent_id"], row["cwd"])
 
     def threads(self) -> tuple[ServiceThread, ...]:
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM service_threads ORDER BY thread_id"
             ).fetchall()
-        return tuple(ServiceThread(row["thread_id"], row["agent_id"]) for row in rows)
+        return tuple(
+            ServiceThread(row["thread_id"], row["agent_id"], row["cwd"]) for row in rows
+        )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> AdmissionRecord:

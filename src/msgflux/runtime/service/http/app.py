@@ -132,7 +132,9 @@ def create_service_app(  # noqa: C901
 
     @post("/v1/threads")
     async def open_thread(data: OpenThreadRequest) -> Response:
-        thread = await service.open_thread(data.agent_id, thread_id=data.thread_id)
+        thread = await service.open_thread(
+            data.agent_id, thread_id=data.thread_id, cwd=data.cwd
+        )
         return _response(thread, 201)
 
     @get("/v1/threads/{thread_id:str}/snapshot")
