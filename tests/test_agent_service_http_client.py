@@ -12,6 +12,7 @@ from msgflux.runtime.service import (
     ServiceConflictError,
     ServiceRecoveryRequiredError,
     ServiceThread,
+    RunSummary,
 )
 from msgflux.runtime.service.http.client import (
     AgentServiceClient,
@@ -54,6 +55,11 @@ async def test_http_methods_encode_requests_and_decode_records():
         path = request.url.path
         if path == "/v1/agents":
             return _json_response(request, {"agents": ["assistant"]})
+        if path.endswith("/runs"):
+            return _json_response(
+                request,
+                {"runs": [{"run_id": "r1", "status": "completed", "updated_at": 12.0}]},
+            )
         if path == "/v1/threads" and request.method == "GET":
             return _json_response(
                 request, {"threads": [{"thread_id": "t", "agent_id": "assistant"}]}
@@ -119,6 +125,8 @@ async def test_http_methods_encode_requests_and_decode_records():
             "https://service.example/", token="secret", client=http
         )
         assert await client.agents() == ("assistant",)
+        runs = await client.runs("t")
+        assert runs == (RunSummary("r1", "completed", 12.0),)
         assert await client.threads() == (ServiceThread("t", "assistant"),)
         assert await client.open_thread("assistant", thread_id="t") == ServiceThread(
             "t", "assistant"

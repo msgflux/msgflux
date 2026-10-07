@@ -3,6 +3,7 @@
 from msgflux.runtime.service.api import AgentService, AgentSession
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
+    RunSummary,
     ServiceBusyError,
     ServiceConflictError,
     ServiceRecoveryRequiredError,
@@ -14,6 +15,7 @@ __all__ = [
     "AgentService",
     "AgentSession",
     "AdmissionReceipt",
+    "RunSummary",
     "ServiceThread",
     "SQLiteServiceStore",
     "ServiceBusyError",

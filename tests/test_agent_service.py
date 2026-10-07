@@ -117,6 +117,55 @@ async def test_duplicate_request_returns_same_run_and_conflicting_prompt_fails()
 
 
 @pytest.mark.asyncio
+async def test_runs_projects_checkpoint_metadata_and_supports_legacy_checkpoints():
+    checkpoints = InMemoryCheckpointStore()
+    agent = _agent("run-summary")
+    agent.checkpoint_store = checkpoints
+    service = _service(lambda _thread_id: AgentSession(agent))
+    thread = await service.open_thread("main", thread_id="run-summaries")
+    namespace = agent.get_module_name()
+    # Persisted checkpoints can predate service admissions. Their private state
+    # and config must never appear in the public summary.
+    checkpoints.save_state(
+        namespace, thread.thread_id, "older", {"status": "completed", "secret": "x"}
+    )
+    checkpoints.save_state(
+        namespace,
+        thread.thread_id,
+        "newer",
+        {"status": "interrupted", "config": {"token": "secret"}},
+    )
+    try:
+        runs = await service.runs(thread.thread_id)
+        assert [run.run_id for run in runs] == ["newer", "older"]
+        assert [run.status for run in runs] == ["interrupted", "completed"]
+        assert all(
+            run.updated_at is None or isinstance(run.updated_at, float) for run in runs
+        )
+        checkpoints.list_runs = lambda *_args, **_kwargs: [
+            {"run_id": "integer-time", "status": "completed", "updated_at": 42}
+        ]
+        converted = await service.runs(thread.thread_id)
+        assert converted[0].updated_at == 42.0
+        assert isinstance(converted[0].updated_at, float)
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runs_without_checkpoint_store_are_empty_and_unknown_thread_errors():
+    agent = _agent("no-checkpoints")
+    service = _service(lambda _thread_id: AgentSession(agent))
+    thread = await service.open_thread("main", thread_id="no-checkpoints-thread")
+    try:
+        assert await service.runs(thread.thread_id) == ()
+        with pytest.raises(KeyError):
+            await service.runs("unknown-thread")
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_observers_and_cancelled_waiter_do_not_own_the_run():
     entered = asyncio.Event()
     release = asyncio.Event()

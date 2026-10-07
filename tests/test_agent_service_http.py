@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 from msgflux.models.response import ModelResponse
 from msgflux.nn import Agent
+from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
 from msgflux.runtime.service.http.app import create_service_app
 
@@ -129,6 +130,44 @@ async def test_thread_workspace_binding_is_exposed_and_immutable(tmp_path):
                 assert invalid.status_code == 422
             assert calls == []
             assert len(service.threads()) == 1
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_endpoint_only_returns_checkpoint_summaries():
+    checkpoints = InMemoryCheckpointStore()
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="http-runs", model=model)
+    agent.checkpoint_store = checkpoints
+    service, calls = _service(lambda _thread: AgentSession(agent))
+    thread = await service.open_thread("agent", thread_id="runs-thread")
+    checkpoints.save_state(
+        agent.get_module_name(),
+        thread.thread_id,
+        "legacy-run",
+        {"status": "completed", "config": {"secret": "host-only"}, "state": "private"},
+    )
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with AsyncTestClient(app=app) as client:
+            denied = await client.get(f"/v1/threads/{thread.thread_id}/runs")
+            assert denied.status_code == 401
+            assert calls == []
+            response = await client.get(
+                f"/v1/threads/{thread.thread_id}/runs", headers=headers
+            )
+            assert response.status_code == 200
+            assert set(response.json()) == {"runs"}
+            assert set(response.json()["runs"][0]) == {"run_id", "status", "updated_at"}
+            assert response.json()["runs"][0]["run_id"] == "legacy-run"
+            assert calls == [thread]
+            assert "host-only" not in response.text and "private" not in response.text
+            missing = await client.get("/v1/threads/missing/runs", headers=headers)
+            assert missing.status_code == 404
     finally:
         await service.aclose()
         service.store.close()

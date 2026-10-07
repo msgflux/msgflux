@@ -207,3 +207,12 @@ the application chooses to bind a workspace to the project's canonical host
 directory. A required project root should be rejected when it is missing. The
 stored `cwd` is immutable and does not grant workspace or tool permissions;
 factories still decide which resources and permissions to provide.
+
+
+## Remote Conversations
+
+Use the generic [`AgentSessionClient`](service-http.md#thread-bound-client)
+when an application or TUI connects to a separate Agent service. It represents
+one remote thread and does not construct an Agent or own backend resources.
+There is no parallel coding-specific HTTP client. Coding policies, tools, models
+and workspace grants remain configured by the host.

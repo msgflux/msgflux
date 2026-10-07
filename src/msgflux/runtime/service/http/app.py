@@ -26,6 +26,7 @@ from msgflux.runtime.service.http.records import (
     OpenThreadRequest,
     PromptRequest,
     ResumeRequest,
+    RunsResponse,
     SteerRequest,
     ThreadsResponse,
 )
@@ -141,6 +142,10 @@ def create_service_app(  # noqa: C901
     async def get_snapshot(thread_id: PathValue) -> Response:
         return _response(snapshot_record(await service.snapshot(thread_id)))
 
+    @get("/v1/threads/{thread_id:str}/runs")
+    async def list_runs(thread_id: PathValue) -> Response:
+        return _response(RunsResponse(runs=await service.runs(thread_id)))
+
     @post("/v1/threads/{thread_id:str}/prompt")
     async def prompt(thread_id: PathValue, data: PromptRequest) -> Response:
         receipt = await service.prompt(
@@ -234,6 +239,7 @@ def create_service_app(  # noqa: C901
             list_threads,
             open_thread,
             get_snapshot,
+            list_runs,
             prompt,
             get_receipt,
             interrupt,

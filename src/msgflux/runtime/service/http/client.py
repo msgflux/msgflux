@@ -12,6 +12,7 @@ import msgspec
 
 from msgflux.runtime.service import (
     AdmissionReceipt,
+    RunSummary,
     ServiceBusyError,
     ServiceConflictError,
     ServiceRecoveryRequiredError,
@@ -26,6 +27,7 @@ from msgflux.runtime.service.http.records import (
     OpenThreadRequest,
     PromptRequest,
     ResumeRequest,
+    RunsResponse,
     SnapshotRecord,
     SteerRequest,
     ThreadsResponse,
@@ -146,6 +148,13 @@ class AgentServiceClient:
         return await self._json(
             "GET", self._thread_path(thread_id) + "/snapshot", SnapshotRecord
         )
+
+    async def runs(self, thread_id: str) -> tuple[RunSummary, ...]:
+        """Return typed saved-run metadata without exposing checkpoint state."""
+        result = await self._json(
+            "GET", self._thread_path(thread_id) + "/runs", RunsResponse
+        )
+        return result.runs
 
     async def prompt(
         self, thread_id: str, prompt: str, *, request_id: str

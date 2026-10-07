@@ -12,9 +12,11 @@ from msgflux.runtime.service.http.records import (
     HealthRecord,
     SnapshotRecord,
 )
+from msgflux.runtime.service.http.session import AgentSessionClient
 
 __all__ = [
     "AgentServiceClient",
+    "AgentSessionClient",
     "AgentServiceHTTPError",
     "AgentServiceProtocolError",
     "RemoteThreadWatcher",
