@@ -210,3 +210,21 @@ async def test_owned_app_shutdown_closes_session_once_and_borrows_journal():
         close.assert_awaited_once()
     finally:
         journal.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_health_identifies_instance_without_creating_agent():
+    service, calls = _service()
+    app = create_service_app(service, token="secret", instance_id="health-instance")
+    try:
+        async with AsyncTestClient(app=app) as client:
+            unauthorized = await client.get("/v1/health")
+            assert unauthorized.status_code == 401
+            response = await client.get(
+                "/v1/health", headers={"Authorization": "Bearer secret"}
+            )
+            assert response.json() == {"instance_id": "health-instance", "version": 1}
+        assert calls == []
+    finally:
+        await service.aclose()
+        service.store.close()

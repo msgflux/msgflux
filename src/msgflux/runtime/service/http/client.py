@@ -20,6 +20,7 @@ from msgflux.runtime.service.http.records import (
     AgentsResponse,
     ErrorResponse,
     EventRecord,
+    HealthRecord,
     InterruptResponse,
     OpenThreadRequest,
     PromptRequest,
@@ -113,6 +114,10 @@ class AgentServiceClient:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    async def health(self) -> HealthRecord:
+        """Return the authenticated runtime instance and protocol identity."""
+        return await self._json("GET", "/v1/health", HealthRecord)
 
     async def agents(self) -> tuple[str, ...]:
         result = await self._json("GET", "/v1/agents", AgentsResponse)
