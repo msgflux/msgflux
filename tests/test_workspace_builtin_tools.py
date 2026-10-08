@@ -230,6 +230,7 @@ async def test_workspace_tools_invocation(workspace_tools, asynchronous):
     with execution_context(scope=scope):
         assert await invoke("read", {"path": "/input"}) == "hello"
         result = await invoke("bash", {"command": "printf output; exit 7"})
+        assert result.results[0].status == "exited"
         assert result.results[0].returncode == 7
         assert result.results[0].stdout == "output\ufffd"
         assert result.results[0].stderr == "error"

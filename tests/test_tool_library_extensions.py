@@ -488,3 +488,62 @@ async def test_portable_search_loading_and_execution_event_order(asynchronous):
         "tool.start",
         "tool.end",
     ]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("empty_message", ["", "   "])
+@pytest.mark.asyncio
+async def test_dispatch_task_errors_keep_structured_details(
+    asynchronous, empty_message, tmp_path
+):
+    from msgflux.runtime import AgentWorkspace, ExecutionScope, execution_context
+    from msgflux.runtime.events import _EventSink, _capture_events
+    from msgflux.tools.builtin import ReadFileTool
+    from msgflux.tools.runtime import ToolIntent
+
+    def empty_failure() -> None:
+        raise RuntimeError(empty_message)
+
+    library = ToolLibrary("workspace-errors", [ReadFileTool(), empty_failure])
+    workspace = AgentWorkspace.local(tmp_path)
+    intents = (
+        ToolIntent(id="missing-file", name="read", arguments={"path": "absent.txt"}),
+        ToolIntent(id="empty-failure", name="empty_failure"),
+    )
+    events = []
+    try:
+        with execution_context(scope=ExecutionScope(workspace=workspace)):
+            with _capture_events(_EventSink(events.append)):
+                outcomes = (
+                    await library.aexecute_intents(intents)
+                    if asynchronous
+                    else library.execute_intents(intents)
+                )
+
+        assert [outcome.status for outcome in outcomes] == [
+            "execution_failed",
+            "execution_failed",
+        ]
+        read_error, empty_error = (outcome.error for outcome in outcomes)
+        assert read_error.code == empty_error.code == "tool_execution_failed"
+        assert "Task " in read_error.message and "absent.txt" in read_error.message
+        assert "Task " in empty_error.message
+        assert read_error.details["exception_type"] == "FileNotFoundError"
+        assert empty_error.details["exception_type"] == "RuntimeError"
+
+        ends = {
+            event.data["tool_call_id"]: event.data
+            for event in events
+            if event.type == "tool.end"
+        }
+        assert "absent.txt" in ends["missing-file"]["error_info"]["message"]
+        assert (
+            ends["missing-file"]["error"]
+            == ends["missing-file"]["error_info"]["message"]
+        )
+        assert ends["missing-file"]["error_info"]["code"] == read_error.code
+        assert ends["missing-file"]["error_info"]["details"] == dict(read_error.details)
+        assert ends["empty-failure"]["error"] == empty_message
+        assert ends["empty-failure"]["error_info"]["message"] == "RuntimeError"
+    finally:
+        await workspace.aclose()

@@ -22,8 +22,7 @@ from msgflux.runtime.service.http import (
     AgentSessionClient,
     create_service_app,
 )
-from msgflux.tools.builtin import ApplyPatchTool, BashTool, WriteTool
-from msgflux.tools.builtin import BashTool, WriteTool, ApplyPatchTool
+from msgflux.tools.builtin import ApplyPatchTool, BashTool, ReadFileTool, WriteTool
 from msgflux.utils.msgspec import msgspec_dumps
 
 TOKEN = "tool-error-integration-token"
@@ -228,6 +227,90 @@ async def test_read_only_write_error_reaches_model_and_tool_end_event(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_missing_read_error_and_bash_exit_are_preserved_over_http(tmp_path):
+    root = tmp_path / "error-workspace"
+    root.mkdir()
+    workspace = AgentWorkspace.local(root)
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(
+        name="main",
+        model=model,
+        tools=[ReadFileTool(), BashTool()],
+        agent_dir=tmp_path / "error-agent-state",
+        workspace=workspace,
+    )
+    histories = []
+    request_count = 0
+
+    async def respond(**kwargs):
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return _tool_call("read", {"path": "missing.txt"})
+        histories.append(kwargs["messages"].to_chatml())
+        if request_count == 2:
+            return _tool_call(
+                "bash", {"command": "printf stdout; printf stderr >&2; exit 7"}
+            )
+        return _text_response("Recovered from the read error and command exit.")
+
+    agent.generator.aforward = AsyncMock(side_effect=respond)
+    try:
+        async with _remote_session(agent, thread_id="missing-read-thread") as (
+            _client,
+            session,
+        ):
+            watch_context = session.watch()
+            watcher = await asyncio.wait_for(watch_context.__aenter__(), timeout=5)
+            try:
+                admission = await session.prompt("read missing file", request_id="read")
+                events = await _collect_until_run_end(watcher, admission.run_id)
+            finally:
+                await watch_context.__aexit__(None, None, None)
+            settled = await asyncio.wait_for(session.wait("read"), timeout=5)
+            assert settled.status == "completed"
+            assert request_count == 3
+
+            read_end = next(
+                event
+                for event in events
+                if event.type == "tool.end" and event.data["tool_name"] == "read"
+            )
+            read_info = read_end.data["error_info"]
+            assert read_end.data["result"] is None
+            assert read_end.data["error"] == read_info["message"]
+            assert read_info["code"] == "tool_execution_failed"
+            assert read_info["details"]["exception_type"] == "FileNotFoundError"
+            assert "missing.txt" in read_info["message"]
+
+            bash_end = next(
+                event
+                for event in events
+                if event.type == "tool.end" and event.data["tool_name"] == "bash"
+            )
+            command = bash_end.data["result"]["results"][0]
+            assert command == {
+                "status": "exited",
+                "stdout": "stdout",
+                "stderr": "stderr",
+                "returncode": 7,
+            }
+            assert bash_end.data["error"] is None
+            assert bash_end.data["error_info"] is None
+
+            feedback = "\n".join(str(history) for history in histories)
+            assert read_info["message"] in feedback
+            assert "returncode" in feedback and "7" in feedback
+            snapshot = await session.snapshot()
+            history = str(snapshot.messages)
+            assert read_info["message"] in history
+            assert "returncode" in history and "7" in history
+    finally:
+        await workspace.aclose()
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_create_existing_error_reaches_model_and_http_events(
     tmp_path,
 ):
@@ -366,5 +449,11 @@ async def test_offload_failure_is_sanitized_in_feedback_and_remote_events(tmp_pa
             assert "private/server/path" not in encoded
             assert "payload-marker-" not in encoded
         assert "error" in tool_end.data and tool_end.data["result"] is None
+        error_info = tool_end.data["error_info"]
+        assert error_info["code"] == "tool_execution_failed"
+        assert error_info["message"] == tool_end.data["error"]
+        assert error_info["details"] == {}
+        assert "private/server/path" not in str(error_info)
+        assert "payload-marker-" not in str(error_info)
         assert await client.receipt(session.thread_id, "report") == settled
     handle.remove()
