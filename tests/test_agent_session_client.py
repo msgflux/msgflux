@@ -23,6 +23,7 @@ from msgflux.runtime.service import (
     AgentSession,
     RunSummary,
     SQLiteServiceStore,
+    ServiceRecoveryRequiredError,
     ServiceThread,
 )
 from msgflux.runtime.service.http import AgentServiceClient, create_service_app
@@ -86,8 +87,10 @@ async def test_open_prompt_receipt_wait_snapshot_and_borrowed_client(tmp_path):
         polled = asyncio.Event()
         receipt_call = client.receipt
 
-        async def track_receipt(thread_id, request_id):
-            current = await receipt_call(thread_id, request_id)
+        async def track_receipt(thread_id, request_id, *, require_waitable=False):
+            current = await receipt_call(
+                thread_id, request_id, require_waitable=require_waitable
+            )
             polled.set()
             return current
 
@@ -112,6 +115,29 @@ async def test_open_prompt_receipt_wait_snapshot_and_borrowed_client(tmp_path):
         # The facade does not close the injected HTTP client.
         assert not http.is_closed
     await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_wait_rejects_pending_attempt_owned_by_another_worker():
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("main", lambda _thread: AgentSession(_agent(_response("unused"))))
+    thread = await service.open_thread("main", thread_id="foreign-owner-thread")
+    service.store.admit(thread.thread_id, "foreign-request", "hello", "main")
+    app = create_service_app(service, token=TOKEN)
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://service"
+    ) as http:
+        client = AgentServiceClient("http://service", token=TOKEN, client=http)
+        session = await AgentSessionClient.open(client, thread_id=thread.thread_id)
+        try:
+            # Receipt inspection remains available for uncertain admissions.
+            assert (await session.receipt("foreign-request")).status == "accepted"
+            with pytest.raises(ServiceRecoveryRequiredError):
+                await session.wait("foreign-request", poll_interval=0.01)
+        finally:
+            await client.aclose()
+            await service.aclose()
 
 
 @pytest.mark.asyncio

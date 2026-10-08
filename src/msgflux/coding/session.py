@@ -4,25 +4,26 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, aclosing
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
 from msgflux.coding.checkpoints import CodingCheckpointExtension
+from msgflux.coding.watcher import _SessionWatcher
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.nn.modules.agent import Agent
 from msgflux.runtime.context import ExecutionScope, new_thread_id
-from msgflux.runtime.event_hub import ThreadSnapshot, ThreadWatcher
-from msgflux.runtime.events import ExecutionEvent
 from msgflux.runtime.service import (
     AdmissionReceipt,
     AgentService,
     AgentSession,
+    EventRecord,
+    RunSummary,
     ServiceThread,
+    SnapshotRecord,
     SQLiteServiceStore,
 )
-
-TERMINAL_RUN_STATUSES = frozenset({"completed", "interrupted"})
+from msgflux.runtime.service.serialization import snapshot_record
 
 
 class CodingSession:
@@ -203,25 +204,28 @@ class CodingSession:
             if self._owns_service_store:
                 self._service_store.close()
 
-    async def snapshot(self) -> ThreadSnapshot:
+    async def snapshot(self) -> SnapshotRecord:
         """Return the service's durable and live projection for this thread."""
-        return await self.service.snapshot(self._thread_id)
+        return snapshot_record(await self.service.snapshot(self._thread_id))
 
-    def watch(self) -> AbstractAsyncContextManager[ThreadWatcher]:
-        """Return the service watcher context manager, including its snapshot."""
-        return self.service.watch(self._thread_id)
+    def watch(self) -> AbstractAsyncContextManager[_SessionWatcher]:
+        """Observe a portable snapshot and future events, as with an HTTP session."""
+        return self._watch()
 
-    def runs(self) -> tuple[dict, ...]:
-        """Discover saved turns; checkpoint state remains authoritative."""
-        if not callable(getattr(self.checkpoint_store, "list_runs", None)):
-            return ()
-        return tuple(
-            dict(item)
-            for item in self.checkpoint_store.list_runs(self.namespace, self.thread_id)
-        )
+    @asynccontextmanager
+    async def _watch(self):
+        # Subscribe before projecting the snapshot, preserving the service's
+        # atomic attach boundary. Conversion failures still close the observer.
+        async with self.service.watch(self.thread_id) as watcher:
+            yield _SessionWatcher(watcher)
 
-    def latest_run(self) -> dict | None:
-        runs = self.runs()
+    async def runs(self) -> tuple[RunSummary, ...]:
+        """Return saved run summaries through the service's shared projection."""
+        return await self.service.runs(self.thread_id)
+
+    async def latest_run(self) -> RunSummary | None:
+        """Return the latest saved run summary, or None for an empty thread."""
+        runs = await self.runs()
         return runs[0] if runs else None
 
     def saved_state(self, run_id: str) -> dict:
@@ -232,7 +236,7 @@ class CodingSession:
             raise ValueError(f"Unknown run: {run_id}")
         return state
 
-    def receipt(self, request_id: str) -> AdmissionReceipt:
+    async def receipt(self, request_id: str) -> AdmissionReceipt:
         return self.service.receipt(self._thread_id, request_id)
 
     async def wait(self, request_id: str) -> AdmissionReceipt:
@@ -252,7 +256,7 @@ class CodingSession:
 
     async def stream(
         self, prompt: str, *, request_id: str | None = None
-    ) -> AsyncIterator[ExecutionEvent]:
+    ) -> AsyncIterator[EventRecord]:
         """Admit a prompt and yield ordered events while the service runs it."""
         async with self.watch() as watcher:
             receipt = await self.prompt(prompt, request_id=request_id)
@@ -262,24 +266,15 @@ class CodingSession:
 
     async def resume(
         self, run_id: str, *, worker_stopped: bool = False
-    ) -> AsyncIterator[ExecutionEvent]:
-        """Resume an admitted or legacy checkpoint without resending its input."""
-        if not isinstance(run_id, str) or not run_id:
-            raise ValueError("`run_id` must be a non-empty string")
-        state = self.saved_state(run_id)
-        if state.get("status") in TERMINAL_RUN_STATUSES:
-            raise ValueError(
-                "This run is terminal. Send a new prompt to continue the conversation."
-            )
-        async with self.watch() as watcher:
-            receipt = await self.service.resume_checkpoint(
-                self._thread_id,
-                run_id,
-                worker_stopped=worker_stopped,
-            )
-            async with aclosing(self._observe(watcher, receipt.run_id)) as events:
-                async for event in events:
-                    yield event
+    ) -> AdmissionReceipt:
+        """Admit checkpoint recovery; observe execution separately through watch.
+
+        worker_stopped is a trusted host assertion, not a remote client option.
+        The service validates checkpoint state and owns the resumed execution.
+        """
+        return await self.service.resume_checkpoint(
+            self.thread_id, run_id, worker_stopped=worker_stopped
+        )
 
     async def steer(self, run_id: str, content: str):
         """Publish a user message through the target run's existing AgentInbox."""

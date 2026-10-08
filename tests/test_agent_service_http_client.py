@@ -89,6 +89,7 @@ async def test_http_methods_encode_requests_and_decode_records():
                 },
             )
         if path.endswith("/requests/req"):
+            assert request.url.params.get("require_waitable") in (None, "true")
             return _json_response(
                 request,
                 {
@@ -135,6 +136,9 @@ async def test_http_methods_encode_requests_and_decode_records():
         assert isinstance(receipt, AdmissionReceipt)
         assert receipt.status == "accepted"
         assert (await client.receipt("t", "req")).revision == 1
+        assert (await client.receipt("t", "req", require_waitable=True)).revision == 1
+        with pytest.raises(TypeError, match="require_waitable must be a bool"):
+            await client.receipt("t", "req", require_waitable=1)
         assert await client.interrupt("t", "run")
         assert (await client.resume_checkpoint("t", "run")).revision == 2
 

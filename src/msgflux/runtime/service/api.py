@@ -622,15 +622,22 @@ class AgentService:
             raise KeyError(run_id)
         return record.receipt
 
+    def _wait_receipt(self, thread_id: str, request_id: str) -> AdmissionReceipt:
+        """Read a receipt only when this service can wait for its live attempt."""
+        receipt = self.receipt(thread_id, request_id)
+        if (
+            receipt.status in {"accepted", "running"}
+            and (thread_id, request_id) not in self._workers
+        ):
+            raise ServiceRecoveryRequiredError("This service does not own that attempt")
+        return receipt
+
     async def wait(self, thread_id: str, request_id: str) -> AdmissionReceipt:
         """Wait for this attempt; cancelling the waiter leaves work running."""
         worker = self._workers.get((thread_id, request_id))
         if worker is not None:
             await asyncio.shield(worker.task)
-        receipt = self.receipt(thread_id, request_id)
-        if receipt.status in {"accepted", "running"}:
-            raise ServiceRecoveryRequiredError("This service does not own that attempt")
-        return receipt
+        return self._wait_receipt(thread_id, request_id)
 
     @asynccontextmanager
     async def watch(self, thread_id: str, *, event_buffer_limit: int | None = None):

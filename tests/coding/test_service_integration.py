@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from msgflux.coding import CodingSession
-from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
@@ -91,7 +90,7 @@ async def test_shared_facades_watch_snapshot_reopen_history_and_borrow_service()
         await asyncio.wait_for(entered.wait(), timeout=2)
         async with second.watch() as watcher:
             assert watcher.snapshot.thread_id == thread.thread_id
-            assert watcher.snapshot.active_run.run_id == receipt.run_id
+            assert watcher.snapshot.active_runs[-1]["run_id"] == receipt.run_id
             release.set()
             events = await asyncio.wait_for(
                 _events_until_run_end(watcher, receipt.run_id), timeout=2
@@ -102,10 +101,10 @@ async def test_shared_facades_watch_snapshot_reopen_history_and_borrow_service()
             "completed"
         )
         snapshot = await second.snapshot()
-        assert isinstance(snapshot.messages, ChatMessages)
+        assert isinstance(snapshot.messages, tuple)
         assert any(
             item.get("role") == "assistant" and item.get("content") == "saved cobalt"
-            for item in snapshot.messages.to_chatml()
+            for item in snapshot.messages
         )
 
         await first.aclose()
@@ -387,8 +386,9 @@ async def test_failed_model_settles_stream_and_preserves_input_checkpoint():
     try:
         with pytest.raises(RuntimeError, match="provider unavailable"):
             await asyncio.wait_for(collect(), 2)
-        assert session.receipt("failed").status == "failed"
-        state = session.saved_state(session.receipt("failed").run_id)
+        receipt = await session.receipt("failed")
+        assert receipt.status == "failed"
+        state = session.saved_state(receipt.run_id)
         assert "retain this input" in str(state)
     finally:
         await session.aclose()

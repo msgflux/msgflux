@@ -11,7 +11,7 @@ from litestar import Litestar, Request, Response, get, post, put
 from litestar.background_tasks import BackgroundTask
 from litestar.exceptions import HTTPException, ValidationException
 from litestar.middleware import DefineMiddleware
-from litestar.params import FromPath
+from litestar.params import FromPath, FromQuery
 from litestar.response.sse import ServerSentEvent, ServerSentEventMessage
 
 from msgflux.exceptions import EventBufferOverflowError
@@ -208,8 +208,18 @@ def create_service_app(  # noqa: C901
         return _response(receipt, 202)
 
     @get("/v1/threads/{thread_id:str}/requests/{request_id:str}")
-    async def get_receipt(thread_id: PathValue, request_id: PathValue) -> Response:
-        return _response(service.receipt(thread_id, request_id))
+    async def get_receipt(
+        thread_id: PathValue,
+        request_id: PathValue,
+        *,
+        require_waitable: FromQuery[bool] = False,
+    ) -> Response:
+        receipt = (
+            service._wait_receipt(thread_id, request_id)
+            if require_waitable
+            else service.receipt(thread_id, request_id)
+        )
+        return _response(receipt)
 
     @post("/v1/threads/{thread_id:str}/runs/{run_id:str}/interrupt")
     async def interrupt(thread_id: PathValue, run_id: PathValue) -> Response:

@@ -53,9 +53,9 @@ async def test_never_during_approval_preparation_resumes_after_worker_is_quiesce
         # A paused receipt can be observed before the resumption acquires the
         # host lock. Watch the durable receipt until the resumed run settles.
         async with asyncio.timeout(5):
-            while session.receipt("midrun").status != "completed":
+            while (await session.receipt("midrun")).status != "completed":
                 await asyncio.sleep(0.01)
-        assert session.receipt("midrun").run_id == receipt.run_id
+        assert (await session.receipt("midrun")).run_id == receipt.run_id
         assert (project / "note.txt").read_text() == "new"
         assert agent.generator.aforward.await_count == 2
     finally:
