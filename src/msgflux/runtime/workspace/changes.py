@@ -206,7 +206,7 @@ class WorkspaceEditor:
         """Prepare a creation that cannot overwrite an existing file."""
         path = workspace_path(path)
         if self._read(path) is not None:
-            raise FileExistsError(path)
+            raise FileExistsError(f"File already exists: {path}")
         return self._prepare(path, None, content)
 
     def prepare_transform(

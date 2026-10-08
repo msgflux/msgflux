@@ -9,6 +9,7 @@ from msgflux.data.stores import InMemoryCheckpointStore, SQLiteCheckpointStore
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.providers.openai import OpenAIChatCompletion
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.tool_transport import render_native_output, transport_adapter
 from msgflux.nn import Agent, ToolLibrary
 from msgflux.runtime import (
@@ -251,6 +252,74 @@ async def test_stream_only_dispatches_complete_patch_once(model, asynchronous):
         model._stream_responses_generate(stream_response=stream, _tool_routes=routes)
     assert len(stream.data.get_intents()) == 1
     assert stream.data.get_intents()[0].arguments["diff"] == "@@\n-old\n+new"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_create_existing_file_returns_clear_reason_to_model(
+    model, tmp_path, native
+):
+    tool = ApplyPatchTool()
+    tool.name = "modify"
+    filesystem = InMemoryWorkspace("files", {"/a": b"original"})
+    checkpoints = InMemoryCheckpointStore()
+    journal = SQLiteApprovalStore(tmp_path / "approvals.sqlite3")
+    model.native_tools = native
+    if native:
+        requested = parse(model, tool, call("create_file"))
+    else:
+        calls = ToolCallAggregator(api_mode="responses")
+        calls.process(
+            0, "call_1", "modify", '{"operation":"create","path":"a","diff":"+new"}'
+        )
+        requested = ModelResponse()
+        requested.set_response_type("tool_call")
+        requested.add(calls)
+    final = ModelResponse()
+    final.set_response_type("text_generation")
+    final.add("could not create")
+    agent = Agent(
+        name="patcher",
+        model=model,
+        tools=[tool],
+        checkpoint_store=checkpoints,
+        approvals=AgentApprovals(journal, {"modify": "v1"}, "p1"),
+    )
+    received = []
+
+    async def respond(**kwargs):
+        if not received:
+            received.append(None)
+            return requested
+        received.append(kwargs["messages"].to_responses_input(native_tools=native))
+        return final
+
+    agent.generator.aforward = AsyncMock(side_effect=respond)
+    try:
+        assert (
+            await agent.acall("create a", scope=scope(filesystem)) == "could not create"
+        )
+        items = checkpoints.load_state("patcher", "t", "r")["messages"]["items"]
+        output = next(
+            item
+            for item in items
+            if item.get("type")
+            == ("apply_patch_call_output" if native else "function_call_output")
+        )
+        assert "File already exists: /a" in output["output"]
+        assert "Cannot prepare workspace change:" in output["output"]
+        assert output["call_id"] == "call_1"
+        model_output = next(
+            item for item in received[1] if item.get("type") == output["type"]
+        )
+        assert "File already exists: /a" in model_output["output"]
+        # Preparation fails before an approval is requested or any write occurs.
+        assert not journal.pending("patcher", "t", "r")
+        with execution_context(scope=scope(filesystem)):
+            assert filesystem.read_text("/a") == "original"
+        assert agent.generator.aforward.await_count == 2
+    finally:
+        journal.close()
 
 
 def test_history_interruption_projection_and_unknown_codec(model):
