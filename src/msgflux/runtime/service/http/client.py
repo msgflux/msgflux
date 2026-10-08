@@ -220,8 +220,18 @@ class AgentServiceClient:
             "POST", self._thread_path(thread_id) + "/prompt", AdmissionReceipt, request
         )
 
-    async def receipt(self, thread_id: str, request_id: str) -> AdmissionReceipt:
+    async def receipt(
+        self,
+        thread_id: str,
+        request_id: str,
+        *,
+        require_waitable: bool = False,
+    ) -> AdmissionReceipt:
+        if not isinstance(require_waitable, bool):
+            raise TypeError("require_waitable must be a bool")
         path = self._thread_path(thread_id) + "/requests/" + _segment(request_id)
+        if require_waitable:
+            path += "?require_waitable=true"
         return await self._json("GET", path, AdmissionReceipt)
 
     async def interrupt(self, thread_id: str, run_id: str) -> bool:

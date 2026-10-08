@@ -117,7 +117,9 @@ class AgentSessionClient:
         ):
             raise ValueError("poll_interval must be a finite positive number")
         while True:
-            current = await self.receipt(request_id)
+            current = await self._client.receipt(
+                self.thread_id, request_id, require_waitable=True
+            )
             if current.status not in {"accepted", "running"}:
                 return current
             await asyncio.sleep(poll_interval)

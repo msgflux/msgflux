@@ -1,11 +1,42 @@
 """Versioned native JSON/SSE contracts for AgentService clients."""
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 import msgspec
 
 from msgflux.runtime.permissions import ResourcePermission
-from msgflux.runtime.service.records import ApprovalReview, RunSummary, ServiceThread
+from msgflux.runtime.service.records import (
+    ApprovalReview,
+    EventRecord,
+    RunSummary,
+    ServiceThread,
+    SnapshotRecord,
+)
+
+__all__ = [
+    "AgentsResponse",
+    "ApprovalDecisionRequest",
+    "ApprovalReview",
+    "ApprovalReviewsResponse",
+    "ErrorResponse",
+    "EventRecord",
+    "HealthRecord",
+    "Identifier",
+    "InterruptResponse",
+    "OpenThreadRequest",
+    "PromptRequest",
+    "ResourcePermission",
+    "ResumeRequest",
+    "RunSummary",
+    "RunsResponse",
+    "ServiceThread",
+    "ShutdownRequest",
+    "ShutdownResponse",
+    "SnapshotRecord",
+    "SteerRequest",
+    "ThreadsResponse",
+    "WorkspacePolicyRequest",
+]
 
 Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
 
@@ -73,26 +104,6 @@ class InterruptResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True)
 class ErrorResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     code: str
     message: str
-
-
-class SnapshotRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    thread_id: str
-    namespace: str | None = None
-    messages: tuple[dict[str, Any], ...] | None = None
-    active_runs: tuple[dict[str, Any], ...] = ()
-    running_tools: tuple[dict[str, Any], ...] = ()
-    background_tasks: tuple[dict[str, Any], ...] = ()
-    approvals: tuple[dict[str, Any], ...] = ()
-    version: Literal[1] = 1
-
-
-class EventRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    type: str
-    timestamp: str
-    data: dict[str, Any]
-    run_id: str | None = None
-    source_path: tuple[str, ...] = ()
-    version: Literal[1] = 1
 
 
 class HealthRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

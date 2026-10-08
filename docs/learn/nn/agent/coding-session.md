@@ -9,7 +9,11 @@ The session is the application-facing facade for one thread. `AgentService` owns
 its executions; `AgentSession` is the host-created binding containing the Agent
 and runtime dependencies. See [their responsibilities and lifetimes](service.md#service-agent-session-and-coding-session).
 `session.prompt(text)` returns an admission receipt; `session.stream(text)`
-observes a prompted run until its attempt settles.
+observes a prompted run until its attempt settles. The facade returns portable
+`SnapshotRecord` and `EventRecord` values, matching the remote thread client.
+Snapshots contain chat messages and live state as tuples of dictionaries, and
+watchers and `stream()` yield event records. The lower-level `Agent` and
+`AgentService` APIs keep their native snapshot and event types.
 
 ## Embedded Session
 
@@ -81,10 +85,13 @@ snapshot = await session.snapshot()
 print(settled.status, snapshot.messages)
 ```
 
-`watch()` atomically subscribes and captures the existing Agent snapshot. Later
+`watch()` atomically subscribes and captures a portable `SnapshotRecord`. Its
+watcher yields `EventRecord` values. Message history and live-state collections
+are tuples of dictionaries. Later
 observers receive the current snapshot and future events; old token deltas are
 not replayed. `wait()` waits for the selected admission without coupling its
-execution to the waiting client. `receipt(request_id)` reads its current status.
+execution to the waiting client. `await receipt(request_id)` reads its current
+status.
 
 Use stable request IDs for input retries. Reusing an ID with the same prompt
 returns the same run; a different prompt raises `ServiceConflictError`. A thread
@@ -136,14 +143,41 @@ configuration directory. The journal owns admission identities and status;
 checkpoints remain authoritative for conversation history and execution state.
 User-supplied stores, Agent, model and workspace remain owned by the application.
 
-`runs()`, `latest_run()` and `saved_state(run_id)` inspect the configured checkpoint
-store. A completed or interrupted run is terminal: submit a new prompt to continue
-the conversation. Resume an unfinished run explicitly:
+`runs()`, `latest_run()` and `receipt(request_id)` are asynchronous service queries.
+Run discovery returns `RunSummary` records with `run_id`, `status` and the
+`updated_at` timestamp;
+it does not expose checkpoint data. `saved_state(run_id)` is a synchronous,
+host-local inspection of the configured checkpoint store. Keep it inside trusted
+host code because checkpoint contents are private runtime state.
+
+A completed or interrupted run is terminal: submit a new prompt to continue the
+conversation. `resume()` admits recovery and returns an `AdmissionReceipt`; use
+`watch()` to observe its events and `wait()` to read its settled outcome:
 
 ```python
-async for event in session.resume(run_id, worker_stopped=True):
-    print(event.type)
+async with session.watch() as observer:
+    receipt = await session.resume(run_id, worker_stopped=True)
+    if receipt.status in {"accepted", "running"}:
+        async for event in observer:
+            if event.run_id == receipt.run_id:
+                print(event.type)
+                if event.type in {"run.end", "run.error", "run.paused"} and len(
+                    event.source_path
+                ) == 1:
+                    break
+settled = await session.wait(receipt.request_id)
+print(settled.status)
 ```
+
+Calling `resume()` on an already completed/interrupted admission returns its
+terminal receipt without executing the model again or emitting new run events.
+The guard in the example avoids waiting for events that will not arrive.
+`worker_stopped` remains a trusted local-host option; remote clients cannot
+assert it.
+
+`stream()` remains a convenience for admitting a new prompt and observing its
+run in one iterator. The explicit `watch()` and `resume()` flow is useful when
+the caller needs to retain the admission receipt independently from observation.
 
 A trusted host may assert `worker_stopped=True` only after establishing that the
 old worker stopped and reconciling uncertain effects. Do not copy this value from

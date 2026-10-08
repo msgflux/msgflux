@@ -154,8 +154,8 @@ async def test_new_session_resumes_durable_thread_and_snapshot_history():
         for item in seen_on_second_call["chat"]
     )
     assert snapshot.thread_id == thread_id
-    assert isinstance(snapshot.messages, ChatMessages)
-    assert snapshot.messages.to_chatml()[-1]["content"] == "cobalt"
+    assert isinstance(snapshot.messages, tuple)
+    assert snapshot.messages[-1]["content"] == "cobalt"
     assert any(event.type == "run.end" for event in events)
 
 
@@ -270,10 +270,21 @@ async def test_resume_approval_pause_replays_tool_batch_once():
             principal="human",
         ),
     )
-    resumed_events = [
-        event async for event in reopened.resume(paused_run, worker_stopped=True)
-    ]
+    async with reopened.watch() as watcher:
+        resumed = await reopened.resume(paused_run, worker_stopped=True)
+        assert resumed.run_id == paused_run
+        resumed_events = []
+        async for event in watcher:
+            if event.run_id == paused_run:
+                resumed_events.append(event)
+                if (
+                    event.type in {"run.end", "run.error", "run.paused"}
+                    and len(event.source_path) == 1
+                ):
+                    break
+        settled = await reopened.wait(resumed.request_id)
 
+    assert settled.status == "completed"
     assert any(event.type == "run.end" for event in resumed_events)
     assert calls == ["secret"], [
         (event.type, event.run_id, dict(event.data)) for event in resumed_events

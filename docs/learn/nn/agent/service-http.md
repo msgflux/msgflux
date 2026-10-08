@@ -367,6 +367,14 @@ local service runner enables this route with its private runtime token and
 requests ordinary Uvicorn graceful shutdown, allowing the service lifespan to
 drain work it owns.
 
+Receipt inspection is observational by default. `AgentSessionClient.wait()`
+uses the same receipt endpoint with `require_waitable=true` to check that an
+accepted/running attempt has a worker in this service instance. Otherwise it
+raises `ServiceRecoveryRequiredError`, as the embedded session does. This check
+does not assert that an old worker has stopped and does not authorize replay.
+Use ordinary `receipt()` to inspect an uncertain attempt; recovery still needs
+trusted host reconciliation.
+
 Errors have the JSON shape `{"code": "...", "message": "..."}`. Missing or invalid
 authentication returns 401, unknown resources return 404, conflicts/busy threads
 and recovery requirements return 409, review access without a configured reviewer

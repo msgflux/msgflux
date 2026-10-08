@@ -25,7 +25,17 @@ and a stable `request_id`; a coding session already identifies its thread and
 can generate the request ID when one is omitted. Both return an admission receipt
 once the input is recorded and work is scheduled. Use `wait()` for the settled
 receipt, `watch()` for snapshot and future events, or `CodingSession.stream()`
-for a finite iterator of one run's events.
+for a finite iterator of one run's events. The `CodingSession` facade exposes
+asynchronous `receipt()`, `runs()`, and `latest_run()` queries so local and
+service-backed sessions have the same interface. Run listings contain service
+`RunSummary` records; checkpoint state remains host-local through its synchronous
+`saved_state()` method. `AgentService.receipt()` itself remains synchronous for
+trusted in-process host code. `CodingSession.snapshot()` and `watch()` expose
+portable `SnapshotRecord` and `EventRecord` values, including when the facade is
+attached to a local service. The lower-level `AgentService.snapshot()` and
+`watch()` continue to use native `ThreadSnapshot` and `ExecutionEvent` values.
+`CodingSession.stream()` remains a local convenience and yields `EventRecord`;
+there is no corresponding stream method on the remote session client.
 
 ## Prompt And Observe
 

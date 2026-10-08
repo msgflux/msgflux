@@ -1,6 +1,6 @@
-"""Serializable identities and admission states for the embedded Agent service."""
+"""Serializable records for the Agent service and its portable projections."""
 
-from typing import Literal
+from typing import Any, Literal
 
 import msgspec
 
@@ -62,3 +62,27 @@ class AdmissionRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     namespace: str
     prompt: str
     owner_id: str | None = None
+
+
+class SnapshotRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Portable projection of a thread's durable and live presentation state."""
+
+    thread_id: str
+    namespace: str | None = None
+    messages: tuple[dict[str, Any], ...] | None = None
+    active_runs: tuple[dict[str, Any], ...] = ()
+    running_tools: tuple[dict[str, Any], ...] = ()
+    background_tasks: tuple[dict[str, Any], ...] = ()
+    approvals: tuple[dict[str, Any], ...] = ()
+    version: Literal[1] = 1
+
+
+class EventRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Portable event projection shared by local and remote observers."""
+
+    type: str
+    timestamp: str
+    data: dict[str, Any]
+    run_id: str | None = None
+    source_path: tuple[str, ...] = ()
+    version: Literal[1] = 1
