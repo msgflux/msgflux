@@ -8,6 +8,13 @@ from typing import Any
 from msgflux.core.dotdict import dotdict
 
 BUILTIN_TOOL_USAGE_GUIDANCE: dict[str, str] = {
+    "read": (
+        "Read only the lines needed for the task. Use offset and limit to "
+        "paginate text. If a page exceeds the configured byte limit, request "
+        "fewer lines by reducing limit. If a single line exceeds the byte "
+        "limit, read cannot retrieve it; use another available tool, such as "
+        "Bash, to extract a smaller portion. Rejected reads return no file content."
+    ),
     "agent": (
         "Use when an available specialized agent is better suited for the task. "
         "Choose the agent whose description matches the task and send a focused "

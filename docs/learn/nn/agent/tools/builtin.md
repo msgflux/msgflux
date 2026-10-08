@@ -128,6 +128,35 @@ cooperative and cannot interrupt a blocking backend operation. Large results
 can still be handled by `ToolOutputOffloadExtension`; offload does not remove
 the need to bound search work.
 
+### Bound Text Reads
+
+`ReadFileTool` returns at most 32 KiB of text per call by default, in addition
+to its 2,000-line ceiling. Configure the byte budget on the tool instance:
+
+```python
+reader = ReadFileTool(max_text_bytes=16 * 1024)
+```
+
+The budget counts UTF-8 bytes. If the selected page exceeds it, the error asks
+for `offset` and a smaller `limit`. If a single line exceeds it, the error asks
+for another available tool, such as Bash. These are separate errors, and
+neither returns file content. Opt into the registered guidance with
+`apply_tool_guidance()` to explain both cases before execution:
+
+```python
+from msgflux.tools import apply_tool_guidance
+
+[reader] = apply_tool_guidance([ReadFileTool(max_text_bytes=16 * 1024)])
+```
+
+This fills `usage_guidance` when the tool has no explicit guidance. The default
+text reader leaves that optional field unset. This also applies to saved tool results;
+rejecting a read does not create another offload file. If a single line exceeds
+the budget, `read` cannot retrieve it: use another available tool, such as Bash,
+to filter or extract a smaller portion. Image reads retain their separate
+`max_image_bytes` budget. Successive reads can still accumulate context.
+
+
 ## WebFetchTool
 
 `WebFetchTool` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing.

@@ -51,3 +51,25 @@ def test_apply_tool_guidance_ignores_unknown_tools():
     [tool] = apply_tool_guidance([unknown_tool])
 
     assert tool.tool_config == {}
+
+
+def test_read_guidance_is_opt_in_and_separate_from_description():
+    from msgflux.nn import ToolLibrary
+    from msgflux.tools.builtin import ReadFileTool
+
+    reader = ReadFileTool()
+    plain = ToolLibrary.inspect_tool_definition(reader)
+    assert plain.usage_guidance is None
+    assert "Text reads exceeding" not in plain.description
+
+    [reader] = apply_tool_guidance([reader])
+    configured = ToolLibrary.inspect_tool_definition(reader)
+    assert configured.description == plain.description
+    assert configured.usage_guidance == BUILTIN_TOOL_USAGE_GUIDANCE["read"]
+    assert "reducing limit" in configured.usage_guidance
+    assert "single line" in configured.usage_guidance
+
+    custom = ReadFileTool()
+    custom.tool_config["usage_guidance"] = "Explicit host instruction."
+    [custom] = apply_tool_guidance([custom])
+    assert custom.tool_config["usage_guidance"] == "Explicit host instruction."

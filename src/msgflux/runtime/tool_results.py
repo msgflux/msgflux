@@ -21,7 +21,11 @@ from msgflux._private.tool_result_reference import (
 from msgflux._private.tool_result_reference import (
     validate_result_id as _validate_id,
 )
-from msgflux.runtime.workspace.local import _check_posix, _root_directory
+from msgflux.runtime.workspace.local import (
+    LocalWorkspace,
+    _check_posix,
+    _root_directory,
+)
 
 
 def _positive(value: int, name: str) -> None:
@@ -60,6 +64,30 @@ def get_tool_result_reference(result: object) -> ToolResultRef | None:
     if reference is None or isinstance(reference, ToolResultRef):
         return reference
     return msgspec.convert(reference, type=ToolResultRef, strict=True)
+
+
+class ToolOutputOffloadConfig(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Limits for opt-in managed, per-thread tool result storage."""
+
+    max_inline_bytes: int = 32 * 1024
+    preview_bytes: int = 2048
+    max_capture_bytes: int = 1_000_000
+    max_result_bytes: int = 64 * 1024 * 1024
+    max_store_bytes: int = 1024 * 1024 * 1024
+
+    def __post_init__(self):
+        for name in (
+            "max_inline_bytes",
+            "max_capture_bytes",
+            "max_result_bytes",
+            "max_store_bytes",
+        ):
+            _positive(getattr(self, name), name)
+        if (
+            type(self.preview_bytes) is not int
+            or not 0 <= self.preview_bytes <= self.max_inline_bytes
+        ):
+            raise ValueError("preview_bytes must be between zero and max_inline_bytes")
 
 
 class ToolResultIntegrityError(ValueError):
@@ -458,3 +486,28 @@ class LocalToolResultStore(ToolResultStore):
                         )
                     remaining -= len(chunk)
                     yield chunk
+
+    def _read_lines(
+        self,
+        reference: ToolResultRef,
+        *,
+        offset: int,
+        limit: int,
+        max_bytes: int,
+    ) -> bytes:
+        """Read a bounded line page from a local result reference."""
+        if not isinstance(reference, ToolResultRef):
+            raise TypeError("reference must be ToolResultRef")
+        if any(
+            type(value) is not int or value <= 0 for value in (offset, limit, max_bytes)
+        ):
+            raise ValueError("offset, limit and max_bytes must be positive integers")
+        with self._root() as root, self._result(root, reference.result_id) as directory:
+            if self._metadata(directory, reference.result_id) != reference:
+                raise ToolResultIntegrityError(
+                    "Tool result reference does not match metadata"
+                )
+            with self._file(directory, "content") as stream:
+                if os.fstat(stream.fileno()).st_size != reference.size_bytes:
+                    raise ToolResultIntegrityError("Tool result size mismatch")
+                return LocalWorkspace._select_lines(stream, offset, limit, max_bytes)

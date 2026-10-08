@@ -80,6 +80,7 @@ from msgflux.runtime.skills import (
 )
 from msgflux.runtime.tool_results import (
     LocalToolResultStore,
+    ToolOutputOffloadConfig,
     ToolResultIntegrityError,
     ToolResultQuotaError,
     ToolResultRef,
@@ -148,6 +149,7 @@ __all__ = [
     "DockerWorkspaceBackend",
     "ToolResultQuotaError",
     "ToolResultUsage",
+    "ToolOutputOffloadConfig",
     "WorkspaceEntry",
     "ProcessOutputCallback",
     "ProcessOutputLimitError",

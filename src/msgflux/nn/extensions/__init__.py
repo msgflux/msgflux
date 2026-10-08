@@ -30,7 +30,10 @@ if TYPE_CHECKING:
         ToolLibraryExtensionHandle,
         ToolSearchExtension,
     )
-    from msgflux.nn.extensions.tool_output import ToolOutputOffloadExtension
+    from msgflux.nn.extensions.tool_output import (
+        ManagedToolOutputOffloadExtension,
+        ToolOutputOffloadExtension,
+    )
     from msgflux.nn.extensions.workspace import WorkspacePromptExtension
     from msgflux.nn.modules.tool_runtime import (
         ToolContextProvider,
@@ -40,6 +43,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ToolOutputOffloadExtension",
+    "ManagedToolOutputOffloadExtension",
     "WorkspacePromptExtension",
     "AgentExtension",
     "AgentExtensionHandle",
@@ -67,6 +71,10 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "ManagedToolOutputOffloadExtension": (
+        "msgflux.nn.extensions.tool_output",
+        "ManagedToolOutputOffloadExtension",
+    ),
     "ToolOutputOffloadExtension": (
         "msgflux.nn.extensions.tool_output",
         "ToolOutputOffloadExtension",

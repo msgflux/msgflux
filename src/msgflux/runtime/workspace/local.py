@@ -27,6 +27,7 @@ from msgflux.runtime.workspace.contracts import (
 from msgflux.runtime.workspace.filesystem import (
     WorkspaceConflictError,
     WorkspaceFilesystem,
+    _ReadByteLimitError,
     workspace_path,
 )
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
@@ -485,14 +486,16 @@ class LocalWorkspace(WorkspaceFilesystem):
                     break
         result = bytearray()
         for _ in range(limit):
-            line = stream.readline(max_bytes - len(result) + 1)
+            line = stream.readline(max_bytes + 1)
             if not line:
                 if not result and offset != 1:
                     raise ValueError("offset exceeds the number of lines")
                 break
+            if len(line) > max_bytes:
+                raise _ReadByteLimitError(single_line=True)
+            if len(result) + len(line) > max_bytes:
+                raise _ReadByteLimitError(single_line=False)
             result.extend(line)
-            if len(result) > max_bytes:
-                raise ValueError("Selected lines exceed the read byte limit")
         return bytes(result)
 
     def _checked_replace(self, path, expected, replacement):

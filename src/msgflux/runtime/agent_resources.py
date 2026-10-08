@@ -7,12 +7,14 @@ import os
 import re
 import stat
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from msgflux.data.stores import SQLiteCheckpointStore
 from msgflux.runtime.agent_inbox import AgentInbox, SQLiteAgentInboxStore
 from msgflux.runtime.approvals import SQLiteApprovalStore
 from msgflux.runtime.service.store import SQLiteServiceStore
+from msgflux.runtime.tool_results import LocalToolResultStore, ToolOutputOffloadConfig
 from msgflux.tasks import SQLiteTaskStore
 
 _THREAD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
@@ -139,6 +141,33 @@ class BoundAgentResources:
         self.agent_inbox = agent_inbox
         self.approval_store = approval_store
         self._closed = False
+        self.offload_config = None
+        self._tool_results = None
+        self._tool_results_lock = RLock()
+
+    def tool_result_store(self, *, create=True, config=None):
+        """Resolve this thread's artifact store without creating it on observation."""
+        with self._tool_results_lock:
+            if self._closed:
+                raise RuntimeError("Agent resources are closed")
+            root = self.thread_dir / "tool-results"
+            if self._tool_results is None:
+                if not create and not root.exists():
+                    return None
+                limits = config or self.offload_config or ToolOutputOffloadConfig()
+                self._tool_results = LocalToolResultStore(
+                    root,
+                    max_result_bytes=limits.max_result_bytes,
+                    max_store_bytes=limits.max_store_bytes,
+                )
+            elif config is not None and (
+                self._tool_results.max_result_bytes != config.max_result_bytes
+                or self._tool_results.max_store_bytes != config.max_store_bytes
+            ):
+                raise ValueError(
+                    "Nested Agent cannot replace tool output storage limits"
+                )
+            return self._tool_results
 
     def close(self) -> None:
         """Close owned SQLite connections once; never delete persisted state."""

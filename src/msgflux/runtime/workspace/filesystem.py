@@ -22,6 +22,25 @@ from msgflux.runtime.workspace.contracts import (
 )
 
 
+class _ReadByteLimitError(ValueError):
+    """Distinguish an oversized line from an oversized selected page."""
+
+    def __init__(self, *, single_line: bool):
+        super().__init__("Selected lines exceed the read byte limit")
+        self.single_line = single_line
+
+
+def _read_byte_limit_error(data: bytes, max_bytes: int) -> _ReadByteLimitError:
+    start = 0
+    while start < len(data):
+        newline = data.find(b"\n", start)
+        end = len(data) if newline < 0 else newline + 1
+        if end - start > max_bytes:
+            return _ReadByteLimitError(single_line=True)
+        start = end
+    return _ReadByteLimitError(single_line=False)
+
+
 def workspace_path(path: str) -> str:
     """Canonical virtual path; never interpret this as a host filesystem path."""
     if (
@@ -147,8 +166,10 @@ class WorkspaceFilesystem(ABC):
             raise ValueError("offset, limit and max_bytes must be positive integers")
         canonical = self._authorize("read", path)
         data = self._read_lines(canonical, offset, limit, max_bytes)
-        if not isinstance(data, bytes) or len(data) > max_bytes:
+        if not isinstance(data, bytes):
             raise ValueError("Backend exceeded the requested read byte limit")
+        if len(data) > max_bytes:
+            raise _read_byte_limit_error(data, max_bytes)
         if data.count(b"\n") + bool(data and not data.endswith(b"\n")) > limit:
             raise ValueError("Backend exceeded the requested read line limit")
         return data
@@ -165,10 +186,11 @@ class WorkspaceFilesystem(ABC):
             raise ValueError("offset exceeds the number of lines")
         end = start
         for _ in range(limit):
+            line_start = end
             newline = data.find(b"\n", end)
             end = len(data) if newline < 0 else newline + 1
             if end - start > max_bytes:
-                raise ValueError("Selected lines exceed the read byte limit")
+                raise _ReadByteLimitError(single_line=end - line_start > max_bytes)
             if end == len(data):
                 break
         return data[start:end]
