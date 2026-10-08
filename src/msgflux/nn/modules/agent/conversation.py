@@ -1229,6 +1229,11 @@ class AgentConversationMixin:
 
         workspace_scope = self._workspace_scope(scope)
         workspace_reference = encode_workspace_reference(workspace_scope.workspace)
+        policy_state = get_execution_context().get("workspace_policy")
+        if run is not None and policy_state is not None:
+            run.set_extension(
+                "workspace_policy", msgspec.to_builtins(policy_state.current)
+            )
         runtime_state = run.durable_state() if run is not None else {}
         if run is not None:
             from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415

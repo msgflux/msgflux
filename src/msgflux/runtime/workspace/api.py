@@ -6,6 +6,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Literal
 from uuid import uuid4
 
 from msgflux.runtime.abort import AbortSignal
@@ -45,6 +46,7 @@ class AgentWorkspace:
         *,
         cwd: str = "/",
         permissions: PermissionSet | None = None,
+        approval_policy: Literal["on-request", "never"] = "never",
     ):
         if not isinstance(environment, ExecutionEnvironment):
             raise TypeError("AgentWorkspace requires an ExecutionEnvironment")
@@ -56,6 +58,9 @@ class AgentWorkspace:
         if permissions is not None and not isinstance(permissions, PermissionSet):
             raise TypeError("permissions must be a PermissionSet or None")
         self._permissions = permissions or PermissionSet()
+        if approval_policy not in ("on-request", "never"):
+            raise ValueError("approval_policy must be 'on-request' or 'never'")
+        self._approval_policy = approval_policy
 
     @classmethod
     def local(
@@ -64,6 +69,7 @@ class AgentWorkspace:
         *,
         read_only: bool = False,
         permissions: PermissionSet | None = None,
+        approval_policy: Literal["on-request", "never"] = "never",
     ) -> AgentWorkspace:
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
@@ -92,7 +98,7 @@ class AgentWorkspace:
             requirements=SandboxRequirements(),
             write_guarantee="cooperative_compare",
         )
-        return cls(environment, permissions=ceiling)
+        return cls(environment, permissions=ceiling, approval_policy=approval_policy)
 
     @classmethod
     async def open(
@@ -101,6 +107,7 @@ class AgentWorkspace:
         workspace_id: str,
         *,
         permissions: PermissionSet | None = None,
+        approval_policy: Literal["on-request", "never"] = "never",
         cwd: str = "/",
         requirements: SandboxRequirements | None = None,
         write_guarantee="atomic_compare",
@@ -126,6 +133,7 @@ class AgentWorkspace:
             binding,
             cwd=cwd,
             permissions=permissions,
+            approval_policy=approval_policy,
             requirements=requirements,
             write_guarantee=write_guarantee,
             max_edit_bytes=max_edit_bytes,
@@ -141,6 +149,7 @@ class AgentWorkspace:
         identity: WorkspaceIdentity,
         *,
         permissions: PermissionSet | None = None,
+        approval_policy: Literal["on-request", "never"] = "never",
         cwd: str = "/",
         requirements: SandboxRequirements | None = None,
         write_guarantee="atomic_compare",
@@ -165,6 +174,7 @@ class AgentWorkspace:
             binding,
             cwd=cwd,
             permissions=permissions,
+            approval_policy=approval_policy,
             requirements=requirements,
             write_guarantee=write_guarantee,
             max_edit_bytes=max_edit_bytes,
@@ -181,6 +191,7 @@ class AgentWorkspace:
         cwd,
         permissions,
         requirements,
+        approval_policy="never",
         write_guarantee,
         max_edit_bytes,
         expected_workspace_id=None,
@@ -204,7 +215,12 @@ class AgentWorkspace:
                 write_guarantee=write_guarantee,
                 max_edit_bytes=max_edit_bytes,
             )
-            workspace = cls(environment, cwd=cwd, permissions=permissions)
+            workspace = cls(
+                environment,
+                cwd=cwd,
+                permissions=permissions,
+                approval_policy=approval_policy,
+            )
             if validate_cwd:
                 cls._validate_cwd(environment.filesystem, workspace.cwd)
         except BaseException as failure:
@@ -240,8 +256,14 @@ class AgentWorkspace:
         *,
         cwd: str = "/",
         permissions: PermissionSet | None = None,
+        approval_policy: Literal["on-request", "never"] = "never",
     ) -> AgentWorkspace:
-        return cls(environment, cwd=cwd, permissions=permissions)
+        return cls(
+            environment,
+            cwd=cwd,
+            permissions=permissions,
+            approval_policy=approval_policy,
+        )
 
     async def aclose(self) -> None:
         """Close the binding opened by this workspace, if it owns one."""
@@ -267,6 +289,11 @@ class AgentWorkspace:
     @property
     def permissions(self) -> PermissionSet:
         return self._permissions
+
+    @property
+    def approval_policy(self) -> str:
+        """Initial approval default; runtime overrides belong to the thread."""
+        return self._approval_policy
 
     def effective_permissions(self, requested: PermissionSet | None) -> PermissionSet:
         """Apply this workspace's immutable ceiling to live scope permissions."""
@@ -327,7 +354,10 @@ class AgentWorkspace:
 
     def with_cwd(self, cwd: str) -> AgentWorkspace:
         view = AgentWorkspace(
-            self._environment, cwd=self.resolve(cwd), permissions=self._permissions
+            self._environment,
+            cwd=self.resolve(cwd),
+            permissions=self._permissions,
+            approval_policy=self.approval_policy,
         )
         # Views borrow the owner's connection. Closing any binding still gates
         # every view through the shared environment.
@@ -345,6 +375,7 @@ class AgentWorkspace:
         from msgflux.runtime.context import (  # noqa: PLC0415
             _CURRENT_SCOPE,
             ExecutionScope,
+            _get_execution_scope_ceiling,
             execution_context,
         )
 
@@ -352,9 +383,12 @@ class AgentWorkspace:
             with execution_context(scope=ExecutionScope(workspace=self)):
                 yield
         else:
-            live_scope = require_workspace_authority(self)
+            require_workspace_authority(self)
             with execution_context(
-                scope=ExecutionScope(workspace=self, permissions=live_scope.permissions)
+                scope=ExecutionScope(
+                    workspace=self,
+                    permissions=_get_execution_scope_ceiling().permissions,
+                )
             ):
                 yield
 

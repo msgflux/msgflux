@@ -6,10 +6,12 @@ import asyncio
 import math
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import msgspec
 
+from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
     ApprovalReview,
@@ -19,6 +21,7 @@ from msgflux.runtime.service import (
 from msgflux.runtime.service.http.client import AgentServiceClient, RemoteThreadWatcher
 from msgflux.runtime.service.http.records import SnapshotRecord
 from msgflux.runtime.service.store import validate_identifier
+from msgflux.runtime.workspace.policy import WorkspacePolicy
 
 
 class AgentSessionClient:
@@ -66,6 +69,25 @@ class AgentSessionClient:
     def workspace_root(self) -> str | None:
         """Canonical host path bound to the thread, if one was supplied."""
         return self._thread.cwd
+
+    async def workspace_policy(self) -> WorkspacePolicy:
+        """Read the current host-selected permission and approval policy."""
+        return await self._client.workspace_policy(self.thread_id)
+
+    async def update_workspace_policy(
+        self,
+        *,
+        permissions: PermissionSet | Literal["read-only", "full-access"] | None = None,
+        approval_policy: Literal["on-request", "never"] | None = None,
+        expected_revision: int | None = None,
+    ) -> WorkspacePolicy:
+        """Update the current policy for this thread through the trusted service."""
+        return await self._client.update_workspace_policy(
+            self.thread_id,
+            permissions=permissions,
+            approval_policy=approval_policy,
+            expected_revision=expected_revision,
+        )
 
     async def prompt(
         self, prompt: str, *, request_id: str | None = None

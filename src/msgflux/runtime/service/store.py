@@ -11,6 +11,7 @@ from time import monotonic, sleep
 import msgspec
 
 from msgflux.runtime.context import new_run_id
+from msgflux.runtime.permissions import ResourcePermission
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
@@ -19,6 +20,8 @@ from msgflux.runtime.service.records import (
     ServiceConflictError,
     ServiceThread,
 )
+from msgflux.runtime.workspace.policy import WorkspacePolicy
+from msgflux.utils.time import utc_now_isoformat
 
 
 def validate_identifier(value: str, label: str) -> None:
@@ -96,6 +99,45 @@ class SQLiteServiceStore:
                     ON service_admissions(thread_id)
                     WHERE status IN ('accepted', 'running', 'paused')"""
                 )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS service_workspace_policies (
+                    thread_id TEXT PRIMARY KEY
+                        REFERENCES service_threads(thread_id) ON DELETE CASCADE,
+                    permissions TEXT NOT NULL,
+                    resources TEXT NOT NULL,
+                    approval_policy TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision > 0),
+                    updated_at TEXT NOT NULL
+                    )"""
+                )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS service_workspace_policy_history (
+                    thread_id TEXT NOT NULL
+                        REFERENCES service_threads(thread_id) ON DELETE CASCADE,
+                    permissions TEXT NOT NULL,
+                    resources TEXT NOT NULL,
+                    approval_policy TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision > 0),
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (thread_id, revision)
+                    )"""
+                )
+                self._connection.execute(
+                    """CREATE TRIGGER IF NOT EXISTS
+                    immutable_workspace_policy_history_update
+                    BEFORE UPDATE ON service_workspace_policy_history
+                    BEGIN
+                        SELECT RAISE(ABORT, 'workspace policy history is append-only');
+                    END"""
+                )
+                self._connection.execute(
+                    """CREATE TRIGGER IF NOT EXISTS
+                    immutable_workspace_policy_history_delete
+                    BEFORE DELETE ON service_workspace_policy_history
+                    BEGIN
+                        SELECT RAISE(ABORT, 'workspace policy history is append-only');
+                    END"""
+                )
                 self._connection.commit()
                 if str(path) != ":memory:":
                     _enable_wal(self._connection)
@@ -153,6 +195,126 @@ class SQLiteServiceStore:
         return tuple(
             ServiceThread(row["thread_id"], row["agent_id"], row["cwd"]) for row in rows
         )
+
+    @staticmethod
+    def _policy_values(policy: WorkspacePolicy) -> tuple[str, str, str]:
+        policy.permission_set()
+        permissions = msgspec.json.encode(policy.permissions).decode("utf-8")
+        resources = msgspec.json.encode(
+            [
+                {"resource": item.resource, "action": item.action}
+                for item in policy.resources
+            ]
+        ).decode("utf-8")
+        return permissions, resources, policy.approval_policy
+
+    @staticmethod
+    def _workspace_policy(row: sqlite3.Row) -> WorkspacePolicy:
+        permissions = msgspec.json.decode(row["permissions"], type=tuple[str, ...])
+        resource_values = msgspec.json.decode(
+            row["resources"], type=list[dict[str, str]]
+        )
+        resources = tuple(ResourcePermission(**item) for item in resource_values)
+        return WorkspacePolicy(
+            thread_id=row["thread_id"],
+            permissions=permissions,
+            resources=resources,
+            approval_policy=row["approval_policy"],
+            revision=row["revision"],
+            updated_at=row["updated_at"],
+        )
+
+    def workspace_policy(self, thread_id: str) -> WorkspacePolicy | None:
+        """Read the current policy for a known thread without creating a row."""
+        validate_identifier(thread_id, "thread_id")
+        self.thread(thread_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM service_workspace_policies WHERE thread_id=?",
+                (thread_id,),
+            ).fetchone()
+        return self._workspace_policy(row) if row is not None else None
+
+    def update_workspace_policy(
+        self,
+        policy: WorkspacePolicy,
+        *,
+        expected_revision: int | None = None,
+    ) -> WorkspacePolicy:
+        """Persist a policy revision and its audit row using one SQLite CAS."""
+        if not isinstance(policy, WorkspacePolicy):
+            raise TypeError("policy must be a WorkspacePolicy")
+        validate_identifier(policy.thread_id, "thread_id")
+        if expected_revision is not None and (
+            type(expected_revision) is not int or expected_revision < 0
+        ):
+            raise ValueError("expected_revision must be a non-negative integer or None")
+        permissions, resources, approval_policy = self._policy_values(policy)
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self.thread(policy.thread_id)
+            current = self._connection.execute(
+                "SELECT revision FROM service_workspace_policies WHERE thread_id=?",
+                (policy.thread_id,),
+            ).fetchone()
+            current_revision = current["revision"] if current is not None else 0
+            if expected_revision is not None and expected_revision != current_revision:
+                raise ServiceConflictError("Workspace policy changed")
+            revision = current_revision + 1
+            updated_at = utc_now_isoformat()
+            values = (
+                permissions,
+                resources,
+                approval_policy,
+                revision,
+                updated_at,
+                policy.thread_id,
+            )
+            self._connection.execute(
+                """INSERT INTO service_workspace_policies
+                (permissions, resources, approval_policy, revision, updated_at,
+                 thread_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(thread_id) DO UPDATE SET
+                    permissions=excluded.permissions,
+                    resources=excluded.resources,
+                    approval_policy=excluded.approval_policy,
+                    revision=excluded.revision,
+                    updated_at=excluded.updated_at""",
+                values,
+            )
+            self._connection.execute(
+                """INSERT INTO service_workspace_policy_history
+                (thread_id, permissions, resources, approval_policy, revision,
+                 updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    policy.thread_id,
+                    permissions,
+                    resources,
+                    approval_policy,
+                    revision,
+                    updated_at,
+                ),
+            )
+            return self._workspace_policy(
+                self._connection.execute(
+                    "SELECT * FROM service_workspace_policies WHERE thread_id=?",
+                    (policy.thread_id,),
+                ).fetchone()
+            )
+
+    def workspace_policy_history(self, thread_id: str) -> tuple[WorkspacePolicy, ...]:
+        """Return every recorded policy revision in revision order."""
+        validate_identifier(thread_id, "thread_id")
+        self.thread(thread_id)
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM service_workspace_policy_history
+                WHERE thread_id=? ORDER BY revision""",
+                (thread_id,),
+            ).fetchall()
+        return tuple(self._workspace_policy(row) for row in rows)
 
     @staticmethod
     def _record(row: sqlite3.Row) -> AdmissionRecord:

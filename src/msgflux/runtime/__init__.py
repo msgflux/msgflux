@@ -122,6 +122,7 @@ from msgflux.runtime.workspace.filesystem import (
 )
 from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
 from msgflux.runtime.workspace.local_executor import LocalProcessExecutor
+from msgflux.runtime.workspace.policy import WorkspacePolicy
 from msgflux.runtime.workspace.process_capture import (
     ProcessOutputLimitError,
     drain_subprocess,
@@ -139,6 +140,7 @@ __all__ = [
     "ServiceConflictError",
     "ServiceRecoveryRequiredError",
     "AgentWorkspace",
+    "WorkspacePolicy",
     "CommandInspection",
     "CommandReceipt",
     "DockerLimits",

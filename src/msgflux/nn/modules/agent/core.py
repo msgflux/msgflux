@@ -544,7 +544,6 @@ class Agent(
             >>> # Filter tools - block specific tools
             >>> agent("query", tool_filter={"block": ["browser"]})
         """
-        approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
         kwargs["scope"] = requested_scope
         resumed = self._try_resume_from_checkpoint(
@@ -626,7 +625,6 @@ class Agent(
         **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
-        approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
         kwargs["scope"] = requested_scope
         resumed = await self._atry_resume_from_checkpoint(

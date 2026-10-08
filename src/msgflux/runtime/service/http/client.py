@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx2
 import msgspec
 
 from msgflux.runtime.approvals import ApprovalConflictError
+from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
     ApprovalReview,
@@ -37,7 +38,9 @@ from msgflux.runtime.service.http.records import (
     SnapshotRecord,
     SteerRequest,
     ThreadsResponse,
+    WorkspacePolicyRequest,
 )
+from msgflux.runtime.workspace.policy import WorkspacePolicy
 
 
 class AgentServiceHTTPError(RuntimeError):
@@ -132,6 +135,48 @@ class AgentServiceClient:
         """Request graceful shutdown of the expected runtime instance."""
         request = ShutdownRequest(expected_instance_id=expected_instance_id)
         return await self._json("POST", "/v1/shutdown", ShutdownResponse, request)
+
+    async def workspace_policy(self, thread_id: str) -> WorkspacePolicy:
+        """Return the host-selected current workspace policy for a thread."""
+        return await self._json(
+            "GET",
+            self._thread_path(thread_id) + "/workspace-policy",
+            WorkspacePolicy,
+        )
+
+    async def update_workspace_policy(
+        self,
+        thread_id: str,
+        *,
+        permissions: PermissionSet | Literal["read-only", "full-access"] | None = None,
+        approval_policy: Literal["on-request", "never"] | None = None,
+        expected_revision: int | None = None,
+    ) -> WorkspacePolicy:
+        """Replace selected policy fields, optionally using revision CAS."""
+        if isinstance(permissions, PermissionSet):
+            request = WorkspacePolicyRequest(
+                permissions=tuple(sorted(permissions.grants)),
+                resources=tuple(
+                    sorted(
+                        permissions.resources,
+                        key=lambda item: (item.resource, item.action),
+                    )
+                ),
+                approval_policy=approval_policy,
+                expected_revision=expected_revision,
+            )
+        else:
+            request = WorkspacePolicyRequest(
+                permissions=permissions,
+                approval_policy=approval_policy,
+                expected_revision=expected_revision,
+            )
+        return await self._json(
+            "PUT",
+            self._thread_path(thread_id) + "/workspace-policy",
+            WorkspacePolicy,
+            request,
+        )
 
     async def agents(self) -> tuple[str, ...]:
         result = await self._json("GET", "/v1/agents", AgentsResponse)

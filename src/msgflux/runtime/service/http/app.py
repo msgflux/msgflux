@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from litestar import Litestar, Request, Response, get, post
+from litestar import Litestar, Request, Response, get, post, put
 from litestar.background_tasks import BackgroundTask
 from litestar.exceptions import HTTPException, ValidationException
 from litestar.middleware import DefineMiddleware
@@ -18,6 +18,7 @@ from msgflux.exceptions import EventBufferOverflowError
 from msgflux.logger import logger
 from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.event_buffer import validate_event_buffer_limit
+from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service.api import AgentService
 from msgflux.runtime.service.http.records import (
     AgentsResponse,
@@ -34,6 +35,7 @@ from msgflux.runtime.service.http.records import (
     ShutdownResponse,
     SteerRequest,
     ThreadsResponse,
+    WorkspacePolicyRequest,
 )
 from msgflux.runtime.service.http.serialization import (
     encode_json,
@@ -155,6 +157,40 @@ def create_service_app(  # noqa: C901
             data.agent_id, thread_id=data.thread_id, cwd=data.cwd
         )
         return _response(thread, 201)
+
+    @get("/v1/threads/{thread_id:str}/workspace-policy")
+    async def get_workspace_policy(thread_id: PathValue) -> Response:
+        return _response(await service.workspace_policy(thread_id))
+
+    @put("/v1/threads/{thread_id:str}/workspace-policy")
+    async def update_workspace_policy(
+        thread_id: PathValue, data: WorkspacePolicyRequest
+    ) -> Response:
+        if isinstance(data.permissions, str) and data.resources is not None:
+            return _error(
+                "invalid_request",
+                "Resource permissions cannot be combined with a permission preset",
+                422,
+            )
+        if data.permissions is None:
+            permissions = (
+                PermissionSet(resources=frozenset(data.resources))
+                if data.resources is not None
+                else None
+            )
+        elif isinstance(data.permissions, str):
+            permissions = data.permissions
+        else:
+            permissions = PermissionSet(
+                frozenset(data.permissions), frozenset(data.resources or ())
+            )
+        policy = await service.update_workspace_policy(
+            thread_id,
+            permissions=permissions,
+            approval_policy=data.approval_policy,
+            expected_revision=data.expected_revision,
+        )
+        return _response(policy)
 
     @get("/v1/threads/{thread_id:str}/snapshot")
     async def get_snapshot(thread_id: PathValue) -> Response:
@@ -278,6 +314,8 @@ def create_service_app(  # noqa: C901
         list_agents,
         list_threads,
         open_thread,
+        get_workspace_policy,
+        update_workspace_policy,
         get_snapshot,
         list_runs,
         prompt,

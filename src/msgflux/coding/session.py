@@ -78,6 +78,7 @@ class CodingSession:
             )
         )
         self.service = AgentService(store=self._service_store)
+        self.service._before_write = self._persist_service
         self._owns_service = True
         self._service_persisted = (
             self._service_path is not None and self._service_path.exists()
@@ -150,6 +151,35 @@ class CodingSession:
         """Stable durable conversation identity for this session."""
         return self._thread_id
 
+    async def workspace_policy(self):
+        """Read the effective policy through the generic Agent service."""
+        return await self.service.workspace_policy(self.thread_id)
+
+    async def update_workspace_policy(
+        self, *, permissions=None, approval_policy=None, expected_revision=None
+    ):
+        """Persist and apply an override to this thread's future operations."""
+        return await self.service.update_workspace_policy(
+            self.thread_id,
+            permissions=permissions,
+            approval_policy=approval_policy,
+            expected_revision=expected_revision,
+        )
+
+    async def approval_reviews(self, run_id: str):
+        return await self.service.approval_reviews(self.thread_id, run_id)
+
+    async def decide_approval(
+        self, run_id: str, request_id: str, *, approved: bool, expected_revision: int
+    ):
+        return await self.service.decide_approval(
+            self.thread_id,
+            run_id,
+            request_id,
+            approved=approved,
+            expected_revision=expected_revision,
+        )
+
     async def cancel(self, run_id: str) -> bool:
         """Request cooperative cancellation of the explicitly selected run."""
         if not isinstance(run_id, str) or not run_id:
@@ -212,7 +242,6 @@ class CodingSession:
         self, prompt: str, *, request_id: str | None = None
     ) -> AdmissionReceipt:
         """Admit input without attaching an event observer."""
-        self._persist_service()
         if request_id is None:
             request_id = uuid4().hex
         return await self.service.prompt(
