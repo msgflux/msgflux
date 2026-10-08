@@ -95,7 +95,7 @@ class AgentApprovalMixin:
     def inspect_approval_batch(self, thread_id: str, run_id: str):
         """Return a detached checkpoint for authenticated host reconciliation."""
         return inspect_batch(
-            self._get_effective_checkpoint_store(),
+            self._get_effective_checkpoint_store(thread_id),
             self.get_module_name(),
             thread_id,
             run_id,
@@ -104,7 +104,7 @@ class AgentApprovalMixin:
     def reconcile_approval_batch(self, thread_id: str, run_id: str, **decision):
         """Resolve an uncertain batch after the host has stopped its worker."""
         return reconcile_batch(
-            self._get_effective_checkpoint_store(),
+            self._get_effective_checkpoint_store(thread_id),
             self.get_module_name(),
             thread_id,
             run_id,

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -77,9 +78,11 @@ from msgflux.nn.modules.agent.conversation import AgentConversationMixin
 from msgflux.nn.modules.agent.inputs import AgentInputMixin
 from msgflux.nn.modules.agent.lifecycle import AgentLifecycleMixin
 from msgflux.nn.modules.agent.model_runtime import AgentModelRuntimeMixin
+from msgflux.nn.modules.agent.resources import AgentResourceMixin, resource_call
 
 
 class Agent(
+    AgentResourceMixin,
     AgentApprovalMixin,
     AgentLifecycleMixin,
     AgentContinuationMixin,
@@ -147,6 +150,7 @@ class Agent(
         agent_inbox: Optional[AgentInbox] = None,
         approvals: Optional[AgentApprovals] = None,
         workspace: Optional[AgentWorkspace] = None,
+        agent_dir: Optional[Union[str, os.PathLike[str]]] = None,
     ):
         """Initialize the Agent module.
 
@@ -292,6 +296,9 @@ class Agent(
             Store used to persist and resume agent execution snapshots. A store
             configured directly on the agent takes precedence over one inherited
             from `execution_context(...)`.
+        agent_dir:
+            Managed persistence root. Per-thread SQLite stores are opened lazily.
+            Cannot be combined with explicit storage adapters or approvals.
         workspace:
             Default live workspace for tool dependency injection. A workspace
             supplied through ExecutionScope overrides this default.
@@ -343,6 +350,12 @@ class Agent(
             self.set_annotations(_DEFAULT_AGENT_ANNOTATIONS.copy())
 
         self._set_config(config)
+        self._init_resources(
+            agent_dir,
+            checkpoint_store=checkpoint_store,
+            agent_inbox=agent_inbox,
+            approvals=approvals,
+        )
         self.checkpoint_store = checkpoint_store
         if approvals is not None and not isinstance(approvals, AgentApprovals):
             raise TypeError("approvals must be AgentApprovals or None")
@@ -454,6 +467,7 @@ class Agent(
                 "tool_turn_limit", ToolTurnLimitExtension(max_tool_turns)
             )
 
+    @resource_call
     def forward(
         self,
         message: Optional[Union[str, Mapping[str, Any], Message]] = None,
@@ -603,6 +617,7 @@ class Agent(
                 raise settled_error from exc
             return response
 
+    @resource_call
     async def aforward(
         self,
         message: Optional[Union[str, Mapping[str, Any], Message]] = None,

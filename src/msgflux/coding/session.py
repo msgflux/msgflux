@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, aclosing
+from pathlib import Path
 from uuid import uuid4
 
 from msgflux.coding.checkpoints import CodingCheckpointExtension
@@ -53,38 +54,47 @@ class CodingSession:
         self.agent = agent
         self._thread_id = thread_id if thread_id is not None else new_thread_id()
         self.namespace = agent.get_module_name()
-        self.checkpoint_store = (
-            checkpoint_store
-            if checkpoint_store is not None
-            else getattr(agent, "checkpoint_store", None)
-        )
-        self.task_store = task_store
-        self.agent_inbox = agent_inbox
         self._scope_factory = scope_factory
+        self._binding = AgentSession(
+            agent,
+            checkpoint_store=checkpoint_store,
+            task_store=task_store,
+            agent_inbox=agent_inbox,
+            scope_factory=scope_factory,
+        )
+        self._service_path: Path | None = (
+            agent.agent_dir / "runtime" / "service.sqlite3"
+            if agent.agent_dir is not None and service_store is None
+            else None
+        )
         self._owns_service_store = service_store is None
         self._service_store = (
             service_store
             if service_store is not None
-            else SQLiteServiceStore(":memory:")
+            else (
+                agent._resources.service_store()
+                if self._service_path is not None and self._service_path.exists()
+                else SQLiteServiceStore(":memory:")
+            )
         )
         self.service = AgentService(store=self._service_store)
         self._owns_service = True
+        self._service_persisted = (
+            self._service_path is not None and self._service_path.exists()
+        )
         self._close_task: asyncio.Task | None = None
-        self._register_agent()
+        try:
+            self._register_agent()
+        except BaseException:
+            if self._owns_service_store:
+                self._service_store.close()
+            raise
 
     def _register_agent(self) -> None:
         agent_id = self.namespace
-        self.service.register(
-            agent_id,
-            lambda _thread: AgentSession(
-                self.agent,
-                checkpoint_store=self.checkpoint_store,
-                task_store=self.task_store,
-                agent_inbox=self.agent_inbox,
-                scope_factory=self._scope_factory,
-            ),
-        )
         self.service.store.bind_thread(ServiceThread(self._thread_id, agent_id))
+        self._binding.bind_resources(self.thread_id)
+        self.service.register(agent_id, lambda _thread: self._binding)
 
     @classmethod
     async def from_service(cls, service: AgentService, thread_id: str) -> CodingSession:
@@ -101,12 +111,39 @@ class CodingSession:
         self._owns_service_store = False
         self._thread_id = thread_id
         self.namespace = session.namespace
-        self.checkpoint_store = session.checkpoint_store
-        self.task_store = session.task_store
-        self.agent_inbox = session.agent_inbox
+        self._binding = session
+        self._service_path = None
+        self._service_persisted = False
         self._scope_factory = session.scope_factory
         self._close_task = None
         return self
+
+    @property
+    def checkpoint_store(self):
+        return self._binding.checkpoint_store
+
+    @property
+    def task_store(self):
+        return self._binding.task_store
+
+    @property
+    def agent_inbox(self):
+        return self._binding.agent_inbox
+
+    def _persist_service(self) -> None:
+        if self._service_path is None or self._service_persisted:
+            return
+        store = self.agent._resources.service_store()
+        try:
+            for thread in self._service_store.threads():
+                store.bind_thread(thread)
+        except BaseException:
+            store.close()
+            raise
+        self._service_store.close()
+        self._service_store = store
+        self.service.store = store
+        self._service_persisted = True
 
     @property
     def thread_id(self) -> str:
@@ -130,6 +167,8 @@ class CodingSession:
     async def _shutdown(self) -> None:
         try:
             await self.service.aclose()
+            if self.agent.agent_dir is not None:
+                await self.agent._close_thread_resources(self.thread_id)
         finally:
             if self._owns_service_store:
                 self._service_store.close()
@@ -173,6 +212,7 @@ class CodingSession:
         self, prompt: str, *, request_id: str | None = None
     ) -> AdmissionReceipt:
         """Admit input without attaching an event observer."""
+        self._persist_service()
         if request_id is None:
             request_id = uuid4().hex
         return await self.service.prompt(

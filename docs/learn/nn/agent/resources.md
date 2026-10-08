@@ -1,7 +1,79 @@
 # Durable Runtime Resources
 
-`RuntimeResources` provides an explicit local application layout. Its minimum
-directories keep immutable tool results separate from per-thread checkpoints:
+## Managed Agent Setup
+
+For the usual durable Agent setup, pass one stable `agent_dir` and reuse the
+same Agent name and thread ID across restarts. Creating the Agent and session is
+lazy; the first admitted prompt creates the private runtime directories:
+
+```text
+~/.msgflux/
+  runtime/service.sqlite3
+  threads/project-thread-1/
+    checkpoints.sqlite3
+    tasks.sqlite3
+    inbox.sqlite3
+    approvals.sqlite3
+```
+
+```python
+import asyncio
+from pathlib import Path
+
+import msgflux as mf
+from msgflux.coding import CodingSession
+from msgflux.nn import Agent
+
+
+async def main():
+    model = mf.Model.chat_completion("openai-codex/gpt-6-luna")
+    agent = Agent(
+        name="assistant",
+        model=model,
+        agent_dir=Path.home() / ".msgflux",
+    )
+    session = CodingSession(agent, thread_id="project-thread-1")
+    try:
+        async with session.watch() as observer:
+            print(observer.snapshot.messages)
+            receipt = await session.prompt("Remember the marker silver fern. Reply only ok.")
+            async for event in observer:
+                print(event.type)
+                if event.type in {"run.end", "run.error"}:
+                    break
+        settled = await session.wait(receipt.request_id)
+        print(settled.status)
+    finally:
+        await session.aclose()
+        model.close()
+
+
+asyncio.run(main())
+```
+
+This creates per-thread checkpoint, background task, inbox, and approval stores
+under `agent_dir/threads/<thread_id>/`. An embedded `CodingSession` also stores
+its admission journal at `agent_dir/runtime/service.sqlite3` on the first
+prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
+history and receipts. `session.aclose()` settles managed background work and
+closes its owned handles without deleting persisted data.
+
+Generic `AgentService` applications also get per-thread stores automatically
+when their trusted session factory returns an Agent configured with `agent_dir`.
+The service owns those thread handles and closes them during shutdown. A generic
+service's admission journal remains separately configured by its host; the
+embedded `CodingSession` setup above places its journal under `agent_dir`.
+
+`agent_dir` is private host state. It is not mounted into the Agent workspace
+and does not grant `ReadFileTool` access. Configure an `AgentWorkspace`
+separately when the model needs project files. The approval journal provisions
+storage only; it does not install an approval policy or reviewer. Do not combine
+`agent_dir` with manually supplied checkpoint, task, inbox, or approval stores.
+
+## Advanced: Explicit Resource Helpers
+
+`RuntimeResources` is for hosts that need to manage individual stores or tool
+result storage directly. Constructing it does not create directories:
 
 ```text
 ~/.msgflux/
@@ -14,11 +86,11 @@ directories keep immutable tool results separate from per-thread checkpoints:
       checkpoint.sqlite
 ```
 
-The root is configurable. Constructing an Agent or `RuntimeResources` does not
-automatically create this layout or enable disk persistence. This is host-side
-infrastructure, not a filesystem mount or permission grant to a model.
+This explicit layout is host-side infrastructure, not a filesystem mount or
+permission grant to a model. For a standard Agent, prefer the managed setup
+above, which owns stores together under `agent_dir/threads/<thread_id>/`.
 
-## Configure the Local Layout
+### Configure the Local Layout
 
 ```python
 from msgflux.runtime import RuntimeResources

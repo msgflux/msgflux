@@ -126,7 +126,7 @@ class AgentConversationMixin:
             else context.get("thread_id")
             or (inbox.thread_id if inbox is not None and inbox._scope_bound else None)
         )
-        store = self._get_effective_checkpoint_store()
+        store = self._get_effective_checkpoint_store(thread_id)
         if store is None or thread_id is None:
             return None
         namespace = self.get_module_name()
@@ -151,11 +151,20 @@ class AgentConversationMixin:
 
     # --- Execution Context Resolution ---
 
-    def _get_effective_checkpoint_store(self):
+    def _get_effective_checkpoint_store(self, thread_id=None):
         checkpoint_store = getattr(self, "checkpoint_store", None)
         if checkpoint_store is not None:
             return checkpoint_store
-        return get_execution_context().get("checkpoint_store")
+        context = get_execution_context()
+        inherited = context.get("checkpoint_store")
+        if inherited is not None:
+            return inherited
+        thread_id = thread_id or context.get("thread_id")
+        if self.agent_dir is not None and thread_id is not None:
+            path = self.agent_dir / "threads" / thread_id / "checkpoints.sqlite3"
+            if path.exists():
+                return self._bind_resources(thread_id).checkpoint_store
+        return None
 
     def _get_effective_task_store(self):
         return get_execution_context().get("task_store")

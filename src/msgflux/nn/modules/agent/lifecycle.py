@@ -66,7 +66,7 @@ class AgentLifecycleMixin:
         poll_interval: float = 0.1,
     ):
         """Observe persisted commits with reconnect cursors, unlike live watch()."""
-        store = self._get_effective_checkpoint_store()
+        store = self._get_effective_checkpoint_store(thread_id)
         if store is None:
             raise ValueError("watch_commits requires a checkpoint store")
         return observe_checkpoints(
@@ -333,7 +333,7 @@ class AgentLifecycleMixin:
         scope = self._workspace_scope(kwargs.get("scope"))
         if scope is not None:
             kwargs["scope"] = scope
-        with self._extension_run_snapshot():
+        with self._resource_context(kwargs), self._extension_run_snapshot():
             with (
                 execution_context(scope=kwargs.get("scope")),
                 _agent_context(
@@ -348,7 +348,7 @@ class AgentLifecycleMixin:
         scope = self._workspace_scope(kwargs.get("scope"))
         if scope is not None:
             kwargs["scope"] = scope
-        with self._extension_run_snapshot():
+        with self._resource_context(kwargs), self._extension_run_snapshot():
             with (
                 execution_context(scope=kwargs.get("scope")),
                 _agent_context(
@@ -362,6 +362,7 @@ class AgentLifecycleMixin:
     @contextmanager
     def _event_stream_execution_context(self, kwargs: Dict[str, Any]):
         with (
+            self._resource_context(kwargs),
             self._extension_run_snapshot(),
             _agent_context(
                 self,
@@ -622,7 +623,7 @@ class AgentLifecycleMixin:
         policy = self._get_effective_approvals(approvals)
 
         def load_messages() -> ChatMessages | None:
-            checkpoint_store = self._get_effective_checkpoint_store()
+            checkpoint_store = self._get_effective_checkpoint_store(thread_id)
             if checkpoint_store is None:
                 return None
             state = checkpoint_store.load_latest_run(
