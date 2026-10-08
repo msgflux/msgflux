@@ -166,10 +166,8 @@ class WorkspaceFilesystem(ABC):
             raise ValueError("offset, limit and max_bytes must be positive integers")
         canonical = self._authorize("read", path)
         data = self._read_lines(canonical, offset, limit, max_bytes)
-        if not isinstance(data, bytes):
+        if not isinstance(data, bytes) or len(data) > max_bytes:
             raise ValueError("Backend exceeded the requested read byte limit")
-        if len(data) > max_bytes:
-            raise _read_byte_limit_error(data, max_bytes)
         if data.count(b"\n") + bool(data and not data.endswith(b"\n")) > limit:
             raise ValueError("Backend exceeded the requested read line limit")
         return data
