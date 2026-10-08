@@ -30,6 +30,17 @@ class _OwnedThread(msgspec.Struct):
 _CURRENT_RESOURCES = ContextVar("msgflux_owned_agent_resources", default=None)
 
 
+def _get_tool_result_store(*, create=True, config=None):
+    owned = _CURRENT_RESOURCES.get()
+    if owned is None:
+        if not create:
+            return None
+        raise RuntimeError(
+            "Managed tool offload requires agent_dir or inherited Agent resources"
+        )
+    return owned.resources.tool_result_store(create=create, config=config)
+
+
 def resource_call(method):
     """Cover direct forward calls as well as Module's wider lifecycle contexts."""
     if inspect.iscoroutinefunction(method):
@@ -125,6 +136,11 @@ class AgentResourceMixin:
     def _resource_context(self, kwargs):
         inherited = _CURRENT_RESOURCES.get()
         if inherited is None and self._resources is None:
+            from msgflux.nn.extensions.tool_output import (  # noqa: PLC0415
+                _bind_managed_offload,
+            )
+
+            _bind_managed_offload(self, None)
             yield
             return
         scope = self._get_requested_scope(kwargs) or get_execution_context()["scope"]
@@ -160,6 +176,11 @@ class AgentResourceMixin:
                         raise ValueError(f"agent_dir conflicts with inherited {key}")
                 self._bind_resources(thread_id)
                 owned = self._owned_threads[thread_id]
+        from msgflux.nn.extensions.tool_output import (  # noqa: PLC0415
+            _bind_managed_offload,
+        )
+
+        _bind_managed_offload(self, owned, inherit=inherited is not None)
         # The GIL does not make a read-modify-write lifecycle operation atomic.
         with owned.lock:
             if owned.closing:

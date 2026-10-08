@@ -2,11 +2,16 @@
 
 import asyncio
 from copy import deepcopy
+from pathlib import Path
 from typing import Optional, Union
 
 from msgflux.data.types import Image
 from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
 from msgflux.runtime.workspace.environment import ProcessRequest
+from msgflux.runtime.workspace.filesystem import (
+    _read_byte_limit_error,
+    _ReadByteLimitError,
+)
 from msgflux.tools.config import tool_config
 from msgflux.tools.handles import ToolLibraryHandle
 from msgflux.tools.shell import ShellCommandResult, ShellResult
@@ -20,6 +25,59 @@ def _tool_path(path: str, workspace: AgentWorkspace) -> str:
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
     return workspace.resolve(path)
+
+
+def _read_offloaded_tool_result(
+    path: str,
+    *,
+    workspace: AgentWorkspace,
+    offset: int,
+    limit: int,
+    max_bytes: int = 1_000_000,
+) -> bytes | None:
+    """Read a result only when path names content in the active thread store."""
+    # This private import avoids making the workspace runtime depend on Agent.
+    from msgflux.nn.modules.agent.resources import (  # noqa: PLC0415
+        _get_tool_result_store,
+    )
+    from msgflux.runtime.permissions import require_permissions  # noqa: PLC0415
+    from msgflux.runtime.tool_results import (  # noqa: PLC0415
+        LocalToolResultStore,
+        ToolResultRef,
+    )
+    from msgflux.runtime.workspace.api import (  # noqa: PLC0415
+        require_workspace_authority,
+    )
+
+    store = _get_tool_result_store(create=False)
+    if store is None:
+        return None
+    if not isinstance(store, LocalToolResultStore):
+        raise TypeError("Managed tool result store must be local")
+    try:
+        relative = Path(path).relative_to(store.root)
+    except ValueError:
+        return None
+    if len(relative.parts) != 2 or relative.parts[1] != "content":
+        return None
+    result_id = relative.parts[0]
+
+    # The artifact is outside the project filesystem. Preserve the current
+    # workspace binding and live read capability, but do not grant filesystem
+    # access to the host path or route any other operation through this store.
+    with workspace._bound():
+        require_workspace_authority(workspace)
+        require_permissions(("filesystem.read",))
+        reference = store.get(result_id)
+        if not isinstance(reference, ToolResultRef):
+            raise TypeError("Tool result store returned an invalid reference")
+        store.verify(reference)
+        return store._read_lines(
+            reference,
+            offset=offset,
+            limit=limit,
+            max_bytes=max_bytes,
+        )
 
 
 @tool_config(runtime_inputs=["workspace", "handle"], retry=False)
@@ -52,6 +110,7 @@ class ReadFileTool:
         *,
         supports_vision: bool = False,
         max_image_bytes: int = 1_000_000,
+        max_text_bytes: int = 32 * 1024,
     ):
         if not isinstance(supports_vision, bool):
             raise TypeError("supports_vision must be a boolean")
@@ -59,6 +118,9 @@ class ReadFileTool:
         if type(max_image_bytes) is not int or max_image_bytes <= 0:
             raise ValueError("max_image_bytes must be a positive integer")
         self.max_image_bytes = max_image_bytes
+        if type(max_text_bytes) is not int or max_text_bytes <= 0:
+            raise ValueError("max_text_bytes must be a positive integer")
+        self.max_text_bytes = max_text_bytes
         self.tool_config = deepcopy(self.tool_config)
         guidance = self.tool_config.get("usage_guidance")
         self.tool_config["usage_guidance"] = (
@@ -79,11 +141,10 @@ class ReadFileTool:
         first, count, is_image = self._read_options(path, offset, limit)
         workspace = resolve_workspace(workspace)
         path = _tool_path(path, workspace)
-        data = (
-            workspace.read_prefix(path, max_bytes=self.max_image_bytes + 1)
-            if is_image
-            else workspace.read_lines(path, offset=first, limit=count)
-        )
+        if is_image:
+            data = workspace.read_prefix(path, max_bytes=self.max_image_bytes + 1)
+        else:
+            data = self._read_text(workspace, path, first, count)
         return self._result(path, data, handle)
 
     async def acall(
@@ -98,12 +159,44 @@ class ReadFileTool:
         first, count, is_image = self._read_options(path, offset, limit)
         workspace = resolve_workspace(workspace)
         path = _tool_path(path, workspace)
-        data = (
-            await workspace.aread_prefix(path, max_bytes=self.max_image_bytes + 1)
-            if is_image
-            else await workspace.aread_lines(path, offset=first, limit=count)
-        )
+        if is_image:
+            data = await workspace.aread_prefix(
+                path, max_bytes=self.max_image_bytes + 1
+            )
+        else:
+            data = await asyncio.to_thread(
+                self._read_text, workspace, path, first, count
+            )
         return self._result(path, data, handle)
+
+    def _text_budget_error(self, error: _ReadByteLimitError):
+        if error.single_line:
+            return ValueError(
+                f"A single line exceeds the byte limit ({self.max_text_bytes} bytes); "
+                "read cannot retrieve it. Use another available tool, such as Bash. "
+                "No content was returned."
+            )
+        return ValueError(
+            f"Read exceeds the byte limit ({self.max_text_bytes} bytes). "
+            "Use offset and a smaller limit to paginate. No content was returned."
+        )
+
+    def _read_text(self, workspace, path, first, count):
+        try:
+            data = _read_offloaded_tool_result(
+                path,
+                workspace=workspace,
+                offset=first,
+                limit=count,
+                max_bytes=self.max_text_bytes,
+            )
+            if data is None:
+                data = workspace.read_lines(
+                    path, offset=first, limit=count, max_bytes=self.max_text_bytes
+                )
+            return data
+        except _ReadByteLimitError as error:
+            raise self._text_budget_error(error) from error
 
     def _read_options(self, path, offset, limit):
         if any(
@@ -120,8 +213,14 @@ class ReadFileTool:
 
     def _result(self, path: str, data: bytes, handle: ToolLibraryHandle | None) -> str:
         mime_type = get_mime_type(path)
-        ceiling = self.max_image_bytes if mime_type.startswith("image/") else 1_000_000
+        ceiling = (
+            self.max_image_bytes
+            if mime_type.startswith("image/")
+            else self.max_text_bytes
+        )
         if len(data) > ceiling:
+            if not mime_type.startswith("image/"):
+                raise self._text_budget_error(_read_byte_limit_error(data, ceiling))
             raise ValueError("File exceeds the configured read byte limit")
         if mime_type.startswith("image/"):
             if not self.supports_vision:

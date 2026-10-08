@@ -14,6 +14,9 @@ lazy; the first admitted prompt creates the private runtime directories:
     tasks.sqlite3
     inbox.sqlite3
     approvals.sqlite3
+    tool-results/                  # created only when a result is offloaded
+      res_<id>/content
+      res_<id>/metadata.json
 ```
 
 ```python
@@ -23,7 +26,9 @@ from pathlib import Path
 import msgflux as mf
 from msgflux.coding import CodingSession
 from msgflux.nn import Agent
-from msgflux.runtime import AgentWorkspace
+from msgflux.runtime import AgentWorkspace, ToolOutputOffloadConfig
+from msgflux.nn.extensions import ManagedToolOutputOffloadExtension
+from msgflux.tools.builtin import ReadFileTool
 
 
 async def main():
@@ -38,6 +43,8 @@ async def main():
         model=model,
         agent_dir=Path.home() / ".msgflux",
         workspace=workspace,
+        extensions=[ManagedToolOutputOffloadExtension()],
+        tools=[ReadFileTool()],
     )
     session = CodingSession(agent, thread_id="project-thread-1")
     try:
@@ -64,6 +71,29 @@ its admission journal at `agent_dir/runtime/service.sqlite3` on the first
 prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
 history and receipts. `session.aclose()` settles managed background work and
 closes its owned handles without deleting persisted data.
+
+Register `ManagedToolOutputOffloadExtension()` through `Agent.extensions` to
+opt into durable storage
+for large supported tool outputs. The per-thread `tool-results/` directory is
+created only when an output crosses the inline threshold. Offloaded text and
+JSON references include the real `content` file path; use the existing `read`
+tool with `offset` and `limit` to page through that path. Shell references can
+be read under the same thread directory using their result ID. The preview is
+only an excerpt. The default inline threshold is 32 KiB, preview is 2 KiB, and
+these limits can be changed through `ToolOutputOffloadConfig`. Include
+`ReadFileTool` in the Agent's tools to let the model retrieve saved content.
+Its bounded excerpts stay inline, and existing references are preserved when
+background results are retrieved. Subagents inherit the parent's offload limits
+and thread store; they cannot replace that configuration.
+
+Offload also bounds shell capture and has per-result and total store quotas.
+Other tools produce their full result before transformation, so offload does
+not bound their own allocations. `ReadFileTool` rejects pages above its configurable `max_text_bytes` budget
+(default 32 KiB) with pagination instructions and no content. A single text
+line above that budget requires another available tool, such as Bash, to
+extract a smaller portion; `read` does not offer byte pagination. Storage failures
+report an output-processing error and warn against automatically retrying a
+tool whose effects may already have happened.
 
 `AgentWorkspace.local` defaults to `approval_policy="never"`. Use
 `approval_policy="on-request"` to review protected workspace changes; this
@@ -110,12 +140,18 @@ The service owns those thread handles and closes them during shutdown. A generic
 service's admission journal remains separately configured by its host; the
 embedded `CodingSession` setup above places its journal under `agent_dir`.
 
-`agent_dir` is private host state. It is not mounted into the Agent workspace
-and does not grant `ReadFileTool` access. Configure an `AgentWorkspace`
-separately when the model needs project files. The approval journal provides
-storage; workspace review is enabled by the workspace's `approval_policy`, and
-the reviewer identity remains host-configured. Do not combine `agent_dir` with
-manually supplied checkpoint, task, inbox, or approval stores.
+`agent_dir` is private host state, not a workspace mount. Managed offload gives
+the existing `read` tool a narrow read path to published `content` files in the
+active thread's result store; it does not expose the rest of `agent_dir`, other
+threads, metadata, or staging files. This read checks the live
+`filesystem.read` permission and works with Local and Docker project workspaces
+without mounting the host result directory into a container. Project files
+still require a separately configured `AgentWorkspace`. Offload is opt-in and
+requires `agent_dir` unless the Agent inherits managed resources from its
+parent. The approval journal provides storage; workspace review is enabled by
+the workspace's `approval_policy`, and the reviewer identity remains
+host-configured. Do not combine `agent_dir` with manually supplied checkpoint,
+task, inbox, or approval stores.
 
 ## Advanced: Explicit Resource Helpers
 
@@ -335,7 +371,8 @@ descriptor = response.tool_calls[0].result
 This extension runs after ordinary `after_tool` handlers, before `tool.end` and
 normal tool feedback serialization. Register it on an existing Agent with
 `agent.tool_library.register_extension(extension.name, extension)`; remove it
-with the returned handle. No offload runs without explicit registration.
+with the returned handle. For managed Agents, `ManagedToolOutputOffloadExtension()` in `Agent.extensions`
+installs this behavior automatically; do not combine both configurations.
 
 Successful large results become a JSON-compatible dictionary:
 
