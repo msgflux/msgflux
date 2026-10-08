@@ -58,6 +58,16 @@ class AgentSession:
         approval_reviewer: str | None = None,
         on_close: Callable[[], Any] | None = None,
     ) -> None:
+        managed = getattr(agent, "agent_dir", None) is not None
+        if managed and any(
+            item is not None for item in (checkpoint_store, task_store, agent_inbox)
+        ):
+            raise ValueError(
+                "agent_dir cannot be combined with explicit session stores"
+            )
+        self._managed = managed
+        self._thread_id = None
+        self._host_on_close = on_close
         agent_store = getattr(agent, "checkpoint_store", None)
         if (
             checkpoint_store is not None
@@ -81,9 +91,33 @@ class AgentSession:
         ):
             raise ValueError("approval_reviewer must be a non-empty string")
         self.approval_reviewer = approval_reviewer
-        self.on_close = on_close
+        self.on_close = self._close if managed else on_close
         self.namespace = agent.get_module_name()
         validate_identifier(self.namespace, "namespace")
+
+    def bind_resources(self, thread_id: str, *, create: bool = False) -> None:
+        """Bind managed per-thread stores; observation never creates a new thread."""
+        if not self._managed:
+            return
+        if self._thread_id is not None and self._thread_id != thread_id:
+            raise ValueError("AgentSession must retain its bound thread identity")
+        self._thread_id = thread_id
+        path = self.agent.agent_dir / "threads" / thread_id / "checkpoints.sqlite3"
+        if self.checkpoint_store is None and (create or path.exists()):
+            resources = self.agent._bind_resources(thread_id)
+            self.checkpoint_store = resources.checkpoint_store
+            self.task_store = resources.task_store
+            self.agent_inbox = resources.agent_inbox
+
+    async def _close(self) -> None:
+        if self._thread_id is not None:
+            await self.agent._close_thread_resources(
+                self._thread_id, before_close=self._host_on_close
+            )
+        elif self._host_on_close is not None:
+            result = self._host_on_close()
+            if inspect.isawaitable(result):
+                await result
 
     def scope(
         self,
@@ -105,6 +139,7 @@ class AgentSession:
                 raise ValueError("scope_factory must preserve thread_id")
         if scope.run_id is not None or scope.abort_signal is not None:
             raise ValueError("scope_factory must preserve service-owned run identity")
+        self.bind_resources(thread_id)
         return scope.with_overrides(
             namespace=self.namespace,
             run_id=run_id,
@@ -112,6 +147,7 @@ class AgentSession:
         )
 
     def context(self, scope: ExecutionScope):
+        self.bind_resources(scope.thread_id, create=scope.run_id is not None)
         return execution_context(
             scope=scope,
             checkpoint_store=self.checkpoint_store,
@@ -351,6 +387,7 @@ class AgentService:
             session = await self._session(thread_id)
             existing = self.store.get(thread_id, request_id)
             if existing is None:
+                session.bind_resources(thread_id, create=True)
                 self._validate_new_input(session, thread_id)
             record = self.store.admit(thread_id, request_id, prompt, session.namespace)
             if record.receipt.status == "accepted":
