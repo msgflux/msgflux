@@ -21,8 +21,15 @@ from msgflux.exceptions import (
 from msgflux.logger import logger
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
-from msgflux.runtime.events import EventType
+from msgflux.runtime.events import EventType, _hub_event_sink
 from msgflux.runtime.service.approvals import project, review_record
+from msgflux.runtime.service.policies import (
+    approval_review_context,
+    clipped_policy,
+    initial_policy,
+    ready_approval_resume,
+    requested_permissions,
+)
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
@@ -35,6 +42,7 @@ from msgflux.runtime.service.records import (
     ServiceThread,
 )
 from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
+from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
 
 
 class AgentSession:
@@ -90,7 +98,8 @@ class AgentSession:
             not isinstance(approval_reviewer, str) or not approval_reviewer.strip()
         ):
             raise ValueError("approval_reviewer must be a non-empty string")
-        self.approval_reviewer = approval_reviewer
+        self.approval_reviewer = approval_reviewer or ("user" if managed else None)
+        self.workspace_policy_state = None
         self.on_close = self._close if managed else on_close
         self.namespace = agent.get_module_name()
         validate_identifier(self.namespace, "namespace")
@@ -144,6 +153,7 @@ class AgentSession:
             namespace=self.namespace,
             run_id=run_id,
             abort_signal=signal,
+            principal=scope.principal or self.approval_reviewer,
         )
 
     def context(self, scope: ExecutionScope):
@@ -153,6 +163,7 @@ class AgentSession:
             checkpoint_store=self.checkpoint_store,
             task_store=self.task_store,
             agent_inbox=self.agent_inbox,
+            workspace_policy=self.workspace_policy_state,
         )
 
 
@@ -182,6 +193,7 @@ class AgentService:
         self._lock = asyncio.Lock()
         self._closed = False
         self._shutdown_task: asyncio.Task | None = None
+        self._before_write = None
 
     def register(self, agent_id: str, factory: Callable) -> None:
         """Register a sync/async ServiceThread -> AgentSession host factory."""
@@ -261,7 +273,16 @@ class AgentService:
             if any(item.agent is session.agent for item in self._sessions.values()):
                 raise ServiceConflictError("Factories must isolate Agents by thread")
             try:
-                session.scope(thread_id)
+                scope = session.scope(thread_id)
+                stored = self.store.workspace_policy(thread_id)
+                selected = stored or initial_policy(thread_id, scope.workspace)
+                session.workspace_policy_state = (
+                    WorkspacePolicyState(
+                        scope.workspace, clipped_policy(selected, scope.workspace)
+                    )
+                    if scope.workspace is not None
+                    else None
+                )
             except BaseException:
                 if session.on_close is not None:
                     closed = session.on_close()
@@ -269,7 +290,12 @@ class AgentService:
                         await closed
                 raise
             self._sessions[thread_id] = session
-        return self._sessions[thread_id]
+        session = self._sessions[thread_id]
+        state = session.workspace_policy_state
+        saved = self.store.workspace_policy(thread_id) if state is not None else None
+        if saved is not None and saved.revision > state.current.revision:
+            state.current = clipped_policy(saved, state.workspace)
+        return session
 
     async def session(self, thread_id: str) -> AgentSession:
         """Resolve live dependencies for a trusted in-process host.
@@ -279,6 +305,86 @@ class AgentService:
         """
         async with self._lock:
             return await self._session(thread_id)
+
+    async def workspace_policy(self, thread_id: str) -> WorkspacePolicy:
+        """Read this thread's effective policy without creating default rows."""
+        async with self._lock:
+            session = await self._session(thread_id)
+            state = session.workspace_policy_state
+            return (
+                state.current if state is not None else initial_policy(thread_id, None)
+            )
+
+    async def update_workspace_policy(
+        self,
+        thread_id: str,
+        *,
+        permissions=None,
+        approval_policy=None,
+        expected_revision: int | None = None,
+    ) -> WorkspacePolicy:
+        """Persist a host-authorized override before publishing it to live calls.
+
+        Permission presets are bounded by the trusted workspace ceiling.
+        Changing approval mode does not itself bypass pending batch validation.
+        """
+        async with self._lock:
+            self._require_open()
+            if self._before_write is not None:
+                self._before_write()
+            session = await self._session(thread_id)
+            state = session.workspace_policy_state
+            workspace = state.workspace if state is not None else None
+            if workspace is None:
+                raise ValueError("This session has no workspace policy to update")
+            current = state.current
+            selected = (
+                requested_permissions(permissions, workspace)
+                if permissions is not None
+                else current.permission_set()
+            )
+            proposed = msgspec.structs.replace(
+                current,
+                permissions=tuple(sorted(selected.grants)),
+                resources=tuple(
+                    sorted(selected.resources, key=lambda r: (r.resource, r.action))
+                ),
+                approval_policy=approval_policy
+                if approval_policy is not None
+                else current.approval_policy,
+            )
+            proposed = clipped_policy(proposed, workspace)
+            saved = self.store.update_workspace_policy(
+                proposed, expected_revision=expected_revision
+            )
+            state.current = saved
+            record, error = self._resume_policy_batch(session, thread_id)
+            self._publish_policy_update(session, saved, record, error)
+            return saved
+
+    def _resume_policy_batch(self, session, thread_id):
+        state = session.workspace_policy_state
+        if self._closed or state is None or state.current.approval_policy != "never":
+            return None, None
+        record, error = ready_approval_resume(self, session, thread_id)
+        if record is not None:
+            record = self.store.prepare_resume(record)
+            self._schedule(record, session)
+        return record, error
+
+    @staticmethod
+    def _publish_policy_update(session, policy, record, error):
+        _hub_event_sink().emit(
+            EventType.WORKSPACE_POLICY_UPDATED,
+            {
+                "policy": msgspec.to_builtins(policy),
+                "resumed_run_id": record.receipt.run_id if record is not None else None,
+                "resume_error": msgspec.to_builtins(error)
+                if error is not None
+                else None,
+            },
+            scope=session.scope(policy.thread_id),
+        )
 
     async def runs(self, thread_id: str) -> tuple[RunSummary, ...]:
         """Return saved run metadata for a thread, newest first.
@@ -313,8 +419,7 @@ class AgentService:
                 raise PermissionError(
                     "This session has no configured approval reviewer"
                 )
-            with session.context(session.scope(thread_id, run_id=run_id)):
-                policy = session.agent._get_effective_approvals()
+            with approval_review_context(session, thread_id, run_id) as policy:
                 if policy is None:
                     return ()
                 state = session.agent.inspect_approval_batch(thread_id, run_id)
@@ -384,11 +489,20 @@ class AgentService:
     ) -> AdmissionReceipt:
         """Admit one input; duplicate identity returns the same run, never another."""
         async with self._lock:
+            self._require_open()
+            if self._before_write is not None:
+                self._before_write()
             session = await self._session(thread_id)
             existing = self.store.get(thread_id, request_id)
             if existing is None:
-                session.bind_resources(thread_id, create=True)
                 self._validate_new_input(session, thread_id)
+                session.bind_resources(thread_id, create=True)
+                state = session.workspace_policy_state
+                if state is not None and self.store.workspace_policy(thread_id) is None:
+                    saved = self.store.update_workspace_policy(
+                        state.current, expected_revision=0
+                    )
+                    state.current = saved
             record = self.store.admit(thread_id, request_id, prompt, session.namespace)
             if record.receipt.status == "accepted":
                 self._schedule(record, session)
@@ -454,6 +568,28 @@ class AgentService:
                     self.store.finish(receipt, self._owner_id, status, error)
             finally:
                 self._workers.pop(key, None)
+            # A policy can change while the model/approval preparation is still
+            # running. Reevaluate only after that worker has finished its Agent
+            # context and durably paused; never overlap the two executions.
+            if status == "paused":
+                await self._resume_quiescent_policy(worker, key)
+
+    async def _resume_quiescent_policy(self, worker, key):
+        if self._closed:
+            return
+        async with self._lock:
+            if key in self._workers:
+                return
+            resumed, blocked = self._resume_policy_batch(
+                worker.session, worker.receipt.thread_id
+            )
+            if resumed is not None or blocked is not None:
+                self._publish_policy_update(
+                    worker.session,
+                    worker.session.workspace_policy_state.current,
+                    resumed,
+                    blocked,
+                )
 
     @staticmethod
     async def _execute(record: AdmissionRecord, worker: _Worker) -> AdmissionStatus:
@@ -502,8 +638,16 @@ class AgentService:
         async with self._lock:
             session = await self._session(thread_id)
             with session.context(session.scope(thread_id)):
+                policy = (
+                    session.agent._get_workspace_approvals(force=True)
+                    if session._managed and session.checkpoint_store is not None
+                    else None
+                    if session._managed
+                    else session.agent._get_effective_approvals()
+                )
                 watcher = session.agent.watch(
                     thread_id,
+                    approvals=policy,
                     event_buffer_limit=event_buffer_limit,
                 )
                 await watcher.__aenter__()

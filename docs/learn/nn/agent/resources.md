@@ -23,14 +23,21 @@ from pathlib import Path
 import msgflux as mf
 from msgflux.coding import CodingSession
 from msgflux.nn import Agent
+from msgflux.runtime import AgentWorkspace
 
 
 async def main():
     model = mf.Model.chat_completion("openai-codex/gpt-6-luna")
+    workspace = AgentWorkspace.local(
+        Path.cwd(),
+        read_only=True,
+        approval_policy="on-request",
+    )
     agent = Agent(
         name="assistant",
         model=model,
         agent_dir=Path.home() / ".msgflux",
+        workspace=workspace,
     )
     session = CodingSession(agent, thread_id="project-thread-1")
     try:
@@ -58,6 +65,45 @@ prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
 history and receipts. `session.aclose()` settles managed background work and
 closes its owned handles without deleting persisted data.
 
+`AgentWorkspace.local` defaults to `approval_policy="never"`. Use
+`approval_policy="on-request"` to review protected workspace changes; this
+derived policy requires the managed approval store provided by `agent_dir`.
+The policy's selected permissions cannot exceed `workspace.permissions`, and
+read-only child scopes remain limited by their inherited permissions. A host
+can update a live thread's selected policy and persist the change:
+
+```python
+from msgflux.runtime import PermissionSet
+
+current = await session.workspace_policy()
+updated = await session.update_workspace_policy(
+    permissions=PermissionSet({"filesystem.read", "filesystem.list"}),
+    approval_policy="never",
+    expected_revision=current.revision,
+)
+```
+
+The `read-only` and `full-access` presets are also accepted. `full-access` means
+the workspace's existing host ceiling; it does not add permissions to that
+ceiling. Independent tool capabilities remain controlled by the host's execution
+scope; a workspace override cannot grant them. Updates take effect at permission
+checks during a live operation and are stored with a new revision. Supplying `expected_revision` rejects stale
+concurrent updates. `workspace.policy_updated` reports the selected policy and
+whether a safe pending approval batch resumed; `resume_error` explains why a
+batch remained paused. If the change occurs while approval preparation is still
+running, reevaluation waits until that worker has durably paused and released its
+Agent context.
+
+When a managed service changes from `on-request` to `never`, it may automatically
+resume only an approval batch owned by that live service instance after checking
+the current tool implementation, invocation, workspace identity, and
+permissions. An expired, claimed, uncertain, changed, or otherwise unverifiable
+request remains paused for explicit recovery. `AgentWorkspace.local()` creates
+a fresh workspace identity when reconstructed, so do not expect pending approval
+resume across process restarts when rebuilding it with that factory. Use a
+backend reconnect with the saved workspace identity when approval recovery must
+survive restarts.
+
 Generic `AgentService` applications also get per-thread stores automatically
 when their trusted session factory returns an Agent configured with `agent_dir`.
 The service owns those thread handles and closes them during shutdown. A generic
@@ -66,9 +112,10 @@ embedded `CodingSession` setup above places its journal under `agent_dir`.
 
 `agent_dir` is private host state. It is not mounted into the Agent workspace
 and does not grant `ReadFileTool` access. Configure an `AgentWorkspace`
-separately when the model needs project files. The approval journal provisions
-storage only; it does not install an approval policy or reviewer. Do not combine
-`agent_dir` with manually supplied checkpoint, task, inbox, or approval stores.
+separately when the model needs project files. The approval journal provides
+storage; workspace review is enabled by the workspace's `approval_policy`, and
+the reviewer identity remains host-configured. Do not combine `agent_dir` with
+manually supplied checkpoint, task, inbox, or approval stores.
 
 ## Advanced: Explicit Resource Helpers
 

@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal
 
 import msgspec
 
+from msgflux.runtime.permissions import ResourcePermission
 from msgflux.runtime.service.records import ApprovalReview, RunSummary, ServiceThread
 
 Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
@@ -40,6 +41,13 @@ class ShutdownResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class ApprovalDecisionRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     approved: bool
     expected_revision: Annotated[int, msgspec.Meta(gt=0)]
+
+
+class WorkspacePolicyRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    permissions: tuple[str, ...] | Literal["read-only", "full-access"] | None = None
+    resources: tuple[ResourcePermission, ...] | None = None
+    approval_policy: Literal["on-request", "never"] | None = None
+    expected_revision: Annotated[int, msgspec.Meta(ge=0)] | None = None
 
 
 class AgentsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

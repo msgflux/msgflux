@@ -83,10 +83,52 @@ not persistence across server restarts. The host configures model credentials,
 permissions, principal and tools. The thread's optional `cwd` is an absolute
 canonical host path stored in its immutable service binding. A client may request
 a project location when opening the thread; the trusted factory decides whether
-to use that path and which workspace and permissions to grant. A path alone
-grants no tool access. Reopening the thread without a path returns its stored
-binding, and supplying a different path conflicts. Clients cannot replace model
-settings or grants through the HTTP payload.
+to use that path and which workspace and maximum permissions to grant. A path
+alone grants no tool access. Reopening the thread without a path returns its
+stored binding, and supplying a different path conflicts. Clients cannot replace
+model settings or expand the workspace's permission ceiling through the HTTP
+payload.
+
+An authenticated service owner can read and update the selected policy for an
+existing thread:
+
+```python
+from msgflux.runtime import PermissionSet
+
+policy = await session.workspace_policy()
+updated = await session.update_workspace_policy(
+    permissions=PermissionSet({"filesystem.read", "filesystem.list"}),
+    approval_policy="on-request",
+    expected_revision=policy.revision,
+)
+print(updated.permissions, updated.approval_policy, updated.revision)
+
+read_only = await session.update_workspace_policy(permissions="read-only")
+full = await session.update_workspace_policy(permissions="full-access")
+```
+
+`permissions` can be an exact `PermissionSet`, the `read-only` or `full-access`
+preset, or omitted to leave the current selection unchanged. The policy is
+persisted with an incrementing revision and audit history. Concurrent updates
+can supply `expected_revision`; a stale revision returns a conflict. The
+selected permissions are always intersected with the workspace's host-configured
+ceiling and any parent execution permissions. `full-access` therefore does not
+expand the host grant. Approval mode selects the workspace's review behavior; it
+never selects a reviewer or bypasses permission checks. A read-only child scope
+remains limited after a parent policy update. Policy changes are visible at live
+permission checks and do not rewrite prior decisions or grant authority to an
+already approved proposal.
+
+Changing a managed service thread from `on-request` to `never` may resume a
+pending approval batch only when the current service instance owns the paused
+run and validates the complete batch against current tool code, invocation,
+workspace identity, and permissions. Expired, claimed, uncertain, changed, or
+otherwise unverifiable approvals remain paused. The
+`workspace.policy_updated` event reports a resumed run ID or a `resume_error`
+explaining why recovery did not proceed. A freshly constructed
+`AgentWorkspace.local()` has a new identity; durable approval recovery across
+process restarts requires reconnecting to the same backend workspace identity.
+See [durable runtime resources](resources.md) for the managed Agent setup.
 
 This adapter runs in a single process around one service. Local daemon discovery/startup is available through the [local process API](service-local.md).
 Coordination across independent server workers remains a separate integration. Do not run multiple Uvicorn workers against one in-memory service.

@@ -37,10 +37,12 @@ from msgflux.nn.modules.container import ModuleDict
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import (
     ExecutionScope,
+    _get_execution_scope_ceiling,
     execution_context,
     get_execution_context,
 )
 from msgflux.runtime.event_hub import ThreadWatcher, get_event_hub
+from msgflux.runtime.permissions import intersect_permissions
 
 if TYPE_CHECKING:
     pass
@@ -608,8 +610,21 @@ class AgentLifecycleMixin:
     def _workspace_scope(self, scope):
         if scope is not None and not isinstance(scope, ExecutionScope):
             raise TypeError("scope must be ExecutionScope or None")
-        current = get_execution_context()["scope"]
+        current = _get_execution_scope_ceiling()
         base = scope or current
+        if (
+            self.workspace is not None
+            and base.workspace is not None
+            and self.workspace is not base.workspace
+            and self.workspace.shares_environment(base.workspace)
+        ):
+            return base.with_overrides(
+                permissions=intersect_permissions(
+                    base.permissions or base.workspace.permissions,
+                    self.workspace.permissions,
+                    workspace_id=self.workspace.workspace_id,
+                ),
+            )
         if base.workspace is None:
             workspace = current.workspace or self.workspace
             if workspace is not None:

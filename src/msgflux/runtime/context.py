@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Mapping
 from uuid import uuid4
 
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.permissions import PermissionSet, intersect_permissions
+from msgflux.runtime.workspace.policy import WorkspacePolicyState
 
 if TYPE_CHECKING:
     from msgflux.runtime.workspace.api import AgentWorkspace
@@ -115,6 +116,9 @@ _CURRENT_SCOPE: contextvars.ContextVar[ExecutionScope | None] = contextvars.Cont
     "msgflux_execution_scope",
     default=None,
 )
+_CURRENT_WORKSPACE_POLICY: contextvars.ContextVar[WorkspacePolicyState | None] = (
+    contextvars.ContextVar("msgflux_workspace_policy", default=None)
+)
 _CURRENT_THREAD_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "msgflux_thread_id",
     default=None,
@@ -170,7 +174,7 @@ _CURRENT_TOOL_CALL_MESSAGE_OFFSET: contextvars.ContextVar[int | None] = (
 
 
 @contextmanager
-def execution_context(
+def execution_context(  # noqa: C901
     *,
     scope: ExecutionScope | None = None,
     thread_id: str | None = None,
@@ -186,6 +190,7 @@ def execution_context(
     abort_signal: AbortSignal | None = None,
     tool_call_id: str | None = None,
     tool_call_message_offset: int | None = None,
+    workspace_policy: WorkspacePolicyState | None = None,
 ):
     """Set execution identity for the enclosed scope.
 
@@ -198,7 +203,7 @@ def execution_context(
             f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
         )
 
-    current_scope = get_execution_scope()
+    current_scope = _get_execution_scope_ceiling()
     base_scope = scope or current_scope
     principal = base_scope.principal
     permissions = base_scope.permissions
@@ -213,7 +218,13 @@ def execution_context(
         if principal is not None and principal != current_scope.principal:
             raise ValueError("Nested execution cannot change its principal")
         principal = current_scope.principal
-        inherited = current_scope.permissions or PermissionSet()
+        inherited = current_scope.permissions
+        if inherited is None:
+            inherited = (
+                current_scope.workspace.permissions
+                if current_scope.workspace is not None
+                else PermissionSet()
+            )
         permissions = intersect_permissions(
             inherited,
             permissions if permissions is not None else inherited,
@@ -266,11 +277,20 @@ def execution_context(
         else base_scope.abort_signal or current_abort_signal
     )
 
-    permissions = (
-        workspace.effective_permissions(permissions)
-        if workspace is not None
-        else permissions
-    )
+    active_policy = _CURRENT_WORKSPACE_POLICY.get()
+    if workspace_policy is not None:
+        if not isinstance(workspace_policy, WorkspacePolicyState):
+            raise TypeError("workspace_policy must be WorkspacePolicyState or None")
+        if active_policy is not None and active_policy is not workspace_policy:
+            raise ValueError("Nested execution cannot replace workspace policy")
+        active_policy = workspace_policy
+    elif active_policy is not None and workspace is not None:
+        if active_policy.workspace is not None and not workspace.shares_environment(
+            active_policy.workspace
+        ):
+            raise ValueError("Nested execution cannot replace the policy workspace")
+    if active_policy is None and workspace is not None:
+        permissions = workspace.effective_permissions(permissions)
     resolved_scope = ExecutionScope(
         thread_id=resolved_thread_id,
         namespace=resolved_namespace,
@@ -282,6 +302,11 @@ def execution_context(
         permissions=permissions,
         workspace=workspace,
     )
+    if (
+        active_policy is not None
+        and active_policy.current.thread_id != resolved_scope.thread_id
+    ):
+        raise ValueError("Workspace policy does not belong to this thread")
     current_checkpoint_store = _CURRENT_CHECKPOINT_STORE.get()
     resolved_checkpoint_store = (
         checkpoint_store if checkpoint_store is not None else current_checkpoint_store
@@ -304,6 +329,7 @@ def execution_context(
     )
 
     scope_token = _CURRENT_SCOPE.set(resolved_scope)
+    policy_token = _CURRENT_WORKSPACE_POLICY.set(active_policy)
     thread_token = _CURRENT_THREAD_ID.set(resolved_scope.thread_id)
     namespace_token = _CURRENT_NAMESPACE.set(resolved_scope.namespace)
     run_token = _CURRENT_RUN_ID.set(resolved_scope.run_id)
@@ -326,9 +352,10 @@ def execution_context(
         else _CURRENT_TOOL_CALL_MESSAGE_OFFSET.get()
     )
     try:
-        yield resolved_scope
+        yield get_execution_scope()
     finally:
         _CURRENT_SCOPE.reset(scope_token)
+        _CURRENT_WORKSPACE_POLICY.reset(policy_token)
         _CURRENT_THREAD_ID.reset(thread_token)
         _CURRENT_NAMESPACE.reset(namespace_token)
         _CURRENT_RUN_ID.reset(run_token)
@@ -357,6 +384,19 @@ def thread_context(
 
 def get_execution_scope() -> ExecutionScope:
     """Return the active execution scope."""
+    scope = _CURRENT_SCOPE.get() or ExecutionScope()
+    policy = _CURRENT_WORKSPACE_POLICY.get()
+    if policy is not None:
+        return replace(scope, permissions=policy.effective_permissions(scope))
+    return scope
+
+
+def _get_execution_scope_ceiling() -> ExecutionScope:
+    """Return the immutable scope ceiling before live policy clipping.
+
+    Trusted delegation code uses this to avoid converting a temporary runtime
+    restriction into a permanent child ceiling.
+    """
     return _CURRENT_SCOPE.get() or ExecutionScope()
 
 
@@ -381,6 +421,7 @@ def get_execution_context() -> Mapping[str, Any | None]:
         "principal": scope.principal,
         "permissions": scope.permissions,
         "workspace": scope.workspace,
+        "workspace_policy": _CURRENT_WORKSPACE_POLICY.get(),
     }
 
 

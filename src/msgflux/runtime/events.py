@@ -45,6 +45,7 @@ class EventType:
     TOOL_PERMISSION_DENIED = "tool.permission_denied"
     TOOL_APPROVAL_REQUIRED = "tool.approval_required"
     TOOL_APPROVAL_RESOLVED = "tool.approval_resolved"
+    WORKSPACE_POLICY_UPDATED = "workspace.policy_updated"
     TASK_START = "task.start"
     TASK_UPDATE = "task.update"
     TASK_END = "task.end"

@@ -4,6 +4,7 @@ from typing import Any, List, Mapping, Optional
 
 from msgflux.runtime.context import (
     ExecutionScope,
+    _get_execution_scope_ceiling,
     get_execution_context,
     new_run_id,
     new_thread_id,
@@ -134,7 +135,7 @@ class AgentTool(ToolBucket, ToolLibraryOperator):
         tool_call_id: str | None,
     ) -> ExecutionScope:
         context = get_execution_context()
-        parent_scope = context["scope"]
+        parent_scope = _get_execution_scope_ceiling()
         thread_id = context.get("thread_id")
         task_handle = context.get("task_handle")
         current_run_id = context.get("run_id")

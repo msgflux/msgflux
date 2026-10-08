@@ -77,15 +77,37 @@ class AgentApprovalMixin:
 
     def _get_effective_approvals(self, approvals=_UNSET):
         if approvals is _UNSET:
-            approvals = (_APPROVAL_POLICIES.get() or {}).get(id(self), self.approvals)
+            policies = _APPROVAL_POLICIES.get() or {}
+            if id(self) in policies:
+                approvals = policies[id(self)]
+            elif self.approvals is not None:
+                approvals = self.approvals
+            else:
+                return self._get_workspace_approvals()
         if approvals is not None and not isinstance(approvals, AgentApprovals):
             raise TypeError("approvals must be AgentApprovals or None")
         return approvals
 
+    def _get_workspace_approvals(self, *, force=False, _policy_version=None):
+        from msgflux.runtime.approvals.workspace import (  # noqa: PLC0415
+            get_workspace_approvals,
+        )
+
+        return get_workspace_approvals(
+            self, force=force, _policy_version=_policy_version
+        )
+
     @contextmanager
     def _approval_context(self, approvals):
+        if approvals is _UNSET:
+            # Automatically selected Workspace policy is live and may change
+            # during a run. Explicit overrides are captured for this call.
+            yield
+            return
         policies = dict(_APPROVAL_POLICIES.get() or {})
-        policies[id(self)] = self._get_effective_approvals(approvals)
+        if approvals is not None and not isinstance(approvals, AgentApprovals):
+            raise TypeError("approvals must be AgentApprovals or None")
+        policies[id(self)] = approvals
         token = _APPROVAL_POLICIES.set(policies)
         try:
             yield
@@ -220,7 +242,8 @@ class AgentApprovalMixin:
         return response
 
     def _approval_pending(self, model_response, intents, messages):
-        if self._get_effective_approvals() is None:
+        policy = self._get_effective_approvals()
+        if policy is None:
             return None
         run = get_agent_run()
         if run is None:
@@ -250,6 +273,7 @@ class AgentApprovalMixin:
                 "native_calls": deepcopy(model_response.data.native_calls),
                 "intents": current,
                 "requests": {},
+                "policy_version": policy.policy_version,
             }
             run.set_extension(_KEY, pending)
             pending = run.get_extension(_KEY)
