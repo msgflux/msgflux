@@ -115,6 +115,15 @@ Use a stable client-generated request ID for retries; correlation IDs are not
 implicitly idempotency keys. Claims and finalization compare a journal revision
 and owner, so a late finalization cannot replace a newer attempt.
 
+Admission also checks the latest checkpoint before scheduling new work. If a
+workspace command receipt has an uncertain outcome, `prompt()` raises
+`ServiceRecoveryRequiredError` with the reconciliation reason and does not
+admit or start another run. Recovery checks report the same error when a command
+receipt still needs host reconciliation. Reconcile the command through the
+trusted workspace host, then retry admission or recovery. An approval request
+raised during a run is different: the run settles as `paused` and can be reviewed
+and resumed through the approval flow.
+
 `open_thread()` records its logical binding without constructing an Agent. Its
 optional `cwd` must be an absolute path to an existing directory; it is resolved to an
 absolute canonical host path and becomes part of the immutable thread binding.
@@ -226,6 +235,11 @@ Without a checkpoint its outcome stays uncertain, so the service refuses to
 resend the original prompt. A paused or failed run resumes under its existing
 run ID and Agent's workspace, approvals and command-receipt validation. Only the
 latest unfinished checkpoint can resume.
+
+If command-receipt validation finds an uncertain command, recovery raises
+`ServiceRecoveryRequiredError` with the concrete reason and schedules no worker.
+The host must reconcile that command before retrying recovery; elapsed time alone
+does not establish its outcome.
 
 A terminal checkpoint written before the journal settled can reconcile its
 receipt without another model call. These are separate transactions, not a

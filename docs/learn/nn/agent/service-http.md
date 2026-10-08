@@ -312,6 +312,12 @@ follow-up queue. Interruption targets an explicit run and returns a boolean.
 An unfinished run already paused or failed in this service can resume through its
 normal recovery checks. The HTTP resume route does not itself approve a tool
 invocation; use the explicit review and decision operations described above.
+An uncertain workspace command blocks admission or recovery with HTTP 409 and
+error code `recovery_required`; the HTTP client raises
+`ServiceRecoveryRequiredError` with the host's reason. No new worker is started.
+Reconcile the command through the trusted host before retrying. An approval
+request raised by a run remains a normal paused run: review and record a decision,
+then resume it explicitly.
 
 HTTP clients cannot assert `worker_stopped` or import uncertain executions after
 a process restart. A trusted host must establish old-worker quiescence and use
@@ -382,6 +388,12 @@ returns 403, and invalid payloads return 422. Unexpected
 server errors return a generic 500 message and are logged on the host. Model
 failures settle their run receipts and appear as `run.error` events, rather than
 turning accepted prompts into transport validation errors.
+
+For an uncertain workspace command, recovery responses use
+`{"code": "recovery_required", "message": "<host reason>"}`. The HTTP client
+maps this response to `ServiceRecoveryRequiredError`; inspect the reason, have
+the trusted host reconcile the command, then retry. A run waiting for an ordinary
+tool approval instead settles with status `paused` and emits `run.paused`.
 
 ## Ownership And Coding Sessions
 

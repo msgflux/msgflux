@@ -187,6 +187,12 @@ under this same quiescence condition. Recovery retains the existing run identity
 and saved context; it does not submit the old user message again. Workspace,
 command-receipt and approval validation still apply.
 
+If a command receipt has an uncertain outcome, `prompt()` and recovery raise
+`ServiceRecoveryRequiredError` with the concrete reconciliation reason, without
+starting a new run. Reconcile the command through the trusted workspace host
+before retrying. An approval request inside a run remains a normal `paused`
+receipt; inspect and decide the approval, then resume that run.
+
 ## Shared Runtime
 
 An application managing several threads can register factories once and attach

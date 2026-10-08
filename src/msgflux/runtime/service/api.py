@@ -467,6 +467,13 @@ class AgentService:
                 return project(result, diff=initial_review.diff)
 
     @staticmethod
+    def _validate_command_receipts(session: AgentSession, state) -> None:
+        try:
+            session.agent._validate_checkpoint_command_receipts(state)
+        except TaskPauseRequestedError as exc:
+            raise ServiceRecoveryRequiredError(str(exc)) from exc
+
+    @staticmethod
     def _validate_new_input(session: AgentSession, thread_id: str) -> None:
         store = session.checkpoint_store
         if store is None:
@@ -474,7 +481,7 @@ class AgentService:
         state = store.load_latest_run(session.namespace, thread_id)
         if state is None:
             return
-        session.agent._validate_checkpoint_command_receipts(state)
+        AgentService._validate_command_receipts(session, state)
         if state.get("status") not in {"completed", "interrupted"}:
             raise ServiceRecoveryRequiredError(
                 "The latest run requires explicit recovery"
@@ -801,7 +808,7 @@ class AgentService:
                 "Only the latest unfinished run can resume"
             )
         with session.context(session.scope(receipt.thread_id, run_id=receipt.run_id)):
-            session.agent._validate_checkpoint_command_receipts(state)
+            AgentService._validate_command_receipts(session, state)
             session.agent._validate_checkpoint_workspace(state)
         return state
 

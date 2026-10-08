@@ -13,6 +13,7 @@ uvicorn = pytest.importorskip("uvicorn")
 
 from msgflux.coding import CodingSession
 from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
@@ -36,6 +37,7 @@ from msgflux.runtime.service.http import (
 )
 from msgflux.runtime.service.http import create_service_app
 from msgflux.runtime.events import _hub_event_sink
+from msgflux.runtime.workspace.receipts import new_command_receipt
 from msgflux.tools.builtin import WriteTool
 from msgflux.utils.msgspec import msgspec_dumps
 
@@ -406,6 +408,71 @@ async def test_invalid_run_and_unknown_request_fail_without_creating_managed_sta
 
         assert not (agent_dir / "threads").exists()
         assert not (agent_dir / "runtime").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_unresolved_command_receipt_reason_survives_prompt_and_resume(kind):
+    async def pause_once(**_kwargs):
+        raise TaskPauseRequestedError(message="seed paused admission")
+
+    agent = _agent(answer=pause_once)
+    async with _session(kind, agent, f"command-recovery-{kind}") as session:
+        admitted = await session.prompt("seed prior run", request_id="seed-request")
+        paused = await asyncio.wait_for(session.wait("seed-request"), timeout=5)
+        assert paused.status == "paused"
+        model_calls = agent.generator.aforward.await_count
+
+        receipt = new_command_receipt(
+            workspace_reference=None,
+            backend="local",
+            run_id=admitted.run_id,
+            tool_call_id="uncertain-command",
+            message_offset=1,
+        )
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(),
+            session.thread_id,
+            admitted.run_id,
+            {
+                "schema_version": 1,
+                "status": "interrupted",
+                "scope": {
+                    "namespace": agent.get_module_name(),
+                    "thread_id": session.thread_id,
+                    "run_id": admitted.run_id,
+                },
+                "messages": {
+                    "items": [],
+                    "metadata": {},
+                    "thread_id": session.thread_id,
+                },
+                "runtime": {
+                    "schema_version": 1,
+                    "extensions": {"command_receipts": [receipt.to_dict()]},
+                },
+            },
+        )
+        runs_before = await session.runs()
+
+        with pytest.raises(ServiceRecoveryRequiredError, match="host reconciliation"):
+            await session.resume(admitted.run_id)
+        with pytest.raises(ServiceRecoveryRequiredError, match="host reconciliation"):
+            await session.prompt(
+                "do not admit while command is uncertain",
+                request_id="blocked-request",
+            )
+
+        assert (await session.receipt("seed-request")).status == "paused"
+        assert (await session.runs()) == runs_before
+        assert agent.generator.aforward.await_count == model_calls
+        if kind == "local":
+            with pytest.raises(KeyError):
+                await session.receipt("blocked-request")
+        else:
+            with pytest.raises(AgentServiceHTTPError) as missing:
+                await session.receipt("blocked-request")
+            assert missing.value.status_code == 404
 
 
 @pytest.mark.asyncio
