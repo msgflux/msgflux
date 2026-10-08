@@ -258,7 +258,8 @@ them. All following events remain correlatable through `run_id` and
 | `reasoning_summary.delta` | Provider reasoning-summary chunk |
 | `message.end` | Complete assistant output |
 | `tool.start` | A validated local tool call or an observed provider search is starting |
-| `tool.blocked` | A tool policy rejected the call before execution; includes the public arguments and reason |
+| `tool.blocked` | A tool policy rejected the call before execution; includes its reason. Permission denials omit arguments. |
+| `tool.permission_denied` | Required permissions were denied before dispatch; includes the call ID, tool name, code, and structured error |
 | `tool.update` | Intermediate tool progress |
 | `tool.end` | Tool execution completed or failed |
 | `tools.updated` | Deferred tool schemas were loaded locally or discovered through the provider |
@@ -270,6 +271,13 @@ them. All following events remain correlatable through `run_id` and
 | `turn.end` | The turn reached a terminal boundary; it has no output payload |
 | `run.end` | The run completed and reports its outcome |
 | `run.error` | Execution failed; the iterator raises after this event |
+
+Permission-denied `tool.permission_denied` and `tool.blocked` events retain
+`data.code` and include `data.error` with `code`, `message`, and `details`. This
+message also reaches model feedback. Failures inside an executing workspace
+operation instead appear in `tool.end.error`; a read-only write or an
+`apply_patch` create on an existing file preserves the concrete backend reason.
+These payloads are also delivered through AgentService HTTP/SSE clients.
 
 ## Tool Discovery
 

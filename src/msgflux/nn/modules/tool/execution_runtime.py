@@ -42,7 +42,7 @@ from msgflux.tools.helpers import (
     coerce_tool_params,
 )
 from msgflux.tools.responses import ToolResponses
-from msgflux.tools.runtime import ToolIntent, ToolOutcome
+from msgflux.tools.runtime import ToolError, ToolIntent, ToolOutcome
 from msgflux.tools.types import ToolBucket, ToolLibraryOperator
 
 
@@ -1496,10 +1496,12 @@ class ToolLibraryExecutionMixin:
                 self.get_tool_definition(intent.name).required_resources,
             )
         except PermissionError as exc:
+            error = ToolError(code="tool_permission_denied", message=str(exc))
             payload = {
                 "tool_call_id": intent.id,
                 "tool_name": intent.name,
-                "code": "tool_permission_denied",
+                "code": error.code,
+                "error": error,
             }
             emit_event(EventType.TOOL_PERMISSION_DENIED, payload)
             emit_event(EventType.TOOL_BLOCKED, payload)
