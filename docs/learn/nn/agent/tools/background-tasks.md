@@ -411,6 +411,13 @@ and expires only its own lease, retaining the ownership marker for a later
 attempt. Old owners cannot publish a task result under a new lease. Store
 fencing does not stop arbitrary operating-system effects of a surviving command.
 
+When recovery classifies a task as `uncertain`, its refusal includes the
+recorded reasons. An unresolved command outcome requires host command
+reconciliation; a pending approval execution requires approval reconciliation.
+Neither lease expiry nor `worker_stopped=True` resolves those outcomes. A command
+may have completed its external effect before its result reached the Agent
+checkpoint, so replay remains blocked until the host reconciles that record.
+
 An executing approval batch remains uncertain until the host uses the Agent's
 approval reconciliation API. A batch waiting for a decision can retain its
 reviewed request and pause safely until approval. Restored workspace identity

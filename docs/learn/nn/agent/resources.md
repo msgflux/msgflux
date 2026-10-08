@@ -72,6 +72,19 @@ prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
 history and receipts. `session.aclose()` settles managed background work and
 closes its owned handles without deleting persisted data.
 
+Cancelling the coroutine awaiting `session.aclose()` leaves shutdown running.
+Await it again before closing borrowed models or workspaces. Managed journals
+and thread stores stay open while admitted work and its cleanup drain.
+An abrupt process exit bypasses cleanup entirely; reopening the same thread
+recovers committed state, and unfinished commands still require host
+reconciliation before replay.
+
+If a factory cleanup callback fails, `AgentService` continues closing its
+other session bindings and reports an aggregated error. The affected binding's
+thread stores remain open for host diagnosis and safe cleanup. Its borrowed
+journal and model are not closed by the service. Resolve the failed cleanup
+before releasing those resources.
+
 Register `ManagedToolOutputOffloadExtension()` through `Agent.extensions` to
 opt into durable storage
 for large supported tool outputs. The per-thread `tool-results/` directory is
