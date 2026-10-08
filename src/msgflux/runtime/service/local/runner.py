@@ -158,11 +158,17 @@ async def serve_local_service(  # noqa: C901
 
             # Keep the generated credential for the health probe and record.
             auth_token = secrets.token_urlsafe(32)
+
+            def request_shutdown() -> None:
+                if server is not None:
+                    server.should_exit = True
+
             app = create_service_app(
                 service,
                 token=auth_token,
                 close_service=True,
                 instance_id=instance_id,
+                on_shutdown=request_shutdown,
             )
 
             listening_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -130,6 +130,69 @@ returning a connection. Initialization and shutdown of an existing owner are wai
 for within `startup_timeout`; an owner with published metadata but an invalid
 identity/health response is reported as requiring recovery and is not replaced.
 
+## Gracefully Restart The Daemon
+
+`restart_local_service()` asks the authenticated current instance to shut down,
+waits for its lifetime lock to be released, and starts a replacement under the
+same startup lock used by concurrent connectors. With no arguments it uses the
+factory and launch directory recorded by the current daemon:
+
+```python
+import asyncio
+
+from msgflux.runtime.service.local import restart_local_service
+
+
+async def main():
+    client = await restart_local_service(restart_timeout=45)
+    try:
+        print("New runtime:", (await client.health()).instance_id)
+    finally:
+        await client.aclose()
+
+
+asyncio.run(main())
+```
+
+This example returns a client connected to the replacement instance. The
+restart timeout bounds the complete stop and startup wait. If graceful shutdown
+is accepted but the old daemon does not release its lock before the deadline,
+the call raises `TimeoutError`; the old daemon continues closing its resources.
+No replacement starts while it holds the lifetime lock. A connection attempt
+may report `ServiceRecoveryRequiredError` while the old HTTP server is no longer
+healthy; retry after shutdown completes. The timeout does not force-kill a worker
+or signal a process.
+
+Restart uses the existing service shutdown behavior: active runs receive a
+cooperative interruption request, and shutdown joins their workers before closing
+factory resources. Their receipts and checkpoints retain the interruption state.
+Restart does not automatically replay prompts or resume paused approvals.
+
+Pass `factory` and `cwd` to select new trusted launch configuration:
+
+```python
+client = await restart_local_service(
+    "my_backend:create_service", runtime_dir="~/.msgflux/runtime",
+    cwd="/absolute/project/path", restart_timeout=45,
+)
+```
+
+An explicit factory must match the recorded factory while its daemon is alive.
+If metadata is unavailable, supply a factory explicitly; a dead daemon's PID is
+never used to infer or signal an owner. A healthy older daemon that does not
+provide authenticated graceful shutdown raises `ServiceRecoveryRequiredError`;
+stop or upgrade it through its existing operator-managed mechanism before
+restarting.
+
+The CLI keeps the existing foreground invocation unchanged. `serve` is the
+default action; `restart` derives the factory and launch directory from private
+runtime metadata and prints the new instance identity and loopback URL:
+
+```bash
+uv run --extra service msgflux-service restart \
+  --runtime-dir ~/.msgflux/runtime --restart-timeout 45
+```
+
 The returned object is an ordinary `AgentServiceClient`. Use `watch()` to get an
 atomic snapshot and future events. Reconnecting after a server restart requires
 calling `connect_local_service()` again so the client receives the new URL/token;
@@ -144,6 +207,8 @@ uv run --extra service msgflux-service \
   --factory my_backend:create_service \
   --cwd /absolute/project/path
 ```
+
+The explicit spelling `msgflux-service serve --factory ...` is equivalent.
 
 The equivalent Python entry point is
 `python -m msgflux.runtime.service.local.cli`. A foreground server and clients

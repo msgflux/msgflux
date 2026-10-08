@@ -285,6 +285,7 @@ All routes require `Authorization: Bearer <token>`.
 | Method | Route | Result |
 | --- | --- | --- |
 | GET | `/v1/health` | Authenticated runtime identity and protocol version |
+| POST | `/v1/shutdown` | Graceful shutdown request when the host enables its shutdown hook |
 | GET | `/v1/agents` | Registered agent IDs |
 | GET / POST | `/v1/threads` | List bindings / open a thread |
 | GET | `/v1/threads/{thread_id}/snapshot` | Portable thread snapshot |
@@ -302,6 +303,27 @@ Thread-open bodies contain `agent_id` and may include `thread_id` and an absolut
 `cwd`. Prompt bodies contain `prompt` and `request_id`; steer bodies contain
 `content`; resume bodies are empty JSON objects. Unknown fields are rejected.
 The native API is separate from any future Chat Completions compatibility adapter.
+
+## Graceful Server Shutdown
+
+A host may opt into an authenticated management route by passing an
+`on_shutdown` callback to `create_service_app()`. The route is absent (404) when
+no callback is configured. Requests must include the runtime's current
+`expected_instance_id`; stale identities receive 409 and do not invoke the
+callback. The callback runs after the 202 response is sent:
+
+```python
+from msgflux.runtime.service.http import AgentServiceClient
+
+health = await client.health()
+accepted = await client.shutdown(expected_instance_id=health.instance_id)
+```
+
+This is a server-owner capability for managing that process. The shared bearer
+credential does not provide per-user tenancy or authorization boundaries. The
+local service runner enables this route with its private runtime token and
+requests ordinary Uvicorn graceful shutdown, allowing the service lifespan to
+drain work it owns.
 
 Errors have the JSON shape `{"code": "...", "message": "..."}`. Missing or invalid
 authentication returns 401, unknown resources return 404, conflicts/busy threads

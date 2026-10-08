@@ -12,6 +12,7 @@ from msgflux.nn import Agent
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
 from msgflux.runtime.service.http.app import create_service_app
+from msgflux.runtime.service.http import AgentServiceClient, ShutdownResponse
 
 
 def _service(factory=None):
@@ -337,6 +338,51 @@ async def test_authenticated_health_identifies_instance_without_creating_agent()
             )
             assert response.json() == {"instance_id": "health-instance", "version": 1}
         assert calls == []
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_route_is_optional_authenticated_and_instance_bound():
+    service, _ = _service()
+    called = []
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        disabled = create_service_app(service, token="secret", instance_id="one")
+        async with AsyncTestClient(app=disabled) as client:
+            response = await client.post(
+                "/v1/shutdown", headers=headers, json={"expected_instance_id": "one"}
+            )
+            assert response.status_code == 404
+
+        app = create_service_app(
+            service,
+            token="secret",
+            instance_id="one",
+            on_shutdown=lambda: called.append(True),
+        )
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as raw_client:
+            client = AgentServiceClient(
+                "http://testserver", token="secret", client=raw_client
+            )
+            unauthorized = await raw_client.post(
+                "/v1/shutdown", content=b"{broken", headers={}
+            )
+            assert unauthorized.status_code == 401
+            mismatch = await raw_client.post(
+                "/v1/shutdown",
+                headers=headers,
+                json={"expected_instance_id": "stale"},
+            )
+            assert mismatch.status_code == 409
+            assert called == []
+            accepted = await client.shutdown(expected_instance_id="one")
+            assert accepted == ShutdownResponse(instance_id="one", accepted=True)
+            assert called == [True]
     finally:
         await service.aclose()
         service.store.close()
