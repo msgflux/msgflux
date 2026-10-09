@@ -202,6 +202,7 @@ class AgentService:
         self._cache = _SessionCache(self._load_session, self._release_reason)
         self._producer_tasks: dict[asyncio.Task, _Worker] = {}
         self._workers: dict[tuple[str, str], _Worker] = {}
+        self._watchers = set()
         self._lock = asyncio.Lock()
         self._closed = False
         self._shutdown_task: asyncio.Task | None = None
@@ -795,26 +796,41 @@ class AgentService:
     @asynccontextmanager
     async def watch(self, thread_id: str, *, event_buffer_limit: int | None = None):
         """Attach to existing Agent watch; observer disposal has no execution effect."""
-        async with self._use_session(thread_id) as session:
-            async with self._lock:
-                with session.context(session.scope(thread_id)):
-                    policy = (
-                        session.agent._get_workspace_approvals(force=True)
-                        if session._managed and session.checkpoint_store is not None
-                        else None
-                        if session._managed
-                        else session.agent._get_effective_approvals()
-                    )
-                    watcher = session.agent.watch(
-                        thread_id,
-                        approvals=policy,
-                        event_buffer_limit=event_buffer_limit,
-                    )
-                    await watcher.__aenter__()
-            try:
-                yield watcher
-            finally:
+        watcher = await self._attach_watcher(thread_id, event_buffer_limit)
+        try:
+            yield watcher
+        finally:
+            self._watchers.discard(watcher)
+            await watcher.aclose()
+
+    async def _attach_watcher(self, thread_id, event_buffer_limit):
+        """Pin dependencies only while subscribing and reading the snapshot."""
+        watcher = None
+        try:
+            async with self._use_session(thread_id) as session:
+                async with self._lock:
+                    self._require_open()
+                    with session.context(session.scope(thread_id)):
+                        policy = (
+                            session.agent._get_workspace_approvals(force=True)
+                            if session._managed and session.checkpoint_store is not None
+                            else None
+                            if session._managed
+                            else session.agent._get_effective_approvals()
+                        )
+                        watcher = session.agent.watch(
+                            thread_id,
+                            approvals=policy,
+                            event_buffer_limit=event_buffer_limit,
+                        )
+                        await watcher.__aenter__()
+                        self._watchers.add(watcher)
+                return watcher
+        except BaseException:
+            if watcher is not None:
+                self._watchers.discard(watcher)
                 await watcher.aclose()
+            raise
 
     async def snapshot(self, thread_id: str):
         async with self.watch(thread_id) as watcher:
@@ -987,6 +1003,9 @@ class AgentService:
         ):
             if isinstance(result, Exception):
                 errors.append(result)
+        for watcher in tuple(self._watchers):
+            await watcher.aclose()
+        self._watchers.clear()
         errors.extend(await self._cache.close_all())
         if errors:
             raise ExceptionGroup("AgentService shutdown failed", errors)

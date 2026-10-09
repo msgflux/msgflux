@@ -162,10 +162,10 @@ absolute canonical host path and becomes part of the immutable thread binding.
 Reopening an existing thread without `cwd` returns its stored binding, while a
 different explicit `cwd` conflicts. The path identifies a project location; it
 does not grant filesystem or process permissions. Those remain factory-owned.
-The factory runs when submission or observation first needs the session. Factory
-failure must release resources it acquired; successful sessions remain owned
-by the service until shutdown. Registering the same mutable Agent for different
-threads is rejected.
+The factory runs when submission or a cold snapshot first needs the session.
+Factory failure must release resources it acquired; successful sessions remain
+loaded until the host releases them or shuts down the service. Registering the
+same mutable Agent for different threads is rejected.
 
 Existing SQLite journals gain the optional `cwd` column automatically. Older
 threads keep `cwd=None`; opening them does not infer a workspace from the
@@ -175,9 +175,21 @@ conversation there.
 
 ## Disconnect, Wait, And Interrupt
 
-Closing a watcher or cancelling `wait()` leaves execution running. A later
-`watch()` starts with the current snapshot and future events. Live deltas are
-process-local; this is not a persistent event replay cursor.
+Closing a watcher or cancelling `wait()` leaves execution running. Attaching a
+watcher briefly loads the thread binding to capture its snapshot and subscribe
+atomically, then drops its references to the Agent and stores. The watcher does
+not pin those resources, so the host can release an idle binding while the
+watcher remains open. The consumer can drain events already queued, and later
+events published for that thread reach the same watcher after a fresh binding
+loads. Live deltas are process-local; they are not a persistent event replay
+cursor. A new snapshot query for an unloaded thread still calls the registered
+factory to load its trusted dependencies.
+
+`AgentService.aclose()` first stops admissions and drains its foreground workers,
+then detaches only watchers attached through that service. Closing their queues
+preserves already published events, so consumers can drain those events and
+then reach the end of the iterator. Standalone watchers created directly from
+an Agent or EventHub are not owned by the service and remain open.
 
 ```python
 receipt = await service.prompt(thread_id, "Run the tests", request_id="tests-1")
@@ -262,13 +274,15 @@ and recovery operations remain available across a release.
 
 `await service.release_session(thread_id)` closes and evicts an idle loaded
 binding, returning `True`; an already unloaded thread returns `False`. The
-service raises `ServiceBusyError` while a foreground worker, watcher, lease, or
-delegated task is using the binding. Cleanup failure quarantines the binding and
-raises `ServiceRecoveryRequiredError` with the cleanup cause, so a new factory
-result cannot overlap an incompletely closed generation. Release preserves the
-durable thread binding, admissions, checkpoints, tasks, approvals, and history;
-the next operation loads a fresh Agent from the registered factory. It does not
-delete a thread or reset its run IDs.
+service raises `ServiceBusyError` while a foreground worker, lease, or
+delegated task is using the binding. An attached watcher does not pin the
+binding after its initial snapshot and subscription are captured. Cleanup
+failure quarantines the binding and raises `ServiceRecoveryRequiredError` with
+the cleanup cause, so a new factory result cannot overlap an incompletely
+closed generation. Release preserves the durable thread binding, admissions,
+checkpoints, tasks, approvals, and history; the next operation loads a fresh
+Agent from the registered factory. It does not delete a thread or reset its run
+IDs.
 
 Host cleanup callbacks are not repeated automatically after failure, because
 their effects may already have happened. A successful callback is also not

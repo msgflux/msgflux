@@ -1,8 +1,10 @@
 """Real socket integration for service lifetime and frontend reconnection."""
 
 import asyncio
+import gc
 import os
 import socket
+import weakref
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
 
@@ -42,15 +44,20 @@ def _response(text):
     return response
 
 
-def _agent(answer, *, name="main", tools=(), checkpoints=None, approvals=None):
+def _agent(
+    answer, *, name="main", tools=(), checkpoints=None, approvals=None, agent_dir=None
+):
     model = Mock()
     model.model_type = "chat_completion"
+    if checkpoints is None and agent_dir is None:
+        checkpoints = InMemoryCheckpointStore()
     agent = Agent(
         name=name,
         model=model,
         tools=list(tools),
-        checkpoint_store=checkpoints or InMemoryCheckpointStore(),
+        checkpoint_store=checkpoints,
         approvals=approvals,
+        agent_dir=agent_dir,
     )
     agent.generator.aforward = AsyncMock(side_effect=answer)
     return agent
@@ -175,6 +182,81 @@ async def test_two_frontends_detach_reconnect_and_deduplicate_over_real_tcp():
             release.set()
             await first.aclose()
             await second.aclose()
+
+
+@pytest.mark.asyncio
+async def test_tcp_sse_watcher_spans_managed_release_and_reload(tmp_path):
+    agents = []
+    observed_history = []
+    agent_dir = tmp_path / "tcp-watch-reload-agent"
+
+    def factory(_thread):
+        generation = len(agents)
+
+        async def answer(**kwargs):
+            if generation:
+                observed_history.extend(kwargs["messages"].to_chatml())
+            return _response(f"socket-answer-{generation}")
+
+        agent = _agent(answer, name="main", agent_dir=agent_dir)
+        agents.append(agent)
+        return AgentSession(agent)
+
+    async with _server(factory) as (service, url):
+        client = AgentServiceClient(url, token=TOKEN)
+        watcher_context = None
+        try:
+            thread = await client.open_thread("main", thread_id="tcp-watch-reload")
+            first = await client.prompt(
+                thread.thread_id, "remember silver pine", request_id="one"
+            )
+            assert (
+                await service.wait(thread.thread_id, first.request_id)
+            ).status == "completed"
+            old_agent = agents[0]
+            old_agent_ref = weakref.ref(old_agent)
+            old_resources = old_agent._owned_threads[thread.thread_id].resources
+
+            context = client.watch(thread.thread_id)
+            watcher = await context.__aenter__()
+            watcher_context = context
+            assert any(
+                item.get("role") == "user"
+                and "remember silver pine" in item.get("content", "")
+                for item in watcher.snapshot.messages
+            )
+            assert await service.release_session(thread.thread_id) is True
+            assert old_resources._closed
+            agents[0] = None
+            del old_agent
+            gc.collect()
+            assert old_agent_ref() is None
+
+            second = await client.prompt(
+                thread.thread_id, "what did I ask?", request_id="two"
+            )
+            assert (
+                await service.wait(thread.thread_id, second.request_id)
+            ).status == "completed"
+            assert await service.release_session(thread.thread_id) is True
+            assert any(
+                item.get("role") == "user"
+                and "remember silver pine" in item.get("content", "")
+                for item in observed_history
+            )
+
+            events = await asyncio.wait_for(_root_terminal(watcher, second.run_id), 3)
+            assert any(
+                event.type == "run.end" and event.run_id == second.run_id
+                for event in events
+            )
+            await watcher_context.__aexit__(None, None, None)
+            watcher_context = None
+            await asyncio.wait_for(_no_watchers(thread.thread_id), 3)
+        finally:
+            if watcher_context is not None:
+                await watcher_context.__aexit__(None, None, None)
+            await client.aclose()
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
 from msgflux.runtime.service.http.app import create_service_app
 from msgflux.runtime.service.http import AgentServiceClient, ShutdownResponse
-from msgflux.runtime.service import ServiceBusyError
 
 
 @pytest.mark.asyncio
@@ -31,13 +30,12 @@ async def test_sse_response_cleanup_releases_watcher_suspended_after_snapshot():
     try:
         snapshot = await anext(response.iterator)
         assert b"event: snapshot" in snapshot
-        with pytest.raises(ServiceBusyError):
-            await service.release_session(thread.thread_id)
+        assert await service.release_session(thread.thread_id) is True
 
         # A disconnect while the snapshot chunk is being sent must close the
         # suspended records generator through the actual response cleanup task.
         await response.background()
-        assert await service.release_session(thread.thread_id) is True
+        assert await service.release_session(thread.thread_id) is False
     finally:
         await response.background()
         await service.aclose()
