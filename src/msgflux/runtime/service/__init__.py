@@ -13,11 +13,13 @@ from msgflux.runtime.service.records import (
     ServiceThread,
     SnapshotRecord,
 )
+from msgflux.runtime.service.session_cache import SessionLease
 from msgflux.runtime.service.store import SQLiteServiceStore
 
 __all__ = [
     "AgentService",
     "AgentSession",
+    "SessionLease",
     "AdmissionReceipt",
     "EventRecord",
     "ApprovalReview",

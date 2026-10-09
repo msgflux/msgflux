@@ -273,6 +273,26 @@ service and factory-owned resources when the runtime itself shuts down. Services
 are bound to one event loop. HTTP/SSE transport and terminal interfaces can consume
 this API separately.
 
+A facade created by `from_service()` keeps only the shared service and durable
+thread identity; it does not pin the loaded Agent. Its prompt, watch, history,
+and recovery methods can continue to be used after the host releases that
+thread's live binding. Direct access to `agent`, checkpoint/task stores, inbox,
+or `saved_state()` is unavailable on a service-backed facade. Trusted host code
+that needs those live dependencies should hold a short service lease:
+
+```python
+lease = await service.acquire_session(thread.thread_id)
+try:
+    agent = lease.session.agent
+    # Inspect or configure this loaded binding while the lease is held.
+finally:
+    await lease.aclose()
+```
+
+The host may then call `await service.release_session(thread.thread_id)` when
+the binding is idle. Durable conversation data remains available for a fresh
+Agent created by the registered factory.
+
 The factory receives a `ServiceThread`, not just a thread ID. Use
 `thread.thread_id` for per-thread Agent/checkpoint identity and `thread.cwd` when
 the application chooses to bind a workspace to the project's canonical host

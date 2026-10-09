@@ -129,3 +129,46 @@ def test_partial_initialization_closes_open_connections_without_deleting_files(
     assert (thread_dir / "checkpoints.sqlite3").exists()
     assert (thread_dir / "tasks.sqlite3").exists()
     assert (thread_dir / "inbox.sqlite3").exists()
+
+
+def test_bound_resource_close_retries_only_handles_that_failed(tmp_path):
+    from pathlib import Path
+
+    from msgflux.runtime.agent_resources import BoundAgentResources
+
+    class Handle:
+        def __init__(self, *, failures=0):
+            self.failures = failures
+            self.calls = 0
+
+        def close(self):
+            self.calls += 1
+            if self.failures:
+                self.failures -= 1
+                raise RuntimeError("close failed")
+
+    approval = Handle()
+    inbox = Handle(failures=1)
+    task = Handle()
+    checkpoint = Handle()
+    resources = BoundAgentResources(
+        thread_id="thread_a",
+        namespace="assistant",
+        thread_dir=Path(tmp_path),
+        checkpoint_store=checkpoint,
+        task_store=task,
+        inbox_store=inbox,
+        agent_inbox=object(),
+        approval_store=approval,
+    )
+
+    with pytest.raises(ExceptionGroup, match="resource stores"):
+        resources.close()
+    assert not resources._closed
+    assert [approval.calls, inbox.calls, task.calls, checkpoint.calls] == [1, 1, 1, 1]
+
+    resources.close()
+    assert resources._closed
+    assert [approval.calls, inbox.calls, task.calls, checkpoint.calls] == [1, 2, 1, 1]
+    resources.close()
+    assert [approval.calls, inbox.calls, task.calls, checkpoint.calls] == [1, 2, 1, 1]

@@ -155,3 +155,68 @@ def root_task_state(service, thread_id):
     session = service._sessions[thread_id]
     resources = session.agent._owned_threads[thread_id].resources
     return [task.to_dict() for task in resources.task_store.list()]
+
+
+@pytest.mark.asyncio
+async def test_thread_close_retry_does_not_repeat_successful_host_callback(tmp_path):
+    agent = _agent("retry-close", tmp_path / "retry-close", lambda **_kwargs: _text())
+    thread_id = "retry-close-thread"
+    resources = agent._bind_resources(thread_id)
+    original_close = resources.checkpoint_store.close
+    store_close_calls = 0
+    callback_calls = 0
+
+    def fail_first_store_close():
+        nonlocal store_close_calls
+        store_close_calls += 1
+        if store_close_calls == 1:
+            raise RuntimeError("checkpoint close failed")
+        original_close()
+
+    def host_close():
+        nonlocal callback_calls
+        callback_calls += 1
+
+    resources.checkpoint_store.close = fail_first_store_close
+    try:
+        with pytest.raises(ExceptionGroup, match="resource stores"):
+            await agent._close_thread_resources(thread_id, before_close=host_close)
+        assert callback_calls == 1
+        assert not resources._closed
+
+        await agent._close_thread_resources(thread_id, before_close=host_close)
+        assert callback_calls == 1
+        assert store_close_calls == 2
+        assert resources._closed
+    finally:
+        if not resources._closed:
+            resources.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_host_close_callback_is_quarantined_without_silent_retry(
+    tmp_path,
+):
+    agent = _agent(
+        "failed-host-close",
+        tmp_path / "failed-host-close",
+        lambda **_kwargs: _text(),
+    )
+    thread_id = "failed-host-close-thread"
+    resources = agent._bind_resources(thread_id)
+    callback_calls = 0
+
+    def host_close():
+        nonlocal callback_calls
+        callback_calls += 1
+        raise RuntimeError("host cleanup requires review")
+
+    try:
+        with pytest.raises(RuntimeError, match="requires review"):
+            await agent._close_thread_resources(thread_id, before_close=host_close)
+        with pytest.raises(RuntimeError, match="requires review"):
+            await agent._close_thread_resources(thread_id, before_close=host_close)
+        assert callback_calls == 1
+        assert not resources._closed
+    finally:
+        resources.close()

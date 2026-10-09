@@ -203,6 +203,15 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             summaries, key=lambda item: (item.updated_at, item.task_id), reverse=True
         )
 
+    def has_unfinished_for_thread(self, *, thread_id: str) -> bool:
+        """Check active task metadata without copying task payloads or results."""
+        with self._lock:
+            return any(
+                task.status in {"queued", "running", "paused"}
+                and task.metadata.get("thread_id") == thread_id
+                for task in self._tasks.values()
+            )
+
     def list_activity(
         self, task_id: str, *, limit: int | None = None
     ) -> List[TaskActivity]:

@@ -392,6 +392,16 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 for row in rows
             ]
 
+    def has_unfinished_for_thread(self, *, thread_id: str) -> bool:
+        """Use an EXISTS query so idle checks never deserialize task results."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM tasks WHERE json_extract(metadata, '$.thread_id') = ? "
+                "AND status IN ('queued', 'running', 'paused') LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        return row is not None
+
     def list_activity(
         self, task_id: str, *, limit: int | None = None
     ) -> List[TaskActivity]:
