@@ -328,7 +328,13 @@ async def test_attaching_facade_does_not_modify_an_active_agents_hooks():
         await asyncio.wait_for(entered.wait(), 2)
         assert not agent.has_extension("coding_checkpoints")
         facade = await CodingSession.from_service(service, thread.thread_id)
-        assert facade.agent is agent
+        with pytest.raises(RuntimeError, match="acquire_session"):
+            _ = facade.agent
+        lease = await service.acquire_session(thread.thread_id)
+        try:
+            assert lease.session.agent is agent
+        finally:
+            await lease.aclose()
         assert not agent.has_extension("coding_checkpoints")
         await facade.aclose()
         release.set()

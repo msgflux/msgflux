@@ -312,7 +312,8 @@ async def test_factory_receives_persisted_service_thread_after_restart(tmp_path)
         store=store,
     )
     thread = await first_service.open_thread("main", thread_id="restart", cwd=root)
-    await first_service.session(thread.thread_id)
+    lease = await first_service.acquire_session(thread.thread_id)
+    await lease.aclose()
     assert first_bindings == [thread]
     await first_service.aclose()
 
@@ -324,7 +325,8 @@ async def test_factory_receives_persisted_service_thread_after_restart(tmp_path)
 
     reopened = _service(async_factory, store=store)
     try:
-        await reopened.session("restart")
+        lease = await reopened.acquire_session("restart")
+        await lease.aclose()
         assert second_bindings == [thread]
     finally:
         await reopened.aclose()
@@ -815,7 +817,11 @@ async def test_checkpoint_import_requires_quiescence_and_reconciles_terminal_run
     service = _service(lambda _thread_id: AgentSession(agent))
     await service.open_thread("main", thread_id=scope.thread_id)
     try:
-        assert (await service.session(scope.thread_id)).agent is agent
+        lease = await service.acquire_session(scope.thread_id)
+        try:
+            assert lease.session.agent is agent
+        finally:
+            await lease.aclose()
         with pytest.raises(ServiceRecoveryRequiredError, match="quiescence"):
             await service.resume_checkpoint(scope.thread_id, run_id)
         assert service.store.get_for_run(scope.thread_id, run_id) is None
@@ -914,9 +920,11 @@ async def test_configured_agent_workspace_is_inherited_before_execution_context(
     service = _service(lambda _thread: AgentSession(agent))
     thread = await service.open_thread("main")
     try:
-        assert (await service.session(thread.thread_id)).scope(
-            thread.thread_id
-        ).workspace is workspace
+        lease = await service.acquire_session(thread.thread_id)
+        try:
+            assert lease.session.scope(thread.thread_id).workspace is workspace
+        finally:
+            await lease.aclose()
         receipt = await service.prompt(
             thread.thread_id, "hello", request_id="workspace"
         )

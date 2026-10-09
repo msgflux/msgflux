@@ -263,6 +263,12 @@ through the normal recovery API. Threads without a checkpoint store return an
 empty tuple. Saved checkpoint state, serialized config, and credentials are
 never included.
 
+Closing a client or its watcher only releases client-side observation resources;
+it does not release the server's loaded AgentSession. Session release is a
+trusted host lifecycle operation through `AgentService.release_session()` and
+has no HTTP endpoint, so a remote observer cannot close resources used by other
+clients.
+
 ```python
 saved = await client.runs(thread_id)
 for run in saved:
@@ -434,8 +440,12 @@ tool approval instead settles with status `paused` and emits `run.paused`.
 
 `create_service_app()` borrows the service by default. Set `close_service=True`
 when application shutdown owns service shutdown; borrowed stores still remain
-host-owned. Resource callbacks must drain any delegated work they own before
-releasing its model/workspace resources.
+host-owned. The host may release an idle loaded thread binding with
+`await service.release_session(thread_id)`; active workers, watchers, session
+leases, and delegated work prevent release. Durable thread and run records
+remain available for a later factory-created Agent. Resource callbacks must
+drain any delegated work they own before releasing its model/workspace
+resources.
 
 An existing embedded coding session can expose the same backend:
 

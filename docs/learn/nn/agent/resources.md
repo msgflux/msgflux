@@ -149,9 +149,17 @@ survive restarts.
 
 Generic `AgentService` applications also get per-thread stores automatically
 when their trusted session factory returns an Agent configured with `agent_dir`.
-The service owns those thread handles and closes them during shutdown. A generic
-service's admission journal remains separately configured by its host; the
-embedded `CodingSession` setup above places its journal under `agent_dir`.
+The service owns those loaded thread handles and closes them during shutdown.
+For a shared long-lived service, the host can release one idle live binding with
+`await service.release_session(thread_id)`. This closes its SQLite connections
+and invokes the factory cleanup callback while preserving the thread directory,
+checkpoints, tasks, inbox, approvals, tool results, and admission journal. A
+later prompt or observation reloads a fresh Agent for the same durable thread.
+Release is refused while a foreground worker, watcher, acquired session lease,
+or delegated task still uses the resources; cleanup failure leaves the binding
+quarantined for diagnosis. A generic service's admission journal remains
+separately configured by its host; the embedded `CodingSession` setup above
+places its journal under `agent_dir`.
 
 `agent_dir` is private host state, not a workspace mount. Managed offload gives
 the existing `read` tool a narrow read path to published `content` files in the

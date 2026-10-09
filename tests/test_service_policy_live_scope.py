@@ -36,21 +36,27 @@ async def test_service_policy_change_clips_permissions_inside_an_active_scope(tm
     service.register("assistant", lambda _thread: AgentSession(agent))
     try:
         thread = await service.open_thread("assistant", thread_id="live-thread")
-        session = await service.session(thread.thread_id)
+        lease = await service.acquire_session(thread.thread_id)
+        session = lease.session
         scope = session.scope(thread.thread_id, run_id="live-run")
-        with session.context(scope):
-            require_permissions(("filesystem.write",))
-            await service.update_workspace_policy(
-                thread.thread_id, permissions="read-only"
-            )
-            assert "filesystem.write" not in get_execution_scope().permissions.grants
-            with pytest.raises(PermissionError, match=r"filesystem\.write"):
+        try:
+            with session.context(scope):
                 require_permissions(("filesystem.write",))
+                await service.update_workspace_policy(
+                    thread.thread_id, permissions="read-only"
+                )
+                assert (
+                    "filesystem.write" not in get_execution_scope().permissions.grants
+                )
+                with pytest.raises(PermissionError, match=r"filesystem\.write"):
+                    require_permissions(("filesystem.write",))
 
-            await service.update_workspace_policy(
-                thread.thread_id, permissions="full-access"
-            )
-            require_permissions(("filesystem.write",))
+                await service.update_workspace_policy(
+                    thread.thread_id, permissions="full-access"
+                )
+                require_permissions(("filesystem.write",))
+        finally:
+            await lease.aclose()
     finally:
         await service.aclose()
         workspace.require_active()
@@ -72,19 +78,25 @@ async def test_borrowed_workspace_policy_state_is_isolated_by_thread(tmp_path):
     try:
         first = await service.open_thread("assistant", thread_id="policy-one")
         second = await service.open_thread("assistant", thread_id="policy-two")
-        await service.session(first.thread_id)
-        await service.session(second.thread_id)
+        first_lease = await service.acquire_session(first.thread_id)
+        second_lease = await service.acquire_session(second.thread_id)
+        first_session = first_lease.session
+        second_session = second_lease.session
         assert agents[first.thread_id].workspace.shares_environment(workspace)
         assert agents[second.thread_id].workspace.shares_environment(workspace)
 
-        await service.update_workspace_policy(first.thread_id, permissions="read-only")
-        first_session = await service.session(first.thread_id)
-        second_session = await service.session(second.thread_id)
-        with first_session.context(first_session.scope(first.thread_id)):
-            with pytest.raises(PermissionError, match=r"filesystem\.write"):
+        try:
+            await service.update_workspace_policy(
+                first.thread_id, permissions="read-only"
+            )
+            with first_session.context(first_session.scope(first.thread_id)):
+                with pytest.raises(PermissionError, match=r"filesystem\.write"):
+                    require_permissions(("filesystem.write",))
+            with second_session.context(second_session.scope(second.thread_id)):
                 require_permissions(("filesystem.write",))
-        with second_session.context(second_session.scope(second.thread_id)):
-            require_permissions(("filesystem.write",))
+        finally:
+            await first_lease.aclose()
+            await second_lease.aclose()
     finally:
         await service.aclose()
         workspace.require_active()
@@ -99,23 +111,27 @@ async def test_child_readonly_workspace_ceiling_survives_parent_full_access(tmp_
     service.register("assistant", lambda _thread: AgentSession(agent))
     try:
         thread = await service.open_thread("assistant", thread_id="child-thread")
-        session = await service.session(thread.thread_id)
-        await service.update_workspace_policy(
-            thread.thread_id, permissions="full-access"
-        )
-        parent_scope = session.scope(thread.thread_id, run_id="parent-run")
-        child_workspace = workspace.with_cwd("/child")
-        readonly = PermissionSet(frozenset({"filesystem.read", "filesystem.list"}))
-        with session.context(parent_scope):
-            require_permissions(("filesystem.write",))
-            with execution_context(
-                scope=_scope(thread.thread_id, child_workspace, readonly)
-            ):
-                assert get_execution_scope().workspace.cwd == "/child"
-                require_permissions(("filesystem.read",))
-                with pytest.raises(PermissionError, match=r"filesystem\.write"):
-                    require_permissions(("filesystem.write",))
-            require_permissions(("filesystem.write",))
+        lease = await service.acquire_session(thread.thread_id)
+        session = lease.session
+        try:
+            await service.update_workspace_policy(
+                thread.thread_id, permissions="full-access"
+            )
+            parent_scope = session.scope(thread.thread_id, run_id="parent-run")
+            child_workspace = workspace.with_cwd("/child")
+            readonly = PermissionSet(frozenset({"filesystem.read", "filesystem.list"}))
+            with session.context(parent_scope):
+                require_permissions(("filesystem.write",))
+                with execution_context(
+                    scope=_scope(thread.thread_id, child_workspace, readonly)
+                ):
+                    assert get_execution_scope().workspace.cwd == "/child"
+                    require_permissions(("filesystem.read",))
+                    with pytest.raises(PermissionError, match=r"filesystem\.write"):
+                        require_permissions(("filesystem.write",))
+                require_permissions(("filesystem.write",))
+        finally:
+            await lease.aclose()
     finally:
         await service.aclose()
         workspace.require_active()

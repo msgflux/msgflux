@@ -310,7 +310,8 @@ async def test_owned_app_shutdown_closes_session_once_and_borrows_journal():
     service = AgentService(store=journal)
     service.register("agent", lambda _thread: AgentSession(agent, on_close=close))
     thread = await service.open_thread("agent")
-    await service.session(thread.thread_id)
+    lease = await service.acquire_session(thread.thread_id)
+    await lease.aclose()
     app = create_service_app(service, token="secret", close_service=True)
     try:
         async with AsyncTestClient(app=app):

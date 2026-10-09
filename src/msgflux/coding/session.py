@@ -53,7 +53,6 @@ class CodingSession:
             raise ValueError("`thread_id` must be a non-empty string or None")
         if not agent.has_extension("coding_checkpoints"):
             agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
-        self.agent = agent
         self._thread_id = thread_id if thread_id is not None else new_thread_id()
         self.namespace = agent.get_module_name()
         self._scope_factory = scope_factory
@@ -64,6 +63,7 @@ class CodingSession:
             agent_inbox=agent_inbox,
             scope_factory=scope_factory,
         )
+        self._binding._retained_by_facade = True
         self._service_path: Path | None = (
             agent.agent_dir / "runtime" / "service.sqlite3"
             if agent.agent_dir is not None and service_store is None
@@ -104,34 +104,48 @@ class CodingSession:
         """Attach a facade to a thread already bound to a shared service."""
         if not isinstance(thread_id, str) or not thread_id:
             raise ValueError("`thread_id` must be a non-empty string")
-        session = await service.session(thread_id)
-        agent = session.agent
+        lease = await service.acquire_session(thread_id)
+        try:
+            namespace = lease.session.namespace
+        finally:
+            await lease.aclose()
         self = cls.__new__(cls)
-        self.agent = agent
         self.service = service
         self._owns_service = False
         self._service_store = None
         self._owns_service_store = False
         self._thread_id = thread_id
-        self.namespace = session.namespace
-        self._binding = session
+        self.namespace = namespace
+        self._binding = None
         self._service_path = None
         self._service_persisted = False
-        self._scope_factory = session.scope_factory
+        self._scope_factory = None
         self._close_task = None
         return self
 
+    def _embedded_binding(self):
+        if self._binding is None:
+            raise RuntimeError(
+                "Service-backed CodingSession dependencies require "
+                "service.acquire_session(); close that lease after use"
+            )
+        return self._binding
+
+    @property
+    def agent(self):
+        return self._embedded_binding().agent
+
     @property
     def checkpoint_store(self):
-        return self._binding.checkpoint_store
+        return self._embedded_binding().checkpoint_store
 
     @property
     def task_store(self):
-        return self._binding.task_store
+        return self._embedded_binding().task_store
 
     @property
     def agent_inbox(self):
-        return self._binding.agent_inbox
+        return self._embedded_binding().agent_inbox
 
     def _persist_service(self) -> None:
         if self._service_path is None or self._service_persisted:

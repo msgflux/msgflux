@@ -141,14 +141,17 @@ class BoundAgentResources:
         self.agent_inbox = agent_inbox
         self.approval_store = approval_store
         self._closed = False
+        self._closing = False
+        self._closed_resources: set[int] = set()
         self.offload_config = None
         self._tool_results = None
         self._tool_results_lock = RLock()
+        self._close_lock = RLock()
 
     def tool_result_store(self, *, create=True, config=None):
         """Resolve this thread's artifact store without creating it on observation."""
         with self._tool_results_lock:
-            if self._closed:
+            if self._closed or self._closing:
                 raise RuntimeError("Agent resources are closed")
             root = self.thread_dir / "tool-results"
             if self._tool_results is None:
@@ -170,23 +173,30 @@ class BoundAgentResources:
             return self._tool_results
 
     def close(self) -> None:
-        """Close owned SQLite connections once; never delete persisted state."""
-        if self._closed:
-            return
-        self._closed = True
-        errors = []
-        for resource in (
-            self.approval_store,
-            self.inbox_store,
-            self.task_store,
-            self.checkpoint_store,
-        ):
-            try:
-                resource.close()
-            except Exception as error:
-                errors.append(error)
-        if errors:
-            raise ExceptionGroup("Failed to close Agent resource stores", errors)
+        """Close owned SQLite connections once; retry only handles that failed."""
+        with self._close_lock, self._tool_results_lock:
+            if self._closed:
+                return
+            self._closing = True
+            errors = []
+            for resource in (
+                self.approval_store,
+                self.inbox_store,
+                self.task_store,
+                self.checkpoint_store,
+            ):
+                identity = id(resource)
+                if identity in self._closed_resources:
+                    continue
+                try:
+                    resource.close()
+                except Exception as error:
+                    errors.append(error)
+                else:
+                    self._closed_resources.add(identity)
+            if errors:
+                raise ExceptionGroup("Failed to close Agent resource stores", errors)
+            self._closed = True
 
 
 def _secure_directory(path: Path) -> None:

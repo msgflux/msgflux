@@ -47,6 +47,11 @@ from msgflux.runtime.service.records import (
     ServiceRecoveryRequiredError,
     ServiceThread,
 )
+from msgflux.runtime.service.session_cache import (
+    SessionLease,
+    _SessionCache,
+    _SessionLoadCleanupError,
+)
 from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
 from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
 
@@ -194,7 +199,8 @@ class AgentService:
         self.store = store
         self._owner_id = uuid4().hex
         self._factories: dict[str, Callable] = {}
-        self._sessions: dict[str, AgentSession] = {}
+        self._cache = _SessionCache(self._load_session, self._release_reason)
+        self._producer_tasks: dict[asyncio.Task, _Worker] = {}
         self._workers: dict[tuple[str, str], _Worker] = {}
         self._lock = asyncio.Lock()
         self._closed = False
@@ -266,60 +272,108 @@ class AgentService:
         if self._closed:
             raise RuntimeError("AgentService is closing or closed")
 
-    async def _session(self, thread_id: str) -> AgentSession:
+    async def _load_session(self, thread_id: str) -> AgentSession:
         self._require_open()
         thread = self.store.thread(thread_id)
-        if thread_id not in self._sessions:
-            factory = self._factories[thread.agent_id]
-            session = factory(thread)
-            if inspect.isawaitable(session):
-                session = await session
-            if not isinstance(session, AgentSession):
-                raise TypeError("factory must return AgentSession")
-            if any(item.agent is session.agent for item in self._sessions.values()):
-                raise ServiceConflictError("Factories must isolate Agents by thread")
-            try:
-                scope = session.scope(thread_id)
-                stored = self.store.workspace_policy(thread_id)
-                selected = stored or initial_policy(thread_id, scope.workspace)
-                session.workspace_policy_state = (
-                    WorkspacePolicyState(
-                        scope.workspace, clipped_policy(selected, scope.workspace)
-                    )
-                    if scope.workspace is not None
-                    else None
+        factory = self._factories[thread.agent_id]
+        session = factory(thread)
+        if inspect.isawaitable(session):
+            session = await session
+        if not isinstance(session, AgentSession):
+            raise TypeError("factory must return AgentSession")
+        if any(item.agent is session.agent for item in self._sessions.values()):
+            raise ServiceConflictError("Factories must isolate Agents by thread")
+        try:
+            scope = session.scope(thread_id)
+            stored = self.store.workspace_policy(thread_id)
+            selected = stored or initial_policy(thread_id, scope.workspace)
+            session.workspace_policy_state = (
+                WorkspacePolicyState(
+                    scope.workspace, clipped_policy(selected, scope.workspace)
                 )
-            except BaseException:
-                if session.on_close is not None:
+                if scope.workspace is not None
+                else None
+            )
+        except BaseException:
+            if session.on_close is not None:
+                try:
                     closed = session.on_close()
                     if inspect.isawaitable(closed):
                         await closed
-                raise
-            self._sessions[thread_id] = session
-        session = self._sessions[thread_id]
-        state = session.workspace_policy_state
-        saved = self.store.workspace_policy(thread_id) if state is not None else None
-        if saved is not None and saved.revision > state.current.revision:
-            state.current = clipped_policy(saved, state.workspace)
+                except BaseException as error:
+                    raise _SessionLoadCleanupError(session, error) from error
+            raise
         return session
 
-    async def session(self, thread_id: str) -> AgentSession:
-        """Resolve live dependencies for a trusted in-process host.
+    @property
+    def _sessions(self):
+        return self._cache.sessions
 
-        Frontends should normally use prompt/watch. This accessor lets a host
-        build a domain-specific facade without duplicating factory ownership.
-        """
-        async with self._lock:
-            return await self._session(thread_id)
+    async def acquire_session(self, thread_id: str) -> SessionLease:
+        """Pin trusted live dependencies until the returned lease is closed."""
+        self._require_open()
+        self.store.thread(thread_id)
+        lease = await self._cache.acquire(thread_id)
+        try:
+            session = lease.session
+            state = session.workspace_policy_state
+            saved = (
+                self.store.workspace_policy(thread_id) if state is not None else None
+            )
+            if saved is not None and saved.revision > state.current.revision:
+                state.current = clipped_policy(saved, state.workspace)
+        except BaseException:
+            await lease.aclose()
+            raise
+        return lease
+
+    @asynccontextmanager
+    async def _use_session(self, thread_id: str):
+        lease = await self.acquire_session(thread_id)
+        try:
+            yield lease.session
+        finally:
+            await lease.aclose()
+
+    def _release_reason(self, thread_id: str, session: AgentSession) -> str | None:
+        if getattr(session, "_retained_by_facade", False):
+            return "The embedded CodingSession retains this Agent"
+        if any(
+            worker.receipt.thread_id == thread_id
+            for worker in self._producer_tasks.values()
+        ):
+            return "A foreground execution or its finalizer is still active"
+        if not session._managed:
+            reason = session.agent._active_background_future_reason(
+                (session.agent.tool_library,)
+            )
+            if reason is not None:
+                return reason
+            if session.task_store is not None:
+                reason = session.agent._unfinished_task_reason(
+                    thread_id, session.task_store
+                )
+                if reason is not None:
+                    return reason
+        with session.context(session.scope(thread_id)):
+            return session.agent._mark_thread_idle_closing(thread_id)
+
+    async def release_session(self, thread_id: str) -> bool:
+        """Release idle owned resources; keep the logical thread and saved state."""
+        self._require_open()
+        self.store.thread(thread_id)
+        return await self._cache.release(thread_id)
 
     async def workspace_policy(self, thread_id: str) -> WorkspacePolicy:
         """Read this thread's effective policy without creating default rows."""
-        async with self._lock:
-            session = await self._session(thread_id)
-            state = session.workspace_policy_state
-            return (
-                state.current if state is not None else initial_policy(thread_id, None)
-            )
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                state = session.workspace_policy_state
+                return (
+                    state.current
+                    if state is not None
+                    else initial_policy(thread_id, None)
+                )
 
     async def update_workspace_policy(
         self,
@@ -334,39 +388,39 @@ class AgentService:
         Permission presets are bounded by the trusted workspace ceiling.
         Changing approval mode does not itself bypass pending batch validation.
         """
-        async with self._lock:
-            self._require_open()
-            if self._before_write is not None:
-                self._before_write()
-            session = await self._session(thread_id)
-            state = session.workspace_policy_state
-            workspace = state.workspace if state is not None else None
-            if workspace is None:
-                raise ValueError("This session has no workspace policy to update")
-            current = state.current
-            selected = (
-                requested_permissions(permissions, workspace)
-                if permissions is not None
-                else current.permission_set()
-            )
-            proposed = msgspec.structs.replace(
-                current,
-                permissions=tuple(sorted(selected.grants)),
-                resources=tuple(
-                    sorted(selected.resources, key=lambda r: (r.resource, r.action))
-                ),
-                approval_policy=approval_policy
-                if approval_policy is not None
-                else current.approval_policy,
-            )
-            proposed = clipped_policy(proposed, workspace)
-            saved = self.store.update_workspace_policy(
-                proposed, expected_revision=expected_revision
-            )
-            state.current = saved
-            record, error = self._resume_policy_batch(session, thread_id)
-            self._publish_policy_update(session, saved, record, error)
-            return saved
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                self._require_open()
+                if self._before_write is not None:
+                    self._before_write()
+                state = session.workspace_policy_state
+                workspace = state.workspace if state is not None else None
+                if workspace is None:
+                    raise ValueError("This session has no workspace policy to update")
+                current = state.current
+                selected = (
+                    requested_permissions(permissions, workspace)
+                    if permissions is not None
+                    else current.permission_set()
+                )
+                proposed = msgspec.structs.replace(
+                    current,
+                    permissions=tuple(sorted(selected.grants)),
+                    resources=tuple(
+                        sorted(selected.resources, key=lambda r: (r.resource, r.action))
+                    ),
+                    approval_policy=approval_policy
+                    if approval_policy is not None
+                    else current.approval_policy,
+                )
+                proposed = clipped_policy(proposed, workspace)
+                saved = self.store.update_workspace_policy(
+                    proposed, expected_revision=expected_revision
+                )
+                state.current = saved
+                record, error = self._resume_policy_batch(session, thread_id)
+                self._publish_policy_update(session, saved, record, error)
+                return saved
 
     def _resume_policy_batch(self, session, thread_id):
         state = session.workspace_policy_state
@@ -398,121 +452,123 @@ class AgentService:
         The checkpoint store remains authoritative; this projection never
         exposes saved state or host configuration.
         """
-        async with self._lock:
-            session = await self._session(thread_id)
-            store = session.checkpoint_store
-            list_runs = getattr(store, "list_runs", None)
-            if not callable(list_runs):
-                return ()
-            summaries = []
-            for item in list_runs(session.namespace, thread_id):
-                # msgspec's strict conversion intentionally rejects integer to
-                # float coercion, so normalize the one permitted provider form.
-                record = dict(item)
-                updated_at = record.get("updated_at")
-                if isinstance(updated_at, int) and not isinstance(updated_at, bool):
-                    record["updated_at"] = float(updated_at)
-                summaries.append(msgspec.convert(record, type=RunSummary, strict=True))
-            return tuple(summaries)
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                store = session.checkpoint_store
+                list_runs = getattr(store, "list_runs", None)
+                if not callable(list_runs):
+                    return ()
+                summaries = []
+                for item in list_runs(session.namespace, thread_id):
+                    # msgspec's strict conversion intentionally rejects integer to
+                    # float coercion, so normalize the one permitted provider form.
+                    record = dict(item)
+                    updated_at = record.get("updated_at")
+                    if isinstance(updated_at, int) and not isinstance(updated_at, bool):
+                        record["updated_at"] = float(updated_at)
+                    summaries.append(
+                        msgspec.convert(record, type=RunSummary, strict=True)
+                    )
+                return tuple(summaries)
 
     async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
         """Read recorded evidence without changing state or promising safe replay."""
         validate_identifier(thread_id, "thread_id")
         validate_identifier(run_id, "run_id")
-        async with self._lock:
-            session = await self._session(thread_id)
-            admission = self.store.get_for_run(thread_id, run_id)
-            store = session.checkpoint_store
-            namespace_matches = (
-                admission is None or admission.namespace == session.namespace
-            )
-            checkpoint = (
-                store.load_state(session.namespace, thread_id, run_id)
-                if store is not None and namespace_matches
-                else None
-            )
-            if admission is None and checkpoint is None:
-                raise KeyError(run_id)
-            local_worker = self._worker_for_run(thread_id, run_id) is not None
-            receipt = admission.receipt if admission is not None else None
-            requires_quiescence, reasons = admission_evidence(
-                admission, session.namespace, self._owner_id, local_worker
-            )
-            checkpoint_status = None
-            checkpoint_revision = None
-            approval_phase = None
-            approval_request_count = 0
-            if checkpoint is None:
-                if (
-                    namespace_matches
-                    and receipt.status in {"running", "paused", "failed"}
-                    and not local_worker
-                ):
-                    reasons.append("A started run has no checkpoint.")
-            else:
-                checkpoint_status = checkpoint.get("status")
-                if not isinstance(checkpoint_status, str):
-                    checkpoint_status = None
-                    reasons.append("The saved checkpoint status is malformed.")
-                if receipt is not None and receipt.status != checkpoint_status:
-                    reasons.append("Admission and checkpoint statuses differ.")
-                revision = checkpoint.get("_checkpoint", {}).get("revision")
-                checkpoint_revision = revision if type(revision) is int else None
-                approval_phase, approval_request_count, approval_reasons = (
-                    approval_evidence(checkpoint)
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                admission = self.store.get_for_run(thread_id, run_id)
+                store = session.checkpoint_store
+                namespace_matches = (
+                    admission is None or admission.namespace == session.namespace
                 )
-                reasons.extend(approval_reasons)
-                if checkpoint_status is not None:
-                    reasons.extend(
-                        checkpoint_reasons(session, checkpoint, thread_id, run_id)
+                checkpoint = (
+                    store.load_state(session.namespace, thread_id, run_id)
+                    if store is not None and namespace_matches
+                    else None
+                )
+                if admission is None and checkpoint is None:
+                    raise KeyError(run_id)
+                local_worker = self._worker_for_run(thread_id, run_id) is not None
+                receipt = admission.receipt if admission is not None else None
+                requires_quiescence, reasons = admission_evidence(
+                    admission, session.namespace, self._owner_id, local_worker
+                )
+                checkpoint_status = None
+                checkpoint_revision = None
+                approval_phase = None
+                approval_request_count = 0
+                if checkpoint is None:
+                    if (
+                        namespace_matches
+                        and receipt.status in {"running", "paused", "failed"}
+                        and not local_worker
+                    ):
+                        reasons.append("A started run has no checkpoint.")
+                else:
+                    checkpoint_status = checkpoint.get("status")
+                    if not isinstance(checkpoint_status, str):
+                        checkpoint_status = None
+                        reasons.append("The saved checkpoint status is malformed.")
+                    if receipt is not None and receipt.status != checkpoint_status:
+                        reasons.append("Admission and checkpoint statuses differ.")
+                    revision = checkpoint.get("_checkpoint", {}).get("revision")
+                    checkpoint_revision = revision if type(revision) is int else None
+                    approval_phase, approval_request_count, approval_reasons = (
+                        approval_evidence(checkpoint)
                     )
-            return RunInspection(
-                run_id=run_id,
-                receipt=receipt,
-                checkpoint_status=checkpoint_status,
-                checkpoint_revision=checkpoint_revision,
-                local_worker=local_worker,
-                requires_quiescence=requires_quiescence,
-                approval_phase=approval_phase,
-                approval_request_count=approval_request_count,
-                background_tasks=(
-                    tuple(
-                        session.task_store.list_summaries(
-                            thread_id=thread_id, run_id=run_id
+                    reasons.extend(approval_reasons)
+                    if checkpoint_status is not None:
+                        reasons.extend(
+                            checkpoint_reasons(session, checkpoint, thread_id, run_id)
                         )
-                    )
-                    if session.task_store is not None and namespace_matches
-                    else ()
-                ),
-                reasons=tuple(dict.fromkeys(reasons)),
-            )
+                return RunInspection(
+                    run_id=run_id,
+                    receipt=receipt,
+                    checkpoint_status=checkpoint_status,
+                    checkpoint_revision=checkpoint_revision,
+                    local_worker=local_worker,
+                    requires_quiescence=requires_quiescence,
+                    approval_phase=approval_phase,
+                    approval_request_count=approval_request_count,
+                    background_tasks=(
+                        tuple(
+                            session.task_store.list_summaries(
+                                thread_id=thread_id, run_id=run_id
+                            )
+                        )
+                        if session.task_store is not None and namespace_matches
+                        else ()
+                    ),
+                    reasons=tuple(dict.fromkeys(reasons)),
+                )
 
     async def approval_reviews(
         self, thread_id: str, run_id: str
     ) -> tuple[ApprovalReview, ...]:
         """Review checkpoint-bound approvals without returning invocation args."""
-        async with self._lock:
-            session = await self._session(thread_id)
-            if session.approval_reviewer is None:
-                raise PermissionError(
-                    "This session has no configured approval reviewer"
-                )
-            with approval_review_context(session, thread_id, run_id) as policy:
-                if policy is None:
-                    return ()
-                state = session.agent.inspect_approval_batch(thread_id, run_id)
-                request_ids = (
-                    state.get("runtime", {})
-                    .get("extensions", {})
-                    .get("pending_approvals", {})
-                    .get("requests", {})
-                    .values()
-                )
-                reviews = [
-                    review_record(session, thread_id, run_id, request_id)
-                    for request_id in request_ids
-                ]
-                return tuple(reviews)
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                if session.approval_reviewer is None:
+                    raise PermissionError(
+                        "This session has no configured approval reviewer"
+                    )
+                with approval_review_context(session, thread_id, run_id) as policy:
+                    if policy is None:
+                        return ()
+                    state = session.agent.inspect_approval_batch(thread_id, run_id)
+                    request_ids = (
+                        state.get("runtime", {})
+                        .get("extensions", {})
+                        .get("pending_approvals", {})
+                        .get("requests", {})
+                        .values()
+                    )
+                    reviews = [
+                        review_record(session, thread_id, run_id, request_id)
+                        for request_id in request_ids
+                    ]
+                    return tuple(reviews)
 
     async def decide_approval(
         self,
@@ -526,23 +582,25 @@ class AgentService:
         """Record one host review; execution still requires explicit resume."""
         if type(expected_revision) is not int or expected_revision <= 0:
             raise ValueError("expected_revision must be a positive integer")
-        async with self._lock:
-            session = await self._session(thread_id)
-            reviewer = session.approval_reviewer
-            if reviewer is None:
-                raise PermissionError(
-                    "This session has no configured approval reviewer"
-                )
-            with session.context(session.scope(thread_id, run_id=run_id)):
-                # Validate the complete checkpoint binding before changing the journal.
-                initial_review = review_record(session, thread_id, run_id, request_id)
-                result = session.agent.decide_approval(
-                    request_id,
-                    approved=approved,
-                    decided_by=reviewer,
-                    expected_revision=expected_revision,
-                )
-                return project(result, diff=initial_review.diff)
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                reviewer = session.approval_reviewer
+                if reviewer is None:
+                    raise PermissionError(
+                        "This session has no configured approval reviewer"
+                    )
+                with session.context(session.scope(thread_id, run_id=run_id)):
+                    # Validate the checkpoint binding before changing the journal.
+                    initial_review = review_record(
+                        session, thread_id, run_id, request_id
+                    )
+                    result = session.agent.decide_approval(
+                        request_id,
+                        approved=approved,
+                        decided_by=reviewer,
+                        expected_revision=expected_revision,
+                    )
+                    return project(result, diff=initial_review.diff)
 
     @staticmethod
     def _validate_command_receipts(session: AgentSession, state) -> None:
@@ -573,25 +631,30 @@ class AgentService:
         request_id: str,
     ) -> AdmissionReceipt:
         """Admit one input; duplicate identity returns the same run, never another."""
-        async with self._lock:
-            self._require_open()
-            if self._before_write is not None:
-                self._before_write()
-            session = await self._session(thread_id)
-            existing = self.store.get(thread_id, request_id)
-            if existing is None:
-                self._validate_new_input(session, thread_id)
-                session.bind_resources(thread_id, create=True)
-                state = session.workspace_policy_state
-                if state is not None and self.store.workspace_policy(thread_id) is None:
-                    saved = self.store.update_workspace_policy(
-                        state.current, expected_revision=0
-                    )
-                    state.current = saved
-            record = self.store.admit(thread_id, request_id, prompt, session.namespace)
-            if record.receipt.status == "accepted":
-                self._schedule(record, session)
-            return record.receipt
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                self._require_open()
+                if self._before_write is not None:
+                    self._before_write()
+                existing = self.store.get(thread_id, request_id)
+                if existing is None:
+                    self._validate_new_input(session, thread_id)
+                    session.bind_resources(thread_id, create=True)
+                    state = session.workspace_policy_state
+                    if (
+                        state is not None
+                        and self.store.workspace_policy(thread_id) is None
+                    ):
+                        saved = self.store.update_workspace_policy(
+                            state.current, expected_revision=0
+                        )
+                        state.current = saved
+                record = self.store.admit(
+                    thread_id, request_id, prompt, session.namespace
+                )
+                if record.receipt.status == "accepted":
+                    self._schedule(record, session)
+                return record.receipt
 
     def _schedule(self, record: AdmissionRecord, session: AgentSession) -> None:
         key = (record.receipt.thread_id, record.receipt.request_id)
@@ -610,7 +673,12 @@ class AgentService:
         worker.task = asyncio.create_task(
             self._produce(record, worker), context=contextvars.Context()
         )
-        worker.task.add_done_callback(self._observe_worker_failure)
+        self._producer_tasks[worker.task] = worker
+        worker.task.add_done_callback(self._producer_finished)
+
+    def _producer_finished(self, task: asyncio.Task) -> None:
+        self._producer_tasks.pop(task, None)
+        self._observe_worker_failure(task)
 
     @staticmethod
     def _observe_worker_failure(task: asyncio.Task) -> None:
@@ -727,26 +795,26 @@ class AgentService:
     @asynccontextmanager
     async def watch(self, thread_id: str, *, event_buffer_limit: int | None = None):
         """Attach to existing Agent watch; observer disposal has no execution effect."""
-        async with self._lock:
-            session = await self._session(thread_id)
-            with session.context(session.scope(thread_id)):
-                policy = (
-                    session.agent._get_workspace_approvals(force=True)
-                    if session._managed and session.checkpoint_store is not None
-                    else None
-                    if session._managed
-                    else session.agent._get_effective_approvals()
-                )
-                watcher = session.agent.watch(
-                    thread_id,
-                    approvals=policy,
-                    event_buffer_limit=event_buffer_limit,
-                )
-                await watcher.__aenter__()
-        try:
-            yield watcher
-        finally:
-            await watcher.aclose()
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                with session.context(session.scope(thread_id)):
+                    policy = (
+                        session.agent._get_workspace_approvals(force=True)
+                        if session._managed and session.checkpoint_store is not None
+                        else None
+                        if session._managed
+                        else session.agent._get_effective_approvals()
+                    )
+                    watcher = session.agent.watch(
+                        thread_id,
+                        approvals=policy,
+                        event_buffer_limit=event_buffer_limit,
+                    )
+                    await watcher.__aenter__()
+            try:
+                yield watcher
+            finally:
+                await watcher.aclose()
 
     async def snapshot(self, thread_id: str):
         async with self.watch(thread_id) as watcher:
@@ -802,35 +870,37 @@ class AgentService:
         """
         if not isinstance(worker_stopped, bool):
             raise TypeError("worker_stopped must be a host-supplied bool")
-        async with self._lock:
-            session = await self._session(thread_id)
-            record = self.store.get(thread_id, request_id)
-            if record is None:
-                raise KeyError(request_id)
-            if record.namespace != session.namespace:
-                raise ServiceConflictError("The host changed the checkpoint namespace")
-            if (thread_id, request_id) in self._workers:
-                raise ServiceBusyError("The attempt still has a local worker")
-            if record.receipt.status == "accepted":
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                record = self.store.get(thread_id, request_id)
+                if record is None:
+                    raise KeyError(request_id)
+                if record.namespace != session.namespace:
+                    raise ServiceConflictError(
+                        "The host changed the checkpoint namespace"
+                    )
+                if (thread_id, request_id) in self._workers:
+                    raise ServiceBusyError("The attempt still has a local worker")
+                if record.receipt.status == "accepted":
+                    self._schedule(record, session)
+                    return record.receipt
+                if record.receipt.status in {"completed", "interrupted"}:
+                    return record.receipt
+                if record.owner_id != self._owner_id and not worker_stopped:
+                    raise ServiceRecoveryRequiredError(
+                        "Establish old-worker quiescence first"
+                    )
+                state = self._recovery_checkpoint(session, record.receipt)
+                record = self.store.prepare_resume(record)
+                if state.get("status") in {"completed", "interrupted"}:
+                    if not self.store.claim(record, self._owner_id):
+                        raise ServiceConflictError("Another worker claimed recovery")
+                    claimed = self.store.get(thread_id, request_id)
+                    return self.store.finish(
+                        claimed.receipt, self._owner_id, state["status"]
+                    )
                 self._schedule(record, session)
                 return record.receipt
-            if record.receipt.status in {"completed", "interrupted"}:
-                return record.receipt
-            if record.owner_id != self._owner_id and not worker_stopped:
-                raise ServiceRecoveryRequiredError(
-                    "Establish old-worker quiescence first"
-                )
-            state = self._recovery_checkpoint(session, record.receipt)
-            record = self.store.prepare_resume(record)
-            if state.get("status") in {"completed", "interrupted"}:
-                if not self.store.claim(record, self._owner_id):
-                    raise ServiceConflictError("Another worker claimed recovery")
-                claimed = self.store.get(thread_id, request_id)
-                return self.store.finish(
-                    claimed.receipt, self._owner_id, state["status"]
-                )
-            self._schedule(record, session)
-            return record.receipt
 
     async def resume_checkpoint(
         self,
@@ -848,22 +918,23 @@ class AgentService:
         if not isinstance(worker_stopped, bool):
             raise TypeError("worker_stopped must be a host-supplied bool")
         validate_identifier(run_id, "run_id")
-        async with self._lock:
-            session = await self._session(thread_id)
-            record = self.store.get_for_run(thread_id, run_id)
-            if record is None:
-                if not worker_stopped:
-                    raise ServiceRecoveryRequiredError(
-                        "Establish old-worker quiescence before importing a checkpoint"
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                record = self.store.get_for_run(thread_id, run_id)
+                if record is None:
+                    if not worker_stopped:
+                        raise ServiceRecoveryRequiredError(
+                            "Establish old-worker quiescence before importing "
+                            "a checkpoint"
+                        )
+                    receipt = AdmissionReceipt(
+                        thread_id, f"checkpoint:{run_id}", run_id, "running"
                     )
-                receipt = AdmissionReceipt(
-                    thread_id, f"checkpoint:{run_id}", run_id, "running"
-                )
-                self._recovery_checkpoint(session, receipt)
-                record = self.store.adopt_checkpoint(
-                    thread_id, run_id, session.namespace
-                )
-            request_id = record.receipt.request_id
+                    self._recovery_checkpoint(session, receipt)
+                    record = self.store.adopt_checkpoint(
+                        thread_id, run_id, session.namespace
+                    )
+                request_id = record.receipt.request_id
         return await self.resume(thread_id, request_id, worker_stopped=worker_stopped)
 
     @staticmethod
@@ -907,23 +978,15 @@ class AgentService:
         await asyncio.shield(task)
 
     async def _shutdown(self) -> None:
-        workers = tuple(self._workers.values())
+        workers = tuple(self._producer_tasks.values())
         for worker in workers:
             worker.scope.abort_signal.abort("AgentService shutdown")
         errors = []
         for result in await asyncio.gather(
-            *(worker.task for worker in workers),
-            return_exceptions=True,
+            *(worker.task for worker in workers), return_exceptions=True
         ):
             if isinstance(result, Exception):
                 errors.append(result)
-        for session in self._sessions.values():
-            if session.on_close is not None:
-                try:
-                    result = session.on_close()
-                    if inspect.isawaitable(result):
-                        await result
-                except Exception as error:
-                    errors.append(error)
+        errors.extend(await self._cache.close_all())
         if errors:
             raise ExceptionGroup("AgentService shutdown failed", errors)

@@ -242,10 +242,43 @@ bindings rather than silently moving a conversation to another environment.
 ## Run Identity And Host Bindings
 
 `receipt_for_run(thread_id, run_id)` locates the admission associated with a saved
-execution. `session(thread_id)` resolves the factory's `AgentSession` for trusted
-in-process integrations; domain facades such as [CodingSession](coding-session.md)
-use it to share dependencies without duplicating runtime ownership. Applications
-can normally use prompt/watch without accessing live dependencies.
+execution. Applications can normally use prompt/watch without accessing live
+dependencies. A trusted host that needs the live `AgentSession` acquires a lease:
+
+```python
+lease = await service.acquire_session(thread_id)
+try:
+    session = lease.session
+    print(session.namespace)
+finally:
+    await lease.aclose()
+```
+
+The lease pins that loaded binding until `aclose()`. Do not keep the session or
+its Agent, stores, inbox, or workspace after releasing the lease. A
+service-backed [CodingSession](coding-session.md) facade stores the service and
+thread identity and does not pin an Agent; its ordinary prompt, watch, history,
+and recovery operations remain available across a release.
+
+`await service.release_session(thread_id)` closes and evicts an idle loaded
+binding, returning `True`; an already unloaded thread returns `False`. The
+service raises `ServiceBusyError` while a foreground worker, watcher, lease, or
+delegated task is using the binding. Cleanup failure quarantines the binding and
+raises `ServiceRecoveryRequiredError` with the cleanup cause, so a new factory
+result cannot overlap an incompletely closed generation. Release preserves the
+durable thread binding, admissions, checkpoints, tasks, approvals, and history;
+the next operation loads a fresh Agent from the registered factory. It does not
+delete a thread or reset its run IDs.
+
+Host cleanup callbacks are not repeated automatically after failure, because
+their effects may already have happened. A successful callback is also not
+repeated when closing another owned store fails. The host must resolve a
+quarantined binding's failed cleanup before replacing its resources.
+
+Release is a host lifecycle operation, not a client action. There is no idle
+timeout or LRU cap in this API; the host can explicitly release threads when
+they are no longer in use. `AgentService.aclose()` still shuts down all loaded
+bindings. The service borrows its admission journal and leaves it open.
 
 ## Reopen And Recover
 

@@ -285,7 +285,8 @@ def create_service_app(  # noqa: C901
         try:
             # Resolve the thread and trusted session before sending SSE headers.
             # The watcher still captures the snapshot atomically with attach.
-            await service.session(thread_id)
+            lease = await service.acquire_session(thread_id)
+            await lease.aclose()
         except Exception as exc:
             return _exception_response(exc)
 

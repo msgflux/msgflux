@@ -195,6 +195,14 @@ async def test_service_shutdown_aggregates_binding_cleanup_failure_and_keeps_bor
             assert not model.close.called
             assert not model.aclose.await_count
     finally:
-        for agent, _model in agents.values():
-            await agent.aclose()
+        for thread_id, (agent, _model) in agents.items():
+            if thread_id == failing_thread.thread_id:
+                with pytest.raises(ExceptionGroup):
+                    await agent.aclose()
+                assert callbacks.count(thread_id) == 1
+                # The host callback failed and is quarantined. Close its bundle
+                # directly for test hygiene without repeating arbitrary cleanup.
+                resources[thread_id].close()
+            else:
+                await agent.aclose()
         journal.close()

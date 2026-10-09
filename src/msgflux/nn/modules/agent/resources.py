@@ -15,6 +15,7 @@ from threading import RLock
 import msgspec
 
 from msgflux.core.dotdict import dotdict
+from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.runtime.agent_resources import AgentResources, BoundAgentResources
 from msgflux.runtime.context import execution_context, get_execution_context
 
@@ -24,6 +25,8 @@ class _OwnedThread(msgspec.Struct):
     libraries: set = msgspec.field(default_factory=set)
     active: int = 0
     closing: bool = False
+    idle_closing: bool = False
+    children_settled: bool = False
     lock: object = msgspec.field(default_factory=RLock)
 
 
@@ -111,6 +114,8 @@ class AgentResourceMixin:
         self._owned_threads: dict[str, _OwnedThread] = {}
         self._resources_closed = False
         self._resource_close_tasks = {}
+        self._resource_close_callbacks_done: set[str] = set()
+        self._resource_close_callback_failures: dict[str, BaseException] = {}
         self._resource_shutdown_task = None
 
     def _bind_resources(self, thread_id):
@@ -203,58 +208,191 @@ class AgentResourceMixin:
 
     async def _close_thread_resources(self, thread_id, *, before_close=None):
         with self._resource_lock:
+            callback_failure = self._resource_close_callback_failures.get(thread_id)
+            if callback_failure is not None:
+                raise callback_failure
             owned = self._owned_threads.get(thread_id)
             if owned is not None:
                 task = self._resource_close_tasks.get(thread_id)
                 if task is None or (task.done() and task.exception() is not None):
                     task = asyncio.create_task(
-                        self._settle_thread_resources(owned, before_close),
+                        self._settle_thread_resources(thread_id, owned, before_close),
                         context=contextvars.Context(),
                     )
                     self._resource_close_tasks[thread_id] = task
         if owned is None:
-            if before_close is not None:
-                result = before_close()
-                if inspect.isawaitable(result):
-                    await result
+            await self._run_thread_close_callback(thread_id, before_close)
             return
         await asyncio.shield(task)
 
-    async def _settle_thread_resources(self, owned, before_close):
+    def _thread_release_reason(self, thread_id) -> str | None:
+        """Explain why this managed thread cannot be safely released as idle."""
+        with self._resource_lock:
+            owned = self._owned_threads.get(thread_id)
+            if owned is None:
+                return None
+            with owned.lock:
+                return self._thread_release_reason_locked(thread_id, owned)
+
+    def _thread_release_reason_locked(self, thread_id, owned) -> str | None:
+        if owned.closing:
+            return "Thread resources are already closing."
+        if owned.active:
+            return "An Agent call is still using thread resources."
+
+        reason = self._active_background_future_reason(tuple(owned.libraries))
+        if reason is not None:
+            return reason
+        reason = self._unfinished_task_reason(thread_id, owned.resources.task_store)
+        if reason is not None:
+            return reason
+        return self._checkpoint_release_reason(thread_id, owned)
+
+    @staticmethod
+    def _active_background_future_reason(libraries) -> str | None:
+        for library in libraries:
+            dispatcher = getattr(library, "_background_dispatcher", None)
+            if dispatcher is None:
+                continue
+            with dispatcher._task_futures_lock:
+                if any(
+                    not future.done() for future in dispatcher._task_futures.values()
+                ):
+                    return "A background task future is still active."
+        return None
+
+    @staticmethod
+    def _unfinished_task_reason(thread_id, task_store) -> str | None:
+        unfinished_query = getattr(task_store, "has_unfinished_for_thread", None)
+        if unfinished_query is None:
+            return "The task store cannot confirm thread quiescence."
+        try:
+            if unfinished_query(thread_id=thread_id):
+                return "A queued, running, or paused background task remains."
+        except Exception as error:
+            return f"Background task state could not be checked: {error}"
+        return None
+
+    def _checkpoint_release_reason(self, thread_id, owned) -> str | None:
+        checkpoints = owned.resources.checkpoint_store
+        namespace = self.get_module_name()
+        try:
+            for status in ("running", "paused", "failed"):
+                for run in checkpoints.list_runs(namespace, thread_id, status=status):
+                    checkpoint = checkpoints.load_state(
+                        namespace, thread_id, run["run_id"]
+                    )
+                    if checkpoint is None:
+                        return "A nonterminal checkpoint is unavailable."
+                    if status == "running":
+                        return "A checkpoint still records a running attempt."
+                    try:
+                        self._validate_checkpoint_command_receipts(checkpoint)
+                    except TaskPauseRequestedError as error:
+                        return str(error)
+                    reason = self._uncertain_checkpoint_approval_reason(checkpoint)
+                    if reason is not None:
+                        return reason
+        except Exception as error:
+            return f"Checkpoint quiescence could not be checked: {error}"
+        return None
+
+    @staticmethod
+    def _uncertain_checkpoint_approval_reason(checkpoint) -> str | None:
+        extensions = checkpoint.get("runtime", {}).get("extensions", {})
+        if not isinstance(extensions, dict):
+            return "Checkpoint approval state is malformed."
+        pending = extensions.get("pending_approvals")
+        if pending is None:
+            return None
+        if not isinstance(pending, dict) or pending.get("schema_version") != 1:
+            return "Checkpoint approval state is unsupported."
+        requests = pending.get("requests")
+        if not isinstance(requests, dict):
+            return "Checkpoint approval requests are malformed."
+        phase = pending.get("phase")
+        if phase is None and requests:
+            return None  # Legacy awaiting-decision checkpoints are quiescent.
+        if phase in {"awaiting_decision", "awaiting-decision", "approved"}:
+            return None
+        return "Pending approval execution requires host reconciliation."
+
+    def _mark_thread_idle_closing(self, thread_id) -> str | None:
+        """Atomically refuse activity or fence new calls before idle cleanup."""
+        with self._resource_lock:
+            owned = self._owned_threads.get(thread_id)
+            if owned is None:
+                return None
+            with owned.lock:
+                reason = self._thread_release_reason_locked(thread_id, owned)
+                if reason is not None:
+                    return reason
+                owned.closing = True
+                owned.idle_closing = True
+                return None
+
+    async def _settle_thread_resources(self, thread_id, owned, before_close):
         with owned.lock:
             owned.closing = True
-        # Child libraries register in the same lifetime, so their futures also
-        # settle before the stores close. Cooperative interruption is not kill.
-        while True:
-            futures = set()
-            with owned.lock:
-                libraries = tuple(owned.libraries)
-            for task in owned.resources.task_store.list():
-                for library in libraries:
-                    future = library.get_background_dispatcher().get_task_future(
-                        task.task_id
-                    )
-                    if future is not None and not future.done():
-                        owned.resources.task_store.request_interrupt(task.task_id)
-                        futures.add(future)
-            if not futures:
-                break
-            await asyncio.gather(
-                *(
-                    asyncio.wrap_future(f) if isinstance(f, Future) else f
-                    for f in futures
-                ),
-                return_exceptions=True,
-            )
+            idle_closing = owned.idle_closing
+            children_settled = owned.children_settled
+        if not idle_closing and not children_settled:
+            # Shutdown may cooperatively interrupt child work. Idle release
+            # already proved quiescence and must not use close to discover it.
+            while True:
+                futures = set()
+                with owned.lock:
+                    libraries = tuple(owned.libraries)
+                for task in owned.resources.task_store.list():
+                    for library in libraries:
+                        future = library.get_background_dispatcher().get_task_future(
+                            task.task_id
+                        )
+                        if future is not None and not future.done():
+                            owned.resources.task_store.request_interrupt(task.task_id)
+                            futures.add(future)
+                if not futures:
+                    break
+                await asyncio.gather(
+                    *(
+                        asyncio.wrap_future(f) if isinstance(f, Future) else f
+                        for f in futures
+                    ),
+                    return_exceptions=True,
+                )
         with owned.lock:
             if owned.active:
                 raise RuntimeError("Stop active Agent calls before closing resources")
-        if before_close is not None:
-            result = before_close()
-            if inspect.isawaitable(result):
-                await result
+            owned.children_settled = True
+        await self._run_thread_close_callback(thread_id, before_close)
         with owned.lock:
             owned.resources.close()
+
+    async def _run_thread_close_callback(self, thread_id, callback):
+        """Run host cleanup once; failed callbacks remain quarantined.
+
+        Host callbacks can have arbitrary side effects, so retrying one after an
+        exception could duplicate cleanup that actually completed. An operator
+        must resolve that failure explicitly before resource shutdown can retry.
+        """
+        if callback is None:
+            return
+        with self._resource_lock:
+            failure = self._resource_close_callback_failures.get(thread_id)
+            if failure is not None:
+                raise failure
+            if thread_id in self._resource_close_callbacks_done:
+                return
+        try:
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
+        except BaseException as error:
+            with self._resource_lock:
+                self._resource_close_callback_failures[thread_id] = error
+            raise
+        with self._resource_lock:
+            self._resource_close_callbacks_done.add(thread_id)
 
     async def aclose(self):
         """Close owned persistence after stopping calls and delegated work.

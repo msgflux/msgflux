@@ -109,6 +109,39 @@ def test_task_store_contract_scoped_summaries(task_store):
     )
 
 
+def test_task_store_contract_detects_unfinished_thread_work_without_quiescence_guess(
+    task_store,
+):
+    task_store.create("queued", task_id="queued", metadata={"thread_id": "thread-a"})
+    task_store.create("running", task_id="running", metadata={"thread_id": "thread-a"})
+    task_store.set_running("running")
+    task_store.create("paused", task_id="paused", metadata={"thread_id": "thread-a"})
+    task_store.set_running("paused")
+    task_store.pause("paused", reason="awaiting host reconciliation")
+    task_store.create("foreign", task_id="foreign", metadata={"thread_id": "thread-b"})
+    task_store.set_running("foreign")
+
+    assert task_store.has_unfinished_for_thread(thread_id="thread-a") is True
+    assert task_store.has_unfinished_for_thread(thread_id="thread-b") is True
+    assert task_store.has_unfinished_for_thread(thread_id="thread-c") is False
+
+    # A stale/expired lease is not evidence that a durable running task stopped.
+    lease_store = task_store
+    lease_store._clock = lambda: 100.0
+    lease_store.create(
+        "expired-lease", task_id="expired-lease", metadata={"thread_id": "thread-c"}
+    )
+    lease_store.claim_worker("expired-lease", "old-owner", lease_seconds=1)
+    lease_store._clock = lambda: 102.0
+    assert lease_store.get_worker_lease("expired-lease").expires_at == 101.0
+    assert lease_store.has_unfinished_for_thread(thread_id="thread-c") is True
+
+    task_store.complete("queued", "done")
+    task_store.complete("running", "done")
+    task_store.interrupt("paused", reason="resolved")
+    assert task_store.has_unfinished_for_thread(thread_id="thread-a") is False
+
+
 def test_task_store_contract_messages_and_conditional_resume(task_store):
     task_store.create(
         "worker", task_id="task-1", metadata={"checkpoint_run_id": "initial"}

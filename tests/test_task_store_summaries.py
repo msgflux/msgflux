@@ -74,3 +74,29 @@ def test_sqlite_summary_order_uses_updated_at_then_task_id(tmp_path):
         ] == ["z", "m", "a"]
     finally:
         store.close()
+
+
+def test_in_memory_unfinished_query_does_not_copy_task_result():
+    class ExplodingDeepcopy:
+        def __deepcopy__(self, memo):
+            raise AssertionError("idle query copied task result")
+
+    store = InMemoryTaskStore()
+    store.create("worker", task_id="task", metadata={"thread_id": "thread-a"})
+    store._tasks["task"].result = ExplodingDeepcopy()
+
+    assert store.has_unfinished_for_thread(thread_id="thread-a") is True
+
+
+def test_sqlite_unfinished_query_does_not_deserialize_task_result(tmp_path):
+    store = SQLiteTaskStore(str(tmp_path / "tasks.sqlite"))
+    try:
+        store.create("worker", task_id="task", metadata={"thread_id": "thread-a"})
+        store._conn.execute(
+            "UPDATE tasks SET result = ? WHERE task_id = ?", ("{malformed", "task")
+        )
+        store._conn.commit()
+
+        assert store.has_unfinished_for_thread(thread_id="thread-a") is True
+    finally:
+        store.close()
