@@ -79,7 +79,8 @@ class CodingSession:
                 else SQLiteServiceStore(":memory:")
             )
         )
-        self.service = AgentService(store=self._service_store)
+        # This facade retains its supplied Agent and cannot reconstruct it.
+        self.service = AgentService(store=self._service_store, cache_policy=None)
         self.service._before_write = self._persist_service
         self._owns_service = True
         self._service_persisted = (

@@ -9,14 +9,16 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 import msgflux as mf
-from msgflux.models.response import ModelResponse
+from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.coding import CodingSession
 from msgflux.nn import Agent
+from msgflux.nn.extensions import AgentExtension
 from msgflux.runtime.context import ExecutionScope, get_execution_context
 from msgflux.runtime.service import (
     AgentService,
     AgentSession,
+    SessionCachePolicy,
     ServiceBusyError,
     ServiceRecoveryRequiredError,
     SQLiteServiceStore,
@@ -287,6 +289,146 @@ async def test_release_rejects_worker_finalizer_after_worker_map_is_cleared():
     finally:
         finish_finalizer.set()
         await service.aclose()
+        await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_stream_finalizer_pins_resources_through_cache_and_shutdown(
+    tmp_path,
+):
+    finalizer_entered = Event()
+    finish_finalizer = Event()
+    agent, _model = _agent(
+        "stream-finalizer",
+        lambda **_kwargs: _response(),
+        agent_dir=tmp_path / "stream-finalizer-state",
+    )
+    service = AgentService(
+        store=SQLiteServiceStore(tmp_path / "stream-finalizer-service.sqlite3"),
+        cache_policy=SessionCachePolicy(idle_timeout=0),
+    )
+    service.register("stream-finalizer", lambda _thread: AgentSession(agent))
+    thread = await service.open_thread("stream-finalizer", thread_id="stream-finalizer")
+    lease = await service.acquire_session(thread.thread_id)
+    session = lease.session
+    session.bind_resources(thread.thread_id, create=True)
+    scope = session.scope(thread.thread_id, run_id="stream-run")
+    resources = agent._owned_threads[thread.thread_id].resources
+    extension = AgentExtension("held-finalizer")
+    agent.register_extension("held-finalizer", extension)
+    original_finalize = agent._afinalize_detached_event_result
+
+    async def held_finalize(result, *, scope=None, _release=None):
+        finalizer_entered.set()
+        await asyncio.to_thread(finish_finalizer.wait)
+        # This is a real store access that fails if TTL cleanup closed the
+        # managed resource bundle before detached finalization completed.
+        resources.checkpoint_store.list_runs(agent.get_module_name(), thread.thread_id)
+        await original_finalize(result, scope=scope, _release=_release)
+
+    agent._afinalize_detached_event_result = held_finalize
+    response = ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    response.finish(status="completed")
+    agent.generator.aforward = AsyncMock(return_value=response)
+    try:
+        await lease.aclose()
+        assert await agent.acall("hello", scope=scope) is response
+        assert await asyncio.to_thread(finalizer_entered.wait, 3)
+        assert agent._owned_threads[thread.thread_id].active == 1
+        agent.remove_extension("held-finalizer")
+        assert agent._pending_extensions["held-finalizer"] is extension
+        await service._cache._sweep_once()
+        assert not resources._closed
+
+        shutdown = asyncio.create_task(service.aclose())
+        await asyncio.sleep(0.05)
+        assert not shutdown.done()
+        assert not resources._closed
+
+        finish_finalizer.set()
+        await asyncio.wait_for(shutdown, timeout=3)
+        assert resources._closed
+        assert "held-finalizer" not in agent._pending_extensions
+        assert "held-finalizer" not in agent._extension_refcounts
+    finally:
+        finish_finalizer.set()
+        if not service._closed:
+            await service.aclose()
+        await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_events_finalizes_inline_without_retaining_resources(
+    tmp_path,
+):
+    agent, _model = _agent(
+        "inline-stream-finalizer",
+        lambda **_kwargs: _response(),
+        agent_dir=tmp_path / "inline-stream-state",
+    )
+    thread_id = "inline-stream"
+    agent._bind_resources(thread_id)
+    owned = agent._owned_threads[thread_id]
+    response = ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    response.finish(status="completed")
+    agent.generator.aforward = AsyncMock(return_value=response)
+
+    try:
+        events = [
+            event
+            async for event in agent.stream_events(
+                "hello", scope=ExecutionScope(thread_id=thread_id, run_id="stream")
+            )
+        ]
+        assert events
+        assert owned.active == 0
+        assert not hasattr(response, "_msgflux_detached_event_context")
+        assert response._is_finalized()
+    finally:
+        await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sync_agent_call_retains_managed_resources_until_finalizer_finishes(
+    tmp_path,
+):
+    finalizer_entered = Event()
+    finish_finalizer = Event()
+    agent, _model = _agent(
+        "sync-stream-finalizer",
+        lambda **_kwargs: _response(),
+        agent_dir=tmp_path / "sync-stream-state",
+    )
+    thread_id = "sync-stream"
+    scope = ExecutionScope(thread_id=thread_id, run_id="sync-stream-run")
+    resources = agent._bind_resources(thread_id)
+    response = ModelStreamResponse(mode="async")
+    response.set_response_type("text_generation")
+    response.finish(status="completed")
+    agent.generator.forward = Mock(return_value=response)
+    original_finalize = agent._afinalize_detached_event_result
+
+    async def held_finalize(result, *, scope=None, _release=None):
+        finalizer_entered.set()
+        await asyncio.to_thread(finish_finalizer.wait)
+        resources.checkpoint_store.list_runs(agent.get_module_name(), thread_id)
+        await original_finalize(result, scope=scope, _release=_release)
+
+    agent._afinalize_detached_event_result = held_finalize
+    try:
+        assert agent("hello", scope=scope) is response
+        assert await asyncio.to_thread(finalizer_entered.wait, 3)
+        assert agent._owned_threads[thread_id].active == 1
+        finish_finalizer.set()
+        deadline = asyncio.get_running_loop().time() + 3
+        while agent._owned_threads[thread_id].active:
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.01)
+        assert resources.checkpoint_store.list_runs(agent.get_module_name(), thread_id)
+    finally:
+        finish_finalizer.set()
         await agent.aclose()
 
 

@@ -1,11 +1,12 @@
 # ruff: noqa: A002
 
 import asyncio
+import contextvars
 import warnings
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from threading import RLock
 from typing import (
-    TYPE_CHECKING,
     Any,
     Dict,
     List,
@@ -33,6 +34,13 @@ from msgflux.nn.hooks.events import (
     OutputContext,
     RunEndContext,
 )
+from msgflux.nn.modules.agent.context import (
+    _CURRENT_AGENT_CONTEXT,
+    _UNSET,
+    _agent_context,
+    _BeforeRunEndHookError,
+    _require_lifecycle_payload,
+)
 from msgflux.nn.modules.container import ModuleDict
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import (
@@ -44,15 +52,7 @@ from msgflux.runtime.context import (
 from msgflux.runtime.event_hub import ThreadWatcher, get_event_hub
 from msgflux.runtime.permissions import intersect_permissions
 
-if TYPE_CHECKING:
-    pass
-from msgflux.nn.modules.agent.context import (
-    _CURRENT_AGENT_CONTEXT,
-    _UNSET,
-    _agent_context,
-    _BeforeRunEndHookError,
-    _require_lifecycle_payload,
-)
+_AGENT_EVENT_STREAM_ROOT = ContextVar("msgflux_agent_event_stream_root", default=None)
 
 
 class AgentLifecycleMixin:
@@ -313,23 +313,55 @@ class AgentLifecycleMixin:
             with snapshot_context:
                 yield names
         finally:
-            wakeups = []
-            cleanups = []
-            with self._extension_lock:
-                for name in names:
-                    count = self._extension_refcounts.get(name, 1) - 1
-                    self._extension_refcounts[name] = count
-                    if count != 0 or name not in self._pending_extensions:
-                        continue
-                    waiter = self._extension_async_cleanup_waiters.get(name)
-                    if waiter is not None:
-                        wakeups.append(waiter)
-                    else:
-                        cleanups.append(name)
-            for loop, waiter in wakeups:
-                loop.call_soon_threadsafe(waiter.set)
-            for name in cleanups:
-                self._cleanup_extension(name)
+            self._release_extension_snapshot(names)
+
+    def _retain_detached_event_context(self):
+        """Keep resources and extensions alive through detached event finalizing."""
+        release_resources = self._retain_detached_resources()
+        names = _get_extension_snapshot(self)
+        names = names if names is not None else frozenset()
+        self._retain_extension_snapshot(names)
+        released = False
+        release_lock = RLock()
+
+        def release() -> None:
+            nonlocal released
+            with release_lock:
+                if released:
+                    return
+                released = True
+            try:
+                self._release_extension_snapshot(names)
+            finally:
+                release_resources()
+
+        return release
+
+    def _retain_extension_snapshot(self, names: frozenset[str]) -> None:
+        with self._extension_lock:
+            for name in names:
+                self._extension_refcounts[name] = (
+                    self._extension_refcounts.get(name, 0) + 1
+                )
+
+    def _release_extension_snapshot(self, names: frozenset[str]) -> None:
+        wakeups = []
+        cleanups = []
+        with self._extension_lock:
+            for name in names:
+                count = self._extension_refcounts.get(name, 1) - 1
+                self._extension_refcounts[name] = count
+                if count != 0 or name not in self._pending_extensions:
+                    continue
+                waiter = self._extension_async_cleanup_waiters.get(name)
+                if waiter is not None:
+                    wakeups.append(waiter)
+                else:
+                    cleanups.append(name)
+        for loop, waiter in wakeups:
+            loop.call_soon_threadsafe(waiter.set)
+        for name in cleanups:
+            self._cleanup_extension(name)
 
     def _call_impl_with_hooks(self, *args, **kwargs):
         scope = self._workspace_scope(kwargs.get("scope"))
@@ -344,7 +376,9 @@ class AgentLifecycleMixin:
                     vars=kwargs.get("vars") or {},
                 ),
             ):
-                return super()._call_impl_with_hooks(*args, **kwargs)
+                result = super()._call_impl_with_hooks(*args, **kwargs)
+                self._attach_detached_event_context(result)
+                return result
 
     async def _acall_impl_with_hooks(self, *args, **kwargs):
         scope = self._workspace_scope(kwargs.get("scope"))
@@ -359,7 +393,20 @@ class AgentLifecycleMixin:
                     vars=kwargs.get("vars") or {},
                 ),
             ):
-                return await super()._acall_impl_with_hooks(*args, **kwargs)
+                result = await super()._acall_impl_with_hooks(*args, **kwargs)
+                self._attach_detached_event_context(result)
+                return result
+
+    def _attach_detached_event_context(self, result: Any) -> None:
+        """Transfer active resource/extension pins to a returned stream."""
+        stream = self._stream_response_from_result(result)
+        if stream is None or _AGENT_EVENT_STREAM_ROOT.get() is self:
+            return
+        release = self._retain_detached_event_context()
+        stream._msgflux_detached_event_context = (
+            release,
+            contextvars.copy_context(),
+        )
 
     @contextmanager
     def _event_stream_execution_context(self, kwargs: Dict[str, Any]):
@@ -372,7 +419,11 @@ class AgentLifecycleMixin:
                 vars=kwargs.get("vars") or {},
             ),
         ):
-            yield
+            token = _AGENT_EVENT_STREAM_ROOT.set(self)
+            try:
+                yield
+            finally:
+                _AGENT_EVENT_STREAM_ROOT.reset(token)
 
     def _update_agent_context(self, inputs: Mapping[str, Any]) -> None:
         state = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self))

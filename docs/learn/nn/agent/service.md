@@ -82,12 +82,16 @@ from pathlib import Path
 import msgflux as mf
 import msgflux.nn as nn
 from msgflux.data.stores import InMemoryCheckpointStore
-from msgflux.runtime import AgentService, AgentSession, SQLiteServiceStore
+from msgflux.runtime import AgentSession
+from msgflux.runtime.service import AgentService, SessionCachePolicy, SQLiteServiceStore
 
 
 async def main():
     journal = SQLiteServiceStore()  # :memory: for this example
-    service = AgentService(store=journal)
+    service = AgentService(
+        store=journal,
+        cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
+    )
 
     def create_session(thread):
         model = mf.Model.chat_completion("openai/gpt-6-luna")
@@ -289,10 +293,48 @@ their effects may already have happened. A successful callback is also not
 repeated when closing another owned store fails. The host must resolve a
 quarantined binding's failed cleanup before replacing its resources.
 
-Release is a host lifecycle operation, not a client action. There is no idle
-timeout or LRU cap in this API; the host can explicitly release threads when
-they are no longer in use. `AgentService.aclose()` still shuts down all loaded
-bindings. The service borrows its admission journal and leaves it open.
+## Automatic Session Cache Policy
+
+`AgentService` defaults to `SessionCachePolicy(max_loaded=64, idle_timeout=300.0)`.
+This bounds how many live thread bindings stay loaded and releases safely idle
+bindings after five minutes. Configure the policy at service construction:
+
+```python
+from msgflux.runtime.service import AgentService, SessionCachePolicy
+
+service = AgentService(
+    store=journal,
+    cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
+)
+```
+
+Each field controls one mechanism. Set `max_loaded=None` to disable the capacity
+limit while keeping the timeout, or `idle_timeout=None` to disable the timeout
+while keeping the capacity limit. Set `cache_policy=None` to disable both and
+manage release manually. `max_loaded` must be positive when set. A timeout of
+`0.0` requests release as soon as the binding is safely idle; it does not wait
+for a watcher to drain its event buffer.
+
+At capacity, the service first looks for an idle least-recently-used binding to
+release before loading an unloaded thread for an operation. A foreground run,
+host lease, delegated task, or unfinished stream finalizer prevents release;
+the service does not cancel that work to make room. A completed task record
+alone does not establish that its stream finalization has finished. If no
+binding can safely be released, the operation
+fails before its factory is called or an input is admitted. Cleanup failures
+remain quarantined and continue to count against capacity until the host
+resolves them. Loading, closing, and quarantined bindings also consume capacity,
+so concurrent factories cannot exceed the configured limit.
+Automatic release closes only resources owned by the session cleanup contract;
+it does not delete thread history or other durable state. Model and workspace
+objects remain host-owned unless the host supplies cleanup for them through the
+session callback.
+
+The policy applies to factory-created service bindings. An embedded
+`CodingSession(agent)` retains its supplied Agent for that facade's lifetime and
+disables automatic cache release. `AgentService.aclose()` stops its cache timer
+and shuts down loaded bindings; the service borrows its admission journal and
+leaves it open.
 
 ## Reopen And Recover
 

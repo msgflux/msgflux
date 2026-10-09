@@ -33,14 +33,18 @@ import msgflux as mf
 from msgflux.coding import CodingCheckpointExtension
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.nn import Agent
-from msgflux.runtime import AgentService, AgentSession, AgentWorkspace, SQLiteServiceStore
+from msgflux.runtime import AgentSession, AgentWorkspace
+from msgflux.runtime.service import AgentService, SessionCachePolicy, SQLiteServiceStore
 from msgflux.runtime.service.http import create_service_app
 from msgflux.tools.builtin import ReadFileTool
 
 
 async def main():
     journal = SQLiteServiceStore()
-    service = AgentService(store=journal)
+    service = AgentService(
+        store=journal,
+        cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
+    )
 
     def create_session(thread):
         if thread.cwd is None:
@@ -449,14 +453,16 @@ tool approval instead settles with status `paused` and emits `run.paused`.
 when application shutdown owns service shutdown; borrowed stores still remain
 host-owned. The host may release an idle loaded thread binding with
 `await service.release_session(thread_id)`; active workers, session leases, and
-delegated work prevent release. Watchers are not a release blocker after their
-initial snapshot and subscription have been captured. Durable
-thread and run records remain available for a later factory-created Agent. A
-cold snapshot still resolves dependencies through the registered factory;
-durable readers that avoid constructing an Agent are a separate future change.
-Release is a manual host operation; automatic idle timeouts and cache capacity
-limits are future work. Resource callbacks must drain any delegated work they
-own before releasing its model/workspace resources.
+delegated work prevent release. The service also applies its configured cache
+policy, which defaults to at most 64 loaded bindings and a 300-second idle
+timeout. Watchers do not block eviction after their initial snapshot and
+subscription. A remote client cannot configure this policy or request release;
+disconnecting only closes its observation connection. Durable thread and run
+records remain available for a later factory-created Agent. A cold snapshot
+still resolves dependencies through the registered factory; durable readers
+that avoid constructing an Agent are a separate future change. Resource
+callbacks must drain any delegated work they own before releasing its
+model/workspace resources.
 
 An existing embedded coding session can expose the same backend:
 

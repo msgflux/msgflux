@@ -23,6 +23,7 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
 from msgflux.runtime.service.approvals import project, review_record
+from msgflux.runtime.service.cache_policy import SessionCachePolicy
 from msgflux.runtime.service.inspection import (
     admission_evidence,
     approval_evidence,
@@ -54,6 +55,8 @@ from msgflux.runtime.service.session_cache import (
 )
 from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
 from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
+
+_DEFAULT_CACHE_POLICY = SessionCachePolicy()
 
 
 class AgentSession:
@@ -195,11 +198,27 @@ class AgentService:
     stores. One service belongs to one async event loop.
     """
 
-    def __init__(self, *, store: SQLiteServiceStore) -> None:
+    def __init__(
+        self,
+        *,
+        store: SQLiteServiceStore,
+        cache_policy: SessionCachePolicy | None = _DEFAULT_CACHE_POLICY,
+    ) -> None:
+        if cache_policy is not None and not isinstance(
+            cache_policy, SessionCachePolicy
+        ):
+            raise TypeError("cache_policy must be SessionCachePolicy or None")
         self.store = store
         self._owner_id = uuid4().hex
         self._factories: dict[str, Callable] = {}
-        self._cache = _SessionCache(self._load_session, self._release_reason)
+        self._cache = _SessionCache(
+            self._load_session,
+            self._release_reason,
+            policy=cache_policy,
+            busy_reason=lambda thread_id, session: self._release_reason(
+                thread_id, session, mark_closing=False
+            ),
+        )
         self._producer_tasks: dict[asyncio.Task, _Worker] = {}
         self._workers: dict[tuple[str, str], _Worker] = {}
         self._watchers = set()
@@ -336,7 +355,9 @@ class AgentService:
         finally:
             await lease.aclose()
 
-    def _release_reason(self, thread_id: str, session: AgentSession) -> str | None:
+    def _release_reason(
+        self, thread_id: str, session: AgentSession, *, mark_closing: bool = True
+    ) -> str | None:
         if getattr(session, "_retained_by_facade", False):
             return "The embedded CodingSession retains this Agent"
         if any(
@@ -357,7 +378,9 @@ class AgentService:
                 if reason is not None:
                     return reason
         with session.context(session.scope(thread_id)):
-            return session.agent._mark_thread_idle_closing(thread_id)
+            if mark_closing:
+                return session.agent._mark_thread_idle_closing(thread_id)
+            return session.agent._thread_release_reason(thread_id)
 
     async def release_session(self, thread_id: str) -> bool:
         """Release idle owned resources; keep the logical thread and saved state."""
@@ -678,7 +701,9 @@ class AgentService:
         worker.task.add_done_callback(self._producer_finished)
 
     def _producer_finished(self, task: asyncio.Task) -> None:
-        self._producer_tasks.pop(task, None)
+        worker = self._producer_tasks.pop(task, None)
+        if worker is not None:
+            self._cache.activity_finished(worker.receipt.thread_id)
         self._observe_worker_failure(task)
 
     @staticmethod

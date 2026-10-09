@@ -171,33 +171,42 @@ async def test_runs_endpoint_only_returns_checkpoint_summaries():
     agent = Agent(name="http-runs", model=model)
     agent.checkpoint_store = checkpoints
     service, calls = _service(lambda _thread: AgentSession(agent))
-    thread = await service.open_thread("agent", thread_id="runs-thread")
-    checkpoints.save_state(
-        agent.get_module_name(),
-        thread.thread_id,
-        "legacy-run",
-        {"status": "completed", "config": {"secret": "host-only"}, "state": "private"},
-    )
+    thread_id = "runs-thread"
     app = create_service_app(service, token="secret")
+
+    async def prepare_thread():
+        await service.open_thread("agent", thread_id=thread_id)
+        checkpoints.save_state(
+            agent.get_module_name(),
+            thread_id,
+            "legacy-run",
+            {
+                "status": "completed",
+                "config": {"secret": "host-only"},
+                "state": "private",
+            },
+        )
+
+    app.on_startup.append(prepare_thread)
+    app.on_shutdown.append(service.aclose)
     headers = {"Authorization": "Bearer secret"}
     try:
         async with AsyncTestClient(app=app) as client:
-            denied = await client.get(f"/v1/threads/{thread.thread_id}/runs")
+            denied = await client.get(f"/v1/threads/{thread_id}/runs")
             assert denied.status_code == 401
             assert calls == []
             response = await client.get(
-                f"/v1/threads/{thread.thread_id}/runs", headers=headers
+                f"/v1/threads/{thread_id}/runs", headers=headers
             )
             assert response.status_code == 200
             assert set(response.json()) == {"runs"}
             assert set(response.json()["runs"][0]) == {"run_id", "status", "updated_at"}
             assert response.json()["runs"][0]["run_id"] == "legacy-run"
-            assert calls == [thread]
+            assert calls == [service.store.thread(thread_id)]
             assert "host-only" not in response.text and "private" not in response.text
             missing = await client.get("/v1/threads/missing/runs", headers=headers)
             assert missing.status_code == 404
     finally:
-        await service.aclose()
         service.store.close()
 
 
@@ -225,9 +234,15 @@ async def test_approval_routes_auth_validate_payload_and_forbid_unconfigured_rev
     model.model_type = "chat_completion"
     agent = Agent(name="http-approval-default", model=model)
     service, calls = _service(lambda _thread: AgentSession(agent))
-    thread = await service.open_thread("agent", thread_id="approval-thread")
+    thread_id = "approval-thread"
     app = create_service_app(service, token="secret")
-    root = f"/v1/threads/{thread.thread_id}/runs/run-1/approvals"
+    root = f"/v1/threads/{thread_id}/runs/run-1/approvals"
+
+    async def prepare_thread():
+        await service.open_thread("agent", thread_id=thread_id)
+
+    app.on_startup.append(prepare_thread)
+    app.on_shutdown.append(service.aclose)
     try:
         async with AsyncTestClient(app=app) as client:
             denied = await client.get(root)
@@ -246,7 +261,6 @@ async def test_approval_routes_auth_validate_payload_and_forbid_unconfigured_rev
             assert forbidden.status_code == 403
             assert forbidden.json()["code"] == "forbidden"
     finally:
-        await service.aclose()
         service.store.close()
 
 
@@ -337,9 +351,15 @@ async def test_owned_app_shutdown_closes_session_once_and_borrows_journal():
     service = AgentService(store=journal)
     service.register("agent", lambda _thread: AgentSession(agent, on_close=close))
     thread = await service.open_thread("agent")
-    lease = await service.acquire_session(thread.thread_id)
-    await lease.aclose()
     app = create_service_app(service, token="secret", close_service=True)
+
+    async def warm_session():
+        # AsyncTestClient runs lifespan in its portal loop. Start the service's
+        # live dependencies there so shutdown uses that same owning event loop.
+        lease = await service.acquire_session(thread.thread_id)
+        await lease.aclose()
+
+    app.on_startup.append(warm_session)
     try:
         async with AsyncTestClient(app=app):
             pass

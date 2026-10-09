@@ -738,19 +738,21 @@ def test_process_crash_after_admission_redelivers_same_pending_request(tmp_path)
     )
 
     async def recover():
-        duplicate = await service.prompt(
-            thread.thread_id, "hello", request_id="admitted"
-        )
-        assert duplicate.run_id == receipt.run_id
-        settled = await service.wait(thread.thread_id, "admitted")
-        assert settled.status == "completed"
-        assert settled.run_id == receipt.run_id
-        assert agent.generator.aforward.await_count == 1
+        try:
+            duplicate = await service.prompt(
+                thread.thread_id, "hello", request_id="admitted"
+            )
+            assert duplicate.run_id == receipt.run_id
+            settled = await service.wait(thread.thread_id, "admitted")
+            assert settled.status == "completed"
+            assert settled.run_id == receipt.run_id
+            assert agent.generator.aforward.await_count == 1
+        finally:
+            await service.aclose()
 
     try:
         asyncio.run(recover())
     finally:
-        asyncio.run(service.aclose())
         checkpoints.close()
         journal.close()
 
@@ -790,17 +792,19 @@ def test_process_crash_after_completed_checkpoint_reconciles_without_model_retry
     )
 
     async def recover():
-        settled = await service.resume(
-            thread.thread_id, "finished-checkpoint", worker_stopped=True
-        )
-        assert settled.status == "completed"
-        assert settled.run_id == record.receipt.run_id
-        assert agent.generator.aforward.await_count == 0
+        try:
+            settled = await service.resume(
+                thread.thread_id, "finished-checkpoint", worker_stopped=True
+            )
+            assert settled.status == "completed"
+            assert settled.run_id == record.receipt.run_id
+            assert agent.generator.aforward.await_count == 0
+        finally:
+            await service.aclose()
 
     try:
         asyncio.run(recover())
     finally:
-        asyncio.run(service.aclose())
         checkpoints.close()
         journal.close()
 
