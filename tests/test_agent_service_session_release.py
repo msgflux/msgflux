@@ -1,6 +1,8 @@
 """Loaded AgentSession release and reload integration coverage."""
 
 import asyncio
+import gc
+import weakref
 from threading import Event
 from unittest.mock import AsyncMock, Mock
 
@@ -150,7 +152,7 @@ async def test_lease_pins_session_and_release_is_idempotent_after_detach():
 
 
 @pytest.mark.asyncio
-async def test_attached_service_watcher_pins_session_until_closed():
+async def test_attached_service_watcher_does_not_pin_released_session():
     agent, _model = _agent("watch-pins", lambda **_kwargs: _response())
     service = AgentService(store=SQLiteServiceStore())
     service.register("watch-pins", lambda _thread: AgentSession(agent))
@@ -158,12 +160,92 @@ async def test_attached_service_watcher_pins_session_until_closed():
     try:
         async with service.watch(thread.thread_id) as watcher:
             assert watcher.snapshot.thread_id == thread.thread_id
-            with pytest.raises(ServiceBusyError):
-                await service.release_session(thread.thread_id)
-        assert await service.release_session(thread.thread_id) is True
+            assert await service.release_session(thread.thread_id) is True
+        assert await service.release_session(thread.thread_id) is False
     finally:
         await service.aclose()
         await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_watcher_spans_managed_release_and_reload(tmp_path):
+    agent_dir = tmp_path / "watch-reload-agent"
+    service = AgentService(store=SQLiteServiceStore())
+    agents = []
+    observed_history = []
+
+    def factory(_thread):
+        generation = len(agents)
+
+        async def answer(**kwargs):
+            if generation:
+                observed_history.extend(kwargs["messages"].to_chatml())
+            return _response(f"answer-{generation}")
+
+        agent, _model = _agent("watch-reload", answer, agent_dir=agent_dir)
+        agents.append(agent)
+        return AgentSession(agent)
+
+    service.register("watch-reload", factory)
+    thread = await service.open_thread("watch-reload", thread_id="watch-reload")
+    watcher_context = None
+    try:
+        first = await service.prompt(
+            thread.thread_id, "remember cobalt", request_id="one"
+        )
+        assert (
+            await service.wait(thread.thread_id, first.request_id)
+        ).status == "completed"
+        old_agent = agents[0]
+        old_agent_ref = weakref.ref(old_agent)
+        old_resources = old_agent._owned_threads[thread.thread_id].resources
+
+        watcher_context = service.watch(thread.thread_id)
+        watcher = await watcher_context.__aenter__()
+        assert any(
+            item.get("role") == "user" and "remember cobalt" in item.get("content", "")
+            for item in watcher.snapshot.messages
+        )
+        assert await service.release_session(thread.thread_id) is True
+        assert old_resources._closed
+        agents[0] = None
+        del old_agent
+        gc.collect()
+        assert old_agent_ref() is None
+
+        second = await service.prompt(
+            thread.thread_id, "what did I ask?", request_id="two"
+        )
+        assert (
+            await service.wait(thread.thread_id, second.request_id)
+        ).status == "completed"
+        assert await service.release_session(thread.thread_id) is True
+        assert any(
+            item.get("role") == "user" and "remember cobalt" in item.get("content", "")
+            for item in observed_history
+        )
+
+        events = []
+        async with asyncio.timeout(3):
+            async for event in watcher:
+                events.append(event)
+                if event.run_id == second.run_id and event.type in {
+                    "run.end",
+                    "run.error",
+                }:
+                    break
+        assert any(event.run_id == second.run_id for event in events)
+        assert any(
+            event.run_id == second.run_id and event.type == "run.end"
+            for event in events
+        )
+    finally:
+        if watcher_context is not None:
+            await watcher_context.__aexit__(None, None, None)
+        await service.aclose()
+        for agent in agents:
+            if agent is not None:
+                await agent.aclose()
 
 
 @pytest.mark.asyncio

@@ -263,11 +263,14 @@ through the normal recovery API. Threads without a checkpoint store return an
 empty tuple. Saved checkpoint state, serialized config, and credentials are
 never included.
 
-Closing a client or its watcher only releases client-side observation resources;
-it does not release the server's loaded AgentSession. Session release is a
-trusted host lifecycle operation through `AgentService.release_session()` and
-has no HTTP endpoint, so a remote observer cannot close resources used by other
-clients.
+Closing a client or its watcher only releases observation resources; it never
+requests server-side session release. After the server captures a watcher's
+initial snapshot and subscription, that watcher does not pin the loaded
+AgentSession. The trusted host can call `AgentService.release_session()` while
+remote watchers remain attached. They can drain already queued events, and
+events published for the logical thread after a fresh factory load continue to
+reach them. Release has no HTTP endpoint, so remote observers cannot close
+resources used by other clients.
 
 ```python
 saved = await client.runs(thread_id)
@@ -327,9 +330,13 @@ async with client.watch(thread_id) as reattached:
         print(event.type)
 ```
 
-The initial snapshot and subscription are captured together by `Agent.watch()`.
-Reconnection starts with current history and live state, followed by future events.
-Old token deltas are not a durable replay log. `Last-Event-ID` is rejected with
+The initial snapshot and subscription are captured together by `Agent.watch()`;
+the service only holds a session lease during that attachment. The watcher then
+observes by logical thread ID, independent of which Agent generation is loaded.
+It can drain buffered events across an idle release and continue receiving
+events after reload. Reconnection starts with current history and live state,
+followed by future events. Old token deltas are not a durable replay log.
+`Last-Event-ID` is rejected with
 422; the adapter does not advertise resumable delta cursors.
 
 Each observer has a buffer limit of 1024 events by default. The host can configure
@@ -441,11 +448,15 @@ tool approval instead settles with status `paused` and emits `run.paused`.
 `create_service_app()` borrows the service by default. Set `close_service=True`
 when application shutdown owns service shutdown; borrowed stores still remain
 host-owned. The host may release an idle loaded thread binding with
-`await service.release_session(thread_id)`; active workers, watchers, session
-leases, and delegated work prevent release. Durable thread and run records
-remain available for a later factory-created Agent. Resource callbacks must
-drain any delegated work they own before releasing its model/workspace
-resources.
+`await service.release_session(thread_id)`; active workers, session leases, and
+delegated work prevent release. Watchers are not a release blocker after their
+initial snapshot and subscription have been captured. Durable
+thread and run records remain available for a later factory-created Agent. A
+cold snapshot still resolves dependencies through the registered factory;
+durable readers that avoid constructing an Agent are a separate future change.
+Release is a manual host operation; automatic idle timeouts and cache capacity
+limits are future work. Resource callbacks must drain any delegated work they
+own before releasing its model/workspace resources.
 
 An existing embedded coding session can expose the same backend:
 
