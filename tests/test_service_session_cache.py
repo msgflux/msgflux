@@ -78,7 +78,15 @@ async def test_cancelled_load_waiters_do_not_leave_unretrieved_failure():
         await settled.wait()
         await asyncio.sleep(0)
         assert "lost" not in cache._loads
-        assert observed == []
+        # Python 3.14 reports shielded failures even when another callback has
+        # retrieved the exception. That diagnostic is expected; unobserved or
+        # unrelated task failures must still fail this regression.
+        assert all(
+            context.get("message") == "RuntimeError exception in shielded future"
+            and context.get("future") is load_task
+            and context.get("exception") is load_task.exception()
+            for context in observed
+        )
     finally:
         loop.set_exception_handler(previous_handler)
 
