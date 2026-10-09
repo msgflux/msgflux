@@ -31,6 +31,8 @@ classifiers = [
 ]
 dependencies = [
     "httpx2>=2.12.0",
+    # 7.1.0 has no sdist or wheels for supported Python 3.13/3.14.
+    "multidict!=7.1.0",
     "jinja2>=3.1.6",
     "msgspec-ext>=0.5.1",
     "msgtrace-sdk>=1.1.0",
