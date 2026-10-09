@@ -40,12 +40,22 @@ there is no corresponding stream method on the remote session client.
 For operational recovery, `await service.inspect_run(thread_id, run_id)` returns
 a `RunInspection` with the optional admission `receipt`, `checkpoint_status` and
 `checkpoint_revision`, whether a `local_worker` is present, whether
-`requires_quiescence` is set, `approval_phase`, `approval_request_count`, and
-human-readable `reasons`. This is an observational summary: it excludes raw
-checkpoint state, prompts, tool arguments, and owner IDs. It does not provide a
-`safe_to_resume` decision. `requires_quiescence` means the trusted host still
-needs to establish that the old worker stopped; the inspection itself is not
-that assertion.
+`requires_quiescence` is set, `approval_phase`, `approval_request_count`,
+`background_tasks` summaries, and human-readable `reasons`. Each task summary
+contains `task_id`, `tool_name`, `status`, `updated_at`, and `error`. These
+summaries are selected from the TaskStore for the thread and tasks whose
+`root_run_id` or `parent_run_id` matches the inspected run. They omit task
+results, progress metadata, arguments, and ownership claims. This inspection is
+observational: it excludes raw checkpoint state, prompts, and owner IDs, and it
+does not provide a `safe_to_resume` decision. `requires_quiescence` means the
+trusted host still needs to establish that the old worker stopped; the
+inspection itself is not that assertion.
+
+Task summaries read persisted TaskStore state, independently of
+`watch().snapshot.background_tasks`. A `queued` or `running` status after
+restart does not prove a worker is alive, and a completed foreground checkpoint
+does not imply its detached background tasks have completed. Reconcile task
+ownership through the task recovery workflow before taking action.
 
 The admission journal and checkpoint store are separate. Their statuses or
 revisions can disagree, and inspection reads them at different times rather than
@@ -54,6 +64,10 @@ the underlying state and re-inspect before taking an action. Approval phase and
 pending count are summaries only; use the host-authorized approval review flow
 to inspect and decide individual requests. `approval_request_count` counts
 requests in the saved batch, including requests with recorded decisions.
+The `background_tasks` field is a tuple of lightweight `TaskSummary` records,
+not a claim that those tasks are currently executing. Use the task store and
+[background task recovery workflow](tools/background-tasks.md#inspecting-and-coordinating-recovery)
+for durable task inspection and recovery.
 
 ## Prompt And Observe
 

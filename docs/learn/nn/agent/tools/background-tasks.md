@@ -66,6 +66,27 @@ When the tool library runs inside this context, it reads the active
 interrupt requests. If no task store is provided, msgFlux creates an in-memory
 store when background tools are used.
 
+For lightweight foreground-run inspection, task stores provide
+`list_summaries(thread_id, run_id)` through `TaskStoreProtocol`. It returns
+`TaskSummary` records with
+`task_id`, `tool_name`, `status`, `updated_at`, and `error`, filtered to the
+requested thread and tasks whose `root_run_id` or `parent_run_id` matches the
+run. The summary query does not load results, progress metadata, or arguments:
+
+```python
+for task in task_store.list_summaries(
+    thread_id="customer_42",
+    run_id="ticket_9001",
+):
+    print(task.task_id, task.tool_name, task.status, task.updated_at, task.error)
+```
+
+Use `task_status()` or `task_output()` when full task progress or results are
+needed. A summary is a persisted status observation, not proof that a worker is
+currently alive or a guarantee that this caller can claim the task.
+Custom `TaskStoreProtocol` implementations must provide this query without
+loading full task results. The built-in in-memory and SQLite stores implement it.
+
 Task control tools are installed automatically while the library contains
 background-capable tools. Removing the last `background=True` or
 `allow_background=True` tool removes those task tools as well. You can still

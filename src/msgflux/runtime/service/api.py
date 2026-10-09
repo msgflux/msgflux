@@ -475,6 +475,15 @@ class AgentService:
                 requires_quiescence=requires_quiescence,
                 approval_phase=approval_phase,
                 approval_request_count=approval_request_count,
+                background_tasks=(
+                    tuple(
+                        session.task_store.list_summaries(
+                            thread_id=thread_id, run_id=run_id
+                        )
+                    )
+                    if session.task_store is not None and namespace_matches
+                    else ()
+                ),
                 reasons=tuple(dict.fromkeys(reasons)),
             )
 

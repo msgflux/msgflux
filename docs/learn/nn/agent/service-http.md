@@ -275,14 +275,21 @@ service's recovery rules allow it.
 
 Use `await client.inspect_run(thread_id, run_id)` for a portable `RunInspection`
 before recovery. It reports the admission receipt, checkpoint status and revision,
-local-worker presence, approval batch phase and request count, and diagnostic
-reasons. A checkpoint created before the admission journal has `receipt=None`.
+local-worker presence, approval batch phase and request count, background task
+summaries, and diagnostic reasons. Its `background_tasks` tuple contains
+`TaskSummary` values (`task_id`, `tool_name`, `status`, `updated_at`, `error`)
+selected from the TaskStore for this thread and tasks associated by `root_run_id`
+or `parent_run_id`. The summaries exclude results, progress/metadata, arguments,
+and claim guarantees. If no admission record exists, including for a checkpoint
+created before the admission journal, `receipt` is `None`.
 
 ```python
 inspection = await client.inspect_run(thread_id, run_id)
 print(inspection.checkpoint_status, inspection.receipt)
 for reason in inspection.reasons:
     print(reason)
+for task in inspection.background_tasks:
+    print(task.task_id, task.tool_name, task.status, task.error)
 ```
 
 This query does not start work, import a checkpoint, claim ownership or assert
@@ -291,8 +298,14 @@ establish that the old worker stopped; remote clients cannot supply that
 assertion. The journal and checkpoint are separate stores, so inspection is not
 an atomic snapshot across them. Approval summaries do not authorize review or
 decisions. `approval_request_count` counts requests in the saved batch, including
-requests with recorded decisions. Raw checkpoints, invocation arguments and
-owner IDs are excluded.
+requests with recorded decisions. Background task summaries are persisted
+TaskStore observations, independent from live task projections in a watch
+snapshot. After restart, `queued` or `running` does not prove a task worker is
+alive; a completed foreground checkpoint may still have background tasks running
+or completed. Use task recovery to inspect ownership and determine whether a
+supported recovery claim is available. Raw
+checkpoints, invocation arguments, task results, progress metadata, and owner IDs
+are excluded.
 
 ## Detach And Reconnect
 

@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 import msgspec
 
+from msgflux.tasks.records import TaskSummary
+
 AdmissionStatus = Literal[
     "accepted", "running", "completed", "paused", "interrupted", "failed"
 ]
@@ -68,6 +70,7 @@ class RunInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     requires_quiescence: bool = False
     approval_phase: str | None = None
     approval_request_count: int = 0
+    background_tasks: tuple[TaskSummary, ...] = ()
     reasons: tuple[str, ...] = ()
 
 

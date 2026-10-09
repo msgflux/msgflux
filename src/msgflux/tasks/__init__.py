@@ -6,6 +6,7 @@ from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.protocol import TaskStoreProtocol
 from msgflux.tasks.providers.in_memory import InMemoryTaskStore
 from msgflux.tasks.providers.sqlite import SQLiteTaskStore
+from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store, task_store_registry
 from msgflux.tasks.store import TaskStore
 from msgflux.tasks.types import (
@@ -29,6 +30,7 @@ __all__ = [
     "TaskRecord",
     "TaskStore",
     "TaskStoreProtocol",
+    "TaskSummary",
     "register_task_store",
     "task_store_registry",
 ]

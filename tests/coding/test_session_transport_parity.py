@@ -39,7 +39,8 @@ from msgflux.runtime.service.http import (
 from msgflux.runtime.service.http import create_service_app
 from msgflux.runtime.events import _hub_event_sink
 from msgflux.runtime.workspace.receipts import new_command_receipt
-from msgflux.tools.builtin import WriteTool
+from msgflux.tools.builtin import AgentTool, WriteTool
+from msgflux.tools.config import tool_config
 from msgflux.utils.msgspec import msgspec_dumps
 
 TOKEN = "coding-session-parity-token"
@@ -791,6 +792,119 @@ async def test_inspect_run_checkpoint_without_admission_requires_quiescence(kind
         assert inspection.requires_quiescence is True
         assert "must not be projected" not in msgspec_dumps(inspection)
         assert agent.generator.aforward.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_retains_only_background_tasks_for_matching_root_after_reopen(
+    tmp_path, kind
+):
+    agent_dir = tmp_path / kind / "background-agent"
+    thread_id = "background-inspection-thread"
+    private_arguments = ["private-child-argument-one", "private-child-argument-two"]
+    private_results = ["private-child-result-one", "private-child-result-two"]
+    scripted_responses = iter(
+        [
+            response
+            for argument in private_arguments
+            for response in (
+                _tool(
+                    "agent",
+                    {
+                        "name": "worker",
+                        "message": argument,
+                        "run_in_background": True,
+                    },
+                ),
+                _text("root run completed"),
+            )
+        ]
+    )
+
+    async def root_answer(**_kwargs):
+        return next(scripted_responses)
+
+    def child_model():
+        model = Mock()
+        model.model_type = "chat_completion"
+        return model
+
+    worker = Agent(name="worker", model=child_model())
+    child_responses = [_text(result) for result in private_results]
+    worker.generator.forward = Mock(side_effect=child_responses)
+    worker.generator.aforward = AsyncMock(side_effect=child_responses)
+    root = _agent(answer=root_answer, agent_dir=agent_dir)
+    root.tool_library.add(tool_config(allow_background=True)(AgentTool()))
+    root.tool_library.add(worker)
+
+    run_ids = []
+    task_ids_by_run = {}
+    async with _session(kind, root, thread_id) as session:
+        for index in range(2):
+            request_id = f"background-inspection-{index}"
+            admitted = await session.prompt(
+                "delegate background work", request_id=request_id
+            )
+            run_ids.append(admitted.run_id)
+            settled = await asyncio.wait_for(session.wait(request_id), timeout=5)
+            assert settled.status == "completed"
+
+            resources = root._owned_threads[thread_id].resources
+            task_store = resources.task_store
+            deadline = asyncio.get_running_loop().time() + 3
+            while True:
+                tasks = task_store.list()
+                associated = [
+                    task
+                    for task in tasks
+                    if task.metadata.get("root_run_id") == admitted.run_id
+                    and task.metadata.get("thread_id") == thread_id
+                ]
+                if len(associated) == 1 and associated[0].status == "completed":
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError(
+                        f"Background task did not complete for run {admitted.run_id}: "
+                        f"{[task.to_dict() for task in associated]}"
+                    )
+                await asyncio.sleep(0.01)
+
+            (task,) = associated
+            task_ids_by_run[admitted.run_id] = task.task_id
+            assert task.metadata["parent_run_id"] == admitted.run_id
+            assert task.metadata["checkpoint_thread_id"] == thread_id
+            assert task.metadata["checkpoint_run_id"] == task.task_id
+            assert private_arguments[index] in str(task.metadata["initial_call_params"])
+            assert private_results[index] in str(task.result)
+
+    # Closing the first service closes its managed stores after both children
+    # have finished. A new local or HTTP service then reads their durable rows.
+    reopened_root = _agent(
+        answer=lambda **_kwargs: _text("inspection must not execute the model"),
+        agent_dir=agent_dir,
+    )
+    async with _session(kind, reopened_root, thread_id) as reopened:
+        for index, run_id in enumerate(run_ids):
+            inspection = await reopened.inspect_run(run_id)
+            summaries = inspection.background_tasks
+
+            assert len(summaries) == 1
+            (summary,) = summaries
+            assert summary.task_id == task_ids_by_run[run_id]
+            assert summary.status == "completed"
+            assert not any(
+                summary.task_id == task_ids_by_run[other_run]
+                for other_run in run_ids
+                if other_run != run_id
+            )
+            serialized = msgspec_dumps(inspection)
+            assert private_arguments[index] not in serialized
+            assert private_results[index] not in serialized
+            assert "initial_call_params" not in serialized
+            assert "task_resume_params" not in serialized
+            assert "metadata" not in serialized
+            assert '"result"' not in serialized
+            assert reopened_root.generator.aforward.await_count == 0
 
 
 @pytest.mark.asyncio

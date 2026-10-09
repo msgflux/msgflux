@@ -11,6 +11,7 @@ from uuid import uuid4
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
 from msgflux.tasks.lease import TaskLease
+from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import SQLiteTaskStoreType
 from msgflux.utils.time import utc_now_isoformat
@@ -369,6 +370,27 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             query += " ORDER BY updated_at DESC"
             rows = self._conn.execute(query, tuple(params)).fetchall()
             return [self._row_to_task(row) for row in rows]
+
+    def list_summaries(self, *, thread_id: str, run_id: str) -> List[TaskSummary]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT task_id, tool_name, status, updated_at, error FROM tasks "
+                "WHERE json_extract(metadata, '$.thread_id') = ? AND ("
+                "json_extract(metadata, '$.root_run_id') = ? OR "
+                "json_extract(metadata, '$.parent_run_id') = ?) "
+                "ORDER BY updated_at DESC, task_id DESC",
+                (thread_id, run_id, run_id),
+            ).fetchall()
+            return [
+                TaskSummary(
+                    task_id=row[0],
+                    tool_name=row[1],
+                    status=row[2],
+                    updated_at=row[3],
+                    error=row[4],
+                )
+                for row in rows
+            ]
 
     def list_activity(
         self, task_id: str, *, limit: int | None = None
