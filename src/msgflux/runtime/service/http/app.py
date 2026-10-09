@@ -322,7 +322,13 @@ def create_service_app(  # noqa: C901
         # a send is cancelled after yielding a chunk. Close it after the
         # response to ensure the observer detaches on a disconnect.
         stream = records()
-        return ServerSentEvent(stream, background=BackgroundTask(stream.aclose))
+
+        async def close_stream() -> None:
+            # An async generator's aclose method is not a coroutine function;
+            # BackgroundTask otherwise calls it without awaiting its result.
+            await stream.aclose()
+
+        return ServerSentEvent(stream, background=BackgroundTask(close_stream))
 
     route_handlers = [
         health,
