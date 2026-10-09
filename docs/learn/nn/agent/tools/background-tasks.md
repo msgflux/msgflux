@@ -182,6 +182,28 @@ When the task completes, `task_wait` returns the same payload as
 the timeout is reached first, it returns a timeout payload with the current
 task status and progress.
 
+### Streaming Agent Results
+
+A background Agent configured with `config={"stream": True}` stays `running`
+until its stream and output finalization finish. The task store receives the
+settled output, including presentation transforms, rather than a live stream
+object. `task_wait` and `task_output` return that same persisted value with both
+in-memory and SQLite task stores.
+
+```python
+# task_id identifies an already dispatched streaming subagent.
+result = agent.tool_library(
+    [("stream-result", "task_wait", {"task_id": task_id, "timeout": 5.0})]
+)
+print(result.tool_calls[0].result)
+```
+
+This waits for the subagent's final result. A timeout reports its current task
+state and leaves execution running. Tokens continue through the Agent's event
+stream; retrieving the task result does not consume the stream or run its
+lifecycle hooks again. Provider or finalization failures produce a failed task
+with the original cause instead of a completed stream placeholder.
+
 ## Model-Chosen Background Execution
 
 Use `allow_background=True` when a tool is useful both inline and in the

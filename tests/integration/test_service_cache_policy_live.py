@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from contextlib import AsyncExitStack
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import tempfile
@@ -286,7 +288,9 @@ def _validate_inspections(inspections, receipts):
         assert inspection.receipt.run_id == receipts[thread_id].run_id
 
 
-def _validate_closed_stores(managed_root, receipts, inspections, tools_config):
+def _validate_closed_stores(
+    managed_root, receipts, inspections, tools_config, workspace_roots
+):
     integrity = {}
     offloaded_counts = {}
     database_metadata = {}
@@ -305,7 +309,7 @@ def _validate_closed_stores(managed_root, receipts, inspections, tools_config):
         task_database = sqlite3.connect(state_thread / "tasks.sqlite3")
         try:
             rows = task_database.execute(
-                "SELECT task_id, status, error, metadata FROM tasks"
+                "SELECT task_id, status, error, metadata, result FROM tasks"
             ).fetchall()
         finally:
             task_database.close()
@@ -315,17 +319,35 @@ def _validate_closed_stores(managed_root, receipts, inspections, tools_config):
         }
         assert {row[0] for row in rows} == expected_ids
         namespaces = set()
-        for _task_id, status, error, raw_metadata in rows:
+        expected_payload = workspace_roots[thread_id] / "payload.bin"
+        expected_bytes = expected_payload.stat().st_size
+        with expected_payload.open("rb") as payload_stream:
+            expected_sha256 = hashlib.file_digest(payload_stream, "sha256").hexdigest()
+        result_summaries = []
+        for _task_id, status, error, raw_metadata, raw_result in rows:
             metadata = json.loads(raw_metadata)
             namespaces.add(metadata.get("checkpoint_namespace"))
             assert status == "completed"
             assert error is None
             assert metadata.get("thread_id") == thread_id
             assert metadata.get("root_run_id") == receipt.run_id
+            result = json.loads(raw_result)
+            assert isinstance(result, str)
+            assert "ModelStreamResponse" not in result
+            assert expected_sha256 in result.lower()
+            normalized_result = re.sub(r"[\s,_]", "", result)
+            assert str(expected_bytes) in normalized_result
+            result_summaries.append(
+                {
+                    "result_type": type(result).__name__,
+                    "result_size_bytes": len(result.encode("utf-8")),
+                }
+            )
         assert namespaces == {"io_a", "io_b"}
         database_metadata[thread_id] = {
             "task_count": len(rows),
             "namespaces": sorted(namespaces),
+            "results": result_summaries,
         }
 
         artifacts = list((state_thread / "tool-results").glob("*/content"))
@@ -815,7 +837,7 @@ async def test_live_codex_cache_eviction_keeps_background_sqlite_and_watchers_sa
 
             await _wait_for_cache_empty(service, timeout=15)
             integrity, database_metadata, offloaded_counts = _validate_closed_stores(
-                managed_root, admissions, inspections, tools_config
+                managed_root, admissions, inspections, tools_config, workspace_roots
             )
 
             # Automatic disposal closes the owned SQLite handles before the
