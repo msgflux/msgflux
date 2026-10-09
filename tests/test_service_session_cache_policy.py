@@ -409,84 +409,92 @@ async def test_live_session_is_not_retained_by_idle_cleaner_after_release():
     await cache.close_all()
 
 
-@pytest.mark.asyncio
 @pytest.mark.skipif(
     not hasattr(asyncio, "eager_task_factory"),
     reason="asyncio.eager_task_factory requires Python 3.12+",
 )
-async def test_eager_factory_preserves_load_reservation_before_running_factory():
-    observed = []
-    cache = None
+def test_eager_factory_preserves_load_reservation_before_running_factory():
+    async def check():
+        observed = []
+        cache = None
 
-    async def load(thread):
-        observed.append(
-            (
-                cache._loads[thread] is asyncio.current_task(),
-                cache._lock.locked(),
+        async def load(thread):
+            observed.append(
+                (
+                    cache._loads[thread] is asyncio.current_task(),
+                    cache._lock.locked(),
+                )
             )
-        )
-        return _Session(thread, [])
+            return _Session(thread, [])
 
-    cache = _SessionCache(load, lambda *_: None)
-    loop = asyncio.get_running_loop()
-    previous_factory = loop.get_task_factory()
-    loop.set_task_factory(asyncio.eager_task_factory)
-    try:
-        lease = await cache.acquire("thread")
-        assert observed == [(True, False)]
-        await lease.aclose()
-        await cache.release("thread")
-    finally:
-        loop.set_task_factory(previous_factory)
-        await cache.close_all()
+        cache = _SessionCache(load, lambda *_: None)
+        loop = asyncio.get_running_loop()
+        previous_factory = loop.get_task_factory()
+        loop.set_task_factory(asyncio.eager_task_factory)
+        try:
+            lease = await cache.acquire("thread")
+            assert observed == [(True, False)]
+            await lease.aclose()
+            await cache.release("thread")
+        finally:
+            loop.set_task_factory(previous_factory)
+            await cache.close_all()
+
+    # Exercise the stdlib eager factory on its matching event loop.
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        runner.run(check())
 
 
-@pytest.mark.asyncio
 @pytest.mark.skipif(
     not hasattr(asyncio, "eager_task_factory"),
     reason="asyncio.eager_task_factory requires Python 3.12+",
 )
-async def test_eager_factory_defers_probe_and_close_gates_until_reserved():
-    observed_probes = []
-    observed_fences = []
-    closed = []
-    cache = None
+def test_eager_factory_defers_probe_and_close_gates_until_reserved():
+    async def check():
+        observed_probes = []
+        observed_fences = []
+        closed = []
+        cache = None
 
-    def busy_reason(thread, _session):
-        entry = cache._entries[thread]
-        observed_probes.append(
-            (
-                entry.close_task is asyncio.current_task(),
-                entry.probing,
-                cache._lock.locked(),
+        def busy_reason(thread, _session):
+            entry = cache._entries[thread]
+            observed_probes.append(
+                (
+                    entry.close_task is asyncio.current_task(),
+                    entry.probing,
+                    cache._lock.locked(),
+                )
             )
-        )
-        return None
+            return None
 
-    def fence_reason(thread, _session):
-        entry = cache._entries[thread]
-        observed_fences.append(
-            (entry.close_task is asyncio.current_task(), cache._lock.locked())
-        )
-        return None
+        def fence_reason(thread, _session):
+            entry = cache._entries[thread]
+            observed_fences.append(
+                (entry.close_task is asyncio.current_task(), cache._lock.locked())
+            )
+            return None
 
-    cache = _SessionCache(
-        lambda thread: _Session(thread, closed),
-        fence_reason,
-        busy_reason=busy_reason,
-        policy=SessionCachePolicy(max_loaded=2, idle_timeout=None),
-    )
-    loop = asyncio.get_running_loop()
-    previous_factory = loop.get_task_factory()
-    loop.set_task_factory(asyncio.eager_task_factory)
-    try:
-        lease = await cache.acquire("thread")
-        await lease.aclose()
-        cache._policy = SessionCachePolicy(max_loaded=2, idle_timeout=0)
-        await cache._sweep_once()
-        assert observed_probes[0] == (True, True, False)
-        assert observed_fences == [(True, False)]
-        assert closed == ["thread"]
-    finally:
-        loop.set_task_factory(previous_factory)
-        await cache.close_all()
+        cache = _SessionCache(
+            lambda thread: _Session(thread, closed),
+            fence_reason,
+            busy_reason=busy_reason,
+            policy=SessionCachePolicy(max_loaded=2, idle_timeout=None),
+        )
+        loop = asyncio.get_running_loop()
+        previous_factory = loop.get_task_factory()
+        loop.set_task_factory(asyncio.eager_task_factory)
+        try:
+            lease = await cache.acquire("thread")
+            await lease.aclose()
+            cache._policy = SessionCachePolicy(max_loaded=2, idle_timeout=0)
+            await cache._sweep_once()
+            assert observed_probes[0] == (True, True, False)
+            assert observed_fences == [(True, False)]
+            assert closed == ["thread"]
+        finally:
+            loop.set_task_factory(previous_factory)
+            await cache.close_all()
+
+    # Exercise the stdlib eager factory on its matching event loop.
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        runner.run(check())
