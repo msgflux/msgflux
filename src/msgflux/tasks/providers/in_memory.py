@@ -9,6 +9,7 @@ from uuid import uuid4
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskRecord
 from msgflux.tasks.lease import TaskLease
+from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import InMemoryTaskStoreType
 from msgflux.utils.time import utc_now_isoformat
@@ -180,6 +181,27 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             if status is not None:
                 tasks = [task for task in tasks if task.status == status]
             return deepcopy(tasks)
+
+    def list_summaries(self, *, thread_id: str, run_id: str) -> List[TaskSummary]:
+        with self._lock:
+            summaries = [
+                TaskSummary(
+                    task_id=task.task_id,
+                    tool_name=task.tool_name,
+                    status=task.status,
+                    updated_at=task.updated_at,
+                    error=task.error,
+                )
+                for task in self._tasks.values()
+                if task.metadata.get("thread_id") == thread_id
+                and (
+                    task.metadata.get("root_run_id") == run_id
+                    or task.metadata.get("parent_run_id") == run_id
+                )
+            ]
+        return sorted(
+            summaries, key=lambda item: (item.updated_at, item.task_id), reverse=True
+        )
 
     def list_activity(
         self, task_id: str, *, limit: int | None = None

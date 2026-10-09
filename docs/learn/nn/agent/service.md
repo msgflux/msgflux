@@ -26,7 +26,7 @@ can generate the request ID when one is omitted. Both return an admission receip
 once the input is recorded and work is scheduled. Use `wait()` for the settled
 receipt, `watch()` for snapshot and future events, or `CodingSession.stream()`
 for a finite iterator of one run's events. The `CodingSession` facade exposes
-asynchronous `receipt()`, `runs()`, and `latest_run()` queries so local and
+asynchronous `receipt()`, `runs()`, `latest_run()`, and `inspect_run()` queries so local and
 service-backed sessions have the same interface. Run listings contain service
 `RunSummary` records; checkpoint state remains host-local through its synchronous
 `saved_state()` method. `AgentService.receipt()` itself remains synchronous for
@@ -36,6 +36,38 @@ attached to a local service. The lower-level `AgentService.snapshot()` and
 `watch()` continue to use native `ThreadSnapshot` and `ExecutionEvent` values.
 `CodingSession.stream()` remains a local convenience and yields `EventRecord`;
 there is no corresponding stream method on the remote session client.
+
+For operational recovery, `await service.inspect_run(thread_id, run_id)` returns
+a `RunInspection` with the optional admission `receipt`, `checkpoint_status` and
+`checkpoint_revision`, whether a `local_worker` is present, whether
+`requires_quiescence` is set, `approval_phase`, `approval_request_count`,
+`background_tasks` summaries, and human-readable `reasons`. Each task summary
+contains `task_id`, `tool_name`, `status`, `updated_at`, and `error`. These
+summaries are selected from the TaskStore for the thread and tasks whose
+`root_run_id` or `parent_run_id` matches the inspected run. They omit task
+results, progress metadata, arguments, and ownership claims. This inspection is
+observational: it excludes raw checkpoint state, prompts, and owner IDs, and it
+does not provide a `safe_to_resume` decision. `requires_quiescence` means the
+trusted host still needs to establish that the old worker stopped; the
+inspection itself is not that assertion.
+
+Task summaries read persisted TaskStore state, independently of
+`watch().snapshot.background_tasks`. A `queued` or `running` status after
+restart does not prove a worker is alive, and a completed foreground checkpoint
+does not imply its detached background tasks have completed. Reconcile task
+ownership through the task recovery workflow before taking action.
+
+The admission journal and checkpoint store are separate. Their statuses or
+revisions can disagree, and inspection reads them at different times rather than
+as one atomic snapshot. Treat `reasons` as diagnostic evidence, then reconcile
+the underlying state and re-inspect before taking an action. Approval phase and
+pending count are summaries only; use the host-authorized approval review flow
+to inspect and decide individual requests. `approval_request_count` counts
+requests in the saved batch, including requests with recorded decisions.
+The `background_tasks` field is a tuple of lightweight `TaskSummary` records,
+not a claim that those tasks are currently executing. Use the task store and
+[background task recovery workflow](tools/background-tasks.md#inspecting-and-coordinating-recovery)
+for durable task inspection and recovery.
 
 ## Prompt And Observe
 
@@ -114,6 +146,15 @@ Changing the prompt under the same identity raises `ServiceConflictError`.
 Use a stable client-generated request ID for retries; correlation IDs are not
 implicitly idempotency keys. Claims and finalization compare a journal revision
 and owner, so a late finalization cannot replace a newer attempt.
+
+Admission also checks the latest checkpoint before scheduling new work. If a
+workspace command receipt has an uncertain outcome, `prompt()` raises
+`ServiceRecoveryRequiredError` with the reconciliation reason and does not
+admit or start another run. Recovery checks report the same error when a command
+receipt still needs host reconciliation. Reconcile the command through the
+trusted workspace host, then retry admission or recovery. An approval request
+raised during a run is different: the run settles as `paused` and can be reviewed
+and resumed through the approval flow.
 
 `open_thread()` records its logical binding without constructing an Agent. Its
 optional `cwd` must be an absolute path to an existing directory; it is resolved to an
@@ -227,6 +268,11 @@ resend the original prompt. A paused or failed run resumes under its existing
 run ID and Agent's workspace, approvals and command-receipt validation. Only the
 latest unfinished checkpoint can resume.
 
+If command-receipt validation finds an uncertain command, recovery raises
+`ServiceRecoveryRequiredError` with the concrete reason and schedules no worker.
+The host must reconcile that command before retrying recovery; elapsed time alone
+does not establish its outcome.
+
 A terminal checkpoint written before the journal settled can reconcile its
 receipt without another model call. These are separate transactions, not a
 global transaction across checkpoint, task and admission stores. Store fencing
@@ -237,6 +283,11 @@ identity. If that checkpoint predates the admission journal, the host must first
 establish quiescence and supply `worker_stopped=True`. The service validates the
 checkpoint and records its existing identity before recovery; the original prompt
 is not reconstructed. A terminal checkpoint settles without another model call.
+
+Call `inspect_run()` before explicit recovery to see the observed admission,
+checkpoint and outstanding reasons. The host still decides whether it has
+reconciled the effects and can assert worker quiescence; inspection cannot make
+that decision on the host's behalf.
 
 ## Shutdown And Ownership
 

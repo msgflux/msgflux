@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 import msgspec
 
+from msgflux.tasks.records import TaskSummary
+
 AdmissionStatus = Literal[
     "accepted", "running", "completed", "paused", "interrupted", "failed"
 ]
@@ -55,6 +57,21 @@ class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     error: str | None = None
     version: Literal[1] = 1
     revision: int = 0
+
+
+class RunInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Read-only recovery evidence for one foreground service run."""
+
+    run_id: str
+    receipt: AdmissionReceipt | None = None
+    checkpoint_status: str | None = None
+    checkpoint_revision: int | None = None
+    local_worker: bool = False
+    requires_quiescence: bool = False
+    approval_phase: str | None = None
+    approval_request_count: int = 0
+    background_tasks: tuple[TaskSummary, ...] = ()
+    reasons: tuple[str, ...] = ()
 
 
 class AdmissionRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

@@ -143,18 +143,50 @@ configuration directory. The journal owns admission identities and status;
 checkpoints remain authoritative for conversation history and execution state.
 User-supplied stores, Agent, model and workspace remain owned by the application.
 
-`runs()`, `latest_run()` and `receipt(request_id)` are asynchronous service queries.
+`runs()`, `latest_run()`, `receipt(request_id)` and `inspect_run(run_id)` are
+asynchronous service queries.
 Run discovery returns `RunSummary` records with `run_id`, `status` and the
 `updated_at` timestamp;
 it does not expose checkpoint data. `saved_state(run_id)` is a synchronous,
 host-local inspection of the configured checkpoint store. Keep it inside trusted
 host code because checkpoint contents are private runtime state.
 
+`inspect_run(run_id)` returns a portable `RunInspection` summary with the
+optional admission receipt, checkpoint status and revision, observed local-worker
+presence, `requires_quiescence`, approval phase and saved approval request count,
+background task summaries, plus diagnostic reasons. Each background task entry
+is a `TaskSummary` with `task_id`, `tool_name`, `status`, `updated_at`, and
+`error`; task results, progress metadata and arguments are not included. The
+summaries come from persisted TaskStore records associated with the inspected
+thread and run (`root_run_id` or `parent_run_id`), not from the live watcher
+snapshot. A `queued` or `running` task status after restart does not prove a
+worker is alive; a completed foreground checkpoint can still have background
+tasks running or completed. Use the task recovery workflow to reconcile task
+ownership.
+
+Inspection does not return raw checkpoint data, prompts, tool arguments or owner
+IDs, and it does not decide that resuming is safe. A set `requires_quiescence`
+flag means the trusted host must establish worker shutdown; it is not evidence
+that shutdown has happened. The journal and checkpoint store are independent, so
+their observed values may disagree and are not sampled atomically. Reconcile and
+inspect again before acting. Approval counts and phases do not grant review
+access; use the host-authorized approval review methods for individual requests.
+`approval_request_count` counts requests in the saved batch, including requests
+whose decisions have already been recorded.
+
 A completed or interrupted run is terminal: submit a new prompt to continue the
 conversation. `resume()` admits recovery and returns an `AdmissionReceipt`; use
 `watch()` to observe its events and `wait()` to read its settled outcome:
 
 ```python
+inspection = await session.inspect_run(run_id)
+for reason in inspection.reasons:
+    print("Recovery check:", reason)
+for task in inspection.background_tasks:
+    print(task.task_id, task.status, task.updated_at, task.error)
+
+# After the trusted host has reconciled external effects and established that
+# the previous worker stopped, it can explicitly resume the run.
 async with session.watch() as observer:
     receipt = await session.resume(run_id, worker_stopped=True)
     if receipt.status in {"accepted", "running"}:
@@ -186,6 +218,12 @@ assertion. Checkpoints predating an admission journal require explicit import
 under this same quiescence condition. Recovery retains the existing run identity
 and saved context; it does not submit the old user message again. Workspace,
 command-receipt and approval validation still apply.
+
+If a command receipt has an uncertain outcome, `prompt()` and recovery raise
+`ServiceRecoveryRequiredError` with the concrete reconciliation reason, without
+starting a new run. Reconcile the command through the trusted workspace host
+before retrying. An approval request inside a run remains a normal `paused`
+receipt; inspect and decide the approval, then resume that run.
 
 ## Shared Runtime
 

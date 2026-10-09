@@ -23,6 +23,11 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
 from msgflux.runtime.service.approvals import project, review_record
+from msgflux.runtime.service.inspection import (
+    admission_evidence,
+    approval_evidence,
+    checkpoint_reasons,
+)
 from msgflux.runtime.service.policies import (
     approval_review_context,
     clipped_policy,
@@ -35,6 +40,7 @@ from msgflux.runtime.service.records import (
     AdmissionRecord,
     AdmissionStatus,
     ApprovalReview,
+    RunInspection,
     RunSummary,
     ServiceBusyError,
     ServiceConflictError,
@@ -409,6 +415,78 @@ class AgentService:
                 summaries.append(msgspec.convert(record, type=RunSummary, strict=True))
             return tuple(summaries)
 
+    async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
+        """Read recorded evidence without changing state or promising safe replay."""
+        validate_identifier(thread_id, "thread_id")
+        validate_identifier(run_id, "run_id")
+        async with self._lock:
+            session = await self._session(thread_id)
+            admission = self.store.get_for_run(thread_id, run_id)
+            store = session.checkpoint_store
+            namespace_matches = (
+                admission is None or admission.namespace == session.namespace
+            )
+            checkpoint = (
+                store.load_state(session.namespace, thread_id, run_id)
+                if store is not None and namespace_matches
+                else None
+            )
+            if admission is None and checkpoint is None:
+                raise KeyError(run_id)
+            local_worker = self._worker_for_run(thread_id, run_id) is not None
+            receipt = admission.receipt if admission is not None else None
+            requires_quiescence, reasons = admission_evidence(
+                admission, session.namespace, self._owner_id, local_worker
+            )
+            checkpoint_status = None
+            checkpoint_revision = None
+            approval_phase = None
+            approval_request_count = 0
+            if checkpoint is None:
+                if (
+                    namespace_matches
+                    and receipt.status in {"running", "paused", "failed"}
+                    and not local_worker
+                ):
+                    reasons.append("A started run has no checkpoint.")
+            else:
+                checkpoint_status = checkpoint.get("status")
+                if not isinstance(checkpoint_status, str):
+                    checkpoint_status = None
+                    reasons.append("The saved checkpoint status is malformed.")
+                if receipt is not None and receipt.status != checkpoint_status:
+                    reasons.append("Admission and checkpoint statuses differ.")
+                revision = checkpoint.get("_checkpoint", {}).get("revision")
+                checkpoint_revision = revision if type(revision) is int else None
+                approval_phase, approval_request_count, approval_reasons = (
+                    approval_evidence(checkpoint)
+                )
+                reasons.extend(approval_reasons)
+                if checkpoint_status is not None:
+                    reasons.extend(
+                        checkpoint_reasons(session, checkpoint, thread_id, run_id)
+                    )
+            return RunInspection(
+                run_id=run_id,
+                receipt=receipt,
+                checkpoint_status=checkpoint_status,
+                checkpoint_revision=checkpoint_revision,
+                local_worker=local_worker,
+                requires_quiescence=requires_quiescence,
+                approval_phase=approval_phase,
+                approval_request_count=approval_request_count,
+                background_tasks=(
+                    tuple(
+                        session.task_store.list_summaries(
+                            thread_id=thread_id, run_id=run_id
+                        )
+                    )
+                    if session.task_store is not None and namespace_matches
+                    else ()
+                ),
+                reasons=tuple(dict.fromkeys(reasons)),
+            )
+
     async def approval_reviews(
         self, thread_id: str, run_id: str
     ) -> tuple[ApprovalReview, ...]:
@@ -467,6 +545,13 @@ class AgentService:
                 return project(result, diff=initial_review.diff)
 
     @staticmethod
+    def _validate_command_receipts(session: AgentSession, state) -> None:
+        try:
+            session.agent._validate_checkpoint_command_receipts(state)
+        except TaskPauseRequestedError as exc:
+            raise ServiceRecoveryRequiredError(str(exc)) from exc
+
+    @staticmethod
     def _validate_new_input(session: AgentSession, thread_id: str) -> None:
         store = session.checkpoint_store
         if store is None:
@@ -474,7 +559,7 @@ class AgentService:
         state = store.load_latest_run(session.namespace, thread_id)
         if state is None:
             return
-        session.agent._validate_checkpoint_command_receipts(state)
+        AgentService._validate_command_receipts(session, state)
         if state.get("status") not in {"completed", "interrupted"}:
             raise ServiceRecoveryRequiredError(
                 "The latest run requires explicit recovery"
@@ -801,7 +886,7 @@ class AgentService:
                 "Only the latest unfinished run can resume"
             )
         with session.context(session.scope(receipt.thread_id, run_id=receipt.run_id)):
-            session.agent._validate_checkpoint_command_receipts(state)
+            AgentService._validate_command_receipts(session, state)
             session.agent._validate_checkpoint_workspace(state)
         return state
 

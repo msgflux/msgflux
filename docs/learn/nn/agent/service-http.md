@@ -273,6 +273,40 @@ This lists resumable checkpoint identities without loading saved state into the
 client. Pass a selected identity to the explicit resume operation when the
 service's recovery rules allow it.
 
+Use `await client.inspect_run(thread_id, run_id)` for a portable `RunInspection`
+before recovery. It reports the admission receipt, checkpoint status and revision,
+local-worker presence, approval batch phase and request count, background task
+summaries, and diagnostic reasons. Its `background_tasks` tuple contains
+`TaskSummary` values (`task_id`, `tool_name`, `status`, `updated_at`, `error`)
+selected from the TaskStore for this thread and tasks associated by `root_run_id`
+or `parent_run_id`. The summaries exclude results, progress/metadata, arguments,
+and claim guarantees. If no admission record exists, including for a checkpoint
+created before the admission journal, `receipt` is `None`.
+
+```python
+inspection = await client.inspect_run(thread_id, run_id)
+print(inspection.checkpoint_status, inspection.receipt)
+for reason in inspection.reasons:
+    print(reason)
+for task in inspection.background_tasks:
+    print(task.task_id, task.tool_name, task.status, task.error)
+```
+
+This query does not start work, import a checkpoint, claim ownership or assert
+that replay is safe. `requires_quiescence=True` means the trusted host must
+establish that the old worker stopped; remote clients cannot supply that
+assertion. The journal and checkpoint are separate stores, so inspection is not
+an atomic snapshot across them. Approval summaries do not authorize review or
+decisions. `approval_request_count` counts requests in the saved batch, including
+requests with recorded decisions. Background task summaries are persisted
+TaskStore observations, independent from live task projections in a watch
+snapshot. After restart, `queued` or `running` does not prove a task worker is
+alive; a completed foreground checkpoint may still have background tasks running
+or completed. Use task recovery to inspect ownership and determine whether a
+supported recovery claim is available. Raw
+checkpoints, invocation arguments, task results, progress metadata, and owner IDs
+are excluded.
+
 ## Detach And Reconnect
 
 ```python
@@ -312,6 +346,12 @@ follow-up queue. Interruption targets an explicit run and returns a boolean.
 An unfinished run already paused or failed in this service can resume through its
 normal recovery checks. The HTTP resume route does not itself approve a tool
 invocation; use the explicit review and decision operations described above.
+An uncertain workspace command blocks admission or recovery with HTTP 409 and
+error code `recovery_required`; the HTTP client raises
+`ServiceRecoveryRequiredError` with the host's reason. No new worker is started.
+Reconcile the command through the trusted host before retrying. An approval
+request raised by a run remains a normal paused run: review and record a decision,
+then resume it explicitly.
 
 HTTP clients cannot assert `worker_stopped` or import uncertain executions after
 a process restart. A trusted host must establish old-worker quiescence and use
@@ -332,6 +372,7 @@ All routes require `Authorization: Bearer <token>`.
 | GET / POST | `/v1/threads` | List bindings / open a thread |
 | GET | `/v1/threads/{thread_id}/snapshot` | Portable thread snapshot |
 | GET | `/v1/threads/{thread_id}/runs` | Saved run metadata summaries |
+| GET | `/v1/threads/{thread_id}/runs/{run_id}/inspection` | Recorded run state and recovery reasons |
 | POST | `/v1/threads/{thread_id}/prompt` | Admission receipt |
 | GET | `/v1/threads/{thread_id}/requests/{request_id}` | Current receipt |
 | GET | `/v1/threads/{thread_id}/watch` | Initial snapshot and continuous SSE events |
@@ -382,6 +423,12 @@ returns 403, and invalid payloads return 422. Unexpected
 server errors return a generic 500 message and are logged on the host. Model
 failures settle their run receipts and appear as `run.error` events, rather than
 turning accepted prompts into transport validation errors.
+
+For an uncertain workspace command, recovery responses use
+`{"code": "recovery_required", "message": "<host reason>"}`. The HTTP client
+maps this response to `ServiceRecoveryRequiredError`; inspect the reason, have
+the trusted host reconcile the command, then retry. A run waiting for an ordinary
+tool approval instead settles with status `paused` and emits `run.paused`.
 
 ## Ownership And Coding Sessions
 
@@ -462,6 +509,7 @@ view with its new `observer.snapshot`; missed event deltas are not replayed.
 its caller is cancelled. Use `cancel(run_id)` for an explicit interruption.
 `runs()` and `latest_run()` expose only service-provided run summaries, not
 checkpoint contents or configuration. The remote facade has no automatic
-reconnect loop. `session.aclose()` is an optional no-op because the facade
+reconnect loop. `await session.inspect_run(run_id)` returns the same inspection
+record as the embedded CodingSession. `session.aclose()` is an optional no-op because the facade
 borrows its client and owns no background tasks; a UI can close its active watch
 context on shutdown, while the host closes the shared HTTP client.

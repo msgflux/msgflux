@@ -261,7 +261,7 @@ them. All following events remain correlatable through `run_id` and
 | `tool.blocked` | A tool policy rejected the call before execution; includes its reason. Permission denials omit arguments. |
 | `tool.permission_denied` | Required permissions were denied before dispatch; includes the call ID, tool name, code, and structured error |
 | `tool.update` | Intermediate tool progress |
-| `tool.end` | Tool execution completed or failed |
+| `tool.end` | Tool execution completed or failed; failed tool calls may include structured `error_info` |
 | `tools.updated` | Deferred tool schemas were loaded locally or discovered through the provider |
 | `task.start` | A background task was dispatched |
 | `task.update` | Background task status or progress changed |
@@ -275,9 +275,33 @@ them. All following events remain correlatable through `run_id` and
 Permission-denied `tool.permission_denied` and `tool.blocked` events retain
 `data.code` and include `data.error` with `code`, `message`, and `details`. This
 message also reaches model feedback. Failures inside an executing workspace
-operation instead appear in `tool.end.error`; a read-only write or an
-`apply_patch` create on an existing file preserves the concrete backend reason.
-These payloads are also delivered through AgentService HTTP/SSE clients.
+operation appear on `tool.end`: the existing textual `data.error` remains, and
+`data.error_info` provides `{code, message, details}` for programmatic handling.
+Execution failures use the generic `tool_execution_failed` code. When execution
+raises an exception, `details.exception_type` identifies its class. The event
+does not include a traceback. Model feedback and conversation history retain
+their existing textual error rendering; `error_info` is additional event metadata.
+
+For example, a UI can show the error while retaining its structured fields for
+logs or diagnostics:
+
+```python
+async for event in observer:
+    if event.type != "tool.end":
+        continue
+    if info := event.data.get("error_info"):
+        print(info["code"], info["message"])
+        print(info.get("details", {}).get("exception_type"))
+    elif error := event.data.get("error"):
+        print(error)
+```
+
+The fallback reads the existing textual field for events without structured
+error metadata. A Bash process that exits nonzero or reaches its timeout still
+returns a structured command result with completed tool status; these outcomes
+are not dispatch exceptions and do not produce `error_info`. Inspect each
+result's `status` and `returncode` (`timed_out` has no return code) instead. Tool
+error payloads are also delivered through AgentService HTTP/SSE clients.
 
 ## Tool Discovery
 

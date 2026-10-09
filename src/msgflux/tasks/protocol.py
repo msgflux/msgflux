@@ -11,6 +11,7 @@ from typing import Any, List, Mapping, Protocol, runtime_checkable
 
 from msgflux.tasks.dataclasses import TaskActivity, TaskRecord
 from msgflux.tasks.lease import TaskLease
+from msgflux.tasks.records import TaskSummary
 
 
 @runtime_checkable
@@ -28,6 +29,8 @@ class TaskStoreProtocol(Protocol):
     def get(self, task_id: str) -> TaskRecord | None: ...
 
     def list(self, *, status: str | None = None) -> List[TaskRecord]: ...
+
+    def list_summaries(self, *, thread_id: str, run_id: str) -> List[TaskSummary]: ...
 
     def list_activity(
         self, task_id: str, *, limit: int | None = None

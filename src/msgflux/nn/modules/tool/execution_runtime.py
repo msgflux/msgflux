@@ -2,6 +2,7 @@
 
 # ruff: noqa: A001, A002
 
+import asyncio
 import weakref
 from dataclasses import replace
 from functools import partial
@@ -805,6 +806,7 @@ class ToolLibraryExecutionMixin:
                 **event_data,
                 "result": outcome.result,
                 "error": str(outcome.error) if outcome.error is not None else None,
+                "error_info": self._tool_error_info(outcome.error),
             },
         )
         if outcome.error is not None:
@@ -861,6 +863,7 @@ class ToolLibraryExecutionMixin:
                 **event_data,
                 "result": outcome.result,
                 "error": str(outcome.error) if outcome.error is not None else None,
+                "error_info": self._tool_error_info(outcome.error),
             },
         )
         if outcome.error is not None:
@@ -879,6 +882,39 @@ class ToolLibraryExecutionMixin:
             EventType.HANDLER_ERROR, {"hook": "transform_tool_output", "error": message}
         )
         return replace(outcome, result=None, error=message)
+
+    @staticmethod
+    def _tool_error_info(error: BaseException | str | None) -> dict | None:
+        if error is None:
+            return None
+        if isinstance(
+            error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ),
+        ):
+            return None
+        message = str(error)
+        details = (
+            {"exception_type": type(error).__name__}
+            if isinstance(error, BaseException)
+            else {}
+        )
+        if not message.strip():
+            message = (
+                type(error).__name__
+                if isinstance(error, BaseException)
+                else "Tool execution failed"
+            )
+        structured = ToolError(
+            code="tool_execution_failed",
+            message=message,
+            details=details,
+        )
+        return msgspec.to_builtins(structured)
 
     def _transform_tool_output(self, outcome: AfterTool) -> AfterTool:
         try:
@@ -1207,6 +1243,7 @@ class ToolLibraryExecutionMixin:
         message: str,
         feedback: Any = None,
         arguments: Mapping[str, Any] | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> ToolOutcome:
         return ToolOutcome.failed(
             intent,
@@ -1214,9 +1251,35 @@ class ToolLibraryExecutionMixin:
             code=code,
             message=message,
             feedback=feedback,
+            details=details,
             metadata=cls._outcome_metadata(
                 intent.arguments if arguments is None else arguments
             ),
+        )
+
+    def _failed_task_outcome(
+        self,
+        intent: ToolIntent,
+        plan: ToolExecutionPlan,
+        result: TaskError,
+    ) -> ToolOutcome:
+        if isinstance(
+            result.exception,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+            ),
+        ):
+            raise result.exception
+        return self._failed_intent(
+            intent,
+            status="execution_failed",
+            code="tool_execution_failed",
+            message=str(result),
+            feedback=self.get_tool_definition(intent.name).feedback,
+            arguments=plan.visible_arguments,
+            details={"exception_type": type(result.exception).__name__},
         )
 
     @classmethod
@@ -1676,23 +1739,7 @@ class ToolLibraryExecutionMixin:
                 if isinstance(result, ToolOutcome):
                     outcomes[index] = result
                 elif isinstance(result, TaskError):
-                    if isinstance(
-                        result.exception,
-                        (
-                            AbortRequestedError,
-                            TaskInterruptRequestedError,
-                            TaskPauseRequestedError,
-                        ),
-                    ):
-                        raise result.exception
-                    outcomes[index] = self._failed_intent(
-                        intent,
-                        status="execution_failed",
-                        code="tool_execution_failed",
-                        message=str(result),
-                        feedback=self.get_tool_definition(intent.name).feedback,
-                        arguments=plan.visible_arguments,
-                    )
+                    outcomes[index] = self._failed_task_outcome(intent, plan, result)
                 else:
                     outcomes[index] = self._completed_intent(
                         intent,
@@ -1752,23 +1799,7 @@ class ToolLibraryExecutionMixin:
                 if isinstance(result, ToolOutcome):
                     outcomes[index] = result
                 elif isinstance(result, TaskError):
-                    if isinstance(
-                        result.exception,
-                        (
-                            AbortRequestedError,
-                            TaskInterruptRequestedError,
-                            TaskPauseRequestedError,
-                        ),
-                    ):
-                        raise result.exception
-                    outcomes[index] = self._failed_intent(
-                        intent,
-                        status="execution_failed",
-                        code="tool_execution_failed",
-                        message=str(result),
-                        feedback=self.get_tool_definition(intent.name).feedback,
-                        arguments=plan.visible_arguments,
-                    )
+                    outcomes[index] = self._failed_task_outcome(intent, plan, result)
                 else:
                     outcomes[index] = self._completed_intent(
                         intent,

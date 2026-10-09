@@ -13,6 +13,7 @@ uvicorn = pytest.importorskip("uvicorn")
 
 from msgflux.coding import CodingSession
 from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
@@ -25,6 +26,7 @@ from msgflux.runtime import (
 from msgflux.runtime.service import (
     AgentService,
     AgentSession,
+    RunInspection,
     ServiceRecoveryRequiredError,
     SQLiteServiceStore,
 )
@@ -36,7 +38,9 @@ from msgflux.runtime.service.http import (
 )
 from msgflux.runtime.service.http import create_service_app
 from msgflux.runtime.events import _hub_event_sink
-from msgflux.tools.builtin import WriteTool
+from msgflux.runtime.workspace.receipts import new_command_receipt
+from msgflux.tools.builtin import AgentTool, WriteTool
+from msgflux.tools.config import tool_config
 from msgflux.utils.msgspec import msgspec_dumps
 
 TOKEN = "coding-session-parity-token"
@@ -410,6 +414,71 @@ async def test_invalid_run_and_unknown_request_fail_without_creating_managed_sta
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["local", "http"])
+async def test_unresolved_command_receipt_reason_survives_prompt_and_resume(kind):
+    async def pause_once(**_kwargs):
+        raise TaskPauseRequestedError(message="seed paused admission")
+
+    agent = _agent(answer=pause_once)
+    async with _session(kind, agent, f"command-recovery-{kind}") as session:
+        admitted = await session.prompt("seed prior run", request_id="seed-request")
+        paused = await asyncio.wait_for(session.wait("seed-request"), timeout=5)
+        assert paused.status == "paused"
+        model_calls = agent.generator.aforward.await_count
+
+        receipt = new_command_receipt(
+            workspace_reference=None,
+            backend="local",
+            run_id=admitted.run_id,
+            tool_call_id="uncertain-command",
+            message_offset=1,
+        )
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(),
+            session.thread_id,
+            admitted.run_id,
+            {
+                "schema_version": 1,
+                "status": "interrupted",
+                "scope": {
+                    "namespace": agent.get_module_name(),
+                    "thread_id": session.thread_id,
+                    "run_id": admitted.run_id,
+                },
+                "messages": {
+                    "items": [],
+                    "metadata": {},
+                    "thread_id": session.thread_id,
+                },
+                "runtime": {
+                    "schema_version": 1,
+                    "extensions": {"command_receipts": [receipt.to_dict()]},
+                },
+            },
+        )
+        runs_before = await session.runs()
+
+        with pytest.raises(ServiceRecoveryRequiredError, match="host reconciliation"):
+            await session.resume(admitted.run_id)
+        with pytest.raises(ServiceRecoveryRequiredError, match="host reconciliation"):
+            await session.prompt(
+                "do not admit while command is uncertain",
+                request_id="blocked-request",
+            )
+
+        assert (await session.receipt("seed-request")).status == "paused"
+        assert (await session.runs()) == runs_before
+        assert agent.generator.aforward.await_count == model_calls
+        if kind == "local":
+            with pytest.raises(KeyError):
+                await session.receipt("blocked-request")
+        else:
+            with pytest.raises(AgentServiceHTTPError) as missing:
+                await session.receipt("blocked-request")
+            assert missing.value.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
 async def test_cancelling_waiter_does_not_cancel_service_owned_execution(kind):
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -454,6 +523,405 @@ async def test_foreign_owned_wait_has_bounded_known_recovery_behavior(kind):
                 # returned immediately by the receipt endpoint's wait mode.
                 await session.wait("foreign-request")
         assert (await session.receipt("foreign-request")).status == "running"
+        assert agent.generator.aforward.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_unknown_id_is_not_lazy_or_mutating(tmp_path, kind):
+    agent_dir = tmp_path / kind / "managed-agent"
+    agent_dir.mkdir(parents=True)
+    agent = _agent(answer=lambda **_kwargs: _text("unused"), agent_dir=agent_dir)
+    async with _session(kind, agent, "inspect-unknown-thread") as session:
+        if kind == "local":
+            with pytest.raises(KeyError):
+                await session.inspect_run("missing-run")
+        else:
+            with pytest.raises(AgentServiceHTTPError) as missing:
+                await session.inspect_run("missing-run")
+            assert missing.value.status_code == 404
+
+        assert not (agent_dir / "threads").exists()
+        assert not (agent_dir / "runtime").exists()
+        assert agent.generator.aforward.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_active_reports_local_worker_without_mutating(kind):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def answer(**_kwargs):
+        entered.set()
+        await release.wait()
+        return _text("finished")
+
+    agent = _agent(answer=answer)
+    async with _session(kind, agent, "inspect-active-thread") as session:
+        admitted = await session.prompt("hold open", request_id="inspect-active")
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        receipt_before = await session.receipt("inspect-active")
+        inspection = await session.inspect_run(admitted.run_id)
+
+        assert inspection.run_id == admitted.run_id
+        assert inspection.receipt == receipt_before
+        assert inspection.receipt.status == "running"
+        assert inspection.local_worker is True
+        assert inspection.requires_quiescence is False
+        assert agent.generator.aforward.await_count == 1
+        release.set()
+        settled = await asyncio.wait_for(session.wait("inspect-active"), timeout=5)
+        assert settled.status == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_failed_provider_preserves_receipt_error_in_reasons(kind):
+    async def fail(**_kwargs):
+        raise RuntimeError("provider unavailable for inspection")
+
+    agent = _agent(answer=fail)
+    async with _session(kind, agent, "inspect-failed-thread") as session:
+        admitted = await session.prompt("fail", request_id="inspect-failed")
+        receipt = await asyncio.wait_for(session.wait("inspect-failed"), timeout=5)
+        inspection = await session.inspect_run(admitted.run_id)
+
+        assert receipt.status == "failed"
+        assert receipt.error
+        assert inspection.receipt == receipt
+        assert any(receipt.error in reason for reason in inspection.reasons)
+        assert inspection.local_worker is False
+        assert inspection.requires_quiescence is False
+        assert agent.generator.aforward.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_preserves_terminal_receipt_and_paused_checkpoint_disagreement(
+    kind,
+):
+    agent = _agent(answer=lambda **_kwargs: _text("completed"))
+    async with _session(kind, agent, "inspect-status-disagreement-thread") as session:
+        admitted = await session.prompt("complete", request_id="inspect-disagreement")
+        receipt = await asyncio.wait_for(
+            session.wait("inspect-disagreement"), timeout=5
+        )
+        assert receipt.status == "completed"
+        model_calls = agent.generator.aforward.await_count
+
+        checkpoint = dict(
+            agent.checkpoint_store.load_state(
+                agent.get_module_name(), session.thread_id, admitted.run_id
+            )
+        )
+        checkpoint["status"] = "paused"
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(), session.thread_id, admitted.run_id, checkpoint
+        )
+        saved_checkpoint = agent.checkpoint_store.load_state(
+            agent.get_module_name(), session.thread_id, admitted.run_id
+        )
+        saved_revision = saved_checkpoint.get("_checkpoint", {}).get("revision")
+
+        inspection = await session.inspect_run(admitted.run_id)
+
+        assert inspection.receipt == receipt
+        assert inspection.receipt.status == "completed"
+        assert inspection.checkpoint_status == "paused"
+        assert any(
+            "Admission and checkpoint statuses differ" in reason
+            for reason in inspection.reasons
+        )
+        assert inspection.requires_quiescence is False
+        if type(saved_revision) is int:
+            assert inspection.checkpoint_revision == saved_revision
+
+        # A terminal service receipt remains authoritative for resume; the
+        # conflicting checkpoint is diagnostic evidence, not a new execution.
+        resumed = await session.resume(admitted.run_id)
+        assert resumed == receipt
+        assert agent.generator.aforward.await_count == model_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_paused_approval_reports_phase_without_mutation(kind):
+    def lookup(value):
+        return value
+
+    agent = _agent(
+        answer=None,
+        tools=[lookup],
+        approvals=AgentApprovals(
+            InMemoryApprovalStore(), {"lookup": "v1"}, "policy-v1"
+        ),
+    )
+    agent.generator.aforward = AsyncMock(
+        side_effect=[_tool("lookup", {"value": "key"})]
+    )
+    async with _session(kind, agent, "inspect-paused-thread") as session:
+        admitted = await session.prompt(
+            "pause for approval", request_id="inspect-paused"
+        )
+        receipt = await asyncio.wait_for(session.wait("inspect-paused"), timeout=5)
+        model_calls = agent.generator.aforward.await_count
+        checkpoint_before = agent.checkpoint_store.load_state(
+            agent.get_module_name(), session.thread_id, admitted.run_id
+        )
+        inspection = await session.inspect_run(admitted.run_id)
+
+        assert receipt.status == "paused"
+        assert inspection.receipt == receipt
+        assert inspection.approval_phase
+        assert inspection.approval_request_count == 1
+        assert inspection.local_worker is False
+        assert inspection.requires_quiescence is False
+        assert await session.receipt("inspect-paused") == receipt
+        assert agent.generator.aforward.await_count == model_calls
+        assert (
+            agent.checkpoint_store.load_state(
+                agent.get_module_name(), session.thread_id, admitted.run_id
+            )
+            == checkpoint_before
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_uncertain_command_reports_reason_without_new_admission(kind):
+    async def pause_once(**_kwargs):
+        raise TaskPauseRequestedError(message="seed paused admission")
+
+    agent = _agent(answer=pause_once)
+    async with _session(kind, agent, f"inspect-command-{kind}") as session:
+        admitted = await session.prompt("seed run", request_id="inspect-command-seed")
+        paused = await asyncio.wait_for(session.wait("inspect-command-seed"), timeout=5)
+        receipt_before = await session.receipt("inspect-command-seed")
+        model_calls = agent.generator.aforward.await_count
+        command = new_command_receipt(
+            workspace_reference=None,
+            backend="local",
+            run_id=admitted.run_id,
+            tool_call_id="inspect-uncertain-command",
+            message_offset=1,
+        )
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(),
+            session.thread_id,
+            admitted.run_id,
+            {
+                "schema_version": 1,
+                "status": "interrupted",
+                "scope": {
+                    "namespace": agent.get_module_name(),
+                    "thread_id": session.thread_id,
+                    "run_id": admitted.run_id,
+                },
+                "messages": {
+                    "items": [],
+                    "metadata": {},
+                    "thread_id": session.thread_id,
+                },
+                "runtime": {
+                    "schema_version": 1,
+                    "extensions": {"command_receipts": [command.to_dict()]},
+                },
+            },
+        )
+
+        inspection = await session.inspect_run(admitted.run_id)
+
+        assert paused.status == "paused"
+        assert inspection.receipt == receipt_before
+        assert inspection.checkpoint_status == "interrupted"
+        assert any("command" in reason.lower() for reason in inspection.reasons)
+        assert await session.receipt("inspect-command-seed") == receipt_before
+        assert agent.generator.aforward.await_count == model_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_foreign_owner_requires_quiescence_without_model_call(kind):
+    agent = _agent(answer=lambda **_kwargs: _text("must not run"))
+    async with _session(
+        kind,
+        agent,
+        "inspect-foreign-thread",
+        foreign_request="inspect-foreign-request",
+    ) as session:
+        record = await session.receipt("inspect-foreign-request")
+        # The admission belongs to another namespace. A checkpoint with the
+        # same identity in the current namespace must not be associated with it.
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(),
+            session.thread_id,
+            record.run_id,
+            {"status": "completed"},
+        )
+        inspection = await session.inspect_run(record.run_id)
+
+        assert inspection.receipt == record
+        assert inspection.receipt.status == "running"
+        assert inspection.local_worker is False
+        assert inspection.requires_quiescence is True
+        assert inspection.checkpoint_status is None
+        assert any("namespace" in reason for reason in inspection.reasons)
+        assert agent.generator.aforward.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_checkpoint_without_admission_requires_quiescence(kind):
+    agent = _agent(answer=lambda **_kwargs: _text("must not run"))
+    async with _session(kind, agent, "inspect-checkpoint-only-thread") as session:
+        run_id = "checkpoint-only-run"
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(),
+            session.thread_id,
+            run_id,
+            {"status": "interrupted", "private": "must not be projected"},
+        )
+
+        inspection = await session.inspect_run(run_id)
+
+        assert isinstance(inspection, RunInspection)
+        assert inspection.run_id == run_id
+        assert inspection.receipt is None
+        assert inspection.checkpoint_status == "interrupted"
+        assert inspection.local_worker is False
+        assert inspection.requires_quiescence is True
+        assert "must not be projected" not in msgspec_dumps(inspection)
+        assert agent.generator.aforward.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_retains_only_background_tasks_for_matching_root_after_reopen(
+    tmp_path, kind
+):
+    agent_dir = tmp_path / kind / "background-agent"
+    thread_id = "background-inspection-thread"
+    private_arguments = ["private-child-argument-one", "private-child-argument-two"]
+    private_results = ["private-child-result-one", "private-child-result-two"]
+    scripted_responses = iter(
+        [
+            response
+            for argument in private_arguments
+            for response in (
+                _tool(
+                    "agent",
+                    {
+                        "name": "worker",
+                        "message": argument,
+                        "run_in_background": True,
+                    },
+                ),
+                _text("root run completed"),
+            )
+        ]
+    )
+
+    async def root_answer(**_kwargs):
+        return next(scripted_responses)
+
+    def child_model():
+        model = Mock()
+        model.model_type = "chat_completion"
+        return model
+
+    worker = Agent(name="worker", model=child_model())
+    child_responses = [_text(result) for result in private_results]
+    worker.generator.forward = Mock(side_effect=child_responses)
+    worker.generator.aforward = AsyncMock(side_effect=child_responses)
+    root = _agent(answer=root_answer, agent_dir=agent_dir)
+    root.tool_library.add(tool_config(allow_background=True)(AgentTool()))
+    root.tool_library.add(worker)
+
+    run_ids = []
+    task_ids_by_run = {}
+    async with _session(kind, root, thread_id) as session:
+        for index in range(2):
+            request_id = f"background-inspection-{index}"
+            admitted = await session.prompt(
+                "delegate background work", request_id=request_id
+            )
+            run_ids.append(admitted.run_id)
+            settled = await asyncio.wait_for(session.wait(request_id), timeout=5)
+            assert settled.status == "completed"
+
+            resources = root._owned_threads[thread_id].resources
+            task_store = resources.task_store
+            deadline = asyncio.get_running_loop().time() + 3
+            while True:
+                tasks = task_store.list()
+                associated = [
+                    task
+                    for task in tasks
+                    if task.metadata.get("root_run_id") == admitted.run_id
+                    and task.metadata.get("thread_id") == thread_id
+                ]
+                if len(associated) == 1 and associated[0].status == "completed":
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError(
+                        f"Background task did not complete for run {admitted.run_id}: "
+                        f"{[task.to_dict() for task in associated]}"
+                    )
+                await asyncio.sleep(0.01)
+
+            (task,) = associated
+            task_ids_by_run[admitted.run_id] = task.task_id
+            assert task.metadata["parent_run_id"] == admitted.run_id
+            assert task.metadata["checkpoint_thread_id"] == thread_id
+            assert task.metadata["checkpoint_run_id"] == task.task_id
+            assert private_arguments[index] in str(task.metadata["initial_call_params"])
+            assert private_results[index] in str(task.result)
+
+    # Closing the first service closes its managed stores after both children
+    # have finished. A new local or HTTP service then reads their durable rows.
+    reopened_root = _agent(
+        answer=lambda **_kwargs: _text("inspection must not execute the model"),
+        agent_dir=agent_dir,
+    )
+    async with _session(kind, reopened_root, thread_id) as reopened:
+        for index, run_id in enumerate(run_ids):
+            inspection = await reopened.inspect_run(run_id)
+            summaries = inspection.background_tasks
+
+            assert len(summaries) == 1
+            (summary,) = summaries
+            assert summary.task_id == task_ids_by_run[run_id]
+            assert summary.status == "completed"
+            assert not any(
+                summary.task_id == task_ids_by_run[other_run]
+                for other_run in run_ids
+                if other_run != run_id
+            )
+            serialized = msgspec_dumps(inspection)
+            assert private_arguments[index] not in serialized
+            assert private_results[index] not in serialized
+            assert "initial_call_params" not in serialized
+            assert "task_resume_params" not in serialized
+            assert "metadata" not in serialized
+            assert '"result"' not in serialized
+            assert reopened_root.generator.aforward.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_inspect_run_malformed_checkpoint_status_is_diagnostic(kind):
+    agent = _agent(answer=lambda **_kwargs: _text("must not run"))
+    async with _session(kind, agent, "inspect-malformed-thread") as session:
+        agent.checkpoint_store.save_state(
+            agent.get_module_name(),
+            session.thread_id,
+            "malformed-run",
+            {"status": ["private-invalid-status"]},
+        )
+        inspection = await session.inspect_run("malformed-run")
+        assert inspection.checkpoint_status is None
+        assert any("status is malformed" in reason for reason in inspection.reasons)
+        assert "private-invalid-status" not in msgspec_dumps(inspection)
         assert agent.generator.aforward.await_count == 0
 
 

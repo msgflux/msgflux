@@ -323,9 +323,12 @@ class AgentTaskRecovery:
             with self._host_scope():
                 return self.library.reconcile_agent_task(task_id)
         if report.classification == "uncertain":
+            detail = (
+                "; ".join(report.reasons) or "recorded outcomes require reconciliation"
+            )
             raise RuntimeError(
-                "Task execution is uncertain; reconcile the pending approval with "
-                "the host approval API before recovery."
+                f"Task execution is uncertain: {detail}. "
+                "Reconcile the recorded outcomes with the host before recovery."
             )
         if report.classification == "active":
             raise RuntimeError(

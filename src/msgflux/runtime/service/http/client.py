@@ -15,6 +15,7 @@ from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
     ApprovalReview,
+    RunInspection,
     RunSummary,
     ServiceBusyError,
     ServiceConflictError,
@@ -211,6 +212,17 @@ class AgentServiceClient:
             "GET", self._thread_path(thread_id) + "/runs", RunsResponse
         )
         return result.runs
+
+    async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
+        """Read execution diagnostics without admitting or resuming work."""
+        path = (
+            self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/inspection"
+        )
+        return await self._json(
+            "GET",
+            path,
+            RunInspection,
+        )
 
     async def prompt(
         self, thread_id: str, prompt: str, *, request_id: str

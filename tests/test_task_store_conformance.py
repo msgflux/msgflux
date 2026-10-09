@@ -8,6 +8,7 @@ import os
 import time
 
 import pytest
+import msgspec
 
 from msgflux.runtime.task_leases import TaskLeaseHeartbeats
 from msgflux.exceptions import TaskLeaseLostError
@@ -15,6 +16,7 @@ from msgflux.tasks import (
     InMemoryTaskStore,
     SQLiteTaskStore,
     TaskHandle,
+    TaskSummary,
     TaskStoreProtocol,
 )
 
@@ -66,6 +68,45 @@ def test_task_store_contract_lifecycle_and_activity(task_store):
     completed = task_store.complete("task-1", "done")
     assert completed.status == "completed"
     assert completed.result == "done"
+
+
+def test_task_store_contract_scoped_summaries(task_store):
+    task_store.create(
+        "child",
+        task_id="root-child",
+        metadata={"thread_id": "thread-a", "root_run_id": "run-a"},
+    )
+    task_store.create(
+        "child",
+        task_id="direct-child",
+        metadata={"thread_id": "thread-a", "parent_run_id": "run-a"},
+    )
+    task_store.create(
+        "child",
+        task_id="wrong-thread",
+        metadata={"thread_id": "thread-b", "root_run_id": "run-a"},
+    )
+    task_store.create(
+        "child",
+        task_id="wrong-run",
+        metadata={"thread_id": "thread-a", "root_run_id": "run-b"},
+    )
+    task_store.complete("root-child", "large result")
+    task_store.fail("direct-child", "tool failed")
+
+    summaries = task_store.list_summaries(thread_id="thread-a", run_id="run-a")
+
+    assert {item.task_id for item in summaries} == {"root-child", "direct-child"}
+    by_id = {item.task_id: item for item in summaries}
+    assert by_id["root-child"].status == "completed"
+    assert by_id["direct-child"].status == "failed"
+    assert by_id["direct-child"].error == "tool failed"
+    assert all(isinstance(item, TaskSummary) for item in summaries)
+    assert all(
+        set(msgspec.to_builtins(item))
+        == {"task_id", "tool_name", "status", "updated_at", "error"}
+        for item in summaries
+    )
 
 
 def test_task_store_contract_messages_and_conditional_resume(task_store):
