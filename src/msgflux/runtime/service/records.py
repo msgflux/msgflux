@@ -57,6 +57,20 @@ class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     revision: int = 0
 
 
+class RunInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Read-only recovery evidence for one foreground service run."""
+
+    run_id: str
+    receipt: AdmissionReceipt | None = None
+    checkpoint_status: str | None = None
+    checkpoint_revision: int | None = None
+    local_worker: bool = False
+    requires_quiescence: bool = False
+    approval_phase: str | None = None
+    approval_request_count: int = 0
+    reasons: tuple[str, ...] = ()
+
+
 class AdmissionRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     receipt: AdmissionReceipt
     namespace: str

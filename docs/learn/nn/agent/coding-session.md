@@ -143,18 +143,38 @@ configuration directory. The journal owns admission identities and status;
 checkpoints remain authoritative for conversation history and execution state.
 User-supplied stores, Agent, model and workspace remain owned by the application.
 
-`runs()`, `latest_run()` and `receipt(request_id)` are asynchronous service queries.
+`runs()`, `latest_run()`, `receipt(request_id)` and `inspect_run(run_id)` are
+asynchronous service queries.
 Run discovery returns `RunSummary` records with `run_id`, `status` and the
 `updated_at` timestamp;
 it does not expose checkpoint data. `saved_state(run_id)` is a synchronous,
 host-local inspection of the configured checkpoint store. Keep it inside trusted
 host code because checkpoint contents are private runtime state.
 
+`inspect_run(run_id)` returns a portable `RunInspection` summary with the
+optional admission receipt, checkpoint status and revision, observed local-worker
+presence, `requires_quiescence`, approval phase and saved approval request count, plus
+diagnostic reasons. It does not return raw checkpoint data, prompts, tool
+arguments or owner IDs, and it does not decide that resuming is safe. A set
+`requires_quiescence` flag means the trusted host must establish worker shutdown;
+it is not evidence that shutdown has happened. The journal and checkpoint store
+are independent, so their observed values may disagree and are not sampled
+atomically. Reconcile and inspect again before acting. Approval counts and phases
+do not grant review access; use the host-authorized approval review methods for
+individual requests. `approval_request_count` counts requests in the saved batch,
+including requests whose decisions have already been recorded.
+
 A completed or interrupted run is terminal: submit a new prompt to continue the
 conversation. `resume()` admits recovery and returns an `AdmissionReceipt`; use
 `watch()` to observe its events and `wait()` to read its settled outcome:
 
 ```python
+inspection = await session.inspect_run(run_id)
+for reason in inspection.reasons:
+    print("Recovery check:", reason)
+
+# After the trusted host has reconciled external effects and established that
+# the previous worker stopped, it can explicitly resume the run.
 async with session.watch() as observer:
     receipt = await session.resume(run_id, worker_stopped=True)
     if receipt.status in {"accepted", "running"}:

@@ -15,6 +15,7 @@ from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
     ApprovalReview,
+    RunInspection,
     RunSummary,
     ServiceThread,
 )
@@ -100,6 +101,10 @@ class AgentSessionClient:
     async def receipt(self, request_id: str) -> AdmissionReceipt:
         """Return the current admission receipt for a request identity."""
         return await self._client.receipt(self.thread_id, request_id)
+
+    async def inspect_run(self, run_id: str) -> RunInspection:
+        """Read recorded run state; this never asserts old-worker quiescence."""
+        return await self._client.inspect_run(self.thread_id, run_id)
 
     async def wait(
         self, request_id: str, *, poll_interval: float = 0.05

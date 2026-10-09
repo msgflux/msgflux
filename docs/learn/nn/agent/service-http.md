@@ -273,6 +273,27 @@ This lists resumable checkpoint identities without loading saved state into the
 client. Pass a selected identity to the explicit resume operation when the
 service's recovery rules allow it.
 
+Use `await client.inspect_run(thread_id, run_id)` for a portable `RunInspection`
+before recovery. It reports the admission receipt, checkpoint status and revision,
+local-worker presence, approval batch phase and request count, and diagnostic
+reasons. A checkpoint created before the admission journal has `receipt=None`.
+
+```python
+inspection = await client.inspect_run(thread_id, run_id)
+print(inspection.checkpoint_status, inspection.receipt)
+for reason in inspection.reasons:
+    print(reason)
+```
+
+This query does not start work, import a checkpoint, claim ownership or assert
+that replay is safe. `requires_quiescence=True` means the trusted host must
+establish that the old worker stopped; remote clients cannot supply that
+assertion. The journal and checkpoint are separate stores, so inspection is not
+an atomic snapshot across them. Approval summaries do not authorize review or
+decisions. `approval_request_count` counts requests in the saved batch, including
+requests with recorded decisions. Raw checkpoints, invocation arguments and
+owner IDs are excluded.
+
 ## Detach And Reconnect
 
 ```python
@@ -338,6 +359,7 @@ All routes require `Authorization: Bearer <token>`.
 | GET / POST | `/v1/threads` | List bindings / open a thread |
 | GET | `/v1/threads/{thread_id}/snapshot` | Portable thread snapshot |
 | GET | `/v1/threads/{thread_id}/runs` | Saved run metadata summaries |
+| GET | `/v1/threads/{thread_id}/runs/{run_id}/inspection` | Recorded run state and recovery reasons |
 | POST | `/v1/threads/{thread_id}/prompt` | Admission receipt |
 | GET | `/v1/threads/{thread_id}/requests/{request_id}` | Current receipt |
 | GET | `/v1/threads/{thread_id}/watch` | Initial snapshot and continuous SSE events |
@@ -474,6 +496,7 @@ view with its new `observer.snapshot`; missed event deltas are not replayed.
 its caller is cancelled. Use `cancel(run_id)` for an explicit interruption.
 `runs()` and `latest_run()` expose only service-provided run summaries, not
 checkpoint contents or configuration. The remote facade has no automatic
-reconnect loop. `session.aclose()` is an optional no-op because the facade
+reconnect loop. `await session.inspect_run(run_id)` returns the same inspection
+record as the embedded CodingSession. `session.aclose()` is an optional no-op because the facade
 borrows its client and owns no background tasks; a UI can close its active watch
 context on shutdown, while the host closes the shared HTTP client.

@@ -26,7 +26,7 @@ can generate the request ID when one is omitted. Both return an admission receip
 once the input is recorded and work is scheduled. Use `wait()` for the settled
 receipt, `watch()` for snapshot and future events, or `CodingSession.stream()`
 for a finite iterator of one run's events. The `CodingSession` facade exposes
-asynchronous `receipt()`, `runs()`, and `latest_run()` queries so local and
+asynchronous `receipt()`, `runs()`, `latest_run()`, and `inspect_run()` queries so local and
 service-backed sessions have the same interface. Run listings contain service
 `RunSummary` records; checkpoint state remains host-local through its synchronous
 `saved_state()` method. `AgentService.receipt()` itself remains synchronous for
@@ -36,6 +36,24 @@ attached to a local service. The lower-level `AgentService.snapshot()` and
 `watch()` continue to use native `ThreadSnapshot` and `ExecutionEvent` values.
 `CodingSession.stream()` remains a local convenience and yields `EventRecord`;
 there is no corresponding stream method on the remote session client.
+
+For operational recovery, `await service.inspect_run(thread_id, run_id)` returns
+a `RunInspection` with the optional admission `receipt`, `checkpoint_status` and
+`checkpoint_revision`, whether a `local_worker` is present, whether
+`requires_quiescence` is set, `approval_phase`, `approval_request_count`, and
+human-readable `reasons`. This is an observational summary: it excludes raw
+checkpoint state, prompts, tool arguments, and owner IDs. It does not provide a
+`safe_to_resume` decision. `requires_quiescence` means the trusted host still
+needs to establish that the old worker stopped; the inspection itself is not
+that assertion.
+
+The admission journal and checkpoint store are separate. Their statuses or
+revisions can disagree, and inspection reads them at different times rather than
+as one atomic snapshot. Treat `reasons` as diagnostic evidence, then reconcile
+the underlying state and re-inspect before taking an action. Approval phase and
+pending count are summaries only; use the host-authorized approval review flow
+to inspect and decide individual requests. `approval_request_count` counts
+requests in the saved batch, including requests with recorded decisions.
 
 ## Prompt And Observe
 
@@ -251,6 +269,11 @@ identity. If that checkpoint predates the admission journal, the host must first
 establish quiescence and supply `worker_stopped=True`. The service validates the
 checkpoint and records its existing identity before recovery; the original prompt
 is not reconstructed. A terminal checkpoint settles without another model call.
+
+Call `inspect_run()` before explicit recovery to see the observed admission,
+checkpoint and outstanding reasons. The host still decides whether it has
+reconciled the effects and can assert worker quiescence; inspection cannot make
+that decision on the host's behalf.
 
 ## Shutdown And Ownership
 
