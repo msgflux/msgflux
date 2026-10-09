@@ -337,9 +337,15 @@ async def test_owned_app_shutdown_closes_session_once_and_borrows_journal():
     service = AgentService(store=journal)
     service.register("agent", lambda _thread: AgentSession(agent, on_close=close))
     thread = await service.open_thread("agent")
-    lease = await service.acquire_session(thread.thread_id)
-    await lease.aclose()
     app = create_service_app(service, token="secret", close_service=True)
+
+    async def warm_session():
+        # AsyncTestClient runs lifespan in its portal loop. Start the service's
+        # live dependencies there so shutdown uses that same owning event loop.
+        lease = await service.acquire_session(thread.thread_id)
+        await lease.aclose()
+
+    app.on_startup.append(warm_session)
     try:
         async with AsyncTestClient(app=app):
             pass

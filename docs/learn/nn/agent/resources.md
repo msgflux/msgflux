@@ -2,6 +2,41 @@
 
 ## Managed Agent Setup
 
+For factory-backed `AgentService` applications, the default cache policy keeps
+at most 64 live bindings loaded and releases safely idle bindings after 300
+seconds. Configure those limits when creating the service:
+
+```python
+import asyncio
+
+from msgflux.runtime.service import AgentService, SessionCachePolicy, SQLiteServiceStore
+
+
+async def main():
+    journal = SQLiteServiceStore("service.sqlite3")
+    service = AgentService(
+        store=journal,
+        cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
+    )
+    try:
+        print(service.agents())
+    finally:
+        await service.aclose()
+        journal.close()
+
+
+asyncio.run(main())
+```
+
+Set either policy field to `None` to disable only that limit, or pass
+`cache_policy=None` to turn off both automatic release mechanisms. A zero
+timeout releases a binding as soon as it is safely idle. Unfinished stream
+finalizers prevent release. Cache release preserves the thread's persisted
+data; model and workspace objects remain host-owned
+unless the factory explicitly releases resources it owns in the session cleanup
+callback. An embedded `CodingSession(agent)` keeps its supplied Agent and does
+not use automatic cache release.
+
 For the usual durable Agent setup, pass one stable `agent_dir` and reuse the
 same Agent name and thread ID across restarts. Creating the Agent and session is
 lazy; the first admitted prompt creates the private runtime directories:

@@ -1,6 +1,7 @@
 """Embedded Agent service and durable admission journal."""
 
 from msgflux.runtime.service.api import AgentService, AgentSession
+from msgflux.runtime.service.cache_policy import SessionCachePolicy
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
     ApprovalReview,
@@ -20,6 +21,7 @@ __all__ = [
     "AgentService",
     "AgentSession",
     "SessionLease",
+    "SessionCachePolicy",
     "AdmissionReceipt",
     "EventRecord",
     "ApprovalReview",

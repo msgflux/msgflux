@@ -1465,6 +1465,10 @@ class Module:
                     self._start_detached_event_finalizer(result, scope=scope)
                 else:
                     self._emit_nested_run_completion(result, scope=scope)
+            else:
+                release, _context = self._take_detached_event_context(result)
+                if release is not None:
+                    release()
             return result
 
     async def _afinalize_detached_event_result(
@@ -1472,6 +1476,7 @@ class Module:
         result: ModelStreamResponse,
         *,
         scope: Any = None,
+        _release: Any = None,
     ) -> None:
         try:
             await self._afinalize_event_result(result)
@@ -1481,6 +1486,16 @@ class Module:
                 {"error": str(exc)},
                 scope=scope,
             )
+        finally:
+            if _release is not None:
+                _release()
+
+    @staticmethod
+    def _take_detached_event_context(result: Any):
+        stream = Module._stream_response_from_result(result)
+        if stream is None:
+            return None, None
+        return stream.__dict__.pop("_msgflux_detached_event_context", (None, None))
 
     def _start_detached_event_finalizer(
         self,
@@ -1488,12 +1503,30 @@ class Module:
         *,
         scope: Any = None,
     ) -> None:
-        context = contextvars.copy_context()
+        release, context = self._take_detached_event_context(result)
+        if context is None:
+            context = contextvars.copy_context()
 
         def finalize() -> None:
-            asyncio.run(self._afinalize_detached_event_result(result, scope=scope))
+            try:
+                asyncio.run(
+                    self._afinalize_detached_event_result(
+                        result, scope=scope, _release=release
+                    )
+                )
+            finally:
+                if release is not None:
+                    release()
 
-        Executor.get_instance().submit(context.run, finalize)
+        try:
+            future = Executor.get_instance().submit(context.run, finalize)
+        except BaseException:
+            if release is not None:
+                release()
+            raise
+        if release is not None:
+            # Release as well when the executor cancels work before it starts.
+            future.add_done_callback(lambda _future: release())
 
     def _call_impl_with_hooks(self, *args, **kwargs):
         if not (self._forward_hooks or self._forward_pre_hooks):
@@ -1634,6 +1667,24 @@ class Module:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, functools.partial(hook, *args))
 
+    def _start_async_detached_event_finalizer(self, result, *, scope):
+        release, context = self._take_detached_event_context(result)
+        finalize_coro = self._afinalize_detached_event_result(
+            result,
+            scope=scope,
+            _release=release,
+        )
+        try:
+            task = asyncio.create_task(finalize_coro, context=context)
+        except BaseException:
+            finalize_coro.close()
+            if release is not None:
+                release()
+            raise
+        if release is not None:
+            task.add_done_callback(lambda _task: release())
+        _track_event_task(task)
+
     async def _acall_impl(self, *args, **kwargs):
         root_hub_run = bool(
             not _is_capturing_events()
@@ -1669,16 +1720,13 @@ class Module:
                 raise
             if run_boundary:
                 if self._stream_response_from_result(result) is not None:
-                    _track_event_task(
-                        asyncio.create_task(
-                            self._afinalize_detached_event_result(
-                                result,
-                                scope=scope,
-                            )
-                        )
-                    )
+                    self._start_async_detached_event_finalizer(result, scope=scope)
                 else:
                     self._emit_nested_run_completion(result, scope=scope)
+            else:
+                release, _context = self._take_detached_event_context(result)
+                if release is not None:
+                    release()
             return result
 
     async def _acall_impl_with_hooks(self, *args, **kwargs):

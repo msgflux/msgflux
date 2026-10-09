@@ -24,6 +24,8 @@ class _OwnedThread(msgspec.Struct):
     resources: BoundAgentResources
     libraries: set = msgspec.field(default_factory=set)
     active: int = 0
+    active_calls: int = 0
+    detached_finalizers: set = msgspec.field(default_factory=set)
     closing: bool = False
     idle_closing: bool = False
     children_settled: bool = False
@@ -191,6 +193,7 @@ class AgentResourceMixin:
             if owned.closing:
                 raise RuntimeError("Agent thread resources are closing")
             owned.active += 1
+            owned.active_calls += 1
             owned.libraries.add(self.tool_library)
         token = _CURRENT_RESOURCES.set(owned)
         try:
@@ -205,6 +208,30 @@ class AgentResourceMixin:
             _CURRENT_RESOURCES.reset(token)
             with owned.lock:
                 owned.active -= 1
+                owned.active_calls -= 1
+
+    def _retain_detached_resources(self):
+        """Keep owned thread resources open through detached stream finalizers."""
+        owned = _CURRENT_RESOURCES.get()
+        if owned is None:
+            return lambda: None
+        finished = Future()
+        with owned.lock:
+            if owned.closing and owned.active_calls <= 0:
+                raise RuntimeError("Agent thread resources are closing")
+            owned.active += 1
+            owned.detached_finalizers.add(finished)
+
+        def release() -> None:
+            with owned.lock:
+                if finished not in owned.detached_finalizers:
+                    return
+                owned.detached_finalizers.remove(finished)
+                owned.active -= 1
+                if not finished.done():
+                    finished.set_result(None)
+
+        return release
 
     async def _close_thread_resources(self, thread_id, *, before_close=None):
         with self._resource_lock:
@@ -361,12 +388,30 @@ class AgentResourceMixin:
                     return_exceptions=True,
                 )
         with owned.lock:
-            if owned.active:
+            if owned.active_calls:
                 raise RuntimeError("Stop active Agent calls before closing resources")
             owned.children_settled = True
+        await self._wait_for_detached_finalizers(owned)
+        with owned.lock:
+            if owned.active:
+                raise RuntimeError("Stop active Agent calls before closing resources")
         await self._run_thread_close_callback(thread_id, before_close)
         with owned.lock:
             owned.resources.close()
+
+    @staticmethod
+    async def _wait_for_detached_finalizers(owned):
+        while True:
+            with owned.lock:
+                if owned.active_calls:
+                    raise RuntimeError(
+                        "Stop active Agent calls before closing resources"
+                    )
+                if not owned.detached_finalizers:
+                    return
+                pending = tuple(owned.detached_finalizers)
+            for future in pending:
+                await asyncio.shield(asyncio.wrap_future(future))
 
     async def _run_thread_close_callback(self, thread_id, callback):
         """Run host cleanup once; failed callbacks remain quarantined.
