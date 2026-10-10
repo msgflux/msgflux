@@ -24,6 +24,11 @@ class AgentTool(ToolBucket, ToolLibraryOperator):
     task_checkpoint_namespace_param = "name"
     name = "agent"
     display_name = "Agent"
+    default_usage_guidance = (
+        "Use when an available specialized agent is better suited for the task. "
+        "Choose the agent whose description matches the task and send a focused "
+        "message."
+    )
     tool_config = {
         "runtime_inputs": ("handle",),
     }

@@ -14,7 +14,6 @@ from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.runtime.context import execution_context
 from msgflux.runtime.events import EventType
-from msgflux.tools import BUILTIN_TOOL_USAGE_GUIDANCE, apply_tool_guidance
 from msgflux.tools.builtin import AgentTool
 
 
@@ -197,15 +196,16 @@ def test_agent_tool_builtin_usage_guidance_is_opt_in_and_survives_capture():
         ToolLibrary(name="default", tools=[AgentTool()]).get_tool_usage_guidance() == []
     )
 
-    [agent_tool] = apply_tool_guidance([AgentTool()])
     reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
+    agent_tool = AgentTool()
     library = ToolLibrary(name="lib", tools=[agent_tool])
+    library.apply_default_usage_guidance()
 
     expected_guidance = [
         {
             "name": "agent",
             "display_name": "Agent",
-            "guidance": BUILTIN_TOOL_USAGE_GUIDANCE["agent"],
+            "guidance": AgentTool.default_usage_guidance,
         }
     ]
     assert library.get_tool_usage_guidance() == expected_guidance
@@ -213,6 +213,37 @@ def test_agent_tool_builtin_usage_guidance_is_opt_in_and_survives_capture():
     library.add(reviewer)
 
     assert library.get_tool_usage_guidance() == expected_guidance
+
+
+def test_default_guidance_is_visible_in_only_the_opted_in_agent_request():
+    def specialized_lookup(query: str) -> str:
+        """Look up specialized information."""
+        return query
+
+    specialized_lookup.default_usage_guidance = "Only use for specialized queries."
+    plain_model = _mock_model("plain response")
+    guided_model = _mock_model("guided response")
+    plain_agent = Agent(
+        name="plain",
+        model=plain_model,
+        system_prompt="You are helpful.",
+        tools=[specialized_lookup],
+    )
+    guided_agent = Agent(
+        name="guided",
+        model=guided_model,
+        system_prompt="You are helpful.",
+        tools=[specialized_lookup],
+    )
+    guided_agent.tool_library.apply_default_usage_guidance()
+
+    plain_agent("Find an answer.")
+    guided_agent("Find an answer.")
+
+    plain_prompt = plain_model.calls[0]["system_prompt"]
+    guided_prompt = guided_model.calls[0]["system_prompt"]
+    assert "Only use for specialized queries." not in plain_prompt
+    assert "Only use for specialized queries." in guided_prompt
 
 
 def test_agent_tool_collects_agent_usage_guidance():
@@ -226,6 +257,36 @@ def test_agent_tool_collects_agent_usage_guidance():
 
     assert "reviewer: Use for code review." in tool.usage_guidance
     assert "planner: Use for planning." in tool.usage_guidance
+
+
+@pytest.mark.parametrize(
+    ("configured_guidance", "expected_sections"),
+    [
+        (
+            "Host instructions.",
+            ("Host instructions.", "reviewer: Use for code review."),
+        ),
+        ("", ()),
+    ],
+)
+def test_agent_tool_default_opt_in_preserves_bucket_guidance_composition(
+    configured_guidance, expected_sections
+):
+    reviewer = Agent(name="reviewer", model=_mock_model("reviewed"))
+    reviewer.tool_config = {"usage_guidance": "Use for code review."}
+    agent_tool = AgentTool()
+    agent_tool.tool_config = {"usage_guidance": configured_guidance}
+    library = ToolLibrary(name="bucket-guidance", tools=[agent_tool, reviewer])
+
+    library.apply_default_usage_guidance()
+    guidance = library.get_tool_usage_guidance()
+
+    if not expected_sections:
+        assert guidance == []
+        return
+    assert len(guidance) == 1
+    for section in expected_sections:
+        assert section in guidance[0]["guidance"]
 
 
 def test_agent_tool_can_start_empty_and_capture_agents_from_library():

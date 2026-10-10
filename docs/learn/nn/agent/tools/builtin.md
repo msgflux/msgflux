@@ -140,17 +140,21 @@ reader = ReadFileTool(max_text_bytes=16 * 1024)
 The budget counts UTF-8 bytes. If the selected page exceeds it, the error asks
 for `offset` and a smaller `limit`. If a single line exceeds it, the error asks
 for another available tool, such as Bash. These are separate errors, and
-neither returns file content. Opt into the registered guidance with
-`apply_tool_guidance()` to explain both cases before execution:
+neither returns file content. Opt into the tool's default guidance on its
+library to explain both cases before execution:
 
 ```python
-from msgflux.tools import apply_tool_guidance
+from msgflux.nn import ToolLibrary
 
-[reader] = apply_tool_guidance([ReadFileTool(max_text_bytes=16 * 1024)])
+library = ToolLibrary(
+    name="files", tools=[ReadFileTool(max_text_bytes=16 * 1024)]
+)
+library.apply_default_usage_guidance()
 ```
 
-This fills `usage_guidance` when the tool has no explicit guidance. The default
-text reader leaves that optional field unset. This also applies to saved tool results;
+This selects the tool-owned `default_usage_guidance` when no explicit guidance
+is supplied. Without the library opt-in, the default text instructions stay
+inactive. This also applies to saved tool results;
 rejecting a read does not create another offload file. If a single line exceeds
 the budget, `read` cannot retrieve it: use another available tool, such as Bash,
 to filter or extract a smaller portion. Image reads retain their separate

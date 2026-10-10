@@ -12,7 +12,6 @@ from msgflux.tools.catalog import (
     ToolRef,
 )
 from msgflux.tools.definitions import ToolCatalog, ToolSpec
-from msgflux.tools.guidance import BUILTIN_TOOL_USAGE_GUIDANCE, apply_tool_guidance
 from msgflux.tools.handles import ToolBucketHandle, ToolLibraryHandle
 from msgflux.tools.runtime import FeedbackSpec, ToolError, ToolIntent, ToolOutcome
 from msgflux.tools.types import (
@@ -24,7 +23,6 @@ from msgflux.tools.types import (
 )
 
 __all__ = [
-    "BUILTIN_TOOL_USAGE_GUIDANCE",
     "FeedbackSpec",
     "Hidden",
     "ToolBackground",
@@ -43,5 +41,4 @@ __all__ = [
     "ToolFlowControl",
     "ToolLibraryHandle",
     "ToolLibraryOperator",
-    "apply_tool_guidance",
 ]

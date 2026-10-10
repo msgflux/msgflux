@@ -987,43 +987,92 @@ print(agent.get_system_prompt())
 The guidance is injected into the system prompt when you render it with
 `agent.get_system_prompt()`.
 
-## Builtin usage guidance
+## Default usage guidance (opt-in)
 
-msgFlux also ships an opt-in guidance registry for builtin tools. This keeps
-tool implementations neutral while letting applications such as a CLI attach
-ready-to-use instructions when composing an agent.
+Tools can declare `default_usage_guidance` alongside their implementation. The
+attribute is a suggested instruction, not an automatically active prompt section.
+Creating a `ToolLibrary` or an `Agent` leaves defaults unused. Explicit
+`usage_guidance` continues to work without enabling defaults.
 
-Use `apply_tool_guidance()` to fill `usage_guidance` only when a tool does not
-already define one:
+Call `apply_default_usage_guidance()` on the library when the application wants
+those defaults:
+
+```python
+import msgflux.nn as nn
+from msgflux.tools.builtin import ReadFileTool, WebFetchTool
+
+library = nn.ToolLibrary(
+    name="research",
+    tools=[ReadFileTool(), WebFetchTool()],
+)
+print(library.get_tool_usage_guidance())  # []
+
+library.apply_default_usage_guidance()
+print(library.get_tool_usage_guidance())  # Read and web_fetch defaults.
+```
+
+For an Agent, use `agent.tool_library.apply_default_usage_guidance()`. Its
+`ToolUsageGuidanceExtension` renders the effective guidance for the current
+request's tool catalog. The opt-in applies to existing tools and later
+registrations, including deferred tools when exposed by the catalog.
+
+Define defaults on custom classes, functions, or callable objects. For example:
+
+```python
+class SearchNotes:
+    """Find notes matching a query."""
+
+    default_usage_guidance = "Use for questions about the user's saved notes."
+
+    def __call__(self, query: str) -> str:
+        return f"Notes matching: {query}"
+
+
+with_defaults = nn.ToolLibrary(name="first", tools=[SearchNotes])
+without_defaults = nn.ToolLibrary(name="second", tools=[SearchNotes])
+with_defaults.apply_default_usage_guidance()
+
+print(with_defaults.get_tool_usage_guidance())  # SearchNotes default.
+print(without_defaults.get_tool_usage_guidance())  # []
+```
+
+The method updates library-owned definitions. It does not change the source
+class, function, object, or another library reusing the implementation. Calling
+it again is safe. Builtin defaults live on their tool classes rather than in a
+separate name-based registry.
+
+Explicit guidance takes precedence. An empty string explicitly suppresses the
+default guidance:
 
 ```python
 import msgflux as mf
-import msgflux.nn as nn
-from msgflux.tools import apply_tool_guidance
-from msgflux.tools.builtin import AgentTool, WebFetchTool, WebSearchTool
+from msgflux import nn
 
-tools = apply_tool_guidance([AgentTool(), WebSearchTool(), WebFetchTool()])
 
-agent = nn.Agent(
-    name="assistant",
-    model=mf.Model.chat_completion("openai/gpt-5.6-luna"),
-    tools=tools,
-)
-
-print(agent.get_system_prompt())
-```
-
-Explicit guidance always wins:
-
-```python
 @mf.tool_config(usage_guidance="Use only for internal repository search.")
-def web_search(query: str) -> str:
+class InternalSearch:
     """Search internal repositories."""
-    ...
 
-tools = apply_tool_guidance([web_search])
+    default_usage_guidance = "Use for general search questions."
+
+    def __call__(self, query: str) -> str:
+        return f"Internal matches: {query}"
+
+
+library = nn.ToolLibrary(name="internal", tools=[InternalSearch])
+library.apply_default_usage_guidance()
 # Keeps "Use only for internal repository search."
 ```
+
+Set `usage_guidance=""` in `tool_config` to suppress a default for that
+registration. Runtime guidance supplied by specialized tools, such as an
+AgentTool's captured-agent instructions, still follows that tool's composition
+contract.
+
+The former `apply_tool_guidance()` helper and builtin guidance map are replaced
+by this library-level opt-in. Applications that used the helper should construct
+the Agent or library normally, then call `apply_default_usage_guidance()`.
+Custom instructions belong in the tool's `usage_guidance` declaration.
 
 ## retry
 

@@ -9,6 +9,8 @@ from typing import (
     Optional,
 )
 
+import msgspec
+
 import msgflux.nn.functional as F
 from msgflux.auto import AutoParams
 from msgflux.chat_messages import ChatMessages
@@ -98,6 +100,7 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
         self._agent_inbox: Optional[AgentInbox] = None
         self._handle: Optional[ToolLibraryHandle] = None
         self._background_dispatcher: Optional[BackgroundTaskDispatcher] = None
+        self._default_usage_guidance = False
         self._lifecycle_owner_ref: Optional[weakref.ReferenceType[Module]] = None
         self.extensions = ModuleDict()
         self.runtime_extensions = ToolExtensionRegistry(install_defaults=True)
@@ -208,6 +211,42 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
 
     def has_extension(self, name: str) -> bool:
         return name in self.extensions or self.runtime_extensions.has(name)
+
+    def apply_default_usage_guidance(self) -> None:
+        """Opt this library into tool-owned default usage guidance.
+
+        The setting applies to tools already registered and to later additions.
+        Explicit guidance, including an empty string, takes precedence.
+        """
+        if self._default_usage_guidance:
+            return
+        self._default_usage_guidance = True
+        for definition in self.registry.definitions():
+            effective = self._with_default_usage_guidance(definition)
+            if effective is not definition:
+                self.registry.replace(effective)
+            implementation = getattr(definition.executor, "impl", definition.executor)
+            if isinstance(implementation, ToolBucket):
+                self._sync_bucket_presentation(definition.name, implementation)
+
+    def _with_default_usage_guidance(
+        self, definition: RuntimeToolDefinition
+    ) -> RuntimeToolDefinition:
+        if not self._default_usage_guidance:
+            return definition
+        metadata = definition.metadata
+        if metadata.get("declared_usage_guidance") is not None or (
+            "declared_usage_guidance" not in metadata
+            and definition.usage_guidance is not None
+            and not isinstance(
+                getattr(definition.executor, "impl", definition.executor), ToolBucket
+            )
+        ):
+            return definition
+        default = metadata.get("default_usage_guidance")
+        if default is None or definition.usage_guidance == default:
+            return definition
+        return msgspec.structs.replace(definition, usage_guidance=default)
 
     def remove_extension(self, name: str) -> None:
         if self.runtime_extensions.has(name):
@@ -391,7 +430,9 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
 
     def add(self, tool: Callable | RuntimeToolDefinition) -> str:
         """Add a local tool in library."""
-        definition = self._compile_tool_definition(tool)
+        definition = self._with_default_usage_guidance(
+            self._compile_tool_definition(tool)
+        )
         self._validate_new_tool_name(definition.name)
         self._validate_tool_extensions(definition)
 
@@ -595,9 +636,14 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
         if not isinstance(annotations, Mapping):
             raise TypeError("Bucket schema annotation patches must return a mapping.")
         bucket_tool.set_annotations(dict(annotations))
-        usage_guidance = bucket.compose_usage_guidance(
-            current.metadata.get("declared_usage_guidance")
-        )
+        explicit_guidance = current.metadata.get("declared_usage_guidance")
+        if explicit_guidance == "":
+            usage_guidance = ""
+        else:
+            default_guidance = explicit_guidance
+            if default_guidance is None and self._default_usage_guidance:
+                default_guidance = current.metadata.get("default_usage_guidance")
+            usage_guidance = bucket.compose_usage_guidance(default_guidance)
         bucket_tool.register_buffer("usage_guidance", usage_guidance)
         bucket_declaration = _declaration_from_tool(bucket_tool)
         self.registry.replace(

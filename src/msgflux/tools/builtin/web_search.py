@@ -34,6 +34,11 @@ class WebSearchTool:
     """
 
     name = "web_search"
+    default_usage_guidance = (
+        "Use when the user asks for current, recent, external, or factual "
+        "information that may not be available in the model context. Prefer "
+        "specific search queries."
+    )
     display_name = "Web Search"
     engine_env_var = "MSGFLUX_TOOL_WEB_SEARCH_ENGINE"
     init_params_env_var = "MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS"

@@ -92,6 +92,13 @@ class ReadFileTool:
 
     name = "read"
     display_name = "Read"
+    default_usage_guidance = (
+        "Read only the lines needed for the task. Use offset and limit to "
+        "paginate text. If a page exceeds the configured byte limit, request "
+        "fewer lines by reducing limit. If a single line exceeds the byte "
+        "limit, read cannot retrieve it; use another available tool, such as "
+        "Bash, to extract a smaller portion. Rejected reads return no file content."
+    )
     annotations = {
         "path": str,
         "offset": Optional[int],
@@ -122,11 +129,22 @@ class ReadFileTool:
             raise ValueError("max_text_bytes must be a positive integer")
         self.max_text_bytes = max_text_bytes
         self.tool_config = deepcopy(self.tool_config)
-        guidance = self.tool_config.get("usage_guidance")
-        self.tool_config["usage_guidance"] = (
-            "\n\n".join(part for part in (guidance, self._VISION_GUIDANCE) if part)
-            if supports_vision
-            else guidance
+        configured_guidance = self.tool_config.get("usage_guidance")
+        if (
+            supports_vision
+            and isinstance(configured_guidance, str)
+            and configured_guidance
+        ):
+            self.tool_config["usage_guidance"] = (
+                configured_guidance + "\n\n" + self._VISION_GUIDANCE
+            )
+        self.default_usage_guidance = "\n\n".join(
+            part
+            for part in (
+                type(self).default_usage_guidance,
+                self._VISION_GUIDANCE if supports_vision else None,
+            )
+            if part
         )
 
     def __call__(

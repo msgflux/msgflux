@@ -174,8 +174,9 @@ calling agent implementations. Explicit
 `usage_guidance` on individual agents is aggregated separately, so the model
 gets delegation guidance without inflating the tool description.
 
-The generic guidance for `agent` is opt-in through
-`apply_tool_guidance([AgentTool()])`, like other builtin guidance entries.
+The generic `default_usage_guidance` for `agent` is opt-in through
+`library.apply_default_usage_guidance()`. Captured-agent guidance continues to
+be composed by the bucket when membership changes.
 
 `capture` can match any tool configuration field. `capture["tool_kind"]` can
 also group multiple kinds with `|`, for example

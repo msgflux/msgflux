@@ -10,6 +10,10 @@ class WebFetchTool:
 
     name = "web_fetch"
     display_name = "Web Fetch"
+    default_usage_guidance = (
+        "Use when the user provides a URL or asks about a specific web page. "
+        "Fetch the page before answering questions about its contents."
+    )
 
     def __init__(
         self,
