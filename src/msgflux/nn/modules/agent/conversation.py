@@ -37,6 +37,8 @@ from msgflux.runtime.agent_inbox import (
 from msgflux.runtime.agent_run import AgentRun, get_agent_run
 from msgflux.runtime.context import (
     ExecutionScope,
+    _get_history_origin,
+    _HistoryOrigin,
     get_execution_context,
     new_run_id,
     new_thread_id,
@@ -56,6 +58,115 @@ from msgflux.nn.modules.agent.context import (
 )
 
 _TASK_RESULT_UNSET = object()
+
+
+def _checkpoint_selection(
+    *,
+    namespace: str,
+    thread_id: str,
+    run_id: str | None,
+    current_exists: bool,
+    origin: _HistoryOrigin | None,
+    allow_latest: bool = True,
+) -> tuple[str, str | None]:
+    if current_exists and run_id is not None:
+        return "current", run_id
+    if (
+        origin is not None
+        and origin.namespace == namespace
+        and origin.thread_id == thread_id
+    ):
+        if origin.run_id != run_id:
+            return "fresh", None
+        if origin.source_run_id is None:
+            return "fresh", None
+        return "source", origin.source_run_id
+    return ("latest", None) if allow_latest else ("fresh", None)
+
+
+def _select_checkpoint_state(
+    store: Any,
+    namespace: str,
+    thread_id: str,
+    run_id: str | None,
+    origin: _HistoryOrigin | None,
+    *,
+    allow_latest: bool = True,
+) -> Mapping[str, Any] | None:
+    current = (
+        store.load_state(namespace, thread_id, run_id) if run_id is not None else None
+    )
+    selection, selected_run_id = _checkpoint_selection(
+        namespace=namespace,
+        thread_id=thread_id,
+        run_id=run_id,
+        current_exists=current is not None,
+        origin=origin,
+        allow_latest=allow_latest,
+    )
+    if selection == "current":
+        return current
+    if selection == "fresh":
+        return None
+    if selection == "source":
+        state = store.load_state(namespace, thread_id, selected_run_id)
+        if state is None:
+            raise _missing_origin_checkpoint(namespace, thread_id, selected_run_id)
+        return state
+    return store.load_latest_run(namespace, thread_id)
+
+
+async def _aselect_checkpoint_state(
+    store: Any,
+    namespace: str,
+    thread_id: str,
+    run_id: str | None,
+    origin: _HistoryOrigin | None,
+    *,
+    allow_latest: bool = True,
+) -> Mapping[str, Any] | None:
+    current = None
+    if run_id is not None:
+        current = (
+            await store.aload_state(namespace, thread_id, run_id)
+            if hasattr(store, "aload_state")
+            else store.load_state(namespace, thread_id, run_id)
+        )
+    selection, selected_run_id = _checkpoint_selection(
+        namespace=namespace,
+        thread_id=thread_id,
+        run_id=run_id,
+        current_exists=current is not None,
+        origin=origin,
+        allow_latest=allow_latest,
+    )
+    if selection == "current":
+        return current
+    if selection == "fresh":
+        return None
+    if selection == "source":
+        state = (
+            await store.aload_state(namespace, thread_id, selected_run_id)
+            if hasattr(store, "aload_state")
+            else store.load_state(namespace, thread_id, selected_run_id)
+        )
+        if state is None:
+            raise _missing_origin_checkpoint(namespace, thread_id, selected_run_id)
+        return state
+    return (
+        await store.aload_latest_run(namespace, thread_id)
+        if hasattr(store, "aload_latest_run")
+        else store.load_latest_run(namespace, thread_id)
+    )
+
+
+def _missing_origin_checkpoint(
+    namespace: str, thread_id: str, run_id: str
+) -> RuntimeError:
+    return RuntimeError(
+        f"Expected checkpoint run `{run_id}` for agent `{namespace}` in thread "
+        f"`{thread_id}`, but it was not found."
+    )
 
 
 class AgentConversationMixin:
@@ -130,9 +241,15 @@ class AgentConversationMixin:
         if store is None or thread_id is None:
             return None
         namespace = self.get_module_name()
-        if scope is not None and scope.run_id is not None:
-            return store.load_state(namespace, thread_id, scope.run_id)
-        return store.load_latest_run(namespace, thread_id)
+        run_id = scope.run_id if scope is not None else context.get("run_id")
+        return _select_checkpoint_state(
+            store,
+            namespace,
+            thread_id,
+            run_id if isinstance(run_id, str) else None,
+            _get_history_origin(),
+            allow_latest=scope is None or scope.run_id is None,
+        )
 
     def _coerce_chat_messages(
         self,
@@ -1330,7 +1447,9 @@ class AgentConversationMixin:
         if checkpoint_store.load_state(namespace, thread_id, run_id) is not None:
             return messages, vars, model_preference
 
-        latest = checkpoint_store.load_latest_run(namespace, thread_id)
+        latest = _select_checkpoint_state(
+            checkpoint_store, namespace, thread_id, run_id, _get_history_origin()
+        )
         if latest is None:
             return messages, vars, model_preference
 
@@ -1372,10 +1491,9 @@ class AgentConversationMixin:
         if current is not None:
             return messages, vars, model_preference
 
-        if hasattr(checkpoint_store, "aload_latest_run"):
-            latest = await checkpoint_store.aload_latest_run(namespace, thread_id)
-        else:
-            latest = checkpoint_store.load_latest_run(namespace, thread_id)
+        latest = await _aselect_checkpoint_state(
+            checkpoint_store, namespace, thread_id, run_id, _get_history_origin()
+        )
         if latest is None:
             return messages, vars, model_preference
 

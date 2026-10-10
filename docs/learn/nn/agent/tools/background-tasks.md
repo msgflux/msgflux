@@ -264,7 +264,19 @@ For background agents it can include compact tool call entries such as:
 For normal background tools, the task id is an operational handle. Background
 agents declare the `message` capability by default. The built-in `AgentTool`
 uses `task_message` to let the root model send another message to the same
-running subagent or continue it from its checkpoint:
+running subagent or continue it from its checkpoint.
+
+The agent name selects a reusable definition. Calling `AgentTool` twice with
+the same name starts two independent child conversations, including when both
+calls run in parallel. They can share the parent's workspace, thread ID and
+checkpoint store; their distinct run IDs identify separate checkpoints.
+Foreground calls through `AgentTool` also start independent conversations.
+
+To continue a particular child, use its `task_id`. After a completed child is
+continued, the runtime records its previous checkpoint run ID and restores
+that exact history. A newer checkpoint from another task with the same agent
+name is not used. If the required source checkpoint is missing, continuation
+fails with an explicit error rather than borrowing another child's history.
 
 ```python
 task_message(

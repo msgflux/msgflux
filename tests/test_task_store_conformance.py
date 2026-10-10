@@ -177,6 +177,86 @@ def test_task_store_contract_messages_and_conditional_resume(task_store):
     assert task_store.pending_messages("task-1") == []
 
 
+def test_task_store_requeue_tracks_checkpoint_lineage_atomically(task_store):
+    task_store.create(
+        "worker", task_id="lineage", metadata={"checkpoint_run_id": "run-a"}
+    )
+    task_store.complete("lineage", "first result")
+    resumed_b = task_store.requeue(
+        "lineage", expected_status="completed", expected_generation=0, run_id="run-b"
+    )
+    assert resumed_b.metadata["checkpoint_run_id"] == "run-b"
+    assert resumed_b.metadata["checkpoint_origin_run_id"] == "run-a"
+
+    # A retry targeting the current run leaves the original lineage intact.
+    task_store.complete("lineage", "second result")
+    resumed_b_retry = task_store.requeue(
+        "lineage", expected_status="completed", expected_generation=1, run_id="run-b"
+    )
+    assert resumed_b_retry.metadata["checkpoint_run_id"] == "run-b"
+    assert resumed_b_retry.metadata["checkpoint_origin_run_id"] == "run-a"
+
+    task_store.complete("lineage", "third result")
+    resumed_c = task_store.requeue(
+        "lineage", expected_status="completed", expected_generation=2, run_id="run-c"
+    )
+    assert resumed_c.metadata["checkpoint_run_id"] == "run-c"
+    assert resumed_c.metadata["checkpoint_origin_run_id"] == "run-b"
+
+
+def test_task_store_requeue_lineage_legacy_and_cas_failure(task_store):
+    task_store.create(
+        "worker", task_id="legacy", metadata={"checkpoint_run_id": "legacy-run"}
+    )
+    task_store.complete("legacy", "done")
+    assert (
+        task_store.requeue(
+            "legacy", expected_status="queued", expected_generation=0, run_id="wrong"
+        )
+        is None
+    )
+    unchanged = task_store.get("legacy")
+    assert unchanged.metadata["checkpoint_run_id"] == "legacy-run"
+    assert "checkpoint_origin_run_id" not in unchanged.metadata
+
+    resumed = task_store.requeue(
+        "legacy", expected_status="completed", expected_generation=0, run_id="new-run"
+    )
+    assert resumed.metadata["checkpoint_origin_run_id"] == "legacy-run"
+
+    task_store.create("worker", task_id="no-origin")
+    task_store.complete("no-origin", "done")
+    fresh = task_store.requeue(
+        "no-origin",
+        expected_status="completed",
+        expected_generation=0,
+        run_id="new-run",
+    )
+    assert fresh.metadata["checkpoint_run_id"] == "new-run"
+    assert "checkpoint_origin_run_id" not in fresh.metadata
+
+
+@pytest.mark.parametrize("previous_run_id", [None, "", 42])
+def test_task_store_requeue_clears_stale_origin_for_unknown_previous_run(
+    task_store, previous_run_id
+):
+    metadata = {"checkpoint_origin_run_id": "older-run"}
+    if previous_run_id is not None:
+        metadata["checkpoint_run_id"] = previous_run_id
+    task_store.create("worker", task_id="stale-origin", metadata=metadata)
+    task_store.complete("stale-origin", "done")
+
+    resumed = task_store.requeue(
+        "stale-origin",
+        expected_status="completed",
+        expected_generation=0,
+        run_id="new-run",
+    )
+
+    assert resumed.metadata["checkpoint_run_id"] == "new-run"
+    assert "checkpoint_origin_run_id" not in resumed.metadata
+
+
 def test_task_store_contract_worker_lease_and_fencing(task_store):
     current_time = [100.0]
     task_store._clock = lambda: current_time[0]

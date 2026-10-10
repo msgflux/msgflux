@@ -775,6 +775,15 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                         return None
                     task.metadata["resume_generation"] = expected_generation + 1
                 if run_id is not None:
+                    previous_run_id = task.metadata.get("checkpoint_run_id")
+                    if (
+                        run_id != previous_run_id
+                        and isinstance(previous_run_id, str)
+                        and previous_run_id
+                    ):
+                        task.metadata["checkpoint_origin_run_id"] = previous_run_id
+                    elif run_id != previous_run_id:
+                        task.metadata.pop("checkpoint_origin_run_id", None)
                     task.metadata["checkpoint_run_id"] = run_id
                 now = utc_now_isoformat()
                 task.status = "queued"

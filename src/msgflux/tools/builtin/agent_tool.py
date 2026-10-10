@@ -5,6 +5,9 @@ from typing import Any, List, Mapping, Optional
 from msgflux.runtime.context import (
     ExecutionScope,
     _get_execution_scope_ceiling,
+    _get_history_origin,
+    _history_origin_context,
+    _HistoryOrigin,
     get_execution_context,
     new_run_id,
     new_thread_id,
@@ -60,20 +63,17 @@ class AgentTool(ToolBucket, ToolLibraryOperator):
         self._validate_agent(name, handle)
         model_preference = self._resolve_model_preference(name, model, handle)
         namespace = handle.get_execution_namespace(name)
-        runtime_arguments = {
-            "scope": scope
-            or self._build_scope(
-                namespace,
-                tool_call_id=handle.get_tool_call_id(),
-            )
-        }
+        tool_call_id = handle.get_tool_call_id()
+        selected_scope = self._resolve_scope(namespace, scope, tool_call_id)
+        runtime_arguments = {"scope": selected_scope}
         if model_preference is not None:
             runtime_arguments["model_preference"] = model_preference
-        return handle(
-            name,
-            message=message,
-            _runtime_arguments=runtime_arguments,
-        )
+        with _history_origin_context(self._history_origin(namespace, selected_scope)):
+            return handle(
+                name,
+                message=message,
+                _runtime_arguments=runtime_arguments,
+            )
 
     async def acall(
         self,
@@ -87,19 +87,50 @@ class AgentTool(ToolBucket, ToolLibraryOperator):
         self._validate_agent(name, handle)
         model_preference = self._resolve_model_preference(name, model, handle)
         namespace = handle.get_execution_namespace(name)
-        runtime_arguments = {
-            "scope": scope
-            or self._build_scope(
-                namespace,
-                tool_call_id=handle.get_tool_call_id(),
-            )
-        }
+        tool_call_id = handle.get_tool_call_id()
+        selected_scope = self._resolve_scope(namespace, scope, tool_call_id)
+        runtime_arguments = {"scope": selected_scope}
         if model_preference is not None:
             runtime_arguments["model_preference"] = model_preference
-        return await handle.acall(
-            name,
-            message=message,
-            _runtime_arguments=runtime_arguments,
+        with _history_origin_context(self._history_origin(namespace, selected_scope)):
+            return await handle.acall(
+                name,
+                message=message,
+                _runtime_arguments=runtime_arguments,
+            )
+
+    @staticmethod
+    def _history_origin(namespace: str, scope: ExecutionScope) -> _HistoryOrigin:
+        current = _get_history_origin()
+        source_run_id = None
+        if (
+            current is not None
+            and current.namespace == namespace
+            and current.thread_id == scope.thread_id
+            and current.run_id == scope.run_id
+        ):
+            source_run_id = current.source_run_id
+        return _HistoryOrigin(
+            namespace=namespace,
+            thread_id=scope.thread_id,
+            run_id=scope.run_id,
+            source_run_id=source_run_id,
+        )
+
+    def _resolve_scope(
+        self,
+        namespace: str,
+        scope: ExecutionScope | None,
+        tool_call_id: str | None,
+    ) -> ExecutionScope:
+        if scope is not None and scope.thread_id and scope.run_id:
+            return scope
+        defaults = self._build_scope(namespace, tool_call_id=tool_call_id)
+        if scope is None:
+            return defaults
+        return scope.with_overrides(
+            thread_id=scope.thread_id or defaults.thread_id,
+            run_id=scope.run_id or defaults.run_id,
         )
 
     @staticmethod
@@ -137,18 +168,12 @@ class AgentTool(ToolBucket, ToolLibraryOperator):
         context = get_execution_context()
         parent_scope = _get_execution_scope_ceiling()
         thread_id = context.get("thread_id")
-        task_handle = context.get("task_handle")
         current_run_id = context.get("run_id")
-        task_id = getattr(task_handle, "task_id", None)
-        if isinstance(task_id, str):
-            run_id = task_id
-        elif isinstance(current_run_id, str) and isinstance(tool_call_id, str):
+        if isinstance(current_run_id, str) and isinstance(tool_call_id, str):
             run_id = f"{current_run_id}:{tool_call_id}:{agent_name}"
         else:
             run_id = new_run_id()
-        parent_run_id = (
-            context.get("parent_run_id") if isinstance(task_id, str) else current_run_id
-        )
+        parent_run_id = current_run_id
         root_run_id = context.get("root_run_id") or current_run_id
 
         return parent_scope.with_overrides(
