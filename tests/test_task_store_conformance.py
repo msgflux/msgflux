@@ -70,6 +70,52 @@ def test_task_store_contract_lifecycle_and_activity(task_store):
     assert completed.result == "done"
 
 
+def test_task_store_result_projection_isolated_and_full_by_default(task_store):
+    task_store.create(
+        "worker",
+        task_id="projected",
+        metadata={"nested": {"owner": "original"}},
+    )
+    task_store.set_running("projected", stage="processing", message="Working")
+    task_store.update_progress("projected", current=1, total=4)
+    task_store.complete("projected", {"answer": [1, 2, 3]})
+
+    projected = task_store.get("projected", include_result=False)
+    assert projected is not None
+    assert projected.result is None
+    projected.metadata["nested"]["owner"] = "mutated"
+    projected.progress.stage = "mutated"
+
+    projected_list = task_store.list(status="completed", include_result=False)
+    assert [item.task_id for item in projected_list] == ["projected"]
+    assert projected_list[0].result is None
+    projected_list[0].metadata["nested"]["owner"] = "also mutated"
+
+    full = task_store.get("projected")
+    assert full is not None
+    assert full.result == {"answer": [1, 2, 3]}
+    assert full.metadata["nested"]["owner"] == "original"
+    assert full.progress.stage == "processing"
+    assert task_store.list(status="completed")[0].result == {"answer": [1, 2, 3]}
+    assert task_store.get("absent", include_result=False) is None
+    assert task_store.list(status="not-a-status", include_result=False) == []
+
+
+def test_in_memory_result_projection_does_not_deepcopy_result():
+    class ExplodingDeepcopy:
+        def __deepcopy__(self, memo):
+            raise AssertionError("inspection query copied task result")
+
+    store = InMemoryTaskStore()
+    store.create("worker", task_id="poisoned")
+    store._tasks["poisoned"].result = ExplodingDeepcopy()
+
+    assert store.get("poisoned", include_result=False).result is None
+    projected = store.list(include_result=False)
+    assert [item.task_id for item in projected] == ["poisoned"]
+    assert projected[0].result is None
+
+
 def test_task_store_contract_scoped_summaries(task_store):
     task_store.create(
         "child",

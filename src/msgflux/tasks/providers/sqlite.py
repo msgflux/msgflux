@@ -345,23 +345,27 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             self._conn.commit()
             return self.get(task.task_id)  # type: ignore[return-value]
 
-    def get(self, task_id: str) -> TaskRecord | None:
-        with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT task_id, tool_name, status, created_at, updated_at,
-                       completed_at, result, error, progress, metadata
-                FROM tasks WHERE task_id=?
-                """,
-                (task_id,),
-            ).fetchone()
-            return self._row_to_task(row) if row is not None else None
-
-    def list(self, *, status: str | None = None) -> List[TaskRecord]:
+    def get(self, task_id: str, *, include_result: bool = True) -> TaskRecord | None:
+        # This branch selects between two fixed, internal SQL fragments.
+        result_column = "result" if include_result else "NULL AS result"
         with self._lock:
             query = (
-                "SELECT task_id, tool_name, status, created_at, updated_at, "
-                "completed_at, result, error, progress, metadata FROM tasks"
+                "SELECT task_id, tool_name, status, created_at, updated_at, "  # noqa: S608 - internal allowlisted column
+                f"completed_at, {result_column}, error, progress, metadata "
+                "FROM tasks WHERE task_id=?"
+            )
+            row = self._conn.execute(query, (task_id,)).fetchone()
+            return self._row_to_task(row) if row is not None else None
+
+    def list(
+        self, *, status: str | None = None, include_result: bool = True
+    ) -> List[TaskRecord]:
+        # This branch selects between two fixed, internal SQL fragments.
+        result_column = "result" if include_result else "NULL AS result"
+        with self._lock:
+            query = (
+                "SELECT task_id, tool_name, status, created_at, updated_at, "  # noqa: S608 - internal allowlisted column
+                f"completed_at, {result_column}, error, progress, metadata FROM tasks"
             )
             params: List[Any] = []
             if status is not None:

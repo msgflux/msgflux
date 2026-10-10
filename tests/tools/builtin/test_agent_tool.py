@@ -730,7 +730,9 @@ def test_agent_tool_background_task_message_resumes_selected_agent():
     old_state = store.load_state("reviewer", "user_42", task_id)
     assert old_state["status"] == "completed"
     task_state = library([("call_5", "task_status", {"task_id": task_id})])
-    resumed_run_id = task_state.tool_calls[0].result["metadata"]["checkpoint_run_id"]
+    assert "metadata" not in task_state.tool_calls[0].result
+    task_record = library.get_handle().get_task_store().get(task_id)
+    resumed_run_id = task_record.metadata["checkpoint_run_id"]
     assert resumed_run_id != task_id
     new_state = store.load_state("reviewer", "user_42", resumed_run_id)
     assert new_state["status"] == "completed"
