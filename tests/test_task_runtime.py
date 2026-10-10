@@ -694,10 +694,19 @@ def test_background_task_reports_progress_and_output():
 
     get_result = library([("call_3", "task_status", {"task_id": task_id})])
     task_state = get_result.tool_calls[0].result
+    assert set(task_state) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "running_for_seconds",
+    }
     assert task_state["status"] == "running"
     assert "started_at" in task_state
     assert isinstance(task_state["running_for_seconds"], float)
-    assert task_state["metadata"]["background_capabilities"] == []
+    internal_task_store = library.get_handle().get_task_store()
+    assert internal_task_store.get(task_id).metadata["background_capabilities"] == []
     assert task_state["progress"]["stage"] == "work"
     assert task_state["progress"]["percent"] == 50.0
 
@@ -713,6 +722,14 @@ def test_background_task_reports_progress_and_output():
     final_state = (
         library([("call_6", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
+    assert set(final_state) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "elapsed_seconds",
+    }
     assert "elapsed_seconds" in final_state
 
     output_result = library([("call_5", "task_output", {"task_id": task_id})])
@@ -852,11 +869,21 @@ def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
         library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
     assert status["status"] == "interrupted"
-    assert status["metadata"]["background_capabilities"] == [
+    assert set(status) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "elapsed_seconds",
+        "reason",
+    }
+    internal_task_store = library.get_handle().get_task_store()
+    assert internal_task_store.get(task_id).metadata["background_capabilities"] == [
         "activity",
         "message",
     ]
-    assert status["last_activity_summary"] == "Status: Task interrupted."
+    assert status["reason"]
 
 
 def test_cancelled_background_future_is_not_logged_as_error():
@@ -1325,11 +1352,20 @@ def test_background_agent_inherits_context_and_checkpoint_run_id():
     task_state = (
         library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
-    assert task_state["metadata"]["thread_id"] == "user_42"
-    assert task_state["metadata"]["parent_run_id"] == "run_root"
-    assert task_state["metadata"]["root_run_id"] == "run_root"
-    assert task_state["metadata"]["checkpoint_thread_id"] == "user_42"
-    assert task_state["metadata"]["checkpoint_run_id"] == task_id
+    assert set(task_state) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "elapsed_seconds",
+    }
+    task_record = library.get_handle().get_task_store().get(task_id)
+    assert task_record.metadata["thread_id"] == "user_42"
+    assert task_record.metadata["parent_run_id"] == "run_root"
+    assert task_record.metadata["root_run_id"] == "run_root"
+    assert task_record.metadata["checkpoint_thread_id"] == "user_42"
+    assert task_record.metadata["checkpoint_run_id"] == task_id
 
 
 def test_background_agent_dispatch_mentions_task_message_and_activity():
@@ -1419,8 +1455,10 @@ def test_background_activity_capability_is_available_for_non_agent_task():
         .result
     )
 
-    assert task["metadata"]["task_kind"] == "tool"
-    assert task["metadata"]["background_capabilities"] == ["activity"]
+    task_record = library.get_handle().get_task_store().get(task_id)
+    assert task_record.metadata["task_kind"] == "tool"
+    assert task_record.metadata["background_capabilities"] == ["activity"]
+    assert "metadata" not in task
     assert isinstance(activity, list)
 
 
@@ -1556,7 +1594,20 @@ def test_task_message_resumes_completed_background_agent():
             .tool_calls[0]
             .result
         )
-        resumed_run_id = task_state["metadata"]["checkpoint_run_id"]
+        assert set(task_state) == {
+            "task_id",
+            "tool_name",
+            "status",
+            "progress",
+            "started_at",
+            "elapsed_seconds",
+        }
+        resumed_run_id = (
+            library.get_handle()
+            .get_task_store()
+            .get(task_id)
+            .metadata["checkpoint_run_id"]
+        )
         assert resumed_run_id != task_id
         assert store.load_state("worker", "user_42", task_id)["status"] == "completed"
         assert (
@@ -2368,7 +2419,20 @@ def test_task_message_resume_clears_previous_interrupt_reason():
             .tool_calls[0]
             .result
         )
-        assert "interrupt_reason" in interrupted_state["metadata"]
+        assert set(interrupted_state) == {
+            "task_id",
+            "tool_name",
+            "status",
+            "progress",
+            "started_at",
+            "elapsed_seconds",
+            "reason",
+        }
+        assert interrupted_state["reason"]
+        assert (
+            "interrupt_reason"
+            in library.get_handle().get_task_store().get(task_id).metadata
+        )
 
         message_result = (
             library(
@@ -2399,7 +2463,18 @@ def test_task_message_resume_clears_previous_interrupt_reason():
             .tool_calls[0]
             .result
         )
-        assert "interrupt_reason" not in resumed_state["metadata"]
+        assert set(resumed_state) == {
+            "task_id",
+            "tool_name",
+            "status",
+            "progress",
+            "started_at",
+            "elapsed_seconds",
+        }
+        assert (
+            "interrupt_reason"
+            not in library.get_handle().get_task_store().get(task_id).metadata
+        )
 
     state = store.load_state("worker", "user_42", task_id)
     assert state is not None

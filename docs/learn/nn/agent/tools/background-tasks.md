@@ -166,6 +166,47 @@ result = agent.tool_library([("call_4", "task_output", {"task_id": task_id})])
 print(result.tool_calls[0].result)
 ```
 
+## Inspecting Tasks Without Loading Results
+
+`task_status` and `task_list` report task identity, state, progress and timing,
+plus an error or a pause/interruption reason when applicable. Their payloads
+omit results, internal metadata and activity history, including for completed
+tasks. Use `task_activity` for updates and tool calls, and `task_output` or
+`task_wait` to retrieve the output explicitly.
+Status queries do not consume the output or change the task's status.
+
+The task stores support the same distinction with `include_result=False`:
+
+```python
+from msgflux.tasks import SQLiteTaskStore
+
+store = SQLiteTaskStore("tasks.sqlite3")
+try:
+    task = store.create("worker")
+    store.complete(task.task_id, {"answer": 42})
+
+    snapshot = store.get(task.task_id, include_result=False)
+    print(snapshot.status)  # completed
+    print(snapshot.result)  # None: this snapshot omitted the result.
+
+    print(store.get(task.task_id).result)  # {"answer": 42}
+finally:
+    store.close()
+```
+
+This example inspects a completed task without reading its saved output, then
+retrieves the output through a normal read. Both `get` and `list` include results
+by default. Passing `include_result=False` returns independent snapshots with
+`result=None`; it leaves the stored result intact. SQLite avoids selecting the
+result column, and the in-memory store avoids copying the result. Other snapshot
+fields retain their usual behavior.
+
+Custom `TaskStoreProtocol` implementations must accept the keyword on both
+methods and omit the result before loading or copying it. With SQLite,
+`task_output` and `task_wait` can retrieve the saved output repeatedly, including
+after reopening the database. The in-memory store retains results for its
+lifetime because it has no disk copy to reload.
+
 ## Waiting For A Task
 
 Sometimes the agent has nothing useful to do until the task finishes.
@@ -564,9 +605,10 @@ It also includes timing helpers such as:
 {
     "started_at": "2026-04-14T14:00:00.000000+00:00",
     "running_for_seconds": 1.243,
-    "last_activity_summary": "Progress: Processed b.txt",
 }
 ```
+
+Use `task_activity(task_id)` to inspect progress updates and subagent tool calls.
 
 ## Passive Notifications Back Into The Agent
 

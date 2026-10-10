@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from copy import deepcopy
+from dataclasses import replace
 from threading import RLock
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
@@ -170,16 +171,23 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
         return self.get(task.task_id)  # type: ignore[return-value]
 
-    def get(self, task_id: str) -> TaskRecord | None:
+    def get(self, task_id: str, *, include_result: bool = True) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            return deepcopy(task) if task is not None else None
+            if task is None:
+                return None
+            snapshot = task if include_result else replace(task, result=None)
+            return deepcopy(snapshot)
 
-    def list(self, *, status: str | None = None) -> List[TaskRecord]:
+    def list(
+        self, *, status: str | None = None, include_result: bool = True
+    ) -> List[TaskRecord]:
         with self._lock:
             tasks = list(self._tasks.values())
             if status is not None:
                 tasks = [task for task in tasks if task.status == status]
+            if not include_result:
+                tasks = [replace(task, result=None) for task in tasks]
             return deepcopy(tasks)
 
     def list_summaries(self, *, thread_id: str, run_id: str) -> List[TaskSummary]:

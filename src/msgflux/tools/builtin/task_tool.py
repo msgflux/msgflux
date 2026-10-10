@@ -29,15 +29,10 @@ class TaskStatusTool(ToolBackground):
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
         task_store = handle.get_task_store()
-        task = task_store.get(task_id)
+        task = task_store.get(task_id, include_result=False)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
-        payload = task.to_dict()
-        payload.update(build_task_timing_fields(task))
-        last_activity = task_store.get_last_activity(task_id)
-        if last_activity is not None:
-            payload["last_activity_summary"] = format_task_activity_entry(last_activity)
-        return payload
+        return build_task_status_payload(task)
 
 
 @_base_task_tools
@@ -56,17 +51,10 @@ class TaskListTool(ToolBackground):
         handle: Hidden = None,
     ) -> list[Dict[str, Any]]:
         task_store = handle.get_task_store()
-        tasks = []
-        for task in task_store.list(status=status):
-            payload = task.to_dict()
-            payload.update(build_task_timing_fields(task))
-            last_activity = task_store.get_last_activity(task.task_id)
-            if last_activity is not None:
-                payload["last_activity_summary"] = format_task_activity_entry(
-                    last_activity
-                )
-            tasks.append(payload)
-        return tasks
+        return [
+            build_task_status_payload(task)
+            for task in task_store.list(status=status, include_result=False)
+        ]
 
 
 @_base_task_tools
@@ -216,7 +204,7 @@ class TaskActivityTool(ToolBackground):
             if limit <= 0:
                 raise ValueError("`limit` must be greater than 0.")
         task_store = handle.get_task_store()
-        task = task_store.get(task_id)
+        task = task_store.get(task_id, include_result=False)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
         if "activity" not in get_task_background_capabilities(task):
@@ -385,6 +373,25 @@ def build_task_timeout_result(
         payload["progress"] = task.progress.to_dict()
     elif task.status == "failed":
         payload["error"] = task.error
+    return payload
+
+
+def build_task_status_payload(task: Any) -> Dict[str, Any]:
+    payload = {
+        "task_id": task.task_id,
+        "tool_name": task.tool_name,
+        "status": task.status,
+        "progress": task.progress.to_dict(),
+        **build_task_timing_fields(task),
+    }
+    if task.error is not None:
+        payload["error"] = task.error
+    reason_key = {
+        "interrupted": "interrupt_reason",
+        "paused": "pause_reason",
+    }.get(task.status)
+    if reason_key is not None and task.metadata.get(reason_key) is not None:
+        payload["reason"] = task.metadata[reason_key]
     return payload
 
 
