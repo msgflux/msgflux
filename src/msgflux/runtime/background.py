@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import CancelledError as FutureCancelledError
 from contextlib import nullcontext
 from functools import partial
@@ -15,6 +16,7 @@ from msgflux.exceptions import (
     TaskPauseRequestedError,
 )
 from msgflux.logger import logger
+from msgflux.models.response import _stream_response_from_result
 from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
 from msgflux.runtime.context import (
     ExecutionScope,
@@ -47,6 +49,20 @@ from msgflux.tools.handles import ToolBucketHandle
 from msgflux.tools.responses import ToolCall
 from msgflux.tools.types import ToolBackground, ToolBucket
 from msgflux.utils.msgspec import lossless_json_roundtrip
+
+
+def _await_event_finalized_result(result: Any, task_id: str) -> Any:
+    stream = _stream_response_from_result(result)
+    finalization = getattr(stream, "_msgflux_event_finalization_future", None)
+    if finalization is None:
+        return result
+    try:
+        return finalization.result()
+    except (FutureCancelledError, asyncio.CancelledError) as exc:
+        raise TaskInterruptRequestedError(
+            task_id,
+            "Agent stream finalization was cancelled",
+        ) from exc
 
 
 class BackgroundTaskDispatcher:
@@ -343,6 +359,7 @@ class BackgroundTaskDispatcher:
             try:
                 require_permissions(required_permissions, required_resources)
                 result = tool(**call_params)
+                result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
             except TaskInterruptRequestedError as exc:

@@ -4,6 +4,7 @@ import functools
 import inspect
 import weakref
 from collections import OrderedDict, namedtuple
+from concurrent.futures import Future
 from contextlib import nullcontext, suppress
 from types import MethodType
 from typing import (
@@ -40,7 +41,11 @@ from msgflux.envs import envs
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
-from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.response import (
+    ModelResponse,
+    ModelStreamResponse,
+    _stream_response_from_result,
+)
 from msgflux.nn.hooks import Hook, RemovableHandle
 from msgflux.nn.hooks.events import RunEndContext
 from msgflux.nn.parameter import Parameter
@@ -1477,22 +1482,70 @@ class Module:
         *,
         scope: Any = None,
         _release: Any = None,
-    ) -> None:
+    ) -> Any:
         try:
-            await self._afinalize_event_result(result)
+            return await self._afinalize_event_result(result)
         except BaseException as exc:
             emit_event(
                 _run_exception_event(exc),
                 {"error": str(exc)},
                 scope=scope,
             )
+            raise
         finally:
             if _release is not None:
                 _release()
 
     @staticmethod
+    def _install_event_finalization_future(result: Any) -> Future | None:
+        stream = _stream_response_from_result(result)
+        if stream is None:
+            return None
+        future = Future()
+        stream._msgflux_event_finalization_future = future
+        return future
+
+    @staticmethod
+    def _settle_event_finalization_future(
+        future: Future | None,
+        *,
+        error: BaseException | None = None,
+        output: Any = None,
+    ) -> None:
+        if future is None or future.done():
+            return
+        if isinstance(error, asyncio.CancelledError):
+            future.cancel()
+        elif error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(output)
+
+    @staticmethod
+    def _event_finalizer_done(scheduler_future, settled, release) -> None:
+        if scheduler_future.cancelled():
+            output = None
+            error = asyncio.CancelledError()
+        else:
+            try:
+                output = scheduler_future.result()
+                error = None
+            except BaseException as exc:
+                output = None
+                error = exc
+        try:
+            if release is not None:
+                release()
+        except BaseException as exc:
+            error = exc
+        if error is not None:
+            Module._settle_event_finalization_future(settled, error=error)
+        else:
+            Module._settle_event_finalization_future(settled, output=output)
+
+    @staticmethod
     def _take_detached_event_context(result: Any):
-        stream = Module._stream_response_from_result(result)
+        stream = _stream_response_from_result(result)
         if stream is None:
             return None, None
         return stream.__dict__.pop("_msgflux_detached_event_context", (None, None))
@@ -1503,30 +1556,35 @@ class Module:
         *,
         scope: Any = None,
     ) -> None:
+        settled = self._install_event_finalization_future(result)
         release, context = self._take_detached_event_context(result)
         if context is None:
             context = contextvars.copy_context()
 
-        def finalize() -> None:
-            try:
-                asyncio.run(
-                    self._afinalize_detached_event_result(
-                        result, scope=scope, _release=release
-                    )
+        def finalize() -> Any:
+            return asyncio.run(
+                self._afinalize_detached_event_result(
+                    result,
+                    scope=scope,
+                    _release=release,
                 )
-            finally:
-                if release is not None:
-                    release()
+            )
 
         try:
             future = Executor.get_instance().submit(context.run, finalize)
-        except BaseException:
+        except BaseException as exc:
+            error = exc
             if release is not None:
-                release()
+                try:
+                    release()
+                except BaseException as release_error:
+                    error = release_error
+            self._settle_event_finalization_future(settled, error=error)
             raise
-        if release is not None:
-            # Release as well when the executor cancels work before it starts.
-            future.add_done_callback(lambda _future: release())
+
+        future.add_done_callback(
+            lambda done: self._event_finalizer_done(done, settled, release)
+        )
 
     def _call_impl_with_hooks(self, *args, **kwargs):
         if not (self._forward_hooks or self._forward_pre_hooks):
@@ -1668,6 +1726,7 @@ class Module:
             return await loop.run_in_executor(None, functools.partial(hook, *args))
 
     def _start_async_detached_event_finalizer(self, result, *, scope):
+        settled = self._install_event_finalization_future(result)
         release, context = self._take_detached_event_context(result)
         finalize_coro = self._afinalize_detached_event_result(
             result,
@@ -1676,13 +1735,20 @@ class Module:
         )
         try:
             task = asyncio.create_task(finalize_coro, context=context)
-        except BaseException:
+        except BaseException as exc:
             finalize_coro.close()
+            error = exc
             if release is not None:
-                release()
+                try:
+                    release()
+                except BaseException as release_error:
+                    error = release_error
+            self._settle_event_finalization_future(settled, error=error)
             raise
-        if release is not None:
-            task.add_done_callback(lambda _task: release())
+
+        task.add_done_callback(
+            lambda done: self._event_finalizer_done(done, settled, release)
+        )
         _track_event_task(task)
 
     async def _acall_impl(self, *args, **kwargs):
@@ -1892,14 +1958,7 @@ class Module:
     @staticmethod
     def _stream_response_from_result(result: Any) -> ModelStreamResponse | None:
         """Find a model stream wrapped by a presentation response envelope."""
-        if isinstance(result, ModelStreamResponse):
-            return result
-        if isinstance(result, dict):
-            candidate = result.get("response")
-            if isinstance(candidate, ModelStreamResponse):
-                return candidate
-        candidate = getattr(result, "response", None)
-        return candidate if isinstance(candidate, ModelStreamResponse) else None
+        return _stream_response_from_result(result)
 
     @staticmethod
     def _incremental_output_transformer(module: Any):
