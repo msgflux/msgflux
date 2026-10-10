@@ -14,6 +14,8 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Mapping
 from uuid import uuid4
 
+import msgspec
+
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.permissions import PermissionSet, intersect_permissions
 from msgflux.runtime.workspace.policy import WorkspacePolicyState
@@ -22,6 +24,33 @@ if TYPE_CHECKING:
     from msgflux.runtime.workspace.api import AgentWorkspace
 
 DEFAULT_NAMESPACE = "default_namespace"
+
+
+class _HistoryOrigin(msgspec.Struct, frozen=True, kw_only=True):
+    """Checkpoint source selected for one agent invocation."""
+
+    namespace: str
+    thread_id: str
+    run_id: str
+    source_run_id: str | None = None
+
+
+_CURRENT_HISTORY_ORIGIN: contextvars.ContextVar[_HistoryOrigin | None] = (
+    contextvars.ContextVar("msgflux_history_origin", default=None)
+)
+
+
+@contextmanager
+def _history_origin_context(origin: _HistoryOrigin | None):
+    origin_token = _CURRENT_HISTORY_ORIGIN.set(origin)
+    try:
+        yield
+    finally:
+        _CURRENT_HISTORY_ORIGIN.reset(origin_token)
+
+
+def _get_history_origin() -> _HistoryOrigin | None:
+    return _CURRENT_HISTORY_ORIGIN.get()
 
 
 def new_thread_id() -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import CancelledError as FutureCancelledError
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from threading import Lock
 from typing import Any, Dict, Mapping
@@ -20,6 +20,8 @@ from msgflux.models.response import _stream_response_from_result
 from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
 from msgflux.runtime.context import (
     ExecutionScope,
+    _history_origin_context,
+    _HistoryOrigin,
     execution_context,
     get_execution_context,
     get_execution_scope,
@@ -63,6 +65,57 @@ def _await_event_finalized_result(result: Any, task_id: str) -> Any:
             task_id,
             "Agent stream finalization was cancelled",
         ) from exc
+
+
+@contextmanager
+def _task_history_origin_context(task_id: str, metadata: Mapping[str, Any]):
+    is_agent_task = metadata.get("task_kind") == "agent"
+    source_run_id = metadata.get("checkpoint_origin_run_id")
+    generation = metadata.get("resume_generation", 0)
+    current = get_execution_context()
+    current_run_id = current.get("run_id")
+    if (
+        is_agent_task
+        and isinstance(generation, int)
+        and generation > 0
+        and not (isinstance(source_run_id, str) and source_run_id)
+    ):
+        initial_run = current_run_id == task_id
+        store = current.get("checkpoint_store")
+        has_current_checkpoint = (
+            store is not None
+            and isinstance(current.get("namespace"), str)
+            and isinstance(current.get("thread_id"), str)
+            and isinstance(current_run_id, str)
+            and store.load_state(
+                current["namespace"], current["thread_id"], current_run_id
+            )
+            is not None
+        )
+        if not initial_run and not has_current_checkpoint:
+            raise RuntimeError(
+                f"Task `{task_id}` resumed without a known checkpoint origin run; "
+                "refusing to select unrelated history."
+            )
+    origin = None
+    if (
+        is_agent_task
+        and isinstance(current.get("namespace"), str)
+        and isinstance(current.get("thread_id"), str)
+        and isinstance(current.get("run_id"), str)
+    ):
+        origin = _HistoryOrigin(
+            namespace=current["namespace"],
+            thread_id=current["thread_id"],
+            run_id=current["run_id"],
+            source_run_id=(
+                source_run_id
+                if isinstance(source_run_id, str) and source_run_id
+                else None
+            ),
+        )
+    with _history_origin_context(origin):
+        yield
 
 
 class BackgroundTaskDispatcher:
@@ -314,6 +367,9 @@ class BackgroundTaskDispatcher:
         task_resume_params: Mapping[str, Any],
     ) -> str:
         impl = getattr(tool, "impl", None)
+        agent = self._task_agent(tool=tool, resume_params=task_resume_params)
+        if hasattr(agent, "get_module_name"):
+            return agent.get_module_name()
         namespace_param = getattr(impl, "task_checkpoint_namespace_param", None)
         if isinstance(namespace_param, str):
             value = task_resume_params.get(namespace_param)
@@ -336,14 +392,15 @@ class BackgroundTaskDispatcher:
         required_resources: tuple = (),
         recover_expired: bool = False,
     ) -> Any:
-        scope = execution_scope or {}
+        task = task_handle._store.get(task_handle.task_id)
+        metadata = task.metadata if task is not None else {}
         capture = (
             nullcontext()
             if _is_capturing_events()
             else _capture_events(_hub_event_sink())
         )
         with (
-            execution_context(**scope),
+            execution_context(**(execution_scope or {})),
             capture,
             event_source(tool_name, "background"),
         ):
@@ -357,9 +414,10 @@ class BackgroundTaskDispatcher:
                 raise TaskLeaseLostError(task_handle.task_id)
             TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
             try:
-                require_permissions(required_permissions, required_resources)
-                result = tool(**call_params)
-                result = _await_event_finalized_result(result, task_handle.task_id)
+                with _task_history_origin_context(task_handle.task_id, metadata):
+                    require_permissions(required_permissions, required_resources)
+                    result = tool(**call_params)
+                    result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
             except TaskInterruptRequestedError as exc:
