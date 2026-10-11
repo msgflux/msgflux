@@ -1,13 +1,13 @@
-"""Explicit progress messages for models without a trusted commentary phase."""
+"""Send user-visible progress updates."""
 
 from msgflux.runtime.events import EventType, _is_capturing_events, emit_event
 
 
 class SendUserMessageTool:
-    """Send a brief user-visible update while continuing the task.
+    """Send progress to the user while the task continues.
 
     Args:
-        message: Progress text for the user. Do not include private reasoning.
+        message: Brief user-visible update; omit private reasoning.
     """
 
     name = "send_user_message"

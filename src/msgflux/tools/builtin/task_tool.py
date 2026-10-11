@@ -24,7 +24,7 @@ _background_message_tools = Registry()
 @_base_task_tools
 class TaskStatusTool(ToolBackground):
     name = "task_status"
-    description = "Get the current status of a background task by task_id."
+    description = "Get compact status for a background task."
     annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
@@ -38,7 +38,7 @@ class TaskStatusTool(ToolBackground):
 @_base_task_tools
 class TaskListTool(ToolBackground):
     name = "task_list"
-    description = "List background tasks registered in the current tool library."
+    description = "List background tasks, optionally filtered by status."
     annotations = {
         "status": Optional[str],
         "handle": Hidden,
@@ -60,7 +60,7 @@ class TaskListTool(ToolBackground):
 @_base_task_tools
 class TaskOutputTool(ToolBackground):
     name = "task_output"
-    description = "Get the final output of a background task by task_id."
+    description = "Get a task's final output or failure."
     annotations = {"task_id": str, "handle": Hidden, "return": Any}
 
     def __call__(self, task_id: str, handle: Hidden) -> Any:
@@ -72,8 +72,7 @@ class TaskOutputTool(ToolBackground):
 class TaskWaitTool(ToolBackground):
     name = "task_wait"
     description = (
-        "Wait for a background task to finish. Returns the final output, failed "
-        "payload, or a timeout status."
+        "Wait for a task to finish; return its output, failure, or timeout status."
     )
     annotations = {
         "task_id": str,
@@ -136,8 +135,8 @@ class TaskWaitTool(ToolBackground):
 class TaskInterruptTool(ToolBackground):
     name = "task_interrupt"
     description = (
-        "Request a cooperative interrupt for a background task. Interrupts "
-        "immediately only if the task has not started yet."
+        "Request a task interrupt. Cancels before start; running tasks stop at "
+        "their next cooperative checkpoint."
     )
     annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
 
@@ -184,7 +183,7 @@ class TaskInterruptTool(ToolBackground):
 class TaskActivityTool(ToolBackground):
     name = "task_activity"
     tool_kind = BACKGROUND_ACTIVITY_TOOL_KIND
-    description = "List compact activity entries for a background task."
+    description = "List recent status, progress, message, tool-call, and error updates."
     annotations = {
         "task_id": str,
         "limit": Optional[int],
@@ -225,8 +224,8 @@ class TaskMessageTool(ToolBackground):
     name = "task_message"
     tool_kind = BACKGROUND_MESSAGE_TOOL_KIND
     description = (
-        "Send a message to a capable background task. Agent tasks can also "
-        "resume from their checkpoint."
+        "Send input to a task with message capability; agent tasks can resume "
+        "from a checkpoint."
     )
     annotations = {
         "task_id": str,

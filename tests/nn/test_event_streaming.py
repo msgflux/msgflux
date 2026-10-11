@@ -133,10 +133,9 @@ def test_send_user_message_tool_library_schema_and_execution():
     assert schema["name"] == "send_user_message"
     assert schema["parameters"]["required"] == ["message"]
     assert schema["parameters"]["properties"]["message"]["type"] == "string"
-    assert (
-        "Progress text for the user"
-        in schema["parameters"]["properties"]["message"]["description"]
-    )
+    message_description = schema["parameters"]["properties"]["message"]["description"]
+    assert "user-visible" in message_description
+    assert "private reasoning" in message_description
 
     events = []
     token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))

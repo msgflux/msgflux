@@ -4,11 +4,11 @@ from msgflux.runtime.skills import AgentSkillManager
 
 
 class SkillTool:
-    """Load an Agent Skill and return its full instructions."""
+    """Activate a skill by name and return its instructions."""
 
     name = "skill"
     display_name = "Skill"
-    description = "Load an Agent Skill and return its full instructions."
+    description = "Activate a skill by name and return its instructions."
 
     def __init__(self, manager: AgentSkillManager):
         self.manager = manager
@@ -26,11 +26,11 @@ class SkillTool:
 
 
 class SkillSearchTool:
-    """Search Agent Skills that are not listed in the initial catalog."""
+    """Find unlisted skills from a capability query."""
 
     name = "skill_search"
     display_name = "Skill Search"
-    description = "Search Agent Skills that are not listed in the initial catalog."
+    description = "Find unlisted skills from a capability query."
 
     def __init__(self, manager: AgentSkillManager):
         self.manager = manager

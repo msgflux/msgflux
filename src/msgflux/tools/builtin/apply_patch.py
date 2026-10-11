@@ -13,13 +13,13 @@ from msgflux.tools.workspace_changes import WorkspaceChangeTool
 
 @tool_config(tool_kind="apply_patch", runtime_inputs=["workspace"], retry=False)
 class ApplyPatchTool(WorkspaceChangeTool):
-    """Create, update or delete one UTF-8 file using a V4A diff.
+    """Apply one V4A patch to a UTF-8 file in the authorized workspace.
 
     Args:
-        operation: Create a new file, update an existing file, or delete it.
-        path: File path, absolute or relative to the configured workspace cwd.
-        diff: V4A body: plus-prefixed lines for create; @@ context hunks for update.
-            Omit or use null for delete. Do not include multi-file envelopes.
+        operation: Create, update, or delete the file.
+        path: Absolute or workspace-relative file path.
+        diff: +lines for create; @@ context hunks with -old/+new for update;
+            null for delete. Do not include multi-file envelopes.
     """
 
     name = "apply_patch"

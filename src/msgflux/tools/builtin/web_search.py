@@ -8,36 +8,11 @@ from msgflux.models.model import Model
 
 
 class WebSearchTool:
-    """Search the web through a retriever backend or a web-search model.
-
-    The engine string selects the execution mode:
-
-    - ``retriever/<provider>`` uses ``Retriever.web_search(<provider>)``
-    - ``model/<provider>/<model-id>`` uses ``Model.chat_completion(...)``
-    - if ``engine`` is omitted, the tool reads
-      ``MSGFLUX_TOOL_WEB_SEARCH_ENGINE`` from the environment
-
-    ``init_params`` are forwarded when the backend client is initialized.
-    ``call_params`` are supported for retriever engines and forwarded on every
-    retriever call. When they are omitted, the tool reads
-    ``MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS`` and
-    ``MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS`` as JSON objects.
-
-    The public tool schema is configured dynamically from the selected engine.
-    Retriever-backed tools expose ``query`` only. Model-backed tools expose an
-    optional ``goal`` parameter so the caller can steer the underlying model.
-
-    Returns:
-        A dict with:
-        - ``data``: the search result payload
-        - ``annotations``: citation metadata when the backend provides it
-    """
+    """Search current web sources with a configured retriever or model."""
 
     name = "web_search"
     default_usage_guidance = (
-        "Use when the user asks for current, recent, external, or factual "
-        "information that may not be available in the model context. Prefer "
-        "specific search queries."
+        "Use for current or external facts; prefer a concise search query."
     )
     display_name = "Web Search"
     engine_env_var = "MSGFLUX_TOOL_WEB_SEARCH_ENGINE"
@@ -143,23 +118,15 @@ class WebSearchTool:
         if self.engine_kind == "retriever":
             return inspect.cleandoc(
                 """
-                Search the web for current information and return structured
-                results from relevant pages.
-
-                Use this when the answer depends on up-to-date public web
-                sources, URLs, citations, or snippets. The `query` should be a
-                concise search phrase, not a full conversation transcript.
+                Search current web sources and return structured results.
+                Use for broad questions, not a known URL.
                 """
             )
 
         return inspect.cleandoc(
             """
-            Search the web for current information and return a synthesized
-            answer grounded in web results.
-
-            Use this when the answer should combine web lookup with concise
-            reasoning or summarization. Pass `goal` only when the response
-            needs a specific style, scope, or success criterion.
+            Search current web sources and synthesize an answer. Use `goal` to
+            focus the result when needed.
             """
         )
 

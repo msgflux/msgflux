@@ -19,15 +19,13 @@ class ToolSearchTool(ToolBucket, ToolLibraryOperator):
     capture = {"defer_loading": True}
     expose_captured_names = True
     display_name = "Tool Search"
-    description = """Find deferred tools. `query` lists; `select` loads.
+    description = """Search deferred tools by keyword or load selected names.
 
     Args:
-        query: Keywords used to find tools.
-        select: Exact tool names to load for the current thread.
+        query: Keywords to search.
+        select: Exact tool names to load for this thread.
     """
-    usage_guidance = (
-        "Search first; activate an exact match with `select` before calling it."
-    )
+    usage_guidance = "Load a match with `select` before calling it."
     annotations = {
         "query": Optional[str],
         "select": Optional[List[str]],
