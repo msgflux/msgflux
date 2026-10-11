@@ -178,12 +178,10 @@ def test_read_default_adds_vision_instructions_only_when_opted_in():
     text_guidance = plain_text.get_tool_usage_guidance()[0]["guidance"]
     image_guidance = plain_image.get_tool_usage_guidance()[0]["guidance"]
 
-    assert "reducing limit" in text_guidance
-    assert "single line" in text_guidance
-    assert "user-role message" not in text_guidance
-    assert "reducing limit" in image_guidance
-    assert "single line" in image_guidance
-    assert "user-role message" in image_guidance
+    assert text_guidance == text_reader.default_usage_guidance
+    assert ReadFileTool._VISION_GUIDANCE not in text_guidance
+    assert image_guidance == image_reader.default_usage_guidance
+    assert ReadFileTool._VISION_GUIDANCE in image_guidance
 
 
 def test_deferred_tool_gets_default_when_activated_after_opt_in():

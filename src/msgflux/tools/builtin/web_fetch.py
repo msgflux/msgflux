@@ -6,7 +6,7 @@ from msgflux.utils.html import html_to_text
 
 
 class WebFetchTool:
-    """Fetches web pages as Markdown via a remote parser endpoint."""
+    """Fetch a known URL and return the page as text."""
 
     name = "web_fetch"
     display_name = "Web Fetch"
@@ -38,19 +38,10 @@ class WebFetchTool:
         return f"{self.web_parser}{self._normalize_url(url)}"
 
     def __call__(self, url: str) -> str:
-        """Fetch and return web content as a string.
-
-        Tries the parser endpoint first. On failure, fetches raw HTML
-        and extracts clean text via semantic chunking as fallback.
+        """Fetch a URL and return parsed page text.
 
         Args:
-            url: Target website URL.
-
-        Returns:
-            Parsed response body as a string.
-
-        Raises:
-            RuntimeError: On network or HTTP failure.
+            url: Page URL, with or without an ``https://`` scheme.
         """
         final_url = self._build_url(url)
         try:
@@ -77,19 +68,10 @@ class WebFetchTool:
             raise RuntimeError(f"Failed to fetch {url}: {exc}") from exc
 
     async def acall(self, url: str) -> str:
-        """Asynchronously fetch and return web content as a string.
-
-        Tries the parser endpoint first. On failure, fetches raw HTML
-        and extracts clean text via semantic chunking as fallback.
+        """Fetch a URL asynchronously and return parsed page text.
 
         Args:
-            url: Target website URL.
-
-        Returns:
-            Parsed response body as a string.
-
-        Raises:
-            RuntimeError: On network or HTTP failure.
+            url: Page URL, with or without an ``https://`` scheme.
         """
         final_url = self._build_url(url)
         target_url = self._normalize_url(url)

@@ -82,22 +82,21 @@ def _read_offloaded_tool_result(
 
 @tool_config(runtime_inputs=["workspace", "handle"], retry=False)
 class ReadFileTool:
-    """Read text lines or publish an image from the authorized workspace.
+    """Read text or publish a supported image from the authorized workspace.
 
     Args:
-        path: File path, absolute or relative to the configured workspace cwd.
-        offset: First text line to read, starting at 1 (default: 1).
-        limit: Maximum text lines to read (default and ceiling: 2000).
+        path: Workspace file path, absolute or relative to its working directory.
+        offset: First text line (1-based; null starts at line 1).
+        limit: Maximum text lines (default and ceiling: 2000).
     """
 
     name = "read"
     display_name = "Read"
     default_usage_guidance = (
-        "Read only the lines needed for the task. Use offset and limit to "
-        "paginate text. If a page exceeds the configured byte limit, request "
-        "fewer lines by reducing limit. If a single line exceeds the byte "
-        "limit, read cannot retrieve it; use another available tool, such as "
-        "Bash, to extract a smaller portion. Rejected reads return no file content."
+        "Read only needed lines; paginate with offset and limit. If a page "
+        "exceeds the byte budget, lower limit. If one line exceeds it, use "
+        "another available tool to extract a smaller portion. Rejected reads "
+        "return no content."
     )
     annotations = {
         "path": str,
@@ -266,21 +265,21 @@ class ReadFileTool:
     retry=False,
 )
 class BashTool:
-    """Run Bash using the host-configured process executor.
+    """Run commands in the authorized workspace with a configured Bash executor.
 
-    Use the injected workspace working directory. Execution is limited to 30 seconds
-    and, by default, 1,000,000 combined stdout/stderr bytes. The host may override
-    the capture budget. Requires a configured executor
-    with Bash and the required execution permission. Isolation and filesystem
-    access depend on the configured executor and its declared requirements.
+    Requires ``process.execute``. The executor controls isolation and file access.
 
     Args:
-        command: Bash command or ordered batch of independent commands.
-        timeout_ms: Per-command execution deadline in milliseconds, at most 30000.
+        command: One command or an ordered batch of independent commands.
+        timeout_ms: Per-command deadline in milliseconds (maximum 30000).
     """
 
     name = "bash"
     display_name = "Bash"
+    default_usage_guidance = (
+        "Combined stdout and stderr default to 1,000,000 bytes per call; split "
+        "large output into smaller commands."
+    )
     annotations = {
         "command": Union[str, list[str]],
         "timeout_ms": Optional[int],

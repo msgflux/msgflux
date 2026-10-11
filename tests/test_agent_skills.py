@@ -419,12 +419,12 @@ def test_agent_registers_builtin_skill_tools(tmp_path):
         == "Skill Search"
     )
     assert (
-        agent_with_skills.tool_library.library["skill"].description
-        == "Load an Agent Skill and return its full instructions."
+        "Activate a skill"
+        in agent_with_skills.tool_library.library["skill"].description
     )
     assert (
-        agent_with_skills.tool_library.library["skill_search"].description
-        == "Search Agent Skills that are not listed in the initial catalog."
+        "unlisted skills"
+        in agent_with_skills.tool_library.library["skill_search"].description
     )
 
 
