@@ -47,16 +47,19 @@ async def test_restart_uses_stored_configuration_and_returns_new_client(
 
     async def probe(observed):
         assert observed == record
-        return Client()
+        return record
 
     async def stopped(runtime_dir, deadline):
         events.append(("stopped", runtime_dir))
 
-    async def start(runtime_dir, factory, cwd, deadline):
+    async def start(runtime_dir, factory, cwd, deadline, *, manifest=None):
         events.append(("start", factory, cwd))
-        return object()
+        return _record(instance_id="new-instance")
 
     monkeypatch.setattr(discovery, "_probe", probe)
+    monkeypatch.setattr(
+        discovery, "AgentServiceClient", lambda _url, **_kwargs: Client()
+    )
     monkeypatch.setattr(discovery, "_daemon_is_stopped", lambda _: False)
     monkeypatch.setattr(discovery, "_wait_for_daemon_stop", stopped)
     monkeypatch.setattr(discovery, "_start_and_wait", start)
@@ -79,15 +82,8 @@ async def test_restart_rejects_factory_mismatch_while_owner_is_alive(
     runtime = prepare_runtime_dir(tmp_path / "runtime")
     write_record(runtime, _record())
 
-    class Client:
-        async def aclose(self):
-            pass
-
-        async def shutdown(self, **kwargs):
-            raise AssertionError("mismatched configuration must not be stopped")
-
-    async def probe(_):
-        return Client()
+    async def probe(record):
+        return record
 
     monkeypatch.setattr(discovery, "_probe", probe)
     monkeypatch.setattr(discovery, "_daemon_is_stopped", lambda _: False)
