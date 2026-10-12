@@ -8,6 +8,38 @@ running, including while an Agent works or waits for approval.
 Install `msgflux[service]` for server support. The process manager in this increment
 uses POSIX locks; the native HTTP client remains usable on other platforms.
 
+## Automatic Endpoint Discovery
+
+`connect_local_service()` ensures that the configured backend is ready before
+returning an owned HTTP client. It checks authenticated health and instance
+identity, reuses a matching server, or starts one when no process holds its
+lifetime lock. Concurrent callers coordinate through the startup lock and receive
+independent clients for the same daemon.
+
+The default `~/.msgflux/runtime/daemon.json` stores the URL, including its actual
+port, instance ID, PID, configuration identity and authentication token. The
+server publishes this owner-only record atomically after its health check passes.
+Graceful shutdown removes only the record belonging to that instance. If a
+process crashes, discovery removes the stale record after verifying that no
+process owns the lifetime lock and starts a replacement.
+
+Use the client to discover the URL without reading the private record yourself:
+
+```python
+from msgflux.runtime.service.local import connect_local_service
+
+async def discover_backend():
+    client = await connect_local_service()
+    try:
+        return client.base_url
+    finally:
+        await client.aclose()
+```
+
+This example returns the validated backend URL. Closing the client releases its
+HTTP pool and leaves the daemon running. Discovery is a step within connection;
+it does not guarantee the server will remain alive for subsequent requests.
+
 ## Register Agents From TOML
 
 Start the coding backend from your project directory:
@@ -36,6 +68,23 @@ To initialize with a model already selected:
 ```bash
 uv run --extra service msgflux-service init --model provider/model-id
 ```
+
+For initialization from the SDK:
+
+```python
+from msgflux.runtime.service.local.manifest import (
+    default_service_config_path,
+    initialize_service_config,
+)
+
+config_path = initialize_service_config(
+    default_service_config_path(),
+    model="provider/model-id",
+)
+```
+
+This creates `~/.msgflux/` and its starter config without starting the backend.
+Call `await connect_local_service()` when you need a running service.
 
 The `--model` option applies only when creating a new file. Initialization never
 overwrites an existing config.

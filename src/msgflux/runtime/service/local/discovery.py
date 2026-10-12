@@ -55,6 +55,25 @@ async def connect_local_service(
     a healthy daemon with the same factory is reused from other directories.
     Select an Agent's workspace separately when opening its service thread.
     """
+    record = await _ensure_local_service(
+        factory,
+        config=config,
+        runtime_dir=runtime_dir,
+        cwd=cwd,
+        startup_timeout=startup_timeout,
+    )
+    return AgentServiceClient(record.url, token=record.token)
+
+
+async def _ensure_local_service(
+    factory: str | None,
+    *,
+    config: Path | None,
+    runtime_dir: Path | None,
+    cwd: Path | None,
+    startup_timeout: float,
+) -> LocalServiceRecord:
+    """Return trusted metadata for a healthy matching owner, starting one if absent."""
     if (factory is None) == (config is None):
         if factory is None and config is None:
             config = initialize_service_config(default_service_config_path())
@@ -85,14 +104,10 @@ async def connect_local_service(
         raise NotADirectoryError("cwd must name an existing directory")
     deadline = asyncio.get_running_loop().time() + startup_timeout
     async with _StartupLock(selected_runtime, deadline):
-        client = await _reuse_running(selected_runtime, factory, manifest, deadline)
-        if client is not None:
-            return client
+        record = await _reuse_running(selected_runtime, factory, manifest, deadline)
+        if record is not None:
+            return record
 
-        if manifest is None:
-            return await _start_and_wait(
-                selected_runtime, factory, selected_cwd, deadline
-            )
         return await _start_and_wait(
             selected_runtime, factory, selected_cwd, deadline, manifest=manifest
         )
@@ -176,16 +191,15 @@ async def restart_local_service(  # noqa: C901
             # start a replacement without contacting an unowned endpoint.
             remove_record(selected_runtime, record.instance_id)
         elif record is not None:
-            client = await _probe(record)
-            if client is None:
+            healthy = await _probe(record)
+            if healthy is None:
                 raise ServiceRecoveryRequiredError(
                     "The local daemon owns its lifetime lock but failed "
                     "its identity health check"
                 )
+            _require_match(record, selected_factory, manifest, allow_digest_change=True)
+            client = AgentServiceClient(record.url, token=record.token)
             try:
-                _require_match(
-                    record, selected_factory, manifest, allow_digest_change=True
-                )
                 try:
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
@@ -211,17 +225,14 @@ async def restart_local_service(  # noqa: C901
                 await client.aclose()
             await _wait_for_daemon_stop(selected_runtime, deadline)
             remove_record(selected_runtime, record.instance_id)
-        if manifest is None:
-            return await _start_and_wait(
-                selected_runtime, selected_factory, selected_cwd, deadline
-            )
-        return await _start_and_wait(
+        record = await _start_and_wait(
             selected_runtime,
             selected_factory,
             selected_cwd,
             deadline,
             manifest=manifest,
         )
+        return AgentServiceClient(record.url, token=record.token)
 
 
 async def _start_and_wait(
@@ -231,7 +242,7 @@ async def _start_and_wait(
     deadline: float,
     *,
     manifest: ServiceManifest | None = None,
-) -> AgentServiceClient:
+) -> LocalServiceRecord:
     if deadline - asyncio.get_running_loop().time() <= 0:
         raise TimeoutError("Timed out before starting the replacement local daemon")
     process = _start_child(runtime_dir, factory, cwd, manifest=manifest)
@@ -265,18 +276,14 @@ async def _reuse_running(
     factory: str | None,
     manifest: ServiceManifest | None,
     deadline: float,
-) -> AgentServiceClient | None:
+) -> LocalServiceRecord | None:
     while True:
         record = read_record(runtime_dir)
         if record is not None:
-            client = await _probe(record)
-            if client is not None:
-                try:
-                    _require_match(record, factory, manifest)
-                except BaseException:
-                    await client.aclose()
-                    raise
-                return client
+            healthy = await _probe(record)
+            if healthy is not None:
+                _require_match(record, factory, manifest)
+                return healthy
             if not _daemon_is_stopped(runtime_dir):
                 raise ServiceRecoveryRequiredError(
                     "The local daemon owns its lifetime lock but failed "
@@ -319,21 +326,19 @@ class _StartupLock:
         return self._context.__exit__(exc_type, exc, tb)
 
 
-async def _probe(record: LocalServiceRecord) -> AgentServiceClient | None:
+async def _probe(record: LocalServiceRecord) -> LocalServiceRecord | None:
     client = AgentServiceClient(record.url, token=record.token, timeout=0.75)
     try:
         health = await asyncio.wait_for(client.health(), timeout=1.0)
         if health.instance_id != record.instance_id or health.version != 1:
-            await client.aclose()
             return None
-        await client.aclose()
-        return AgentServiceClient(record.url, token=record.token)
+        return record
     except asyncio.CancelledError:
-        await client.aclose()
         raise
     except Exception:
-        await client.aclose()
         return None
+    finally:
+        await client.aclose()
 
 
 def _daemon_is_stopped(runtime_dir: Path) -> bool:
@@ -393,7 +398,7 @@ async def _wait_for_child(
     factory: str | None,
     manifest: ServiceManifest | None,
     deadline: float,
-) -> AgentServiceClient:
+) -> LocalServiceRecord:
     while True:
         if process.poll() is not None:
             raise RuntimeError(
@@ -402,10 +407,10 @@ async def _wait_for_child(
         record = read_record(runtime_dir)
         if record is not None:
             _require_match(record, factory, manifest)
-            client = await _probe(record)
-            if client is not None:
+            healthy = await _probe(record)
+            if healthy is not None:
                 _schedule_reaper(process)
-                return client
+                return healthy
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             raise TimeoutError(

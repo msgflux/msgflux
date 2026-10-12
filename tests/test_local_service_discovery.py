@@ -4,6 +4,7 @@ import asyncio
 import stat
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 import msgspec
@@ -312,3 +313,130 @@ def test_failed_atomic_metadata_replace_preserves_old_record_and_discards_stagin
         files.write_record(directory, replacement)
     assert files.read_record(directory) == old
     assert list(directory.glob(".daemon-*")) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["healthy", "wrong-instance", "error", "cancel"])
+async def test_health_probe_closes_its_client_and_returns_only_metadata(
+    monkeypatch, outcome
+):
+    from unittest.mock import AsyncMock
+    from msgflux.runtime.service.local import discovery
+    from msgflux.runtime.service.http.records import HealthRecord
+
+    record = _record()
+    client = AsyncMock()
+    client.health.return_value = HealthRecord(
+        instance_id=record.instance_id if outcome == "healthy" else "other-instance"
+    )
+    if outcome == "error":
+        client.health.side_effect = RuntimeError("health failed")
+    elif outcome == "cancel":
+        client.health.side_effect = asyncio.CancelledError()
+    created = []
+
+    def create_client(url, **kwargs):
+        assert url == record.url
+        assert kwargs["token"] == record.token
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(discovery, "AgentServiceClient", create_client)
+    if outcome == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await discovery._probe(record)
+    else:
+        result = await discovery._probe(record)
+        assert result == (record if outcome == "healthy" else None)
+    client.aclose.assert_awaited_once()
+    assert created == [client]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash", [False, True])
+async def test_concurrent_connectors_share_daemon_and_recover_its_metadata(
+    tmp_path, monkeypatch, crash
+):
+    from msgflux.runtime.service.local import discovery
+    from msgflux.runtime.service.http.client import AgentServiceClient
+
+    runtime = tmp_path / "runtime"
+    factory = "tests.test_local_service_runner:local_factory"
+    original_start = discovery._start_child
+    processes = []
+    clients = []
+
+    def start(*args, **kwargs):
+        process = original_start(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(discovery, "_start_child", start)
+    try:
+        async with asyncio.timeout(30):
+            results = await asyncio.gather(
+                *(
+                    connect_local_service(factory, runtime_dir=runtime, cwd=Path.cwd())
+                    for _ in range(8)
+                ),
+                return_exceptions=True,
+            )
+            clients.extend(
+                item for item in results if isinstance(item, AgentServiceClient)
+            )
+            assert len(clients) == 8, results
+            record = read_record(runtime)
+            assert record is not None
+            assert len(processes) == 1
+            assert len({id(client) for client in clients}) == 8
+            assert {client.base_url for client in clients} == {record.url}
+            health = await asyncio.gather(*(client.health() for client in clients))
+            assert {item.instance_id for item in health} == {record.instance_id}
+            await asyncio.gather(*(client.aclose() for client in clients))
+            clients.clear()
+
+            # Closing all frontends leaves a reusable, independently owned daemon.
+            reused = await connect_local_service(factory, runtime_dir=runtime)
+            clients.append(reused)
+            assert (await reused.health()).instance_id == record.instance_id
+            assert len(processes) == 1
+            if crash:
+                processes[0].kill()
+                while processes[0].poll() is None:
+                    await asyncio.sleep(0.01)
+                assert read_record(runtime) == record
+                replacement = await connect_local_service(factory, runtime_dir=runtime)
+                clients.append(replacement)
+                new_record = read_record(runtime)
+                assert new_record is not None
+                assert new_record.instance_id != record.instance_id
+                assert replacement.base_url == new_record.url
+                assert (
+                    await replacement.health()
+                ).instance_id == new_record.instance_id
+                assert len(processes) == 2
+            active = clients[-1]
+            await active.shutdown(
+                expected_instance_id=(await active.health()).instance_id
+            )
+            while read_record(runtime) is not None or not discovery._daemon_is_stopped(
+                runtime
+            ):
+                await asyncio.sleep(0.01)
+            assert not (runtime / RECORD_NAME).exists()
+    finally:
+        await asyncio.gather(*(client.aclose() for client in clients))
+        record = read_record(runtime) if runtime.exists() else None
+        if record is not None:
+            cleanup_client = AgentServiceClient(record.url, token=record.token)
+            try:
+                with suppress(Exception):
+                    await cleanup_client.shutdown(
+                        expected_instance_id=record.instance_id
+                    )
+            finally:
+                await cleanup_client.aclose()
+        # Test-owned subprocesses are always reaped, including failed assertions.
+        for process in processes:
+            if process.poll() is None:
+                await discovery._stop_owned_child(process)
