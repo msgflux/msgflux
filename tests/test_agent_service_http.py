@@ -384,8 +384,88 @@ async def test_authenticated_health_identifies_instance_without_creating_agent()
             response = await client.get(
                 "/v1/health", headers={"Authorization": "Bearer secret"}
             )
-            assert response.json() == {"instance_id": "health-instance", "version": 1}
+            assert response.json() == {
+                "instance_id": "health-instance",
+                "version": 1,
+                "default_agent": None,
+            }
         assert calls == []
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_http_uses_default_agent_for_new_threads_and_keeps_existing_binding():
+    service = AgentService(store=SQLiteServiceStore(), default_agent="agent")
+    service.register("agent", lambda _: None)
+    service.register("other", lambda _: None)
+    app = create_service_app(
+        service, token="secret", instance_id="default-agent-instance"
+    )
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with AsyncTestClient(app=app) as client:
+            health = await client.get("/v1/health", headers=headers)
+            assert health.json() == {
+                "instance_id": "default-agent-instance",
+                "version": 1,
+                "default_agent": "agent",
+            }
+
+            created = await client.post(
+                "/v1/threads",
+                json={"thread_id": "default-thread"},
+                headers=headers,
+            )
+            assert created.status_code == 201
+            assert created.json() == {
+                "thread_id": "default-thread",
+                "agent_id": "agent",
+                "cwd": None,
+            }
+
+            reopened = await client.post(
+                "/v1/threads",
+                json={"thread_id": "default-thread"},
+                headers=headers,
+            )
+            assert reopened.status_code == 201
+            assert reopened.json()["agent_id"] == "agent"
+
+            conflict = await client.post(
+                "/v1/threads",
+                json={"thread_id": "default-thread", "agent_id": "other"},
+                headers=headers,
+            )
+            assert conflict.status_code == 409
+            assert conflict.json()["code"] == "service_conflict"
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_programmatic_service_does_not_choose_first_registered_agent():
+    service, _ = _service()
+    try:
+        with pytest.raises(ValueError, match="agent_id is required"):
+            await service.open_thread()
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_default_agent_name_is_validated_and_registration_checked_on_creation():
+    with pytest.raises(ValueError, match="default_agent"):
+        AgentService(store=SQLiteServiceStore(), default_agent=" ")
+
+    service = AgentService(store=SQLiteServiceStore(), default_agent="configured")
+    service.register("other", lambda _: None)
+    try:
+        with pytest.raises(KeyError, match="configured"):
+            await service.open_thread()
     finally:
         await service.aclose()
         service.store.close()

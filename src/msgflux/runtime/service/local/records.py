@@ -7,26 +7,41 @@ from urllib.parse import urlsplit
 
 import msgspec
 
+from msgflux.runtime.service.local.manifest import validate_factory_path
+
 
 class LocalServiceRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     instance_id: str
-    factory: str
     cwd: str
     url: str
     pid: int
     token: str
     version: Literal[1] = 1
+    factory: str | None = None
+    config_path: str | None = None
+    config_digest: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.instance_id or not self.factory or not self.cwd or not self.token:
+        if not self.instance_id or not self.cwd or not self.token:
             raise ValueError("Local service record has an empty required field")
         if self.pid < 1:
             raise ValueError("Local service record PID must be positive")
-        if ":" not in self.factory:
-            raise ValueError("Factory must use MODULE:CALLABLE syntax")
-        module, callable_name = self.factory.split(":", 1)
-        if not module or not callable_name or any(c.isspace() for c in self.factory):
-            raise ValueError("Factory must use MODULE:CALLABLE syntax")
+        factory_source = self.factory is not None
+        config_source = self.config_path is not None or self.config_digest is not None
+        if factory_source == config_source:
+            raise ValueError("Local service record must have exactly one source")
+        if factory_source:
+            validate_factory_path(self.factory)
+        elif (
+            not self.config_path
+            or not self.config_path.startswith("/")
+            or not self.config_digest
+            or len(self.config_digest) != 64
+            or any(c not in "0123456789abcdef" for c in self.config_digest)
+        ):
+            raise ValueError(
+                "Config source requires an absolute path and SHA-256 digest"
+            )
         if not self.cwd.startswith("/"):
             raise ValueError("Local service cwd must be absolute")
         parsed = urlsplit(self.url)
@@ -51,6 +66,7 @@ class LocalServiceRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True
         return (
             "LocalServiceRecord("
             f"instance_id={self.instance_id!r}, factory={self.factory!r}, "
+            f"config_path={self.config_path!r}, config_digest={self.config_digest!r}, "
             f"cwd={self.cwd!r}, url={self.url!r}, pid={self.pid!r}, "
             "token=<redacted>, version=1)"
         )

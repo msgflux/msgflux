@@ -24,6 +24,13 @@ from msgflux.runtime.service.local.files import (
     read_record,
     remove_record,
 )
+from msgflux.runtime.service.local.manifest import (
+    ServiceManifest,
+    default_service_config_path,
+    initialize_service_config,
+    load_service_manifest,
+    validate_factory_path,
+)
 from msgflux.runtime.service.local.records import LocalServiceRecord
 
 _reapers: set[asyncio.Task[None]] = set()
@@ -34,8 +41,9 @@ _LOG_FILE = "daemon.log"
 
 
 async def connect_local_service(
-    factory: str,
+    factory: str | None = None,
     *,
+    config: Path | None = None,
     runtime_dir: Path | None = None,
     cwd: Path | None = None,
     startup_timeout: float = 30,
@@ -47,7 +55,19 @@ async def connect_local_service(
     a healthy daemon with the same factory is reused from other directories.
     Select an Agent's workspace separately when opening its service thread.
     """
-    _validate_factory(factory)
+    if (factory is None) == (config is None):
+        if factory is None and config is None:
+            config = initialize_service_config(default_service_config_path())
+        else:
+            raise ValueError("provide exactly one of factory or config")
+    manifest = None
+    if config is not None:
+        selected_cwd = (
+            (Path(cwd) if cwd is not None else Path.cwd()).expanduser().resolve()
+        )
+        manifest = load_service_manifest(config, cwd=selected_cwd)
+    else:
+        _validate_factory(factory)
     if (
         isinstance(startup_timeout, bool)
         or not isinstance(startup_timeout, (int, float))
@@ -65,16 +85,23 @@ async def connect_local_service(
         raise NotADirectoryError("cwd must name an existing directory")
     deadline = asyncio.get_running_loop().time() + startup_timeout
     async with _StartupLock(selected_runtime, deadline):
-        client = await _reuse_running(selected_runtime, factory, deadline)
+        client = await _reuse_running(selected_runtime, factory, manifest, deadline)
         if client is not None:
             return client
 
-        return await _start_and_wait(selected_runtime, factory, selected_cwd, deadline)
+        if manifest is None:
+            return await _start_and_wait(
+                selected_runtime, factory, selected_cwd, deadline
+            )
+        return await _start_and_wait(
+            selected_runtime, factory, selected_cwd, deadline, manifest=manifest
+        )
 
 
 async def restart_local_service(  # noqa: C901
     factory: str | None = None,
     *,
+    config: Path | None = None,
     runtime_dir: Path | None = None,
     cwd: Path | None = None,
     restart_timeout: float = 30,
@@ -85,6 +112,8 @@ async def restart_local_service(  # noqa: C901
     lock spans shutdown and replacement, so concurrent connectors cannot start
     a second owner in the transition.
     """
+    if factory is not None and config is not None:
+        raise ValueError("provide only one of factory or config")
     if factory is not None:
         _validate_factory(factory)
     if (cwd is not None) and not isinstance(cwd, (str, Path)):
@@ -104,7 +133,7 @@ async def restart_local_service(  # noqa: C901
     deadline = asyncio.get_running_loop().time() + restart_timeout
     async with _StartupLock(selected_runtime, deadline):
         record = read_record(selected_runtime)
-        if record is None and factory is None:
+        if record is None and factory is None and config is None:
             if not _daemon_is_stopped(selected_runtime):
                 raise ServiceRecoveryRequiredError(
                     "The local daemon has no trusted factory metadata; "
@@ -114,7 +143,21 @@ async def restart_local_service(  # noqa: C901
                 "No stored local service factory is available; pass factory explicitly"
             )
 
-        selected_factory = factory or record.factory
+        manifest = None
+        if factory is None and config is None and record is not None:
+            factory = record.factory
+            if record.config_path is not None:
+                config = Path(record.config_path)
+        if config is not None:
+            selected_cwd_for_config = (
+                Path(cwd).expanduser().resolve()
+                if cwd is not None
+                else Path(record.cwd)
+                if record is not None
+                else Path.cwd().resolve()
+            )
+            manifest = load_service_manifest(config, cwd=selected_cwd_for_config)
+        selected_factory = factory
         if cwd is not None:
             selected_cwd = Path(cwd).expanduser().resolve()
         elif record is not None:
@@ -140,7 +183,9 @@ async def restart_local_service(  # noqa: C901
                     "its identity health check"
                 )
             try:
-                _require_match(record, selected_factory)
+                _require_match(
+                    record, selected_factory, manifest, allow_digest_change=True
+                )
                 try:
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
@@ -166,19 +211,32 @@ async def restart_local_service(  # noqa: C901
                 await client.aclose()
             await _wait_for_daemon_stop(selected_runtime, deadline)
             remove_record(selected_runtime, record.instance_id)
+        if manifest is None:
+            return await _start_and_wait(
+                selected_runtime, selected_factory, selected_cwd, deadline
+            )
         return await _start_and_wait(
-            selected_runtime, selected_factory, selected_cwd, deadline
+            selected_runtime,
+            selected_factory,
+            selected_cwd,
+            deadline,
+            manifest=manifest,
         )
 
 
 async def _start_and_wait(
-    runtime_dir: Path, factory: str, cwd: Path, deadline: float
+    runtime_dir: Path,
+    factory: str | None,
+    cwd: Path,
+    deadline: float,
+    *,
+    manifest: ServiceManifest | None = None,
 ) -> AgentServiceClient:
     if deadline - asyncio.get_running_loop().time() <= 0:
         raise TimeoutError("Timed out before starting the replacement local daemon")
-    process = _start_child(runtime_dir, factory, cwd)
+    process = _start_child(runtime_dir, factory, cwd, manifest=manifest)
     try:
-        return await _wait_for_child(process, runtime_dir, factory, deadline)
+        return await _wait_for_child(process, runtime_dir, factory, manifest, deadline)
     except BaseException:
         cleanup = asyncio.create_task(_stop_owned_child(process))
         _cleanups.add(cleanup)
@@ -203,7 +261,10 @@ async def _wait_for_daemon_stop(runtime_dir: Path, deadline: float) -> None:
 
 
 async def _reuse_running(
-    runtime_dir: Path, factory: str, deadline: float
+    runtime_dir: Path,
+    factory: str | None,
+    manifest: ServiceManifest | None,
+    deadline: float,
 ) -> AgentServiceClient | None:
     while True:
         record = read_record(runtime_dir)
@@ -211,7 +272,7 @@ async def _reuse_running(
             client = await _probe(record)
             if client is not None:
                 try:
-                    _require_match(record, factory)
+                    _require_match(record, factory, manifest)
                 except BaseException:
                     await client.aclose()
                     raise
@@ -280,7 +341,13 @@ def _daemon_is_stopped(runtime_dir: Path) -> bool:
         return handle is not None
 
 
-def _start_child(runtime_dir: Path, factory: str, cwd: Path) -> subprocess.Popen[bytes]:
+def _start_child(
+    runtime_dir: Path,
+    factory: str | None,
+    cwd: Path,
+    *,
+    manifest: ServiceManifest | None = None,
+) -> subprocess.Popen[bytes]:
     log_path = runtime_dir / _LOG_FILE
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
@@ -292,18 +359,23 @@ def _start_child(runtime_dir: Path, factory: str, cwd: Path) -> subprocess.Popen
             raise PermissionError("Local daemon log must be an owned regular file")
         os.fchmod(descriptor, 0o600)
         # argv is passed directly; no shell interprets configured values.
+        command = [
+            sys.executable,
+            "-m",
+            "msgflux.runtime.service.local.cli",
+            "--runtime-dir",
+            str(runtime_dir),
+            "--cwd",
+            str(cwd),
+        ]
+        if manifest is not None:
+            command.extend(("--config", str(manifest.path)))
+        else:
+            if factory is None:
+                raise ValueError("provide exactly one of factory or config")
+            command.extend(("--factory", factory))
         return subprocess.Popen(  # noqa: S603
-            [
-                sys.executable,
-                "-m",
-                "msgflux.runtime.service.local.cli",
-                "--factory",
-                factory,
-                "--runtime-dir",
-                str(runtime_dir),
-                "--cwd",
-                str(cwd),
-            ],
+            command,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=descriptor,
@@ -318,7 +390,8 @@ def _start_child(runtime_dir: Path, factory: str, cwd: Path) -> subprocess.Popen
 async def _wait_for_child(
     process: subprocess.Popen[bytes],
     runtime_dir: Path,
-    factory: str,
+    factory: str | None,
+    manifest: ServiceManifest | None,
     deadline: float,
 ) -> AgentServiceClient:
     while True:
@@ -328,7 +401,7 @@ async def _wait_for_child(
             )
         record = read_record(runtime_dir)
         if record is not None:
-            _require_match(record, factory)
+            _require_match(record, factory, manifest)
             client = await _probe(record)
             if client is not None:
                 _schedule_reaper(process)
@@ -370,20 +443,27 @@ async def _stop_owned_child(process: subprocess.Popen[bytes]) -> None:
             await asyncio.sleep(0.05)
 
 
-def _require_match(record: LocalServiceRecord, factory: str) -> None:
-    if record.factory != factory:
+def _require_match(
+    record: LocalServiceRecord,
+    factory: str | None,
+    manifest: ServiceManifest | None,
+    *,
+    allow_digest_change: bool = False,
+) -> None:
+    matches = (
+        record.factory == factory
+        if manifest is None
+        else record.config_path == str(manifest.path)
+        and (allow_digest_change or record.config_digest == manifest.digest)
+    )
+    if not matches:
         raise ServiceConflictError(
-            "A local AgentService is already configured for a different factory"
+            "A local AgentService is already configured for a different "
+            "factory or config source"
         )
 
 
 def _validate_factory(factory: str) -> None:
-    if not isinstance(factory, str) or ":" not in factory:
+    if not isinstance(factory, str):
         raise ValueError("factory must use MODULE:CALLABLE syntax")
-    module, callable_name = factory.split(":", 1)
-    if (
-        not module
-        or not callable_name
-        or any(character.isspace() for character in factory)
-    ):
-        raise ValueError("factory must use MODULE:CALLABLE syntax")
+    validate_factory_path(factory)

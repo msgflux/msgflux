@@ -14,6 +14,7 @@ from msgflux.runtime import (
     ExecutionScope,
     InMemoryApprovalStore,
     InMemoryWorkspace,
+    InMemoryWorkspaceBackend,
     PermissionSet,
     AgentWorkspace,
 )
@@ -430,6 +431,45 @@ def test_same_environment_handle_cannot_escape_its_own_narrow_ceiling(tmp_path):
             narrow.write_text("blocked.txt", "no")
 
     assert not (tmp_path / "blocked.txt").exists()
+
+
+def test_permission_view_borrows_environment_and_cannot_gain_parent_authority(
+    tmp_path,
+):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "README.md").write_text("review me", encoding="utf-8")
+    owner = AgentWorkspace.local(
+        tmp_path, permissions=PermissionSet(["filesystem.read"])
+    ).with_cwd("src")
+    child = owner.with_permissions(
+        PermissionSet(["filesystem.read", "filesystem.write", "process.execute"])
+    )
+
+    assert child.shares_environment(owner)
+    assert child.cwd == owner.cwd == "/src"
+    assert child.workspace_id == owner.workspace_id
+    assert child.read_text("README.md") == "review me"
+    assert child.permissions == PermissionSet(["filesystem.read"])
+    with pytest.raises(PermissionError):
+        child.write_text("blocked.txt", "no")
+    with pytest.raises(PermissionError):
+        child.run(["true"])
+    assert not (tmp_path / "src" / "blocked.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_closing_permission_view_does_not_close_owned_workspace_binding():
+    backend = InMemoryWorkspaceBackend({"/README.md": b"still open"})
+    owner = await AgentWorkspace.open(
+        backend, "borrowed-permissions", permissions=PermissionSet(["filesystem.read"])
+    )
+    child = owner.with_permissions(PermissionSet(["filesystem.read"]))
+
+    assert child._owned_binding is None
+    await child.aclose()
+
+    assert owner.read_text("README.md") == "still open"
+    await owner.aclose()
 
 
 def test_background_tool_cannot_expand_live_workspace_ceiling(tmp_path):

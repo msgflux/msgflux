@@ -189,7 +189,7 @@ class AgentServiceClient:
 
     async def open_thread(
         self,
-        agent_id: str,
+        agent_id: str | None = None,
         *,
         thread_id: str | None = None,
         cwd: str | Path | None = None,

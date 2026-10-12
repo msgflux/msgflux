@@ -129,7 +129,7 @@ def create_service_app(  # noqa: C901
     async def health() -> Response:
         # Check service availability without invoking a configured Agent factory.
         service.threads()
-        return _response(HealthRecord(instance_id))
+        return _response(HealthRecord(instance_id, default_agent=service.default_agent))
 
     async def shutdown(data: ShutdownRequest) -> Response:
         if data.expected_instance_id != instance_id:

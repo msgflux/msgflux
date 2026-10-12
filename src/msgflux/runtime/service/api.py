@@ -202,13 +202,17 @@ class AgentService:
         self,
         *,
         store: SQLiteServiceStore,
+        default_agent: str | None = None,
         cache_policy: SessionCachePolicy | None = _DEFAULT_CACHE_POLICY,
     ) -> None:
         if cache_policy is not None and not isinstance(
             cache_policy, SessionCachePolicy
         ):
             raise TypeError("cache_policy must be SessionCachePolicy or None")
+        if default_agent is not None:
+            validate_identifier(default_agent, "default_agent")
         self.store = store
+        self.default_agent = default_agent
         self._owner_id = uuid4().hex
         self._factories: dict[str, Callable] = {}
         self._cache = _SessionCache(
@@ -244,24 +248,53 @@ class AgentService:
         self._require_open()
         return self.store.threads()
 
+    def _select_thread_agent(
+        self, agent_id: str | None, thread_id: str | None
+    ) -> tuple[str, ServiceThread | None]:
+        existing = None
+        if thread_id is not None:
+            try:
+                existing = self.store.thread(thread_id)
+            except KeyError:
+                pass
+        if existing is not None:
+            # The persisted binding is authoritative when reopening a
+            # thread. An explicit different agent is rejected by bind_thread.
+            return (
+                agent_id if agent_id is not None else existing.agent_id,
+                existing,
+            )
+
+        selected_agent = agent_id if agent_id is not None else self.default_agent
+        if selected_agent is None:
+            raise ValueError(
+                "agent_id is required to create a thread when no "
+                "default_agent is configured"
+            )
+        if selected_agent not in self._factories:
+            raise KeyError(selected_agent)
+        return selected_agent, None
+
     async def open_thread(
         self,
-        agent_id: str,
+        agent_id: str | None = None,
         *,
         thread_id: str | None = None,
         cwd: str | Path | None = None,
     ) -> ServiceThread:
         """Bind a conversation and optional absolute workspace root lazily.
 
-        Omitting cwd preserves an existing binding. An explicit root is
-        canonicalized and immutable; no factory runs or process cwd changes.
+        New threads use the explicit agent or ``default_agent``. Reopening an
+        existing thread preserves its stored agent when omitted. Omitting cwd
+        preserves an existing binding. No factory runs or process cwd changes.
         """
         async with self._lock:
             self._require_open()
-            if agent_id not in self._factories:
-                raise KeyError(agent_id)
+            if agent_id is not None:
+                validate_identifier(agent_id, "agent_id")
             if thread_id is not None:
                 validate_identifier(thread_id, "thread_id")
+            selected_agent, existing = self._select_thread_agent(agent_id, thread_id)
             canonical_cwd = None
             if cwd is not None:
                 if not isinstance(cwd, (str, Path)):
@@ -280,12 +313,10 @@ class AgentService:
                 canonical_cwd = str(canonical_path)
             resolved_thread_id = thread_id if thread_id is not None else new_thread_id()
             if canonical_cwd is None:
-                try:
-                    canonical_cwd = self.store.thread(resolved_thread_id).cwd
-                except KeyError:
-                    pass
+                if existing is not None:
+                    canonical_cwd = existing.cwd
             return self.store.bind_thread(
-                ServiceThread(resolved_thread_id, agent_id, canonical_cwd)
+                ServiceThread(resolved_thread_id, selected_agent, canonical_cwd)
             )
 
     def _require_open(self) -> None:
