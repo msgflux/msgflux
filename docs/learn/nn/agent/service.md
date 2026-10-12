@@ -4,6 +4,10 @@
 A TUI or application can submit an input, disconnect its watcher, and attach
 again while the run continues. No HTTP framework is required for this API.
 The optional [HTTP/SSE adapter](service-http.md) exposes it to separate processes.
+The [local service launcher](service-local.md#register-agents-from-toml) can
+register named coding agents or custom Python factories from TOML at startup.
+It can initialize a default configuration containing ready-to-use coding agents;
+each AgentSession and its resources remain lazy per thread.
 
 ## Service, Agent Session, And Coding Session
 
@@ -90,6 +94,7 @@ async def main():
     journal = SQLiteServiceStore()  # :memory: for this example
     service = AgentService(
         store=journal,
+        default_agent="main",
         cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
     )
 
@@ -104,7 +109,7 @@ async def main():
         return AgentSession(agent, on_close=model.aclose)
 
     service.register("main", create_session)
-    thread = await service.open_thread("main", cwd=Path.cwd())
+    thread = await service.open_thread(cwd=Path.cwd())
     try:
         async with service.watch(thread.thread_id) as observer:
             print(observer.snapshot.messages)
@@ -159,6 +164,13 @@ receipt still needs host reconciliation. Reconcile the command through the
 trusted workspace host, then retry admission or recovery. An approval request
 raised during a run is different: the run settles as `paused` and can be reviewed
 and resumed through the approval flow.
+
+Set `AgentService(default_agent="main", ...)` to let `open_thread()` create a
+thread without an explicit agent ID. The selected default must be registered.
+A service with no configured default requires an explicit ID for a new thread;
+it does not choose the first registered agent. Reopening a known `thread_id`
+without an ID retains the stored agent, even if the default has changed. An
+explicit conflicting ID is rejected. The HTTP client follows these same rules.
 
 `open_thread()` records its logical binding without constructing an Agent. Its
 optional `cwd` must be an absolute path to an existing directory; it is resolved to an

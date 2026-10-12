@@ -18,6 +18,7 @@ from msgflux.runtime.service.http.client import (
     AgentServiceClient,
     AgentServiceProtocolError,
 )
+from msgflux.runtime.service.http.records import HealthRecord
 
 
 def _json_response(request, payload, status=200):
@@ -144,6 +145,47 @@ async def test_http_methods_encode_requests_and_decode_records():
 
     assert all(r.headers["authorization"] == "Bearer secret" for r in seen)
     assert seen[-1].url.path == "/v1/threads/t/runs/run/resume"
+
+
+@pytest.mark.asyncio
+async def test_open_thread_can_omit_agent_id_for_service_default():
+    def handler(request):
+        assert json.loads(request.content) == {
+            "agent_id": None,
+            "thread_id": None,
+            "cwd": None,
+        }
+        return _json_response(
+            request, {"thread_id": "default-thread", "agent_id": "assistant"}, 201
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        assert await client.open_thread() == ServiceThread(
+            "default-thread", "assistant"
+        )
+
+
+@pytest.mark.asyncio
+async def test_health_decodes_legacy_and_default_agent_metadata():
+    payloads = iter(
+        [
+            {"instance_id": "legacy", "version": 1},
+            {"instance_id": "configured", "version": 1, "default_agent": "main"},
+        ]
+    )
+
+    def handler(request):
+        return _json_response(request, next(payloads))
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        legacy = await client.health()
+        configured = await client.health()
+
+    assert legacy == HealthRecord("legacy")
+    assert legacy.default_agent is None
+    assert configured == HealthRecord("configured", default_agent="main")
 
 
 @pytest.mark.asyncio

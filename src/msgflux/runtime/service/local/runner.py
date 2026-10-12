@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import inspect
 import os
 import secrets
@@ -16,25 +15,19 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from msgflux.runtime.service import AgentService
+from msgflux.runtime.service import AgentService, SQLiteServiceStore
 from msgflux.runtime.service.local.files import (
     prepare_runtime_dir,
     process_lock,
     remove_record,
     write_record,
 )
+from msgflux.runtime.service.local.manifest import load_factory, load_service_manifest
 from msgflux.runtime.service.local.records import LocalServiceRecord
 
 
 def _load_factory(path: str) -> Callable[[Path], Any]:
-    module_name, separator, attribute = path.partition(":")
-    if not separator or not module_name or not attribute:
-        raise ValueError("factory must use the form 'module:attribute'")
-    module = importlib.import_module(module_name)
-    factory = getattr(module, attribute)
-    if not callable(factory):
-        raise TypeError("configured factory attribute must be callable")
-    return factory
+    return load_factory(path)
 
 
 async def _make_service(factory_path: str, runtime_dir: Path) -> AgentService:
@@ -45,6 +38,48 @@ async def _make_service(factory_path: str, runtime_dir: Path) -> AgentService:
     if not isinstance(service, AgentService):
         raise TypeError("configured factory must return an AgentService")
     return service
+
+
+def _make_manifest_service(
+    config_path: Path, runtime_dir: Path, cwd: Path
+) -> tuple[AgentService, str, str]:
+    manifest = load_service_manifest(config_path, cwd=cwd)
+    coding_builder = None
+    if manifest.coding_catalog.agents:
+        from msgflux.coding.factory import (  # noqa: PLC0415
+            create_coding_session_factory,
+        )
+
+        coding_builder = create_coding_session_factory
+    factories = {}
+    for agent_id, config in manifest.agents.items():
+        try:
+            if config.harness == "coding":
+                if coding_builder is None:
+                    raise RuntimeError("Coding session factory builder is unavailable")
+                factories[agent_id] = coding_builder(
+                    options=manifest.coding_catalog.agents[agent_id],
+                    catalog=manifest.coding_catalog,
+                    config_path=manifest.path,
+                    runtime_dir=runtime_dir,
+                )
+            else:
+                if config.factory is None:
+                    raise ValueError(
+                        f"Agent {agent_id!r} has no coding harness or factory"
+                    )
+                factories[agent_id] = load_factory(config.factory)
+        except (ValueError, TypeError, ImportError, AttributeError) as exc:
+            raise ValueError(f"Invalid agent factory for {agent_id!r}: {exc}") from exc
+    store = SQLiteServiceStore(runtime_dir / "service.sqlite3")
+    try:
+        service = AgentService(store=store, default_agent=manifest.defaults.agent)
+        for agent_id, factory in factories.items():
+            service.register(agent_id, factory)
+    except BaseException:
+        store.close()
+        raise
+    return service, str(manifest.path), manifest.digest
 
 
 def _validated_cwd(cwd: Path | None) -> Path:
@@ -93,8 +128,9 @@ async def _stop_server(server, server_task: asyncio.Task | None) -> None:
 
 
 async def serve_local_service(  # noqa: C901
-    factory: str,
+    factory: str | None = None,
     *,
+    config: Path | None = None,
     runtime_dir: Path | None = None,
     cwd: Path | None = None,
 ) -> None:
@@ -106,7 +142,9 @@ async def serve_local_service(  # noqa: C901
     """
     if os.name != "posix":
         raise OSError("the local service runner currently requires POSIX locks")
-    if not isinstance(factory, str) or not factory:
+    if (factory is None) == (config is None):
+        raise ValueError("provide exactly one of factory or config")
+    if factory is not None and (not isinstance(factory, str) or not factory):
         raise ValueError("factory must use the form 'module:attribute'")
     working_directory = _validated_cwd(cwd)
     directory = prepare_runtime_dir(
@@ -125,8 +163,17 @@ async def serve_local_service(  # noqa: C901
         server = None
         listening_socket: socket.socket | None = None
         instance_id = uuid4().hex
+        config_path: str | None = None
+        config_digest: str | None = None
         try:
-            service = await _make_service(factory, directory)
+            if config is None:
+                if factory is None:
+                    raise ValueError("provide exactly one of factory or config")
+                service = await _make_service(factory, directory)
+            else:
+                service, config_path, config_digest = _make_manifest_service(
+                    config, directory, working_directory
+                )
 
             import uvicorn  # noqa: PLC0415
 
@@ -199,11 +246,13 @@ async def serve_local_service(  # noqa: C901
                 directory,
                 LocalServiceRecord(
                     instance_id=instance_id,
-                    factory=factory,
                     cwd=str(working_directory),
                     url=url,
                     pid=os.getpid(),
                     token=auth_token,
+                    factory=factory,
+                    config_path=config_path,
+                    config_digest=config_digest,
                 ),
             )
             await server_task

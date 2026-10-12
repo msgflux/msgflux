@@ -67,6 +67,30 @@ workspace = mf.AgentWorkspace.local(".", permissions=permissions)
 This workspace permits reads while writes, listings, and process execution
 remain unavailable even if a live scope requests them.
 
+To give a child agent a narrower view of an existing workspace, use
+`with_permissions()`. The child keeps the same workspace identity, cwd, and
+environment, while its requested permissions are intersected with the parent's
+permissions:
+
+```python
+parent_workspace = mf.AgentWorkspace.local(".")
+child_workspace = parent_workspace.with_permissions(
+    mf.PermissionSet(["filesystem.read"])
+)
+child_agent = Agent(
+    name="reviewer",
+    model="openai/gpt-4.1-mini",
+    workspace=child_workspace,
+    tools=[ReadFileTool()],
+)
+```
+
+The child can read through the shared workspace and cannot add permissions the
+parent does not have. A permission view borrows the parent's environment, so
+closing it does not close the parent's connection. Permission limits govern
+msgflux workspace operations; local commands still run on the host, and this
+view does not create an operating-system sandbox.
+
 For an invocation that may read only one file, restrict the scope using an exact
 resource permission constructed by the workspace:
 

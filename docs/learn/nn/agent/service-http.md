@@ -383,7 +383,7 @@ All routes require `Authorization: Bearer <token>`.
 
 | Method | Route | Result |
 | --- | --- | --- |
-| GET | `/v1/health` | Authenticated runtime identity and protocol version |
+| GET | `/v1/health` | Authenticated runtime identity, protocol version and optional default agent |
 | POST | `/v1/shutdown` | Graceful shutdown request when the host enables its shutdown hook |
 | GET | `/v1/agents` | Registered agent IDs |
 | GET / POST | `/v1/threads` | List bindings / open a thread |
@@ -398,6 +398,13 @@ All routes require `Authorization: Bearer <token>`.
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/resume` | Recovery receipt |
 | GET | `/v1/threads/{thread_id}/runs/{run_id}/approvals` | Verified approval reviews |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/approvals/{request_id}/decision` | Recorded decision |
+
+`await client.open_thread()` can omit the agent ID when the server configures a
+`default_agent`. `await client.health()` exposes that preference as optional
+metadata; older health responses decode it as `None`. For an existing thread,
+omitting the ID preserves its original binding. Without a configured default,
+a new thread needs an explicit ID. Authentication and workspace permissions
+remain governed by the existing service policies.
 
 Thread-open bodies contain `agent_id` and may include `thread_id` and an absolute
 `cwd`. Prompt bodies contain `prompt` and `request_id`; steer bodies contain

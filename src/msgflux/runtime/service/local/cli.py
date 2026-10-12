@@ -16,12 +16,14 @@ def _parser() -> argparse.ArgumentParser:
         description="Run or restart a local authenticated AgentService.",
     )
     parser.add_argument(
-        "action", nargs="?", choices=("serve", "restart"), default="serve"
+        "action", nargs="?", choices=("serve", "restart", "init"), default="serve"
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--factory",
         help="trusted factory as module:attribute; it receives runtime_dir",
     )
+    source.add_argument("--config", type=Path, help="TOML service manifest")
     parser.add_argument(
         "--restart-timeout",
         type=float,
@@ -37,12 +39,37 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="working directory used to import the factory and resolve its files",
     )
+    parser.add_argument(
+        "--model",
+        help="provider/model-id to set in a newly initialized config (init only)",
+    )
     return parser
+
+
+def _initialize_config(args: argparse.Namespace) -> None:
+    if args.factory is not None:
+        raise SystemExit("init accepts --config, not --factory")
+    from msgflux.runtime.service.local.manifest import (  # noqa: PLC0415
+        default_service_config_path,
+        initialize_service_config,
+    )
+
+    config = args.config or default_service_config_path()
+    if args.config is not None and not config.is_absolute():
+        base = args.cwd.expanduser().resolve() if args.cwd is not None else Path.cwd()
+        config = base / config
+    path = initialize_service_config(config, model=args.model)
+    sys.stdout.write(f"Initialized service config at {path}\n")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Run foreground serving or gracefully restart the local daemon."""
     args = _parser().parse_args(argv)
+    if args.model is not None and args.action != "init":
+        raise SystemExit("--model is only accepted with the init action")
+    if args.action == "init":
+        _initialize_config(args)
+        return
     if args.action == "restart":
         if args.restart_timeout is not None and args.restart_timeout <= 0:
             raise SystemExit("--restart-timeout must be positive")
@@ -53,6 +80,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         async def restart() -> None:
             client = await restart_local_service(
                 args.factory,
+                config=args.config,
                 runtime_dir=args.runtime_dir,
                 cwd=args.cwd,
                 restart_timeout=args.restart_timeout or 30,
@@ -68,10 +96,15 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         asyncio.run(restart())
         return
-    if args.factory is None:
-        raise SystemExit("serve requires --factory MODULE:CALLABLE")
     if args.cwd is not None:
         os.chdir(args.cwd.expanduser().resolve())
+    if args.factory is None and args.config is None:
+        from msgflux.runtime.service.local.manifest import (  # noqa: PLC0415
+            default_service_config_path,
+            initialize_service_config,
+        )
+
+        args.config = initialize_service_config(default_service_config_path())
     current_directory = str(Path.cwd().resolve())
     if current_directory not in sys.path:
         sys.path.insert(0, current_directory)
@@ -83,6 +116,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     asyncio.run(
         serve_local_service(
             args.factory,
+            config=args.config,
             runtime_dir=args.runtime_dir,
             cwd=Path.cwd(),
         )

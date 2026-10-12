@@ -128,7 +128,98 @@ def test_cli_parser_preserves_legacy_serve_and_adds_restart():
     assert restarted.factory is None
     assert restarted.restart_timeout == 12
 
+    initialized = cli._parser().parse_args(["init", "--config", "settings.toml"])
+    assert initialized.action == "init"
+    assert initialized.config == Path("settings.toml")
+    initialized = cli._parser().parse_args(["init", "--model", "provider/model-id"])
+    assert initialized.model == "provider/model-id"
 
-def test_cli_requires_factory_for_foreground_serve():
-    with pytest.raises(SystemExit, match="serve requires --factory"):
-        cli.main(["serve"])
+
+def test_cli_init_reports_dangling_config_symlink_without_changing_it(
+    tmp_path, monkeypatch, capsys
+):
+    target = tmp_path / "missing.toml"
+    config = tmp_path / "config.toml"
+    config.symlink_to(target)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(FileNotFoundError, match="dangling symlink"):
+        cli.main(["init", "--config", str(config)])
+
+    assert "Initialized service config" not in capsys.readouterr().out
+    assert config.is_symlink()
+    assert config.readlink() == target
+    assert not target.exists()
+
+
+def test_cli_foreground_serve_defaults_to_home_manifest(tmp_path, monkeypatch):
+    from msgflux.runtime.service.local import runner
+    from msgflux.runtime.service.local.manifest import _CONFIG_TEMPLATE
+
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    received = {}
+
+    async def capture(factory, **kwargs):
+        received["factory"] = factory
+        received.update(kwargs)
+
+    monkeypatch.setattr(runner, "serve_local_service", capture)
+    cli.main(["serve"])
+    assert received["factory"] is None
+    assert received["config"] == home / ".msgflux" / "config.toml"
+    assert received["config"].read_text() == _CONFIG_TEMPLATE
+
+
+def test_cli_init_only_creates_config_and_prints_path(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    cli.main(["init"])
+    config = home / ".msgflux" / "config.toml"
+    assert config.is_file()
+    assert config.stat().st_mode & 0o777 == 0o600
+    assert str(config) in capsys.readouterr().out
+
+
+def test_cli_init_accepts_default_model(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    cli.main(["init", "--model", "vendor/model-1"])
+    config = home / ".msgflux" / "config.toml"
+    assert 'model = "vendor/model-1"' in config.read_text()
+    assert str(config) in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("model", ["missing-slash", "provider/", " provider/id"])
+def test_cli_init_rejects_invalid_model_before_creating_files(
+    tmp_path, monkeypatch, model
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    with pytest.raises(ValueError, match="Invalid --model"):
+        cli.main(["init", "--model", model])
+    assert not home.exists()
+
+
+def test_cli_model_option_is_only_valid_with_init():
+    with pytest.raises(SystemExit, match="only accepted with the init action"):
+        cli.main(["serve", "--model", "provider/model-id"])
+
+
+def test_cli_init_resolves_relative_config_against_cwd(tmp_path, capsys):
+    project = tmp_path / "project"
+    project.mkdir()
+    cli.main(["init", "--cwd", str(project), "--config", "agents.toml"])
+    config = project / "agents.toml"
+    assert config.is_file()
+    assert str(config) in capsys.readouterr().out
+
+
+def test_cli_rejects_factory_and_config_together(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            ["serve", "--factory", "sample.backend:create", "--config", "config.toml"]
+        )
+    assert exc_info.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err

@@ -42,7 +42,7 @@ Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
 
 
 class OpenThreadRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    agent_id: Identifier
+    agent_id: Identifier | None = None
     thread_id: Identifier | None = None
     cwd: str | None = None
 
@@ -109,3 +109,4 @@ class ErrorResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class HealthRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     instance_id: str
     version: Literal[1] = 1
+    default_agent: Identifier | None = None

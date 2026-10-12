@@ -352,6 +352,19 @@ class AgentWorkspace:
     def editor(self) -> AgentWorkspaceEditor:
         return AgentWorkspaceEditor(self)
 
+    def with_permissions(self, permissions: PermissionSet) -> AgentWorkspace:
+        """Borrow this environment with a narrower immutable permission ceiling."""
+        if not isinstance(permissions, PermissionSet):
+            raise TypeError("permissions must be PermissionSet")
+        return AgentWorkspace(
+            self._environment,
+            cwd=self.cwd,
+            permissions=intersect_permissions(
+                self.permissions, permissions, workspace_id=self.workspace_id
+            ),
+            approval_policy=self.approval_policy,
+        )
+
     def with_cwd(self, cwd: str) -> AgentWorkspace:
         view = AgentWorkspace(
             self._environment,
