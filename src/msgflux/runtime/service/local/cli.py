@@ -12,7 +12,7 @@ from typing import Sequence
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="msgflux-service",
+        prog="msgflux service",
         description="Run or restart a local authenticated AgentService.",
     )
     parser.add_argument(

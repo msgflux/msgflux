@@ -76,7 +76,7 @@ doc = [
 ]
 
 [project.scripts]
-msgflux-service = "msgflux.runtime.service.local.cli:main"
+msgflux = "msgflux.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/msgflux/msgflux"

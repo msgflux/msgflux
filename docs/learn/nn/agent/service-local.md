@@ -45,14 +45,14 @@ it does not guarantee the server will remain alive for subsequent requests.
 Start the coding backend from your project directory:
 
 ```bash
-uv run --extra service msgflux-service
+uv run --extra service msgflux service
 ```
 
 When the default `~/.msgflux/config.toml` does not exist, the launcher creates a
 starter file. Set a model in that file before launching the service: msgFlux does
 not guess a provider or model. Missing model configuration produces an actionable
 error before a daemon starts or opens its store. You can provide the default at
-initialization with `msgflux-service init --model provider/model-id`, or edit
+initialization with `msgflux init --model provider/model-id`, or edit
 `defaults.model` afterward. Once configured, construction remains lazy: starting the service does not call a model or create a conversation
 directory. Provider credentials are read from their existing authentication
 source when needed.
@@ -60,13 +60,13 @@ source when needed.
 To create the file without starting the server:
 
 ```bash
-uv run --extra service msgflux-service init
+uv run --extra service msgflux init
 ```
 
 To initialize with a model already selected:
 
 ```bash
-uv run --extra service msgflux-service init --model provider/model-id
+uv run --extra service msgflux init --model provider/model-id
 ```
 
 For initialization from the SDK:
@@ -122,6 +122,47 @@ Otherwise it inherits the declared defaults; omitted `reasoning_effort` uses
 `medium`. The runtime does not select another
 model or account when a request fails. Credentials are not copied into the TOML
 file.
+
+### Builtin And Custom Subagents
+
+Use a preset to supply builtin instructions, description and tool/permission
+defaults. The Explorer investigates code and reports file references:
+
+```toml
+[agents.explorer]
+harness = "coding"
+preset = "explorer"
+```
+
+List `explorer` in a parent's `subagents` to expose it through AgentTool.
+Explicit `description`, `permissions`, tools and `prompt_file` override preset
+defaults, including empty tool/permission lists. A prompt file replaces preset
+instructions while preserving host context and effective permissions. Models and
+reasoning continue to inherit `[defaults]`; presets never choose credentials.
+
+For a custom reviewer:
+
+```toml
+[agents.reviewer]
+harness = "coding"
+description = "Review changes for defects and missing tests."
+prompt_file = "prompts/reviewer.md"
+permissions = ["read"]
+```
+
+The same resolution is available to Python hosts:
+
+```python
+from msgflux.coding.config import coding_agent_options
+
+explorer = coding_agent_options(
+    "explorer", "provider/model-id", preset="explorer",
+)
+```
+
+Use these resolved options with `create_coding_session_factory()` and a
+`CodingAgentCatalog` as the existing factory does. Trusted application `factory`
+entries own their construction; they do not accept coding presets or options.
 
 ### Tools And Subagents
 
@@ -246,8 +287,8 @@ application modules. `harness` and `factory` are mutually exclusive.
 ### Selecting And Initializing A File
 
 ```bash
-uv run --extra service msgflux-service init --config ./agents.toml
-uv run --extra service msgflux-service --config ./agents.toml
+uv run --extra service msgflux init --config ./agents.toml
+uv run --extra service msgflux service --config ./agents.toml
 ```
 
 Initialization publishes one complete file with owner-only permissions and never
@@ -454,7 +495,7 @@ default action; `restart` derives the factory and launch directory from private
 runtime metadata and prints the new instance identity and loopback URL:
 
 ```bash
-uv run --extra service msgflux-service restart \
+uv run --extra service msgflux service restart \
   --runtime-dir ~/.msgflux/runtime --restart-timeout 45
 ```
 
@@ -469,12 +510,12 @@ old connections are not silently redirected or retried.
 For an explicitly managed persistent process:
 
 ```bash
-uv run --extra service msgflux-service \
+uv run --extra service msgflux service \
   --factory my_backend:create_service \
   --cwd /absolute/project/path
 ```
 
-The explicit spelling `msgflux-service serve --factory ...` is equivalent.
+The explicit spelling `msgflux service serve --factory ...` is equivalent.
 
 The equivalent Python entry point is
 `python -m msgflux.runtime.service.local.cli`. A foreground server and clients
