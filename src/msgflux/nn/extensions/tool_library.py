@@ -10,6 +10,7 @@ from msgflux.logger import logger
 from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.module import Module
 from msgflux.protocols.mcp import MCPClient, filter_tools
+from msgflux.tools.builtin.task_bucket import TaskTool
 from msgflux.tools.builtin.task_tool import (
     BACKGROUND_CAPABILITY_TOOLS,
     BASE_TASK_TOOLS,
@@ -124,6 +125,8 @@ class BackgroundTasksExtension(ToolLibraryExtension):
     def __init__(self) -> None:
         super().__init__("background_tasks")
         self.register_buffer("disabled_tool_names", set())
+        self._grouped = False
+        self._syncing = False
 
     def validate_tool(self, _library: ToolLibrary, definition: Any) -> None:
         if ToolBackground.is_background_definition(definition):
@@ -144,6 +147,10 @@ class BackgroundTasksExtension(ToolLibraryExtension):
                 definition=definition,
             ):
                 self.disabled_tool_names.add(definition.name)
+            if self._grouped and "task" in library.library:
+                bucket = library.library["task"].impl
+                if isinstance(bucket, TaskTool) and not bucket.tools:
+                    library.remove("task")
             return
         if ToolBackground.is_background_definition(definition):
             self.sync(library)
@@ -156,14 +163,45 @@ class BackgroundTasksExtension(ToolLibraryExtension):
             self.validate_tool(library, definition)
         self.sync(library)
 
+    def enable_grouping(self) -> None:
+        """Group automatically managed task controls behind the TaskTool bucket."""
+        self._grouped = True
+        self.sync(self.library)
+
     def sync(self, library: ToolLibrary) -> None:
-        ToolBackground.sync_task_tools(
-            library=library,
-            disabled_tool_names=self.disabled_tool_names,
-            base_tools=BASE_TASK_TOOLS,
-            capability_tools=BACKGROUND_CAPABILITY_TOOLS,
-            definition_factory=library.inspect_tool_definition,
-        )
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            ToolBackground.sync_task_tools(
+                library=library,
+                disabled_tool_names=self.disabled_tool_names,
+                base_tools=BASE_TASK_TOOLS,
+                capability_tools=BACKGROUND_CAPABILITY_TOOLS,
+                definition_factory=library.inspect_tool_definition,
+                include_deferred=self._grouped,
+            )
+            if self._grouped:
+                active = any(
+                    ToolBackground.is_reserved_definition(item)
+                    for item in library.registry.definitions()
+                )
+                if (
+                    active
+                    and "task" in library.library
+                    and not isinstance(library.library["task"].impl, TaskTool)
+                ):
+                    raise ValueError(
+                        "The task name is reserved when task grouping is enabled"
+                    )
+                if active and "task" not in library.library:
+                    library.add(TaskTool())
+                elif not active and "task" in library.library:
+                    bucket = library.library["task"].impl
+                    if isinstance(bucket, TaskTool):
+                        library.remove("task")
+        finally:
+            self._syncing = False
 
     def is_active_task_tool(
         self,
@@ -179,20 +217,22 @@ class BackgroundTasksExtension(ToolLibraryExtension):
             base_tools=BASE_TASK_TOOLS,
             capability_tools=BACKGROUND_CAPABILITY_TOOLS,
             definition_factory=library.inspect_tool_definition,
+            include_deferred=self._grouped,
         )
 
     def on_remove(self, library: ToolLibrary) -> None:
-        task_tools = [
-            tool_name
-            for tool_name in tuple(library.library)
+        task_names = tuple(
+            definition.name
+            for definition in library.registry.definitions()
             if self.is_active_task_tool(
-                library=library,
-                tool_name=tool_name,
-                definition=library.get_tool_definition(tool_name),
+                library=library, tool_name=definition.name, definition=definition
             )
-        ]
-        for tool_name in task_tools:
+        )
+        for tool_name in task_names:
             library.remove(tool_name)
+        if self._grouped and "task" in library.library:
+            if isinstance(library.library["task"].impl, TaskTool):
+                library.remove("task")
         self.disabled_tool_names.clear()
 
 

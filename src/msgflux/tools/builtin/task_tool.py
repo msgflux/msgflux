@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any, Collection, Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from msgflux.core.registry import Registry
@@ -23,6 +23,10 @@ _background_message_tools = Registry()
 
 @_base_task_tools
 class TaskStatusTool(ToolBackground):
+    default_usage_guidance = (
+        "Returns compact state without final output. Retrieve results with "
+        "an output or wait tool."
+    )
     name = "task_status"
     description = "Get compact status for a background task."
     annotations = {"task_id": str, "handle": Hidden, "return": Dict[str, Any]}
@@ -59,6 +63,10 @@ class TaskListTool(ToolBackground):
 
 @_base_task_tools
 class TaskOutputTool(ToolBackground):
+    default_usage_guidance = (
+        "Retrieve the final result using task_id. Fetching is repeatable "
+        "and does not consume the result."
+    )
     name = "task_output"
     description = "Get a task's final output or failure."
     annotations = {"task_id": str, "handle": Hidden, "return": Any}
@@ -70,6 +78,10 @@ class TaskOutputTool(ToolBackground):
 
 @_base_task_tools
 class TaskWaitTool(ToolBackground):
+    default_usage_guidance = (
+        "Use a finite timeout to bound waiting. If the task is still "
+        "running, wait again or inspect its status."
+    )
     name = "task_wait"
     description = (
         "Wait for a task to finish; return its output, failure, or timeout status."
@@ -133,6 +145,10 @@ class TaskWaitTool(ToolBackground):
 
 @_base_task_tools
 class TaskInterruptTool(ToolBackground):
+    default_usage_guidance = (
+        "Request cooperative interruption. Inspect task status to confirm; "
+        "completed effects are not undone."
+    )
     name = "task_interrupt"
     description = (
         "Request a task interrupt. Cancels before start; running tasks stop at "
@@ -421,24 +437,8 @@ def format_task_activity_entry(activity: Any) -> str:
     return f"{label}: {activity.summary}"
 
 
-def build_background_dispatch_result(
-    *,
-    task_id: str,
-    tool_name: str,
-    task_capabilities: Collection[str],
-) -> str:
-    actions = ["`task_status`"]
-    if "activity" in task_capabilities:
-        actions.append("`task_activity`")
-    if "message" in task_capabilities:
-        actions.append("`task_message`")
-    actions.extend(["`task_interrupt`", "`task_wait`", "`task_output`"])
-    return (
-        f"The `{tool_name}` tool is running in the background with "
-        f"task_id='{task_id}'. Use that task_id with "
-        + ", ".join(actions[:-1])
-        + f", or {actions[-1]}."
-    )
+def build_background_dispatch_result(*, task_id: str) -> str:
+    return f"task_id='{task_id}'"
 
 
 def truncate_activity_text(value: str, *, limit: int = 140) -> str:

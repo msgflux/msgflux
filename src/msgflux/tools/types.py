@@ -345,10 +345,13 @@ class ToolBackground(ToolLibraryOperator):
         base_tools: Iterable[Callable],
         capability_tools: Mapping[str, Iterable[Callable]],
         definition_factory: Callable[[Callable], ToolDefinition],
+        include_deferred: bool = False,
     ) -> bool:
         if not cls.is_reserved_definition(definition):
             return False
-        background_tools = list(cls._iter_background_tools(library))
+        background_tools = list(
+            cls._iter_background_tools(library, include_deferred=include_deferred)
+        )
         if not background_tools:
             return False
 
@@ -418,8 +421,11 @@ class ToolBackground(ToolLibraryOperator):
         base_tools: Iterable[Callable],
         capability_tools: Mapping[str, Iterable[Callable]],
         definition_factory: Callable[[Callable], ToolDefinition],
+        include_deferred: bool = False,
     ) -> None:
-        background_tools = list(cls._iter_background_tools(library))
+        background_tools = list(
+            cls._iter_background_tools(library, include_deferred=include_deferred)
+        )
         all_task_tools = cls._all_task_tools(
             base_tools=base_tools,
             capability_tools=capability_tools,
@@ -468,9 +474,15 @@ class ToolBackground(ToolLibraryOperator):
     def _iter_background_tools(
         cls,
         library: Any,
+        *,
+        include_deferred: bool = False,
     ) -> Iterator[Any]:
-        for tool_name in library.library:
-            definition = library.get_tool_definition(tool_name)
+        definitions = (
+            library.registry.definitions()
+            if include_deferred
+            else (library.get_tool_definition(name) for name in library.library)
+        )
+        for definition in definitions:
             if cls.is_reserved_definition(definition):
                 continue
             if cls.is_background_definition(definition):
@@ -526,7 +538,7 @@ class ToolBackground(ToolLibraryOperator):
             tool_name = definition.name
             if tool_name in disabled_tool_names:
                 continue
-            if tool_name in library.library:
+            if library.registry.has(tool_name):
                 existing = library.get_tool_definition(tool_name)
                 if not cls.is_reserved_definition(existing):
                     raise ValueError(
@@ -546,7 +558,10 @@ class ToolBackground(ToolLibraryOperator):
     ) -> None:
         for tool in tools:
             tool_name = definition_factory(tool).name
-            if tool_name in library.library and cls.is_reserved_definition(
+            if library.registry.has(tool_name) and cls.is_reserved_definition(
                 library.get_tool_definition(tool_name)
             ):
-                library._remove_registered_tool(tool_name)
+                if tool_name in library.library:
+                    library._remove_registered_tool(tool_name)
+                else:
+                    library.remove(tool_name)

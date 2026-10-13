@@ -442,3 +442,45 @@ The tool returns a structured `dotdict` with:
 
         response = agent("Tell me about the history of the Python programming language")
         ```
+
+## TaskTool Bucket
+
+The coding harness automatically groups the controls needed by background-capable
+tools into one `task` tool. Its typed request schema exposes only available
+operations: `status`, `list`, `output`, `wait`, `interrupt`, and, when supported,
+`activity` and `message`. Adding or removing sources updates the schema.
+
+```json
+{"request": {"operation": "status", "task_id": "..."}}
+```
+
+```json
+{"request": {"operation": "wait", "task_id": "...", "timeout": 10.0}}
+```
+
+`status` returns compact state; `activity` shows progress; `output` and `wait`
+retrieve final results. Results can be fetched repeatedly. Each operation accepts
+its own fields, rather than requiring unrelated optional fields for every call.
+
+Generic ToolLibrary users can opt in after installing their tools:
+
+```python
+library.extensions["background_tasks"].enable_grouping()
+```
+
+The individual task controls remain the default outside the coding harness.
+`TaskTool` is also exported from `msgflux.tools.builtin` for explicit composition.
+
+
+A background dispatch returns only its task identifier:
+
+```text
+task_id='abc123'
+```
+
+Instructions for consulting and controlling tasks belong to the controller's
+usage guidance, rather than being repeated in each dispatch result. The coding
+harness applies TaskTool's default usage guidance automatically. Generic
+ToolLibrary users can opt in with `library.apply_default_usage_guidance()`.
+The guidance is associated with the registered tool name, so a renamed controller
+uses that name without changes to the background runtime.

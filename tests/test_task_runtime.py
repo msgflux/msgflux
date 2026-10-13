@@ -752,7 +752,7 @@ def test_task_wait_returns_final_output():
     assert "task_interrupt" in library.get_tool_names()
     task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
     assert f"task_id='{task_id}'" in dispatch.tool_calls[0].result
-    assert "`task_wait`" in dispatch.tool_calls[0].result
+    assert dispatch.tool_calls[0].result == f"task_id='{task_id}'"
 
     timer = threading.Timer(0.1, release.set)
     timer.start()
@@ -1368,7 +1368,7 @@ def test_background_agent_inherits_context_and_checkpoint_run_id():
     assert task_record.metadata["checkpoint_run_id"] == task_id
 
 
-def test_background_agent_dispatch_mentions_task_message_and_activity():
+def test_background_agent_controls_include_message_and_activity():
     worker = Agent(name="worker", model=_mock_model("done"))
     worker.tool_config = {"background": True}
 
@@ -1377,14 +1377,15 @@ def test_background_agent_dispatch_mentions_task_message_and_activity():
     dispatch = library([("call_1", "worker", {"task": "Solve this"})])
     result = dispatch.tool_calls[0].result
 
-    assert "`task_activity`" in result
-    assert "`task_message`" in result
-    assert "`task_interrupt`" in result
-    assert "`task_wait`" in result
-    assert "`task_output`" in result
-    assert "task_message" in library.get_tool_names()
-    assert "task_activity" in library.get_tool_names()
-    assert "task_interrupt" in library.get_tool_names()
+    task_id = library.get_handle().get_task_store().list()[0].task_id
+    assert result == f"task_id='{task_id}'"
+    assert {
+        "task_activity",
+        "task_message",
+        "task_interrupt",
+        "task_wait",
+        "task_output",
+    } <= set(library.get_tool_names())
 
 
 def test_injected_handle_can_add_background_agent_with_agent_task_tools():
@@ -1410,7 +1411,7 @@ def test_injected_handle_can_add_background_agent_with_agent_task_tools():
     assert "task_message" in add_result
 
 
-def test_background_tool_dispatch_does_not_mention_task_activity():
+def test_background_tool_dispatch_is_compact_without_activity_controls():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
         """Run a simple background tool."""
@@ -1421,12 +1422,12 @@ def test_background_tool_dispatch_does_not_mention_task_activity():
     dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
     result = dispatch.tool_calls[0].result
 
-    assert "`task_status`" in result
-    assert "`task_interrupt`" in result
-    assert "`task_wait`" in result
-    assert "`task_output`" in result
-    assert "`task_activity`" not in result
-    assert "`task_message`" not in result
+    assert "task_status" in library.get_tool_names()
+    assert "task_interrupt" in library.get_tool_names()
+    assert "task_wait" in library.get_tool_names()
+    assert "task_output" in library.get_tool_names()
+    task_id = library.get_handle().get_task_store().list()[0].task_id
+    assert result == f"task_id='{task_id}'"
     assert "task_activity" not in library.get_tool_names()
 
 
@@ -1441,7 +1442,7 @@ def test_background_activity_capability_is_available_for_non_agent_task():
     dispatch = library([("call_1", "monitored_pipeline", {"value": 4})])
     task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
 
-    assert "`task_activity`" in dispatch.tool_calls[0].result
+    assert dispatch.tool_calls[0].result == f"task_id='{task_id}'"
     assert "`task_message`" not in dispatch.tool_calls[0].result
     assert "task_activity" in library.get_tool_names()
     assert "task_message" not in library.get_tool_names()
