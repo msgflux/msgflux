@@ -24,6 +24,7 @@ from msgflux.runtime.service.store import validate_identifier
 
 _CONFIG_TEMPLATE = """[defaults]
 agent = "coding"
+account = "default"
 # Choose a model available to your configured provider, for example:
 # model = "provider/model-id"
 # reasoning_effort = "medium"
@@ -44,6 +45,8 @@ harness = "coding"
 
 class _DefaultsConfig(msgspec.Struct, forbid_unknown_fields=True):
     agent: str
+    account: str = "default"
+    accounts_dir: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -159,6 +162,19 @@ def load_factory(path: str) -> Any:
     return factory
 
 
+def _resolve_account_defaults(defaults: _DefaultsConfig, config_dir: Path) -> None:
+    from msgflux.accounts.store import Accounts  # noqa: PLC0415
+
+    Accounts._validate_name(defaults.account, "account")
+    if defaults.accounts_dir is not None:
+        if not defaults.accounts_dir.strip():
+            raise ValueError("defaults.accounts_dir must be non-empty")
+        selected_root = Path(defaults.accounts_dir).expanduser()
+        if not selected_root.is_absolute():
+            selected_root = config_dir / selected_root
+        defaults.accounts_dir = str(selected_root.resolve())
+
+
 def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceManifest:
     """Parse and resolve the config without importing user factories."""
     manifest_path = Path(path).expanduser()
@@ -186,6 +202,7 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
         and not config.defaults.reasoning_effort.strip()
     ):
         raise ValueError("defaults.reasoning_effort must be non-empty when provided")
+    _resolve_account_defaults(config.defaults, manifest_path.parent)
     if config.defaults.agent not in config.agents:
         raise ValueError("defaults.agent must reference a declared agent")
 

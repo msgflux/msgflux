@@ -602,6 +602,7 @@ class BackgroundTaskDispatcher:
                 parent_run_id=task.metadata.get("parent_run_id"),
                 root_run_id=task.metadata.get("root_run_id"),
                 workspace=selected_workspace,
+                account_name=task.metadata.get("account_name"),
             ),
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
@@ -631,6 +632,7 @@ class BackgroundTaskDispatcher:
                 parent_run_id=task.metadata.get("parent_run_id"),
                 root_run_id=task.metadata.get("root_run_id"),
                 workspace=selected_workspace,
+                account_name=task.metadata.get("account_name"),
             ),
         }
         if recover_expired and checkpoint is None:
@@ -774,6 +776,7 @@ class BackgroundTaskDispatcher:
             thread_id = new_thread_id()
         parent_run_id = context.get("run_id")
         root_run_id = context.get("root_run_id")
+        account_name = context["scope"].account_name
         checkpoint_store = self._effective_checkpoint_store(
             tool=tool,
             resume_params=task_resume_params,
@@ -809,6 +812,7 @@ class BackgroundTaskDispatcher:
             "thread_id": thread_id,
             "parent_run_id": parent_run_id,
             "root_run_id": root_run_id,
+            "account_name": account_name,
             "checkpoint_thread_id": thread_id,
             "background_capabilities": list(task_capabilities),
             "interrupt_requested": False,
@@ -862,6 +866,7 @@ class BackgroundTaskDispatcher:
                     else task.task_id
                 ),
                 workspace=selected_workspace,
+                account_name=account_name,
             )
         runner_params["tool_call_id"] = tool_id
         activity_recorder = TaskActivityRecorder(task.task_id, task_store)
@@ -887,6 +892,7 @@ class BackgroundTaskDispatcher:
                     else None
                 ),
                 workspace=selected_workspace,
+                account_name=account_name,
             ),
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id

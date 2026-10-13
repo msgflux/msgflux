@@ -96,9 +96,20 @@ class SQLiteServiceStore:
                     fingerprint TEXT NOT NULL,
                     status TEXT NOT NULL, owner_id TEXT, error TEXT,
                     revision INTEGER NOT NULL DEFAULT 0,
+                    account_name TEXT,
                     PRIMARY KEY (thread_id, request_id)
                     )"""
                 )
+                admission_columns = {
+                    row["name"]
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(service_admissions)"
+                    )
+                }
+                if "account_name" not in admission_columns:
+                    self._connection.execute(
+                        "ALTER TABLE service_admissions ADD COLUMN account_name TEXT"
+                    )
                 self._connection.execute(
                     """CREATE UNIQUE INDEX IF NOT EXISTS service_active_thread
                     ON service_admissions(thread_id)
@@ -348,6 +359,7 @@ class SQLiteServiceStore:
             row["namespace"],
             row["prompt"],
             row["owner_id"],
+            row["account_name"] if "account_name" in row.keys() else None,
         )
 
     def get(self, thread_id: str, request_id: str) -> AdmissionRecord | None:
@@ -371,7 +383,11 @@ class SQLiteServiceStore:
         return self._record(row) if row is not None else None
 
     def adopt_checkpoint(
-        self, thread_id: str, run_id: str, namespace: str
+        self,
+        thread_id: str,
+        run_id: str,
+        namespace: str,
+        account_name: str | None = None,
     ) -> AdmissionRecord:
         """Journal an existing checkpoint identity without scheduling work.
 
@@ -420,9 +436,16 @@ class SQLiteServiceStore:
                 self._connection.execute(
                     """INSERT INTO service_admissions
                     (thread_id, request_id, run_id, namespace, prompt,
-                     fingerprint, status, owner_id, revision)
-                    VALUES (?, ?, ?, ?, '', ?, 'running', 'checkpoint', 1)""",
-                    (thread_id, request_id, run_id, namespace, fingerprint),
+                     fingerprint, status, owner_id, revision, account_name)
+                    VALUES (?, ?, ?, ?, '', ?, 'running', 'checkpoint', 1, ?)""",
+                    (
+                        thread_id,
+                        request_id,
+                        run_id,
+                        namespace,
+                        fingerprint,
+                        account_name,
+                    ),
                 )
             except sqlite3.IntegrityError as error:
                 active = self._connection.execute(
@@ -444,7 +467,14 @@ class SQLiteServiceStore:
             return self._record(row)
 
     def admit(
-        self, thread_id: str, request_id: str, prompt: str, namespace: str
+        self,
+        thread_id: str,
+        request_id: str,
+        prompt: str,
+        namespace: str,
+        account_name: str | None = None,
+        *,
+        check_account: bool = True,
     ) -> AdmissionRecord:
         validate_identifier(thread_id, "thread_id")
         validate_identifier(request_id, "request_id")
@@ -464,13 +494,15 @@ class SQLiteServiceStore:
             if existing is not None:
                 if (existing.namespace, existing.prompt) != (namespace, prompt):
                     raise ServiceConflictError("request_id identifies another input")
+                if check_account and existing.account_name != account_name:
+                    raise ServiceConflictError("request_id identifies another account")
                 return existing
             try:
                 self._connection.execute(
                     """INSERT INTO service_admissions
                     (thread_id, request_id, run_id, namespace, prompt,
-                     fingerprint, status)
-                    VALUES (?, ?, ?, ?, ?, ?, 'accepted')""",
+                     fingerprint, status, account_name)
+                    VALUES (?, ?, ?, ?, ?, ?, 'accepted', ?)""",
                     (
                         thread_id,
                         request_id,
@@ -478,6 +510,7 @@ class SQLiteServiceStore:
                         namespace,
                         prompt,
                         fingerprint,
+                        account_name,
                     ),
                 )
             except sqlite3.IntegrityError as error:

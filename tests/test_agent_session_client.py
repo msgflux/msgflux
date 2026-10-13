@@ -201,7 +201,9 @@ async def test_prompt_generates_request_id_and_watch_delegates():
     assert await session.prompt("hello") == "receipt"
     request_id = client.prompt.await_args.kwargs["request_id"]
     UUID(request_id)
-    client.prompt.assert_awaited_once_with("thread", "hello", request_id=request_id)
+    client.prompt.assert_awaited_once_with(
+        "thread", "hello", request_id=request_id, account_name=None
+    )
     assert session.watch() is watcher_context
     client.watch.assert_called_once_with("thread")
 

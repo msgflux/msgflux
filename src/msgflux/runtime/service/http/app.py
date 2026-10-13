@@ -214,7 +214,10 @@ def create_service_app(  # noqa: C901
     @post("/v1/threads/{thread_id:str}/prompt")
     async def prompt(thread_id: PathValue, data: PromptRequest) -> Response:
         receipt = await service.prompt(
-            thread_id, data.prompt, request_id=data.request_id
+            thread_id,
+            data.prompt,
+            request_id=data.request_id,
+            account_name=data.account_name,
         )
         return _response(receipt, 202)
 

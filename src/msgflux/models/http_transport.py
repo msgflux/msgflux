@@ -136,6 +136,7 @@ class HTTPTransport:
         iterate: Callable[[Any], Iterator[Any]],
         method: str = "POST",
         headers: dict[str, str] | None = None,
+        credentials: ResolvedModelCredentials | None = None,
         json: Any = None,
         data: Any = None,
         files: Any = None,
@@ -145,12 +146,18 @@ class HTTPTransport:
             emitted = False
             owner._raise_if_aborted()
             try:
-                credentials = owner.credential_resolver.resolve(owner)
+                attempt_credentials = (
+                    credentials
+                    if credentials is not None
+                    else owner.credential_resolver.resolve(owner)
+                )
                 with self._get_client().stream(
                     method,
-                    self._url(owner, endpoint, credentials),
+                    self._url(owner, endpoint, attempt_credentials),
                     **self._request_kwargs(
-                        headers=merge_headers(headers or {}, credentials.headers),
+                        headers=merge_headers(
+                            headers or {}, attempt_credentials.headers
+                        ),
                         json=json,
                         data=data,
                         files=files,
@@ -191,6 +198,7 @@ class HTTPTransport:
         iterate: Callable[[Any], AsyncIterator[Any]],
         method: str = "POST",
         headers: dict[str, str] | None = None,
+        credentials: ResolvedModelCredentials | None = None,
         json: Any = None,
         data: Any = None,
         files: Any = None,
@@ -200,12 +208,18 @@ class HTTPTransport:
             emitted = False
             owner._raise_if_aborted()
             try:
-                credentials = await owner.credential_resolver.aresolve(owner)
+                attempt_credentials = (
+                    credentials
+                    if credentials is not None
+                    else await owner.credential_resolver.aresolve(owner)
+                )
                 async with self._get_async_client().stream(
                     method,
-                    self._url(owner, endpoint, credentials),
+                    self._url(owner, endpoint, attempt_credentials),
                     **self._request_kwargs(
-                        headers=merge_headers(headers or {}, credentials.headers),
+                        headers=merge_headers(
+                            headers or {}, attempt_credentials.headers
+                        ),
                         json=json,
                         data=data,
                         files=files,

@@ -233,9 +233,16 @@ class AgentServiceClient:
         )
 
     async def prompt(
-        self, thread_id: str, prompt: str, *, request_id: str
+        self,
+        thread_id: str,
+        prompt: str,
+        *,
+        request_id: str,
+        account_name: str | None = None,
     ) -> AdmissionReceipt:
-        request = PromptRequest(prompt=prompt, request_id=request_id)
+        request = PromptRequest(
+            prompt=prompt, request_id=request_id, account_name=account_name
+        )
         return await self._json(
             "POST", self._thread_path(thread_id) + "/prompt", AdmissionReceipt, request
         )

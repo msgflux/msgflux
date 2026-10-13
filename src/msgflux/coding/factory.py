@@ -153,6 +153,7 @@ def create_coding_session_factory(
     catalog: CodingAgentCatalog,
     config_path: Path,
     runtime_dir: Path,
+    accounts=None,
 ) -> Callable[[ServiceThread], Awaitable[AgentSession]]:
     """Create a lazy, per-thread AgentSession factory for a coding entry."""
     if not isinstance(options, CodingAgentOptions):
@@ -169,6 +170,7 @@ def create_coding_session_factory(
         catalog=catalog,
         config_path=config_path,
         runtime_dir=runtime_dir,
+        accounts=accounts,
     )
     return builder.create_session
 
@@ -181,11 +183,13 @@ class _CodingSessionBuilder:
         catalog: CodingAgentCatalog,
         config_path: Path,
         runtime_dir: Path,
+        accounts=None,
     ) -> None:
         self.options = options
         self.catalog = catalog
         self.config_path = config_path
         self.runtime_dir = runtime_dir
+        self.accounts = accounts
 
     async def create_session(self, thread: ServiceThread) -> AgentSession:
         if not isinstance(thread, ServiceThread):
@@ -248,7 +252,11 @@ class _CodingSessionBuilder:
             for name in selected.tools_deferred
             if coding_tool_allowed(name, permissions)
         )
-        model = _create_model(selected)
+        model = (
+            _create_model(selected, accounts=self.accounts)
+            if self.accounts is not None
+            else _create_model(selected)
+        )
         models.append(model)
         children = self._build_children(
             selected,
@@ -347,13 +355,14 @@ def _model_has_native_commentary(model: Any) -> bool:
     return bool(callable(supports_unphased) and supports_unphased())
 
 
-def _create_model(options: CodingAgentOptions):
+def _create_model(options: CodingAgentOptions, *, accounts=None):
     from msgflux.models.model import Model  # noqa: PLC0415
 
-    return Model.chat_completion(
-        options.model,
-        reasoning_effort=options.reasoning_effort,
-    )
+    kwargs = {"reasoning_effort": options.reasoning_effort}
+    if accounts is not None:
+        provider = options.model.split("/", 1)[0]
+        kwargs["credential_resolver"] = accounts.resolver(provider)
+    return Model.chat_completion(options.model, **kwargs)
 
 
 __all__ = [

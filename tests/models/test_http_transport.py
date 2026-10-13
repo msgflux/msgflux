@@ -248,3 +248,72 @@ def test_owned_async_client_is_recreated_for_a_new_event_loop():
     assert clients[0] is not clients[1]
     asyncio.run(transport.aclose())
     assert transport._async_client is None
+
+
+def test_stream_accepts_request_bound_credentials_without_resolving_again():
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return httpx2.Response(200, content=b"stream body")
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    credentials = _Credentials()
+    owner = _Owner(credentials)
+    transport = HTTPTransport(client=client, max_retries=0)
+    resolved = ResolvedModelCredentials(
+        headers={"Authorization": "Bearer request-bound"}
+    )
+    try:
+        chunks = list(
+            transport.stream(
+                owner,
+                "/stream",
+                credentials=resolved,
+                iterate=lambda response: response.iter_bytes(),
+            )
+        )
+        assert chunks == [b"stream body"]
+        assert captured[0].headers["authorization"] == "Bearer request-bound"
+        assert credentials.calls == 0
+    finally:
+        transport.close()
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_astream_accepts_request_bound_credentials_without_resolving_again():
+    captured = []
+
+    async def handler(request):
+        captured.append(request)
+        return httpx2.Response(200, content=b"stream body")
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    credentials = _AsyncCredentials()
+    owner = _Owner(credentials)
+    transport = HTTPTransport(async_client=client, max_retries=0)
+    resolved = ResolvedModelCredentials(
+        headers={"Authorization": "Bearer request-bound"}
+    )
+
+    async def iterate(response):
+        async for chunk in response.aiter_bytes():
+            yield chunk
+
+    try:
+        chunks = [
+            chunk
+            async for chunk in transport.astream(
+                owner,
+                "/stream",
+                credentials=resolved,
+                iterate=iterate,
+            )
+        ]
+        assert chunks == [b"stream body"]
+        assert captured[0].headers["authorization"] == "Bearer request-bound"
+        assert credentials.calls == 0
+    finally:
+        await transport.aclose()
+        await client.aclose()
