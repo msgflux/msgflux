@@ -94,12 +94,18 @@ class AgentSessionClient:
         )
 
     async def prompt(
-        self, prompt: str, *, request_id: str | None = None
+        self,
+        prompt: str,
+        *,
+        request_id: str | None = None,
+        account_name: str | None = None,
     ) -> AdmissionReceipt:
         """Admit a prompt without coupling execution to an observer."""
         if request_id is None:
             request_id = uuid4().hex
-        return await self._client.prompt(self.thread_id, prompt, request_id=request_id)
+        return await self._client.prompt(
+            self.thread_id, prompt, request_id=request_id, account_name=account_name
+        )
 
     async def receipt(self, request_id: str) -> AdmissionReceipt:
         """Return the current admission receipt for a request identity."""

@@ -45,11 +45,14 @@ def _make_manifest_service(
 ) -> tuple[AgentService, str, str]:
     manifest = load_service_manifest(config_path, cwd=cwd)
     coding_builder = None
+    accounts = None
     if manifest.coding_catalog.agents:
+        from msgflux.accounts.store import Accounts  # noqa: PLC0415
         from msgflux.coding.factory import (  # noqa: PLC0415
             create_coding_session_factory,
         )
 
+        accounts = Accounts(manifest.defaults.accounts_dir)
         coding_builder = create_coding_session_factory
     factories = {}
     for agent_id, config in manifest.agents.items():
@@ -62,6 +65,7 @@ def _make_manifest_service(
                     catalog=manifest.coding_catalog,
                     config_path=manifest.path,
                     runtime_dir=runtime_dir,
+                    accounts=accounts,
                 )
             else:
                 if config.factory is None:
@@ -73,7 +77,11 @@ def _make_manifest_service(
             raise ValueError(f"Invalid agent factory for {agent_id!r}: {exc}") from exc
     store = SQLiteServiceStore(runtime_dir / "service.sqlite3")
     try:
-        service = AgentService(store=store, default_agent=manifest.defaults.agent)
+        service = AgentService(
+            store=store,
+            default_agent=manifest.defaults.agent,
+            default_account=manifest.defaults.account,
+        )
         for agent_id, factory in factories.items():
             service.register(agent_id, factory)
     except BaseException:

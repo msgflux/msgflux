@@ -446,6 +446,57 @@ def test_401_retries_only_when_auth_file_has_a_new_access_token(
         model.close()
 
 
+def test_401_retries_with_injected_resolver_without_reading_external_auth(
+    tmp_path, monkeypatch
+):
+    from msgflux.models.model_credentials import (
+        ModelCredentialResolver,
+        ResolvedModelCredentials,
+    )
+    from msgflux.models.providers import openai_codex
+
+    auth_file = _write_auth(tmp_path / "auth.json", "external-token")
+    attempts = []
+    sent = []
+
+    class ManagedResolver(ModelCredentialResolver):
+        def resolve(self, owner):
+            token = "managed-one" if len(attempts) == 0 else "managed-two"
+            attempts.append(token)
+            return ResolvedModelCredentials(
+                headers={"Authorization": f"Bearer {token}"}
+            )
+
+    def handler(request):
+        sent.append(request.headers["authorization"])
+        if len(sent) == 1:
+            return httpx2.Response(401, text="private error")
+        return httpx2.Response(
+            200,
+            text=_sse(
+                {"type": "response.completed", "response": _completed_response()}
+            ),
+        )
+
+    def forbidden_external_read(path):
+        raise AssertionError("Codex retry read the external auth file")
+
+    monkeypatch.setattr(openai_codex, "read_codex_credentials", forbidden_external_read)
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    model = _model(
+        auth_file,
+        client=client,
+        credential_resolver=ManagedResolver(),
+    )
+    try:
+        response = model("Retry using the managed grant")
+        assert response.consume() == "Codex says hello."
+        assert attempts == ["managed-one", "managed-two"]
+        assert sent == ["Bearer managed-one", "Bearer managed-two"]
+    finally:
+        model.close()
+
+
 def test_changed_auth_file_is_used_by_the_next_request(tmp_path):
     auth_file = _write_auth(tmp_path / "auth.json")
     captured = []

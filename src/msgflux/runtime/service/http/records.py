@@ -53,6 +53,7 @@ class OpenThreadRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True)
 class PromptRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     prompt: str
     request_id: Identifier
+    account_name: Identifier | None = None
 
 
 class SteerRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

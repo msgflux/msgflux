@@ -912,7 +912,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self.retry = retry
         self.warmup_max_tokens = warmup_max_tokens or 1
         self._initialize()
-        self._get_api_key()
+        if credential_resolver is None:
+            self._get_api_key()
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params.pop("provider_tools", None)
@@ -1650,10 +1651,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def _check_cache(self, **kwargs):
         if self.enable_cache and self._response_cache:
+            scope = get_execution_context().get("scope")
             cache_key = generate_cache_key(
                 **kwargs,
                 _sampling_run_params=self.sampling_run_params,
                 _chat_settings=self.chat_settings,
+                _account_name=getattr(scope, "account_name", None),
             )
             hit, cached_response = self._response_cache.get(cache_key)
             if hit:
@@ -1662,10 +1665,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def _store_cache(self, response, **kwargs):
         if self.enable_cache and self._response_cache:
+            scope = get_execution_context().get("scope")
             cache_key = generate_cache_key(
                 **kwargs,
                 _sampling_run_params=self.sampling_run_params,
                 _chat_settings=self.chat_settings,
+                _account_name=getattr(scope, "account_name", None),
             )
             self._response_cache.set(cache_key, response)
 

@@ -55,6 +55,24 @@ class CodexCredentialResolver(ModelCredentialResolver):
         )
 
 
+def _credential_fingerprint(credentials: ResolvedModelCredentials) -> bytes | None:
+    authorization = next(
+        (
+            value
+            for key, value in credentials.headers.items()
+            if key.casefold() == "authorization"
+        ),
+        None,
+    )
+    if not isinstance(authorization, str) or not authorization:
+        return None
+    scheme, separator, token = authorization.partition(" ")
+    fingerprint_value = (
+        token if separator and scheme.casefold() == "bearer" else authorization
+    )
+    return sha256(fingerprint_value.encode()).digest()
+
+
 class CodexResponsesAPI(OpenAIResponsesAPI):
     """Translate the shared Responses request to the Codex SSE endpoint."""
 
@@ -187,15 +205,24 @@ class CodexChatTransport(HTTPChatTransport):
         return owner.api_adapter.decode_response(completed)
 
     def _stream(self, owner: Any, request: PreparedChatRequest) -> Iterator[Any]:
+        previous_fingerprint: bytes | None = None
         for attempt in range(2):
             emitted = False
-            _sent_token_fingerprint.set(None)
+            credentials = owner.credential_resolver.resolve(owner)
+            fingerprint = _credential_fingerprint(credentials)
+            _sent_token_fingerprint.set(fingerprint)
+            if attempt and (fingerprint is None or fingerprint == previous_fingerprint):
+                raise RuntimeError(
+                    "Codex login expired or revoked; renew it in Codex CLI or Tau"
+                ) from None
+            previous_fingerprint = fingerprint
             try:
                 with closing(
                     self.http.stream(
                         owner,
                         request.endpoint,
                         headers=self._headers(request),
+                        credentials=credentials,
                         json=self._body(request),
                         iterate=lambda response: iter_sse_json(response.iter_lines()),
                     )
@@ -213,12 +240,7 @@ class CodexChatTransport(HTTPChatTransport):
                     raise RuntimeError(
                         "Codex request failed after streaming began"
                     ) from None
-                updated = read_codex_credentials(owner.auth_file).access_token
-                if (
-                    attempt
-                    or sha256(updated.encode()).digest()
-                    == _sent_token_fingerprint.get()
-                ):
+                if attempt:
                     raise RuntimeError(
                         "Codex login expired or revoked; renew it in Codex CLI or Tau"
                     ) from None
@@ -226,15 +248,24 @@ class CodexChatTransport(HTTPChatTransport):
     async def _astream(
         self, owner: Any, request: PreparedChatRequest
     ) -> AsyncIterator[Any]:
+        previous_fingerprint: bytes | None = None
         for attempt in range(2):
             emitted = False
-            _sent_token_fingerprint.set(None)
+            credentials = await owner.credential_resolver.aresolve(owner)
+            fingerprint = _credential_fingerprint(credentials)
+            _sent_token_fingerprint.set(fingerprint)
+            if attempt and (fingerprint is None or fingerprint == previous_fingerprint):
+                raise RuntimeError(
+                    "Codex login expired or revoked; renew it in Codex CLI or Tau"
+                ) from None
+            previous_fingerprint = fingerprint
             try:
                 async with aclosing(
                     self.http.astream(
                         owner,
                         request.endpoint,
                         headers=self._headers(request),
+                        credentials=credentials,
                         json=self._body(request),
                         iterate=lambda response: aiter_sse_json(response.aiter_lines()),
                     )
@@ -252,12 +283,7 @@ class CodexChatTransport(HTTPChatTransport):
                     raise RuntimeError(
                         "Codex request failed after streaming began"
                     ) from None
-                updated = read_codex_credentials(owner.auth_file).access_token
-                if (
-                    attempt
-                    or sha256(updated.encode()).digest()
-                    == _sent_token_fingerprint.get()
-                ):
+                if attempt:
                     raise RuntimeError(
                         "Codex login expired or revoked; renew it in Codex CLI or Tau"
                     ) from None
@@ -315,7 +341,8 @@ class OpenAICodexChatCompletion(OpenAICompatibleChatCompletion):
     def _initialize(self) -> None:
         if not isinstance(getattr(self, "chat_transport", None), CodexChatTransport):
             self.chat_transport = CodexChatTransport()
-        self.credential_resolver = CodexCredentialResolver()
+        if "credential_resolver" not in self.__dict__:
+            self.credential_resolver = CodexCredentialResolver()
         self.api_mode_capabilities = self.capabilities.mode(self.api_mode)
         self.api_adapter = self.api_mode_capabilities.adapter
         self.reasoning_codec = self.api_mode_capabilities.reasoning_codec

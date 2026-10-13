@@ -263,7 +263,11 @@ class CodingSession:
         return await self.service.wait(self._thread_id, request_id)
 
     async def prompt(
-        self, prompt: str, *, request_id: str | None = None
+        self,
+        prompt: str,
+        *,
+        request_id: str | None = None,
+        account_name: str | None = None,
     ) -> AdmissionReceipt:
         """Admit input without attaching an event observer."""
         if request_id is None:
@@ -272,6 +276,7 @@ class CodingSession:
             self._thread_id,
             prompt,
             request_id=request_id,
+            account_name=account_name,
         )
 
     async def stream(

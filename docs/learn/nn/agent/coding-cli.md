@@ -6,9 +6,15 @@ manages the service and submits noninteractive tasks. The TUI is a separate fron
 ## Initialize And Run
 
 ```bash
+msgflux accounts login provider --account-name default
 msgflux init --model provider/model-id
 msgflux -p "Review the current changes"
 ```
+
+The login command chooses the provider's registered authentication method: API
+keys use a hidden prompt and OAuth adapters start their login flow. The coding
+backend uses the managed `default` account unless selected otherwise; credentials
+are not copied into the service config. See [Accounts](accounts.md).
 
 Initialization creates `~/.msgflux/config.toml` once and preserves an existing
 file. Choose a model available through your configured credentials. A prompt
@@ -62,6 +68,25 @@ progress messages. Other service threads remain interactive by default. The mode
 is part of the thread binding and survives restart; use a new thread when switching
 between interactive and print modes. Application factories receive this flag on
 ServiceThread and are responsible for honoring it.
+
+## Select An Account
+
+```bash
+msgflux accounts login openai-codex --account-name work
+msgflux -p "Review the current changes" --account-name work --json
+```
+
+`--account-name` selects the credential bundle for this execution, including its
+subagents and background tasks. Omit it to use `[defaults].account` (`default`
+when unspecified). A later prompt on the same thread can select a different
+account. Recovery retains the original recorded account; changing the default
+does not change an admitted run. Missing providers or invalid credentials fail
+without selecting a different account or reading global provider credentials.
+
+Accounts normally live under `~/.msgflux/accounts`. A trusted host can set
+`[defaults].accounts_dir` to another directory; use the same path with
+`msgflux accounts login --accounts-dir PATH`. Credentials are resolved for each
+request, rather than stored on cached models or shared HTTP clients.
 
 ## Live Events
 

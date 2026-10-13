@@ -45,6 +45,7 @@ class PromptExecution:
         runtime_dir: Path | None = None,
         cwd: Path | None = None,
         agent_id: str | None = None,
+        account_name: str | None = None,
         thread_id: str | None = None,
         observer: ObservationCallback | None = None,
         interrupt_on_cancel: bool = False,
@@ -70,7 +71,10 @@ class PromptExecution:
                         observer("snapshot", watcher.snapshot)
                     admission = asyncio.create_task(
                         client.prompt(
-                            thread.thread_id, prompt, request_id=self.result.request_id
+                            thread.thread_id,
+                            prompt,
+                            request_id=self.result.request_id,
+                            account_name=account_name,
                         )
                     )
                     receipt = await asyncio.shield(admission)

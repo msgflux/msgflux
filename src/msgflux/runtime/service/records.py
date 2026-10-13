@@ -90,6 +90,7 @@ class AdmissionRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     namespace: str
     prompt: str
     owner_id: str | None = None
+    account_name: str | None = None
 
 
 class SnapshotRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

@@ -22,7 +22,8 @@ when an existing instance is healthy.
 ## Run A Server
 
 Save this as `server.py` and set `MSGFLUX_SERVICE_TOKEN` to a secret shared with
-authorized clients. Configure the provider credentials in the server environment.
+authorized clients. This example reads provider credentials from a local
+managed account bundle.
 
 ```python
 import asyncio
@@ -30,6 +31,7 @@ import os
 
 import uvicorn
 import msgflux as mf
+from msgflux.accounts import Accounts
 from msgflux.coding import CodingCheckpointExtension
 from msgflux.data.stores import InMemoryCheckpointStore
 from msgflux.nn import Agent
@@ -41,15 +43,21 @@ from msgflux.tools.builtin import ReadFileTool
 
 async def main():
     journal = SQLiteServiceStore()
+    accounts = Accounts()
     service = AgentService(
         store=journal,
+        default_account="default",
         cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
     )
 
     def create_session(thread):
         if thread.cwd is None:
             raise ValueError("This coding service requires a project cwd")
-        model = mf.Model.chat_completion("openai/gpt-6-luna", reasoning_effort="medium")
+        model = mf.Model.chat_completion(
+            "openai/gpt-6-luna",
+            reasoning_effort="medium",
+            credential_resolver=accounts.resolver("openai"),
+        )
         workspace = AgentWorkspace.local(thread.cwd)
         agent = Agent(
             name="main",
@@ -92,6 +100,39 @@ alone grants no tool access. Reopening the thread without a path returns its
 stored binding, and supplying a different path conflicts. Clients cannot replace
 model settings or expand the workspace's permission ceiling through the HTTP
 payload.
+
+The host selects the account for new runs through `AgentService.default_account`.
+Coding services created from a local manifest read this from `defaults.account`,
+which defaults to `"default"`. The manifest's optional `defaults.accounts_dir`
+sets the account bundle root; a relative path is resolved beside the manifest,
+and an omitted path uses `~/.msgflux/accounts/`. In the Python example above,
+`Accounts()` uses that same default root. Pass `Accounts(root=...)` when a host
+needs a different root.
+For a custom `AgentSession` factory, also attach an `Accounts.resolver(provider)`
+to each model that should use managed credentials; `default_account` selects the
+run identity and does not create or load provider credentials by itself.
+
+An authenticated client can choose an account for a new prompt:
+
+```python
+receipt = await client.prompt(
+    thread.thread_id,
+    "Review the current changes",
+    request_id="review-17",
+    account_name="work",
+)
+```
+
+The service records that selection with the admission before scheduling the
+Agent. Omitting `account_name` selects the service default for a new admission.
+Replaying a request ID with no account reuses its original admission; supplying
+a different explicit account for that ID returns a conflict. Resume always uses
+the account already stored for the run, even after the service default changes.
+Secrets never travel in the prompt request. Missing credentials fail for the
+selected account and provider without falling back to environment keys or a
+different account. Older admissions without a recorded account remain unknown;
+managed authentication cannot safely resume them under today's default, so
+start a new execution with an explicit account.
 
 An authenticated service owner can read and update the selected policy for an
 existing thread:

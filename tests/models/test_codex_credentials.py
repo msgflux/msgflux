@@ -7,6 +7,7 @@ import pytest
 
 from msgflux.models.codex_credentials import (
     CodexOAuthCredentials,
+    parse_codex_credentials,
     read_codex_credentials,
     resolve_codex_auth_file,
 )
@@ -44,6 +45,36 @@ def test_reads_codex_cli_credentials_and_jwt_expiry(tmp_path, api_key_value):
     )
     assert token not in repr(result)
     assert "acct-cli" not in repr(result)
+
+
+def test_parses_codex_payload_in_memory_without_filesystem():
+    token = _jwt({"exp": 2_000_000_000})
+    payload = {
+        "auth_mode": "chatgpt",
+        "tokens": {"access_token": token, "account_id": "acct-cli"},
+    }
+
+    result = parse_codex_credentials(payload, now=1_900_000_000)
+
+    assert result == CodexOAuthCredentials(
+        access_token=token, account_id="acct-cli", expires_at=2_000_000_000
+    )
+
+
+def test_parses_opaque_codex_access_token_expiry():
+    result = parse_codex_credentials(
+        {
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "opaque-access",
+                "account_id": "acct-cli",
+                "expires_at": 2_000_000_000,
+            },
+        },
+        now=1_900_000_000,
+    )
+
+    assert result.expires_at == 2_000_000_000
 
 
 def test_reads_tau_credentials_and_millisecond_expiry(tmp_path):

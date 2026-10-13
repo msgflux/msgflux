@@ -78,6 +78,7 @@ async def test_http_methods_encode_requests_and_decode_records():
             assert json.loads(request.content) == {
                 "prompt": "hello",
                 "request_id": "req",
+                "account_name": None,
             }
             return _json_response(
                 request,

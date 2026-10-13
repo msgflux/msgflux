@@ -53,9 +53,10 @@ starter file. Set a model in that file before launching the service: msgFlux doe
 not guess a provider or model. Missing model configuration produces an actionable
 error before a daemon starts or opens its store. You can provide the default at
 initialization with `msgflux init --model provider/model-id`, or edit
-`defaults.model` afterward. Once configured, construction remains lazy: starting the service does not call a model or create a conversation
-directory. Provider credentials are read from their existing authentication
-source when needed.
+`defaults.model` afterward. Once configured, construction remains lazy: starting
+the service does not call a model or create a conversation directory. Coding
+agents read their selected provider credential from a named account bundle only
+when a model request needs it.
 
 To create the file without starting the server:
 
@@ -94,9 +95,11 @@ Without `--model`, the generated backend configuration contains:
 ```toml
 [defaults]
 agent = "coding"
+account = "default"
 # Choose an available provider/model, for example:
 # model = "provider/model-id"
 # reasoning_effort = "medium"
+# accounts_dir = "./accounts"  # defaults to ~/.msgflux/accounts
 
 [agents.coding]
 harness = "coding"
@@ -122,6 +125,40 @@ Otherwise it inherits the declared defaults; omitted `reasoning_effort` uses
 `medium`. The runtime does not select another
 model or account when a request fails. Credentials are not copied into the TOML
 file.
+
+`defaults.account` selects the account for new prompt executions and defaults to
+`"default"`. `defaults.accounts_dir` optionally selects the credential bundle
+root. A relative path is resolved from the config file's directory; when omitted,
+the root is `~/.msgflux/accounts/`. Under that root, each account has a separate
+directory and credential record for each provider. For example, configure an API key without
+putting it in TOML:
+
+```bash
+msgflux accounts login openai --account-name work
+msgflux accounts inspect work
+```
+
+The first command prompts for the key and stores it in the `work` bundle. The
+second lists configured providers and status without printing credentials. The
+`msgflux accounts` commands use `~/.msgflux/accounts/` unless `--accounts-dir`
+is supplied. Set `defaults.accounts_dir` to use another root for the service.
+Provider and account records are read from that root only; the coding harness
+does not fall back to a process environment key or another account when a
+credential is missing. API-key providers are discovered from msgFlux's model
+provider registry. The managed native OAuth adapter currently supports
+`openai-codex`; registering an API-compatible provider does not imply that its
+OAuth login is supported.
+
+This automatic resolver setup applies to coding harness entries. A custom
+`factory` entry owns its model construction and must attach `Accounts.resolver()`
+to models that should use managed credentials.
+
+The CLI can select a different account for one new prompt. The account is
+recorded with the admitted run, so retries with the same request ID reuse that
+run and its account. Resume uses the recorded account even if
+`defaults.account` has changed. Admissions created before account selection was
+persisted keep an unknown account; managed authentication reports that identity
+cannot be recovered and requires a new execution with an explicit selection.
 
 ### Builtin And Custom Subagents
 

@@ -7,6 +7,7 @@ import contextvars
 import inspect
 from collections.abc import Callable
 from contextlib import aclosing, asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -56,6 +57,7 @@ from msgflux.runtime.service.session_cache import (
 )
 from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
 from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
+from msgflux.utils.validation import is_valid_account_name
 
 _DEFAULT_CACHE_POLICY = SessionCachePolicy()
 
@@ -149,6 +151,7 @@ class AgentSession:
         *,
         run_id: str | None = None,
         signal: AbortSignal | None = None,
+        account_name: str | None = None,
     ) -> ExecutionScope:
         scope = ExecutionScope(
             thread_id=thread_id,
@@ -164,12 +167,13 @@ class AgentSession:
         if scope.run_id is not None or scope.abort_signal is not None:
             raise ValueError("scope_factory must preserve service-owned run identity")
         self.bind_resources(thread_id)
-        return scope.with_overrides(
+        resolved_scope = scope.with_overrides(
             namespace=self.namespace,
             run_id=run_id,
             abort_signal=signal,
             principal=scope.principal or self.approval_reviewer,
         )
+        return replace(resolved_scope, account_name=account_name)
 
     def context(self, scope: ExecutionScope):
         self.bind_resources(scope.thread_id, create=scope.run_id is not None)
@@ -204,6 +208,7 @@ class AgentService:
         *,
         store: SQLiteServiceStore,
         default_agent: str | None = None,
+        default_account: str = "default",
         cache_policy: SessionCachePolicy | None = _DEFAULT_CACHE_POLICY,
     ) -> None:
         if cache_policy is not None and not isinstance(
@@ -212,6 +217,7 @@ class AgentService:
             raise TypeError("cache_policy must be SessionCachePolicy or None")
         if default_agent is not None:
             validate_identifier(default_agent, "default_agent")
+        self.default_account = self._validate_account_name(default_account)
         self.store = store
         self.default_agent = default_agent
         self._owner_id = uuid4().hex
@@ -231,6 +237,16 @@ class AgentService:
         self._closed = False
         self._shutdown_task: asyncio.Task | None = None
         self._before_write = None
+
+    @staticmethod
+    def _validate_account_name(account_name: str | None) -> str:
+        if not is_valid_account_name(account_name):
+            raise ValueError(
+                "account_name must be 1-64 characters, start with a letter or digit, "
+                "and contain only letters, digits, '.', '_' or '-'; "
+                "'.' and '..' are invalid"
+            )
+        return account_name
 
     def register(self, agent_id: str, factory: Callable) -> None:
         """Register a sync/async ServiceThread -> AgentSession host factory."""
@@ -724,8 +740,11 @@ class AgentService:
         prompt: str,
         *,
         request_id: str,
+        account_name: str | None = None,
     ) -> AdmissionReceipt:
         """Admit one input; duplicate identity returns the same run, never another."""
+        if account_name is not None:
+            account_name = self._validate_account_name(account_name)
         async with self._use_session(thread_id) as session:
             async with self._lock:
                 self._require_open()
@@ -745,7 +764,12 @@ class AgentService:
                         )
                         state.current = saved
                 record = self.store.admit(
-                    thread_id, request_id, prompt, session.namespace
+                    thread_id,
+                    request_id,
+                    prompt,
+                    session.namespace,
+                    account_name=account_name or self.default_account,
+                    check_account=account_name is not None,
                 )
                 if record.receipt.status == "accepted":
                     self._schedule(record, session)
@@ -760,6 +784,7 @@ class AgentService:
             record.receipt.thread_id,
             run_id=record.receipt.run_id,
             signal=signal,
+            account_name=record.account_name,
         )
         worker = _Worker(record.receipt, session, scope)
         self._workers[key] = worker
@@ -1042,9 +1067,17 @@ class AgentService:
                     receipt = AdmissionReceipt(
                         thread_id, f"checkpoint:{run_id}", run_id, "running"
                     )
-                    self._recovery_checkpoint(session, receipt)
+                    state = self._recovery_checkpoint(session, receipt)
+                    saved_scope = state.get("scope")
+                    saved_account = (
+                        saved_scope.get("account_name")
+                        if isinstance(saved_scope, dict)
+                        else None
+                    )
+                    if saved_account is not None:
+                        saved_account = self._validate_account_name(saved_account)
                     record = self.store.adopt_checkpoint(
-                        thread_id, run_id, session.namespace
+                        thread_id, run_id, session.namespace, saved_account
                     )
                 request_id = record.receipt.request_id
         return await self.resume(thread_id, request_id, worker_stopped=worker_stopped)

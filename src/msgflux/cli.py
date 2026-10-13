@@ -42,6 +42,9 @@ def _prompt_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent", help="configured agent ID; defaults to defaults.agent"
     )
+    parser.add_argument(
+        "--account-name", help="credential bundle; defaults to defaults.account"
+    )
     parser.add_argument("--thread", help="continue an existing noninteractive thread")
     parser.add_argument("--config", type=Path, help="backend TOML configuration")
     parser.add_argument(
@@ -91,6 +94,11 @@ def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "accounts":
+        from msgflux.accounts.cli import main as accounts_main  # noqa: PLC0415
+
+        accounts_main(args[1:])
+        return
     if args and args[0] in {"init", "service"}:
         from msgflux.runtime.service.local.cli import (  # noqa: PLC0415
             main as service_main,
@@ -116,6 +124,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 runtime_dir=options.runtime_dir,
                 cwd=options.cwd,
                 agent_id=options.agent,
+                account_name=options.account_name,
                 thread_id=options.thread,
                 observer=observe if options.stream else None,
                 interrupt_on_cancel=not options.detach_on_interrupt,

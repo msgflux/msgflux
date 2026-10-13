@@ -74,6 +74,7 @@ class ExecutionScope:
     principal: str | None = None
     permissions: PermissionSet | None = None
     workspace: AgentWorkspace | None = None
+    account_name: str | None = None
 
     def __post_init__(self) -> None:
         from msgflux.runtime.workspace.api import AgentWorkspace  # noqa: PLC0415
@@ -95,6 +96,12 @@ class ExecutionScope:
             raise ValueError(
                 "ExecutionScope.principal must be a non-empty string or None"
             )
+        if self.account_name is not None and (
+            not isinstance(self.account_name, str) or not self.account_name.strip()
+        ):
+            raise ValueError(
+                "ExecutionScope.account_name must be a non-empty string or None"
+            )
 
     def with_overrides(
         self,
@@ -108,6 +115,7 @@ class ExecutionScope:
         principal: str | None = None,
         permissions: PermissionSet | None = None,
         workspace: AgentWorkspace | None = None,
+        account_name: str | None = None,
     ) -> ExecutionScope:
         resolved_run_id = run_id if run_id is not None else self.run_id
         resolved_workspace = workspace if workspace is not None else self.workspace
@@ -129,6 +137,9 @@ class ExecutionScope:
             principal=principal if principal is not None else self.principal,
             permissions=permissions if permissions is not None else self.permissions,
             workspace=resolved_workspace,
+            account_name=account_name
+            if account_name is not None
+            else self.account_name,
         )
 
     def to_dict(self) -> dict[str, str | None]:
@@ -138,7 +149,26 @@ class ExecutionScope:
             "run_id": self.run_id,
             "parent_run_id": self.parent_run_id,
             "root_run_id": self.root_run_id,
+            "account_name": self.account_name,
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ExecutionScope:
+        """Restore durable identity fields while accepting pre-account snapshots."""
+        return cls(
+            **{
+                key: value[key]
+                for key in (
+                    "thread_id",
+                    "namespace",
+                    "run_id",
+                    "parent_run_id",
+                    "root_run_id",
+                    "account_name",
+                )
+                if key in value
+            }
+        )
 
 
 _CURRENT_SCOPE: contextvars.ContextVar[ExecutionScope | None] = contextvars.ContextVar(
@@ -237,7 +267,11 @@ def execution_context(  # noqa: C901
     principal = base_scope.principal
     permissions = base_scope.permissions
     workspace = base_scope.workspace
+    account_name = base_scope.account_name
     if _CURRENT_SCOPE.get() is not None:
+        if account_name is not None and account_name != current_scope.account_name:
+            raise ValueError("Nested execution cannot change its account")
+        account_name = current_scope.account_name
         if workspace is not None and (
             current_scope.workspace is None
             or not workspace.shares_environment(current_scope.workspace)
@@ -330,6 +364,7 @@ def execution_context(  # noqa: C901
         principal=principal,
         permissions=permissions,
         workspace=workspace,
+        account_name=account_name,
     )
     if (
         active_policy is not None

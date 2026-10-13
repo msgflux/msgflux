@@ -73,9 +73,15 @@ def read_codex_credentials(
         data = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise ValueError("Codex OAuth credential file is not valid JSON") from None
+    return parse_codex_credentials(data, now=now)
+
+
+def parse_codex_credentials(
+    data: dict[str, object], *, now: float | None = None
+) -> CodexOAuthCredentials:
+    """Parse a Codex or Tau credential document without filesystem access."""
     if not isinstance(data, dict):
         raise ValueError("Codex OAuth credential file has an unsupported format")
-
     access_token, account_id, expires_at = _parse_credentials(data)
 
     if not isinstance(access_token, str) or not access_token.strip():
@@ -109,7 +115,10 @@ def _parse_credentials(data: dict) -> tuple[object, object, float | None]:
         tokens = data["tokens"]
         access_token = tokens.get("access_token")
         account_id = tokens.get("account_id")
-        return access_token, account_id, _jwt_expiration(access_token)
+        expires_at = _jwt_expiration(access_token)
+        if expires_at is None:
+            expires_at = _unix_expiration(tokens.get("expires_at"))
+        return access_token, account_id, expires_at
 
     entry = data.get("openai-codex")
     if not isinstance(entry, dict) or entry.get("type") != "oauth":
@@ -138,6 +147,14 @@ def _tau_expiration(value: object) -> float | None:
     return float(value) / 1000.0
 
 
+def _unix_expiration(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        raise ValueError("Codex OAuth credential expiry is invalid")
+    return float(value)
+
+
 def _jwt_expiration(token: object) -> float | None:
     if not isinstance(token, str):
         return None
@@ -157,6 +174,7 @@ def _jwt_expiration(token: object) -> float | None:
 
 __all__ = [
     "CodexOAuthCredentials",
+    "parse_codex_credentials",
     "read_codex_credentials",
     "resolve_codex_auth_file",
 ]
