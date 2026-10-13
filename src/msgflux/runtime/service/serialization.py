@@ -51,3 +51,31 @@ def event_record(event: ExecutionEvent) -> EventRecord:
 
 
 __all__ = ["encode_json", "event_record", "snapshot_record"]
+
+
+def checkpoint_answer(checkpoint: dict) -> str:
+    """Extract the final assistant text from a specific completed checkpoint."""
+    messages = ChatMessages()
+    messages._hydrate_state(checkpoint["messages"])
+    for message in reversed(messages.to_chatml()):
+        if message.get("role") == "user":
+            break
+        if (
+            message.get("role") != "assistant"
+            or message.get("tool_calls")
+            or message.get("phase") == "commentary"
+        ):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict)
+                and part.get("type") in {"text", "output_text"}
+            )
+            if text:
+                return text
+    raise ValueError("Completed run has no final assistant text")

@@ -70,7 +70,7 @@ async def test_open_prompt_receipt_wait_snapshot_and_borrowed_client(tmp_path):
     ) as http:
         client = AgentServiceClient("http://service", token=TOKEN, client=http)
         session = await AgentSessionClient.open(
-            client, thread_id="project-thread", cwd=tmp_path
+            client, thread_id="project-thread", cwd=tmp_path, agent_id="main"
         )
         assert session.thread_id == "project-thread"
         assert session.agent_id == "main"
@@ -129,7 +129,9 @@ async def test_wait_rejects_pending_attempt_owned_by_another_worker():
         transport=transport, base_url="http://service"
     ) as http:
         client = AgentServiceClient("http://service", token=TOKEN, client=http)
-        session = await AgentSessionClient.open(client, thread_id=thread.thread_id)
+        session = await AgentSessionClient.open(
+            client, thread_id=thread.thread_id, agent_id="main"
+        )
         try:
             # Receipt inspection remains available for uncertain admissions.
             assert (await session.receipt("foreign-request")).status == "accepted"
@@ -233,7 +235,9 @@ async def test_real_http_approval_reviews_and_bound_session_client():
             transport=transport, base_url="http://service"
         ) as http:
             client = AgentServiceClient("http://service", token=TOKEN, client=http)
-            session = await AgentSessionClient.open(client, thread_id="review-thread")
+            session = await AgentSessionClient.open(
+                client, thread_id="review-thread", agent_id="main"
+            )
             reviews = await client.approval_reviews(session.thread_id, "run-1")
             assert reviews == ()
             assert await session.approval_reviews("run-1") == ()
@@ -280,7 +284,9 @@ async def test_real_http_client_decides_then_resumes_approval():
             transport=transport, base_url="http://service"
         ) as http:
             client = AgentServiceClient("http://service", token=TOKEN, client=http)
-            session = await AgentSessionClient.open(client, thread_id="decision-thread")
+            session = await AgentSessionClient.open(
+                client, thread_id="decision-thread", agent_id="main"
+            )
             receipt = await session.prompt("write the file", request_id="write-1")
             settled = await service.wait(session.thread_id, "write-1")
             assert settled.status == "paused", settled.error

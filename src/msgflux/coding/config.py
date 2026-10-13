@@ -8,6 +8,7 @@ from typing import Literal
 
 import msgspec
 
+from msgflux.coding.presets import get_coding_preset
 from msgflux.runtime.permissions import PermissionSet
 
 _TOOL_SELECTORS = frozenset(
@@ -94,6 +95,54 @@ class CodingAgentOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     prompt_file: Path | None = None
     subagents: tuple[str, ...] = ()
     permissions: tuple[CodingPermission, ...] = DEFAULT_CODING_PERMISSIONS
+    description: str | None = None
+    instructions: str | None = None
+
+
+def coding_agent_options(
+    agent_id: str,
+    model: str,
+    *,
+    reasoning_effort: str = "medium",
+    preset: str | None = None,
+    description: str | None = None,
+    permissions: tuple[CodingPermission, ...] | None = None,
+    active: tuple[str, ...] | None = None,
+    deferred: tuple[str, ...] | None = None,
+    prompt_file: Path | None = None,
+    subagents: tuple[str, ...] = (),
+) -> CodingAgentOptions:
+    """Resolve explicit settings over builtin defaults for Python or TOML callers."""
+    defaults = get_coding_preset(preset) if preset is not None else None
+    options = CodingAgentOptions(
+        agent_id=agent_id,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        tools_active=active
+        if active is not None
+        else defaults.active
+        if defaults
+        else ("workspace",),
+        tools_deferred=deferred
+        if deferred is not None
+        else defaults.deferred
+        if defaults
+        else (),
+        permissions=permissions
+        if permissions is not None
+        else defaults.permissions
+        if defaults
+        else DEFAULT_CODING_PERMISSIONS,
+        description=description
+        if description is not None
+        else defaults.description
+        if defaults
+        else None,
+        instructions=defaults.instructions if defaults else None,
+        prompt_file=prompt_file,
+        subagents=subagents,
+    )
+    return resolve_coding_agent_options(options)
 
 
 class CodingAgentCatalog(msgspec.Struct, frozen=True):
@@ -269,6 +318,7 @@ def _validate_subagent_graph(catalog: CodingAgentCatalog) -> None:
 __all__ = [
     "CodingAgentCatalog",
     "CodingAgentOptions",
+    "coding_agent_options",
     "resolve_coding_agent_options",
     "resolve_coding_tools",
     "validate_coding_agent_options",

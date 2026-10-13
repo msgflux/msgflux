@@ -154,7 +154,10 @@ def create_service_app(  # noqa: C901
     @post("/v1/threads")
     async def open_thread(data: OpenThreadRequest) -> Response:
         thread = await service.open_thread(
-            data.agent_id, thread_id=data.thread_id, cwd=data.cwd
+            data.agent_id,
+            thread_id=data.thread_id,
+            cwd=data.cwd,
+            interactive=data.interactive,
         )
         return _response(thread, 201)
 
@@ -199,6 +202,10 @@ def create_service_app(  # noqa: C901
     @get("/v1/threads/{thread_id:str}/runs")
     async def list_runs(thread_id: PathValue) -> Response:
         return _response(RunsResponse(runs=await service.runs(thread_id)))
+
+    @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/result")
+    async def run_result(thread_id: PathValue, run_id: PathValue) -> Response:
+        return _response(await service.run_result(thread_id, run_id))
 
     @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/inspection")
     async def inspect_run(thread_id: PathValue, run_id: PathValue) -> Response:
@@ -340,6 +347,7 @@ def create_service_app(  # noqa: C901
         get_snapshot,
         list_runs,
         inspect_run,
+        run_result,
         prompt,
         get_receipt,
         interrupt,

@@ -83,6 +83,11 @@ class SQLiteServiceStore:
                     self._connection.execute(
                         "ALTER TABLE service_threads ADD COLUMN cwd TEXT"
                     )
+                if "interactive" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE service_threads ADD COLUMN "
+                        "interactive INTEGER NOT NULL DEFAULT 1"
+                    )
                 self._connection.execute(
                     """CREATE TABLE IF NOT EXISTS service_admissions (
                     thread_id TEXT NOT NULL REFERENCES service_threads(thread_id),
@@ -161,6 +166,8 @@ class SQLiteServiceStore:
             raise ValueError(f"Invalid service thread: {error}") from error
         validate_identifier(thread.thread_id, "thread_id")
         validate_identifier(thread.agent_id, "agent_id")
+        if type(thread.interactive) is not bool:
+            raise ValueError("interactive must be a boolean")
         if thread.cwd is not None:
             validate_identifier(thread.cwd, "cwd")
             if not Path(thread.cwd).is_absolute():
@@ -168,8 +175,13 @@ class SQLiteServiceStore:
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT OR IGNORE INTO service_threads
-                (thread_id, agent_id, cwd) VALUES (?, ?, ?)""",
-                (thread.thread_id, thread.agent_id, thread.cwd),
+                (thread_id, agent_id, cwd, interactive) VALUES (?, ?, ?, ?)""",
+                (
+                    thread.thread_id,
+                    thread.agent_id,
+                    thread.cwd,
+                    int(thread.interactive),
+                ),
             )
             existing = self.thread(thread.thread_id)
             if existing != thread:
@@ -185,7 +197,9 @@ class SQLiteServiceStore:
             ).fetchone()
         if row is None:
             raise KeyError(thread_id)
-        return ServiceThread(row["thread_id"], row["agent_id"], row["cwd"])
+        return ServiceThread(
+            row["thread_id"], row["agent_id"], row["cwd"], bool(row["interactive"])
+        )
 
     def threads(self) -> tuple[ServiceThread, ...]:
         with self._lock:
@@ -193,7 +207,10 @@ class SQLiteServiceStore:
                 "SELECT * FROM service_threads ORDER BY thread_id"
             ).fetchall()
         return tuple(
-            ServiceThread(row["thread_id"], row["agent_id"], row["cwd"]) for row in rows
+            ServiceThread(
+                row["thread_id"], row["agent_id"], row["cwd"], bool(row["interactive"])
+            )
+            for row in rows
         )
 
     @staticmethod

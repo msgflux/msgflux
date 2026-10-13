@@ -535,6 +535,12 @@ async def main():
 asyncio.run(main())
 ```
 
+Omitting `agent_id` in `AgentSessionClient.open()` selects the service's configured
+default agent; pass `agent_id="main"` explicitly when that binding is intended.
+The optional `interactive` flag becomes part of the durable thread binding.
+Omitting it preserves an existing thread's mode or uses `true` for a new thread.
+An explicit conflicting mode is rejected.
+
 The stable request ID lets a caller safely check admission after a network
 uncertainty without silently submitting a second prompt. To reconnect after a
 watch disconnect, open another `session.watch()` context and replace the local

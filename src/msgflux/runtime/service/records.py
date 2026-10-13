@@ -47,6 +47,7 @@ class ServiceThread(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     thread_id: str
     agent_id: str
     cwd: str | None = None
+    interactive: bool = True
 
 
 class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -57,6 +58,16 @@ class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     error: str | None = None
     version: Literal[1] = 1
     revision: int = 0
+
+
+class RunResult(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Settled answer from one recorded run, without events or full history."""
+
+    thread_id: str
+    run_id: str
+    status: AdmissionStatus
+    output: str | None = None
+    error: str | None = None
 
 
 class RunInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

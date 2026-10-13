@@ -42,6 +42,7 @@ from msgflux.runtime.service.records import (
     AdmissionStatus,
     ApprovalReview,
     RunInspection,
+    RunResult,
     RunSummary,
     ServiceBusyError,
     ServiceConflictError,
@@ -281,6 +282,7 @@ class AgentService:
         *,
         thread_id: str | None = None,
         cwd: str | Path | None = None,
+        interactive: bool | None = None,
     ) -> ServiceThread:
         """Bind a conversation and optional absolute workspace root lazily.
 
@@ -294,7 +296,15 @@ class AgentService:
                 validate_identifier(agent_id, "agent_id")
             if thread_id is not None:
                 validate_identifier(thread_id, "thread_id")
+            interactive = msgspec.convert(interactive, type=bool | None, strict=True)
             selected_agent, existing = self._select_thread_agent(agent_id, thread_id)
+            selected_interactive = (
+                interactive
+                if interactive is not None
+                else existing.interactive
+                if existing is not None
+                else True
+            )
             canonical_cwd = None
             if cwd is not None:
                 if not isinstance(cwd, (str, Path)):
@@ -316,7 +326,12 @@ class AgentService:
                 if existing is not None:
                     canonical_cwd = existing.cwd
             return self.store.bind_thread(
-                ServiceThread(resolved_thread_id, selected_agent, canonical_cwd)
+                ServiceThread(
+                    resolved_thread_id,
+                    selected_agent,
+                    canonical_cwd,
+                    selected_interactive,
+                )
             )
 
     def _require_open(self) -> None:
@@ -525,6 +540,31 @@ class AgentService:
                         msgspec.convert(record, type=RunSummary, strict=True)
                     )
                 return tuple(summaries)
+
+    async def run_result(self, thread_id: str, run_id: str) -> RunResult:
+        """Return the answer recorded for this run; unfinished runs have no output."""
+        from msgflux.runtime.service.serialization import (  # noqa: PLC0415
+            checkpoint_answer,
+        )
+
+        receipt = self.receipt_for_run(thread_id, run_id)
+        if receipt.status != "completed":
+            return RunResult(thread_id, run_id, receipt.status, error=receipt.error)
+        async with self._use_session(thread_id) as session:
+            admission = self.store.get_for_run(thread_id, run_id)
+            store = session.checkpoint_store
+            checkpoint = (
+                store.load_state(admission.namespace, thread_id, run_id)
+                if store is not None
+                else None
+            )
+            if checkpoint is None or checkpoint.get("status") != "completed":
+                raise ServiceRecoveryRequiredError(
+                    "Completed run has no final checkpoint"
+                )
+            return RunResult(
+                thread_id, run_id, "completed", output=checkpoint_answer(checkpoint)
+            )
 
     async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
         """Read recorded evidence without changing state or promising safe replay."""

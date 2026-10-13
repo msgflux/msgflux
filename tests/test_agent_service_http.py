@@ -135,7 +135,12 @@ async def test_thread_workspace_binding_is_exposed_and_immutable(tmp_path):
         async with httpx2.AsyncClient(
             transport=transport, base_url="http://testserver", headers=headers
         ) as client:
-            body = {"agent_id": "agent", "thread_id": "project", "cwd": str(first)}
+            body = {
+                "agent_id": "agent",
+                "thread_id": "project",
+                "cwd": str(first),
+                "interactive": True,
+            }
             opened = await client.post("/v1/threads", json=body)
             assert opened.status_code == 201
             assert opened.json() == body
@@ -423,6 +428,7 @@ async def test_http_uses_default_agent_for_new_threads_and_keeps_existing_bindin
                 "thread_id": "default-thread",
                 "agent_id": "agent",
                 "cwd": None,
+                "interactive": True,
             }
 
             reopened = await client.post(

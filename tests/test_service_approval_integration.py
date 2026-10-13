@@ -76,7 +76,9 @@ async def test_remote_review_decision_and_explicit_resume(tmp_path, decision):
             client = AgentServiceClient(
                 "http://testserver", token="owner-token", client=http
             )
-            session = await AgentSessionClient.open(client, thread_id="project")
+            session = await AgentSessionClient.open(
+                client, thread_id="project", agent_id="main"
+            )
             admitted = await session.prompt("update file", request_id="edit-request")
             paused = await asyncio.wait_for(session.wait("edit-request"), 5)
             assert paused.status == "paused"
