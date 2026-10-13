@@ -135,7 +135,9 @@ async def _session(kind, agent, thread_id, *, foreign_request=None):
             client = AgentServiceClient(
                 f"http://127.0.0.1:{port}", token=TOKEN, client=http
             )
-            session = await AgentSessionClient.open(client, thread_id=thread_id)
+            session = await AgentSessionClient.open(
+                client, thread_id=thread_id, agent_id="main"
+            )
             if foreign_request is not None:
                 _mark_foreign_attempt(service, session.thread_id, foreign_request)
             yield session

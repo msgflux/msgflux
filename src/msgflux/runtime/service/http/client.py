@@ -16,6 +16,7 @@ from msgflux.runtime.service import (
     AdmissionReceipt,
     ApprovalReview,
     RunInspection,
+    RunResult,
     RunSummary,
     ServiceBusyError,
     ServiceConflictError,
@@ -193,11 +194,13 @@ class AgentServiceClient:
         *,
         thread_id: str | None = None,
         cwd: str | Path | None = None,
+        interactive: bool | None = None,
     ) -> ServiceThread:
         request = OpenThreadRequest(
             agent_id=agent_id,
             thread_id=thread_id,
             cwd=str(cwd) if isinstance(cwd, Path) else cwd,
+            interactive=interactive,
         )
         return await self._json("POST", "/v1/threads", ServiceThread, request)
 
@@ -212,6 +215,11 @@ class AgentServiceClient:
             "GET", self._thread_path(thread_id) + "/runs", RunsResponse
         )
         return result.runs
+
+    async def run_result(self, thread_id: str, run_id: str) -> RunResult:
+        """Fetch only the status and final answer for a recorded run."""
+        path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/result"
+        return await self._json("GET", path, RunResult)
 
     async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
         """Read execution diagnostics without admitting or resuming work."""

@@ -48,12 +48,15 @@ class AgentSessionClient:
         cls,
         client: AgentServiceClient,
         *,
-        agent_id: str = "main",
+        agent_id: str | None = None,
         thread_id: str | None = None,
         cwd: str | Path | None = None,
+        interactive: bool | None = None,
     ) -> AgentSessionClient:
         """Open or retrieve a service thread and bind this facade to it."""
-        thread = await client.open_thread(agent_id, thread_id=thread_id, cwd=cwd)
+        thread = await client.open_thread(
+            agent_id, thread_id=thread_id, cwd=cwd, interactive=interactive
+        )
         return cls(client, thread)
 
     @property

@@ -32,6 +32,7 @@ async def test_open_thread_sends_host_workspace_path_and_decodes_binding():
             "agent_id": "main",
             "thread_id": "project",
             "cwd": "/host/project",
+            "interactive": None,
         }
         return _json_response(
             request,
@@ -70,6 +71,7 @@ async def test_http_methods_encode_requests_and_decode_records():
                 "agent_id": "assistant",
                 "thread_id": "t",
                 "cwd": None,
+                "interactive": None,
             }
             return _json_response(request, {"thread_id": "t", "agent_id": "assistant"})
         if path.endswith("/prompt"):
@@ -154,6 +156,7 @@ async def test_open_thread_can_omit_agent_id_for_service_default():
             "agent_id": None,
             "thread_id": None,
             "cwd": None,
+            "interactive": None,
         }
         return _json_response(
             request, {"thread_id": "default-thread", "agent_id": "assistant"}, 201

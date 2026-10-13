@@ -8,6 +8,7 @@ from msgflux.runtime.permissions import ResourcePermission
 from msgflux.runtime.service.records import (
     ApprovalReview,
     EventRecord,
+    RunResult,
     RunSummary,
     ServiceThread,
     SnapshotRecord,
@@ -28,6 +29,7 @@ __all__ = [
     "ResourcePermission",
     "ResumeRequest",
     "RunSummary",
+    "RunResult",
     "RunsResponse",
     "ServiceThread",
     "ShutdownRequest",
@@ -45,6 +47,7 @@ class OpenThreadRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True)
     agent_id: Identifier | None = None
     thread_id: Identifier | None = None
     cwd: str | None = None
+    interactive: bool | None = None
 
 
 class PromptRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

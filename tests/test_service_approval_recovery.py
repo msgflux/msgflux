@@ -97,7 +97,9 @@ async def test_sqlite_approval_review_and_decision_survive_service_restart(tmp_p
             client = AgentServiceClient(
                 "http://testserver", token="owner-token", client=http
             )
-            session = await AgentSessionClient.open(client, thread_id=thread_id)
+            session = await AgentSessionClient.open(
+                client, thread_id=thread_id, agent_id="main"
+            )
             admission = await session.prompt("record one effect", request_id=request_id)
             paused = await asyncio.wait_for(session.wait(request_id), timeout=5)
             assert paused.status == "paused"
@@ -138,7 +140,9 @@ async def test_sqlite_approval_review_and_decision_survive_service_restart(tmp_p
             client = AgentServiceClient(
                 "http://testserver", token="owner-token", client=http
             )
-            session = await AgentSessionClient.open(client, thread_id=thread_id)
+            session = await AgentSessionClient.open(
+                client, thread_id=thread_id, agent_id="main"
+            )
             (after_restart,) = await session.approval_reviews(admission.run_id)
             assert after_restart.request_id == before_restart.request_id
             assert after_restart.revision == before_restart.revision

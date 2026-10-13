@@ -73,7 +73,9 @@ async def _remote_session(agent, *, thread_id):
                 raise RuntimeError("HTTP server exited before startup")
             await asyncio.sleep(0.01)
         client = AgentServiceClient(f"http://127.0.0.1:{port}", token=TOKEN)
-        session = await AgentSessionClient.open(client, thread_id=thread_id)
+        session = await AgentSessionClient.open(
+            client, thread_id=thread_id, agent_id="main"
+        )
         yield client, session
     finally:
         server.should_exit = True
