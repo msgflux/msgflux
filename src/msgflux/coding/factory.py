@@ -84,6 +84,8 @@ def _tool_instances(
             getattr(instance, "tool_config", getattr(type(instance), "tool_config", {}))
         )
         config["defer_loading"] = is_deferred
+        if name == "bash":
+            config["allow_background"] = True
         instance.tool_config = config
         tools.append(instance)
     return tools
@@ -97,7 +99,7 @@ def _load_prompt(
     interactive: bool,
     permissions: tuple[CodingPermission, ...],
 ) -> str:
-    custom_instructions = None
+    custom_instructions = options.instructions
     if options.prompt_file is not None:
         try:
             custom_instructions = options.prompt_file.read_text(encoding="utf-8")
@@ -203,6 +205,7 @@ class _CodingSessionBuilder:
                 working_directory=working_directory,
                 models=models,
                 tool_resources=tool_resources,
+                interactive=thread.interactive,
             )
             return AgentSession(
                 agent,
@@ -227,6 +230,7 @@ class _CodingSessionBuilder:
         models: list[Any],
         tool_resources: list[Any],
         ancestors: frozenset[str] = frozenset(),
+        interactive: bool = False,
     ) -> Agent:
         if selected.agent_id in ancestors:
             raise ValueError(f"Subagent cycle detected at {selected.agent_id!r}")
@@ -260,13 +264,18 @@ class _CodingSessionBuilder:
             owned_resources=tool_resources,
             supports_vision=_model_supports_vision(model),
         )
-        interactive = selected.agent_id == self.options.agent_id
         if interactive and not _model_has_native_commentary(model):
             tools.append(SendUserMessageTool())
         if children:
-            tools = [AgentTool(), *children, *tools]
+            dispatcher = AgentTool()
+            dispatcher.tool_config = {
+                **dispatcher.tool_config,
+                "allow_background": True,
+            }
+            tools = [dispatcher, *children, *tools]
         agent = Agent(
             name=name,
+            description=selected.description,
             model=model,
             system_prompt=_load_prompt(
                 selected,
@@ -287,6 +296,7 @@ class _CodingSessionBuilder:
             ),
         )
         agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
+        agent.tool_library.extensions["background_tasks"].enable_grouping()
         agent.tool_library.apply_default_usage_guidance()
         return agent
 

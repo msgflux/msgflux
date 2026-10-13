@@ -29,7 +29,8 @@ def system_prompt(
     instructions = [
         f"You are {agent_name}, the coding agent in Vulcano.",
         f"The project directory is {workspace}. Tool paths are absolute host paths "
-        "or relative to the project directory. Inspect relevant files before editing.",
+        "or relative to the project directory. Inspect relevant definitions and "
+        "callers before editing.",
     ]
     if custom_instructions is not None:
         instructions.extend(
@@ -45,8 +46,9 @@ def system_prompt(
             (
                 "Prefer simple, maintainable changes. Follow the project's "
                 "instructions.",
-                "Use read for text and supported images; use bash for commands and "
-                "searches when available. Use only the editing tools supplied.",
+                "Use only supplied tools. Discover deferred tools before calling them. "
+                "Make focused changes, verify them with available checks, and "
+                "report results and remaining limitations.",
                 access_instruction,
                 interaction_instruction,
             )

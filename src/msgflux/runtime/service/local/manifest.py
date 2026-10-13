@@ -13,11 +13,10 @@ from typing import Any
 import msgspec
 
 from msgflux.coding.config import (
-    DEFAULT_CODING_PERMISSIONS,
     CodingAgentCatalog,
     CodingAgentOptions,
     CodingPermission,
-    resolve_coding_agent_options,
+    coding_agent_options,
     validate_coding_catalog,
     validate_model_path,
 )
@@ -50,12 +49,14 @@ class _DefaultsConfig(msgspec.Struct, forbid_unknown_fields=True):
 
 
 class _ToolsConfig(msgspec.Struct, forbid_unknown_fields=True):
-    active: list[str] = msgspec.field(default_factory=list)
-    deferred: list[str] = msgspec.field(default_factory=list)
+    active: list[str] | None = None
+    deferred: list[str] | None = None
 
 
 class _AgentConfig(msgspec.Struct, forbid_unknown_fields=True):
     harness: str | None = None
+    preset: str | None = None
+    description: str | None = None
     factory: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -223,27 +224,31 @@ def _resolve_coding_options(
         prompt_file = Path(agent.prompt_file) if agent.prompt_file is not None else None
         if prompt_file is not None and not prompt_file.is_absolute():
             prompt_file = config_dir / prompt_file
-        options = CodingAgentOptions(
+        options = coding_agent_options(
             agent_id=agent_id,
             model=model,
             reasoning_effort=(
                 agent.reasoning_effort or config.defaults.reasoning_effort or "medium"
             ),
-            tools_active=tuple(
-                agent.tools.active if agent.tools is not None else ("workspace",)
+            active=(
+                tuple(agent.tools.active)
+                if agent.tools is not None and agent.tools.active is not None
+                else None
             ),
-            tools_deferred=(
-                tuple(agent.tools.deferred) if agent.tools is not None else ()
+            deferred=(
+                tuple(agent.tools.deferred)
+                if agent.tools is not None and agent.tools.deferred is not None
+                else None
             ),
+            preset=agent.preset,
+            description=agent.description,
             prompt_file=prompt_file,
             subagents=tuple(agent.subagents),
             permissions=(
-                tuple(agent.permissions)
-                if agent.permissions is not None
-                else DEFAULT_CODING_PERMISSIONS
+                tuple(agent.permissions) if agent.permissions is not None else None
             ),
         )
-        options_by_id[agent_id] = resolve_coding_agent_options(options)
+        options_by_id[agent_id] = options
     return options_by_id
 
 
@@ -266,6 +271,8 @@ def _validate_agent(
             any(
                 value is not None
                 for value in (
+                    agent.preset,
+                    agent.description,
                     agent.model,
                     agent.reasoning_effort,
                     agent.prompt_file,
@@ -292,6 +299,7 @@ def _validate_coding_agent(
     config_dir: Path,
 ) -> None:
     for label, value in (
+        ("description", agent.description),
         ("model", agent.model),
         ("reasoning_effort", agent.reasoning_effort),
     ):
