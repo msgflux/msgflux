@@ -14,6 +14,7 @@ from msgflux.accounts import Accounts
 from msgflux.coding import factory as coding_factory
 from msgflux.models import Model
 from msgflux.models.chat_transport import HTTPChatTransport
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.service import ServiceRecoveryRequiredError
 from msgflux.runtime.service.http import (
     AgentServiceClient,
@@ -50,24 +51,54 @@ async def test_coding_factory_refuses_replaced_workspace_root(tmp_path):
         '[agents.coding.tools]\nactive=["workspace"]\n'
     )
     service = _make_manifest_service(config, runtime, root)[0]
+    app = create_service_app(service, token="fixture-service-token")
     try:
-        thread = await service.open_thread(
-            "coding", thread_id="custom:thread", cwd=root
-        )
-        await service.workspace_policy(thread.thread_id)
-    finally:
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://service"
+        ) as http:
+            client = AgentServiceClient(
+                "http://service", token="fixture-service-token", client=http
+            )
+            session = await AgentSessionClient.open(
+                client, agent_id="coding", thread_id="custom:thread", cwd=root
+            )
+            await session.workspace_policy()
         await service.aclose()
         service.store.close()
-    root.rename(tmp_path / "original-project")
-    root.mkdir()
-    service = _make_manifest_service(config, runtime, root)[0]
-    try:
-        with pytest.raises(PermissionError, match="resource/configuration mismatch"):
-            await service.workspace_policy(thread.thread_id)
-        assert list(root.iterdir()) == []
+
+        root.rename(tmp_path / "original-project")
+        root.mkdir()
+        service = _make_manifest_service(config, runtime, root)[0]
+        try:
+            with pytest.raises(ServiceRecoveryRequiredError) as caught:
+                await service.workspace_policy("custom:thread")
+            assert "custom:thread" in str(caught.value)
+            assert isinstance(caught.value.__cause__, WorkspaceIdentityError)
+            assert "Workspace directory was replaced" in str(caught.value.__cause__)
+            assert list(root.iterdir()) == []
+
+            async with httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(
+                    app=create_service_app(service, token="fixture-service-token")
+                ),
+                base_url="http://service",
+            ) as http:
+                client = AgentServiceClient(
+                    "http://service", token="fixture-service-token", client=http
+                )
+                session = await AgentSessionClient.open(
+                    client, thread_id="custom:thread"
+                )
+                with pytest.raises(ServiceRecoveryRequiredError):
+                    await session.workspace_policy()
+            assert list(root.iterdir()) == []
+        finally:
+            await service.aclose()
+            service.store.close()
     finally:
-        await service.aclose()
-        service.store.close()
+        if not service._closed:
+            await service.aclose()
+            service.store.close()
 
 
 @pytest.mark.asyncio

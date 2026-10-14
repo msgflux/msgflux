@@ -508,6 +508,31 @@ maps this response to `ServiceRecoveryRequiredError`; inspect the reason, have
 the trusted host reconcile the command, then retry. A run waiting for an ordinary
 tool approval instead settles with status `paused` and emits `run.paused`.
 
+Built-in coding workspaces also retain identity by thread in the durable local
+workspace registry. A backend or resource ID change, configuration revision
+change, root path change, or replaced directory is a recovery condition. These
+identity failures return HTTP 409 with code `recovery_required`. A workspace
+factory load failure includes thread context and a specific mismatch reason in
+the response message; a direct `WorkspaceIdentityError` also maps to this code.
+Generic `PermissionError` responses remain neutral and do not include exception
+text. `WorkspaceIdentityError` uses fixed public messages for known mismatch
+reasons; any underlying exception remains in the server-side cause chain. The
+service never adopts a replacement directory or escalates permissions
+automatically. Resolve the mismatch through the trusted host before retrying.
+
+```python
+from msgflux.runtime import ServiceRecoveryRequiredError
+
+try:
+    receipt = await client.prompt(thread_id, "Review the project")
+except ServiceRecoveryRequiredError as exc:
+    print("Recovery required:", str(exc))
+```
+
+The SDK raises `ServiceRecoveryRequiredError` for a `recovery_required` response.
+Remote clients can inspect its message; the HTTP response does not transmit the
+server's Python exception cause.
+
 ## Ownership And Coding Sessions
 
 `create_service_app()` borrows the service by default. Set `close_service=True`

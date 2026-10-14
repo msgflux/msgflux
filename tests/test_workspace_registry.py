@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.workspace.local import LocalWorkspaceBackend
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 from msgflux.runtime.workspace.docker_executor import (
@@ -46,7 +47,7 @@ async def test_registry_open_mismatch_and_missing_entry_do_not_adopt(tmp_path):
     identity = first.identity
     await first.aclose()
 
-    with pytest.raises(PermissionError, match="mismatch"):
+    with pytest.raises(WorkspaceIdentityError, match="Workspace directory changed"):
         await LocalWorkspaceBackend(other, registry=registry).open("project")
     with pytest.raises(FileNotFoundError, match="not registered"):
         await backend.reconnect("missing", identity)
@@ -65,7 +66,9 @@ async def test_registry_reconnect_rejects_replaced_root(tmp_path):
     root.rename(tmp_path / "old")
     root.mkdir()
 
-    with pytest.raises(PermissionError, match="mismatch"):
+    with pytest.raises(
+        WorkspaceIdentityError, match="Workspace directory was replaced"
+    ):
         await LocalWorkspaceBackend(root, registry=registry).reconnect(
             "project", identity
         )
@@ -89,7 +92,7 @@ async def test_open_rejects_root_swap_after_registration_before_bind(
         return identity
 
     monkeypatch.setattr(registry, "register_or_verify", register_then_replace)
-    with pytest.raises(PermissionError, match="root was replaced"):
+    with pytest.raises(WorkspaceIdentityError, match="Workspace root was replaced"):
         await backend.open("project")
     assert "project" not in backend._resources
     registry.close()
@@ -211,3 +214,83 @@ def test_registry_rejects_invalid_record_before_persist_and_replaces_by_revision
             root_inode=4,
         )
     registry.close()
+
+
+@pytest.mark.parametrize(
+    ("operation", "field", "value", "message"),
+    [
+        (
+            "register_or_verify",
+            "backend",
+            "other-backend",
+            "Workspace backend changed",
+        ),
+        (
+            "verify",
+            "backend",
+            "other-backend",
+            "Workspace backend changed",
+        ),
+        (
+            "verify",
+            "resource_id",
+            "other-resource",
+            "Workspace resource ID changed",
+        ),
+        (
+            "register_or_verify",
+            "config_revision",
+            "other-config",
+            "Workspace backend configuration changed",
+        ),
+        (
+            "verify",
+            "config_revision",
+            "other-config",
+            "Workspace backend configuration changed",
+        ),
+        (
+            "register_or_verify",
+            "root",
+            "/other-workspace",
+            "Workspace directory changed",
+        ),
+        ("verify", "root", "/other-workspace", "Workspace directory changed"),
+        ("register_or_verify", "root_device", 3, "Workspace directory was replaced"),
+        ("verify", "root_device", 3, "Workspace directory was replaced"),
+        ("register_or_verify", "root_inode", 4, "Workspace directory was replaced"),
+        ("verify", "root_inode", 4, "Workspace directory was replaced"),
+    ],
+)
+def test_registry_mismatch_reasons_preserve_original_identity(
+    tmp_path, operation, field, value, message
+):
+    registry = SQLiteWorkspaceRegistry(tmp_path / "registry.sqlite3")
+    values = {
+        "backend": "local-posix",
+        "resource_id": "project",
+        "config_revision": "config",
+        "root": "/workspace",
+        "root_device": 1,
+        "root_inode": 2,
+    }
+    original = registry.register_or_verify("project", **values)
+    changed = {**values, field: value}
+
+    with pytest.raises(WorkspaceIdentityError, match=message):
+        if operation == "register_or_verify":
+            registry.register_or_verify("project", **changed)
+        else:
+            registry.verify("project", **changed)
+
+    assert registry.get("project") == original
+    registry.close()
+
+
+def test_workspace_identity_error_rejects_unknown_reason_without_echoing_it():
+    secret_reason = "fake-secret-config-revision"
+    with pytest.raises(
+        ValueError, match="Unknown workspace identity failure reason"
+    ) as caught:
+        WorkspaceIdentityError(secret_reason)
+    assert secret_reason not in str(caught.value)

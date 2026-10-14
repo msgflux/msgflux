@@ -116,6 +116,7 @@ from msgflux.runtime.workspace.environment import (
     ProcessRequest,
     ProcessResult,
 )
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.workspace.filesystem import (
     InMemoryWorkspace,
     WorkspaceConflictError,
@@ -177,6 +178,7 @@ __all__ = [
     "PreparedFileChange",
     "WorkspaceEditor",
     "WorkspaceConflictError",
+    "WorkspaceIdentityError",
     "ExecutionEnvironment",
     "ProcessExecutor",
     "ProcessRequest",

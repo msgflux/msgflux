@@ -12,6 +12,7 @@ from uuid import uuid4
 import msgspec
 
 from msgflux.runtime.workspace.contracts import WorkspaceIdentity
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 
 
 class WorkspaceRegistryRecord(
@@ -167,26 +168,15 @@ class SQLiteWorkspaceRegistry:
                     self._conn.commit()
                     return record.identity
                 record = self._record(row)
-                expected = (
-                    backend,
-                    resource_id,
-                    config_revision,
-                    root,
-                    root_device,
-                    root_inode,
+                self._verify_record(
+                    record,
+                    backend=backend,
+                    resource_id=resource_id,
+                    config_revision=config_revision,
+                    root=root,
+                    root_device=root_device,
+                    root_inode=root_inode,
                 )
-                actual = (
-                    record.identity.backend,
-                    record.identity.resource_id,
-                    record.identity.config_revision,
-                    record.root,
-                    record.root_device,
-                    record.root_inode,
-                )
-                if actual != expected:
-                    raise PermissionError(
-                        "Workspace registry resource/configuration mismatch"
-                    )
                 self._conn.commit()
                 return record.identity
             except BaseException:
@@ -286,28 +276,30 @@ class SQLiteWorkspaceRegistry:
     def verify(self, workspace_id: str, **expected) -> WorkspaceIdentity:
         """Require an existing exact resource fingerprint without adopting it."""
         record = self.get_record(workspace_id)
-        wanted = tuple(
-            expected[key]
-            for key in (
-                "backend",
-                "resource_id",
-                "config_revision",
-                "root",
-                "root_device",
-                "root_inode",
-            )
-        )
-        actual = (
-            record.identity.backend,
-            record.identity.resource_id,
-            record.identity.config_revision,
-            record.root,
-            record.root_device,
-            record.root_inode,
-        )
-        if actual != wanted:
-            raise PermissionError("Workspace registry resource/configuration mismatch")
+        self._verify_record(record, **expected)
         return record.identity
+
+    @staticmethod
+    def _verify_record(
+        record: WorkspaceRegistryRecord,
+        *,
+        backend: str,
+        resource_id: str,
+        config_revision: str,
+        root: str,
+        root_device: int,
+        root_inode: int,
+    ) -> None:
+        if record.identity.backend != backend:
+            raise WorkspaceIdentityError("backend_changed")
+        if record.identity.resource_id != resource_id:
+            raise WorkspaceIdentityError("resource_changed")
+        if record.identity.config_revision != config_revision:
+            raise WorkspaceIdentityError("configuration_changed")
+        if record.root != root:
+            raise WorkspaceIdentityError("directory_changed")
+        if (record.root_device, record.root_inode) != (root_device, root_inode):
+            raise WorkspaceIdentityError("directory_replaced")
 
     def close(self) -> None:
         with self._lock:

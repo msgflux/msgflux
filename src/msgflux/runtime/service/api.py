@@ -56,6 +56,7 @@ from msgflux.runtime.service.session_cache import (
     _SessionLoadCleanupError,
 )
 from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
 from msgflux.utils.validation import is_valid_account_name
 
@@ -355,6 +356,14 @@ class AgentService:
             raise RuntimeError("AgentService is closing or closed")
 
     async def _load_session(self, thread_id: str) -> AgentSession:
+        try:
+            return await self._create_session(thread_id)
+        except WorkspaceIdentityError as error:
+            raise ServiceRecoveryRequiredError(
+                f"Cannot load workspace for thread {thread_id!r}: {error}"
+            ) from error
+
+    async def _create_session(self, thread_id: str) -> AgentSession:
         self._require_open()
         thread = self.store.thread(thread_id)
         factory = self._factories[thread.agent_id]
