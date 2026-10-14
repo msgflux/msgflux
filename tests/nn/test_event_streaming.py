@@ -1160,6 +1160,231 @@ async def test_agent_streams_reasoning_from_intermediate_tool_model_response():
     assert events.index(summaries[1]) < events.index(model_responses[1])
 
 
+def _assert_two_tool_outputs(items):
+    call_ids = {
+        item["call_id"] for item in items if item.get("type") == "function_call"
+    }
+    outputs = {
+        item["call_id"]: item.get("output")
+        for item in items
+        if item.get("type") == "function_call_output"
+    }
+    assert call_ids == set(outputs) == {"call_first", "call_second"}
+    assert outputs["call_first"] == "first result"
+    assert outputs["call_second"] == "second result"
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_loop_classifies_stream_response_after_return():
+    calls = []
+    tool_stream_returned = asyncio.Event()
+    release_tool_stream = asyncio.Event()
+    tool_response = ModelResponse()
+    tool_response.set_response_type("tool_call")
+    first_calls = ToolCallAggregator()
+    first_calls.process(0, "call_first", "first_tool", "{}")
+    tool_response.data = first_calls
+
+    second_calls = ToolCallAggregator()
+    second_calls.process(0, "call_second", "second_tool", "{}")
+    delayed_response = ModelStreamResponse(mode="async")
+    returned_response_types = []
+
+    async def produce_delayed_tool_response():
+        await release_tool_stream.wait()
+        delayed_response.set_response_type("tool_call")
+        delayed_response.data = second_calls
+        delayed_response.finish()
+
+    final_response = ModelStreamResponse(mode="async")
+    final_response.set_response_type("text_generation")
+    final_response.add("both tools complete")
+    final_response.finish()
+    model_inputs = []
+    model_call_count = 0
+    producer_tasks = []
+
+    async def model_call(**kwargs):
+        nonlocal model_call_count
+        model_call_count += 1
+        if model_call_count == 1:
+            return tool_response
+        if model_call_count == 2:
+            producer_tasks.append(asyncio.create_task(produce_delayed_tool_response()))
+            return delayed_response
+        model_inputs.append(kwargs["messages"].to_items())
+        return final_response
+
+    def first_tool() -> str:
+        """Return the first tool result."""
+        calls.append("first")
+        return "first result"
+
+    def second_tool() -> str:
+        """Return the second tool result."""
+        calls.append("second")
+        return "second result"
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    model.acall = AsyncMock(side_effect=model_call)
+    agent = Agent(
+        name="delayed_tool_classification",
+        model=model,
+        tools=[first_tool, second_tool],
+        config={"stream": True},
+    )
+    execute_model = agent._aexecute_model
+
+    async def observe_model_response(*args, **kwargs):
+        response = await execute_model(*args, **kwargs)
+        if response is delayed_response:
+            returned_response_types.append(response.response_type)
+            tool_stream_returned.set()
+        return response
+
+    agent._aexecute_model = observe_model_response
+    stream_task = asyncio.create_task(_collect_events(agent.stream_events("Run both")))
+    try:
+        await asyncio.wait_for(tool_stream_returned.wait(), 2)
+        assert returned_response_types == [None]
+        assert calls == ["first"]
+        assert not stream_task.done()
+
+        release_tool_stream.set()
+        events = await asyncio.wait_for(stream_task, 2)
+
+        assert calls == ["first", "second"]
+        assert model_call_count == 3
+        assert len(model_inputs) == 1
+        _assert_two_tool_outputs(model_inputs[0])
+
+        tool_ends = [event for event in events if event.type == EventType.TOOL_END]
+        assert [event.data["tool_name"] for event in tool_ends] == [
+            "first_tool",
+            "second_tool",
+        ]
+        model_responses = [
+            event for event in events if event.type == EventType.MODEL_RESPONSE
+        ]
+        assert model_responses[-1].data["response_type"] == "text_generation"
+        assert events.index(tool_ends[-1]) < events.index(model_responses[-1])
+        run_end = next(event for event in events if event.type == EventType.RUN_END)
+        assert events.index(model_responses[-1]) < events.index(run_end)
+    finally:
+        release_tool_stream.set()
+        await asyncio.gather(*producer_tasks, return_exceptions=True)
+        if not stream_task.done():
+            stream_task.cancel()
+            await asyncio.gather(stream_task, return_exceptions=True)
+        await agent.aclose()
+
+
+def _observe_sync_stream_return(agent, target, response_types, returned):
+    execute_model = agent._execute_model
+
+    def observe(*args, **kwargs):
+        response = execute_model(*args, **kwargs)
+        if response is target:
+            response_types.append(response.response_type)
+            returned.set()
+        return response
+
+    agent._execute_model = observe
+
+
+@pytest.mark.asyncio
+async def test_sync_agent_tool_loop_classifies_stream_response_after_return():
+    calls = []
+    tool_stream_returned = threading.Event()
+    release_tool_stream = threading.Event()
+    tool_response = ModelResponse()
+    tool_response.set_response_type("tool_call")
+    first_calls = ToolCallAggregator()
+    first_calls.process(0, "call_first", "first_tool", "{}")
+    tool_response.data = first_calls
+
+    second_calls = ToolCallAggregator()
+    second_calls.process(0, "call_second", "second_tool", "{}")
+    delayed_response = ModelStreamResponse(mode="sync")
+    returned_response_types = []
+
+    def produce_delayed_tool_response():
+        release_tool_stream.wait()
+        delayed_response.set_response_type("tool_call")
+        delayed_response.data = second_calls
+        delayed_response.finish()
+
+    final_response = ModelStreamResponse(mode="sync")
+    final_response.set_response_type("text_generation")
+    final_response.add("both tools complete")
+    final_response.finish()
+    model_inputs = []
+    model_call_count = 0
+    producer_threads = []
+
+    def model_call(**kwargs):
+        nonlocal model_call_count
+        model_call_count += 1
+        if model_call_count == 1:
+            return tool_response
+        if model_call_count == 2:
+            producer = threading.Thread(target=produce_delayed_tool_response)
+            producer.start()
+            producer_threads.append(producer)
+            return delayed_response
+        model_inputs.append(kwargs["messages"].to_items())
+        return final_response
+
+    def first_tool() -> str:
+        """Return the first tool result."""
+        calls.append("first")
+        return "first result"
+
+    def second_tool() -> str:
+        """Return the second tool result."""
+        calls.append("second")
+        return "second result"
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    model.return_value = None
+    model.side_effect = model_call
+    agent = Agent(
+        name="delayed_sync_tool_classification",
+        model=model,
+        tools=[first_tool, second_tool],
+        config={"stream": True},
+    )
+    _observe_sync_stream_return(
+        agent, delayed_response, returned_response_types, tool_stream_returned
+    )
+    run_task = asyncio.create_task(asyncio.to_thread(agent, "Run both"))
+    try:
+        await asyncio.wait_for(asyncio.to_thread(tool_stream_returned.wait, 2), 3)
+        assert returned_response_types == [None]
+        assert calls == ["first"]
+        assert not run_task.done()
+
+        release_tool_stream.set()
+        response = await asyncio.wait_for(run_task, 2)
+
+        assert calls == ["first", "second"]
+        assert model_call_count == 3
+        assert len(model_inputs) == 1
+        _assert_two_tool_outputs(model_inputs[0])
+        assert response.response_type == "text_generation"
+        assert final_response.data == "both tools complete"
+    finally:
+        release_tool_stream.set()
+        for producer in producer_threads:
+            producer.join(timeout=2)
+        if not run_task.done():
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+        await agent.aclose()
+
+
 def test_before_run_can_replace_fresh_agent_input():
     agent, model = make_agent(
         hooks=[
