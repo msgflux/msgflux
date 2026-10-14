@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-import msgspec
+from msgflux.utils.msgspec import msgspec_dumps
 
 
 def _prompt_parser() -> argparse.ArgumentParser:
@@ -16,11 +16,12 @@ def _prompt_parser() -> argparse.ArgumentParser:
         prog="msgflux",
         description=(
             "Run a coding task, or manage the backend with "
-            "'msgflux service' and 'msgflux init'."
+            "'msgflux service', 'msgflux init', and 'msgflux accounts'."
         ),
         epilog=(
             "Commands: msgflux init --model PROVIDER/MODEL; "
-            "msgflux service; msgflux service restart."
+            "msgflux accounts login PROVIDER --account-name NAME; "
+            "msgflux service; msgflux service status; msgflux service restart."
         ),
     )
     parser.add_argument("-p", "--prompt", required=True, help="noninteractive task")
@@ -60,13 +61,11 @@ def _prompt_parser() -> argparse.ArgumentParser:
 
 def _write_observation(kind: str, record, *, as_json: bool) -> None:
     if as_json:
-        line = msgspec.json.encode({"type": kind, kind: record, "version": 1}).decode(
-            "utf-8"
-        )
+        line = msgspec_dumps({"type": kind, kind: record, "version": 1})
     elif kind == "event":
         content = record.data.get("delta")
         if not isinstance(content, str):
-            content = msgspec.json.encode(record.data).decode("utf-8")
+            content = msgspec_dumps(record.data)
         source = "/".join(record.source_path)
         label = f"{record.type} {source}" if source else record.type
         line = f"[{label}] {content}"
@@ -80,7 +79,7 @@ def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
     if as_json and streaming:
         _write_observation("result", result, as_json=True)
     elif as_json:
-        sys.stdout.write(msgspec.json.encode(result).decode("utf-8") + "\n")
+        sys.stdout.write(msgspec_dumps(result) + "\n")
     elif result.status == "completed":
         sys.stdout.write((result.output or "") + "\n")
     else:

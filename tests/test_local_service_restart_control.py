@@ -139,10 +139,14 @@ def test_cli_init_reports_dangling_config_symlink_without_changing_it(
     config.symlink_to(target)
     monkeypatch.chdir(tmp_path)
 
-    with pytest.raises(FileNotFoundError, match="dangling symlink"):
+    with pytest.raises(SystemExit) as exited:
         cli.main(["init", "--config", str(config)])
 
-    assert "Initialized service config" not in capsys.readouterr().out
+    assert exited.value.code == 1
+    captured = capsys.readouterr()
+    assert "Initialized service config" not in captured.out
+    assert "dangling symlink" in captured.err
+    assert "Traceback" not in captured.err
     assert config.is_symlink()
     assert config.readlink() == target
     assert not target.exists()
@@ -189,12 +193,14 @@ def test_cli_init_accepts_default_model(tmp_path, monkeypatch, capsys):
 
 @pytest.mark.parametrize("model", ["missing-slash", "provider/", " provider/id"])
 def test_cli_init_rejects_invalid_model_before_creating_files(
-    tmp_path, monkeypatch, model
+    tmp_path, monkeypatch, model, capsys
 ):
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
-    with pytest.raises(ValueError, match="Invalid --model"):
+    with pytest.raises(SystemExit) as exited:
         cli.main(["init", "--model", model])
+    assert exited.value.code == 1
+    assert "Invalid --model" in capsys.readouterr().err
     assert not home.exists()
 
 

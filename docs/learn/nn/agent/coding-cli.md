@@ -25,12 +25,15 @@ in the service's observation stream and history.
 
 ```bash
 msgflux service
+msgflux service status
 msgflux service restart
 msgflux -p "Investigate the failing test" --agent explorer
 ```
 
-`service` runs in the foreground; `service restart` replaces the discovered local
-daemon. `--agent` selects an entry from the backend config. Without it, the command
+`service` runs in the foreground; `service status` shows the verified address
+without starting the daemon; `service restart` replaces the discovered local
+daemon. Add `--json` to `service status` for machine-readable diagnostics.
+`--agent` selects an entry from the backend config. Without it, the command
 uses `defaults.agent`. Declare the Explorer preset before selecting it.
 The former `msgflux-service` console entry has been replaced by `msgflux service`.
 

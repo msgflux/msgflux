@@ -10,6 +10,16 @@ import msgspec
 from msgflux.runtime.service.local.manifest import validate_factory_path
 
 
+class LocalServiceStatus(msgspec.Struct, frozen=True):
+    """Verified daemon identity without authentication material."""
+
+    status: Literal["running", "stopped", "unreachable"]
+    runtime_dir: str
+    url: str | None = None
+    instance_id: str | None = None
+    pid: int | None = None
+
+
 class LocalServiceRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     instance_id: str
     cwd: str

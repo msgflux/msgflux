@@ -31,13 +31,38 @@ from msgflux.runtime.service.local.manifest import (
     load_service_manifest,
     validate_factory_path,
 )
-from msgflux.runtime.service.local.records import LocalServiceRecord
+from msgflux.runtime.service.local.records import LocalServiceRecord, LocalServiceStatus
 
 _reapers: set[asyncio.Task[None]] = set()
 _cleanups: set[asyncio.Task[None]] = set()
 _STARTUP_LOCK = "startup.lock"
 _DAEMON_LOCK = "daemon.lock"
 _LOG_FILE = "daemon.log"
+
+
+async def inspect_local_service(
+    *, runtime_dir: Path | None = None
+) -> LocalServiceStatus:
+    """Inspect the recorded daemon without starting it or creating local files."""
+    directory = (
+        (
+            Path(runtime_dir)
+            if runtime_dir is not None
+            else Path.home() / ".msgflux" / "runtime"
+        )
+        .expanduser()
+        .absolute()
+    )
+    if directory.is_symlink():
+        raise ValueError("Runtime directory must be a real directory, not a symlink")
+    record = read_record(directory)
+    if record is None:
+        return LocalServiceStatus("stopped", str(directory))
+    if await _probe(record) is None:
+        return LocalServiceStatus("unreachable", str(directory))
+    return LocalServiceStatus(
+        "running", str(directory), record.url, record.instance_id, record.pid
+    )
 
 
 async def connect_local_service(

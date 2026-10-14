@@ -10,10 +10,9 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-import msgspec
-
 from msgflux.accounts.providers import get_provider_auth
 from msgflux.accounts.store import Accounts
+from msgflux.utils.msgspec import msgspec_dumps
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -84,7 +83,7 @@ def _execute(options, accounts: Accounts) -> dict:
 
 def _write_result(options, result, exit_code) -> None:
     if options.json:
-        sys.stdout.write(msgspec.json.encode(result).decode() + "\n")
+        sys.stdout.write(msgspec_dumps(result) + "\n")
     elif exit_code:
         sys.stderr.write(result["error"] + "\n")
     elif options.command == "list":
