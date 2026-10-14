@@ -47,7 +47,7 @@ async def test_coding_factory_refuses_replaced_workspace_root(tmp_path):
     config.write_text(
         '[defaults]\nagent="coding"\nmodel="openai/gpt-4.1"\n'
         'accounts_dir="accounts"\n[agents.coding]\nharness="coding"\n'
-        '[agents.coding.tools]\nactive=["read", "apply_patch"]\n'
+        '[agents.coding.tools]\nactive=["workspace"]\n'
     )
     service = _make_manifest_service(config, runtime, root)[0]
     try:
@@ -87,7 +87,7 @@ async def test_manifest_coding_approval_and_account_survive_restart(
         '[defaults]\nagent="coding"\naccount="work"\n'
         'accounts_dir="accounts"\nmodel="openai/gpt-4.1"\n'
         '[agents.coding]\nharness="coding"\n'
-        '[agents.coding.tools]\nactive=["read", "apply_patch"]\n'
+        '[agents.coding.tools]\nactive=["workspace"]\n'
     )
     requests = []
     transports = []

@@ -24,6 +24,7 @@ from msgflux.runtime.context import get_execution_scope
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.runtime.permissions import require_permissions
 from msgflux.runtime.workspace.changes import PreparedFileChange
+from msgflux.tools.helpers import RUNTIME_BACKGROUND_PARAM, coerce_tool_params
 from msgflux.tools.runtime import ToolOutcome
 from msgflux.tools.workspace_changes import (
     workspace_change_execution,
@@ -37,9 +38,37 @@ class ApprovalReconciliationRequiredError(TaskPauseRequestedError):
     """Do not overwrite a claimed batch: its worker may still be executing."""
 
 
+def _approval_arguments(definition, arguments, *, dispatch_mode=None):
+    """Bind dispatch controls separately from the executable arguments."""
+    visible_arguments = coerce_tool_params(definition.name, arguments)
+    selected_dispatch = definition.dispatch.name
+    if selected_dispatch == "optional_background":
+        argument = definition.dispatch.options.get("argument", RUNTIME_BACKGROUND_PARAM)
+        if dispatch_mode is not None and argument in visible_arguments:
+            raise ValueError(
+                "Runtime dispatch controls cannot be added to approved arguments"
+            )
+        requested = visible_arguments.pop(argument, False)
+        if requested is not None and type(requested) is not bool:
+            raise TypeError(f"`{argument}` must be a bool or None")
+        selected_dispatch = "background" if requested is True else "foreground"
+    if dispatch_mode is not None:
+        selected_dispatch = dispatch_mode
+    if definition.dispatch.name == "foreground" and selected_dispatch != "foreground":
+        raise ValueError("Approved tools cannot change dispatch mode")
+    if selected_dispatch not in {"foreground", "background"}:
+        raise ValueError("Unsupported approved dispatch mode")
+    if (
+        selected_dispatch == "background"
+        and workspace_change_tool(definition) is not None
+    ):
+        raise ValueError("Approved file changes must execute in foreground")
+    return visible_arguments, selected_dispatch
+
+
 @dataclass(frozen=True)
 class AgentApprovals:
-    """Approval rules for named foreground tools; versions are owned by the host."""
+    """Approval rules for executable tools; versions are owned by the host."""
 
     store: ApprovalStore
     tools: Mapping[str, str]
@@ -63,15 +92,27 @@ class AgentApprovals:
         }
         object.__setattr__(self, "tools", MappingProxyType(tools))
 
-    def binding(self, library, intent, *, arguments=None, change=None):
+    def binding(
+        self, library, intent, *, arguments=None, change=None, dispatch_mode=None
+    ):
         scope = get_execution_scope()
         definition = library.get_tool_definition(intent.name)
         if (
-            definition.dispatch.name != "foreground"
+            definition.dispatch.name
+            not in {"foreground", "optional_background", "background"}
             or definition.feedback.name == "call_as_response"
         ):
-            raise ValueError("Agent approvals only support executable foreground tools")
+            raise ValueError(
+                "Agent approvals require executable foreground or background tools"
+            )
+        visible_arguments, selected_dispatch = _approval_arguments(
+            definition,
+            intent.arguments if arguments is None else arguments,
+            dispatch_mode=dispatch_mode,
+        )
         resources = self._resource_binding(definition, scope)
+        if definition.dispatch.name != "foreground":
+            resources["dispatch_mode"] = selected_dispatch
         if change is not None:
             resources["prepared_change"] = change.digest
         return ApprovalBinding.from_call(
@@ -83,7 +124,7 @@ class AgentApprovals:
             tool_name=intent.name,
             tool_revision=self.tools[intent.name],
             policy_version=self.policy_version,
-            arguments=intent.arguments if arguments is None else arguments,
+            arguments=visible_arguments,
             resources=resources,
             required_permissions=definition.required_permissions,
         )
@@ -197,14 +238,11 @@ class ApprovalBatch:
             record = self.records.get(plan.intent.id)
             if record is None:
                 raise ApprovalConflictError("No approval for this tool call")
-            if plan.dispatch.name != "foreground":
-                raise ApprovalConflictError(
-                    "Approved tools cannot change dispatch mode"
-                )
             binding = self.policy.binding(
                 self.library,
                 plan.intent,
                 arguments=plan.visible_arguments,
+                dispatch_mode=plan.dispatch.name,
                 change=prepare_workspace_change(
                     plan.definition, plan.visible_arguments
                 ),

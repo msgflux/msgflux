@@ -325,10 +325,10 @@ def test_on_request_never_silently_disables_without_owned_journal(tmp_path):
         asyncio.run(agent.aclose())
 
 
-def test_selected_nonforeground_tool_is_rejected_by_workspace_approval_policy(
+def test_selected_detached_tool_is_rejected_by_workspace_approval_policy(
     tmp_path,
 ):
-    @mf.tool_config(background=True, required_permissions=("process.execute",))
+    @mf.tool_config(detached=True, required_permissions=("process.execute",))
     def execute_in_background(command: str) -> str:
         return command
 
@@ -354,7 +354,7 @@ def test_selected_nonforeground_tool_is_rejected_by_workspace_approval_policy(
     agent._bind_resources(scope.thread_id)
     try:
         with execution_context(scope=scope, workspace_policy=state):
-            with pytest.raises(ValueError, match="non-foreground tool"):
+            with pytest.raises(ValueError, match="detached tool"):
                 get_workspace_approvals(agent)
     finally:
         import asyncio

@@ -99,11 +99,12 @@ def _selected_tool_revisions(agent):
         if not protected:
             continue
         if (
-            definition.dispatch.name != "foreground"
+            definition.dispatch.name
+            not in {"foreground", "optional_background", "background"}
             or definition.feedback.name == "call_as_response"
         ):
             raise ValueError(
-                "Workspace approval policy cannot protect non-foreground tool "
+                "Workspace approval policy cannot protect detached tool "
                 f"{definition.name!r}"
             )
         selected[definition.name] = _definition_revision(definition)
