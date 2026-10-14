@@ -473,6 +473,36 @@ returning a connection. Initialization and shutdown of an existing owner are wai
 for within `startup_timeout`; an owner with published metadata but an invalid
 identity/health response is reported as requiring recovery and is not replaced.
 
+## Inspect The Daemon
+
+Inspect the local service without starting it:
+
+```bash
+msgflux service status
+msgflux service status --runtime-dir ~/.msgflux/runtime --json
+```
+
+An active service reports its verified URL, PID and instance ID. JSON output
+contains `status`, `runtime_dir`, `url`, `pid`, and `instance_id`; it never
+contains the authentication token. Exit code `0` means `running`. Exit code `1`
+means `stopped` (no metadata) or `unreachable` (metadata exists but the
+authenticated identity check failed). Unverified identities have no URL in the
+result. Inspection creates no files and leaves stale metadata untouched.
+Malformed or insecure metadata produces a concise error on stderr.
+
+The SDK offers the same read-only operation:
+
+```python
+from msgflux.runtime.service.local import inspect_local_service
+
+status = await inspect_local_service()
+if status.status == "running":
+    print(status.url)
+```
+
+This example discovers the active address without launching the daemon. Use
+`connect_local_service()` when you want to start a service if none exists.
+
 ## Gracefully Restart The Daemon
 
 `restart_local_service()` asks the authenticated current instance to shut down,
