@@ -23,7 +23,8 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux accounts login PROVIDER --account-name NAME; "
             "msgflux service; msgflux service status; msgflux service stop; "
             "msgflux service inspect; msgflux runs inspect/resume THREAD_ID RUN_ID; "
-            "msgflux runs ls --active; msgflux threads interrupt/stop THREAD_ID."
+            "msgflux runs ls --active; msgflux threads interrupt/stop THREAD_ID; "
+            "msgflux agents ls; msgflux threads ls; msgflux config validate."
         ),
     )
     parser.add_argument("-p", "--prompt", required=True, help="noninteractive task")
@@ -93,26 +94,39 @@ def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
         sys.stderr.write(f"{result.error or result.status}\n{identities}\n")
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    args = list(sys.argv[1:] if argv is None else argv)
+def _dispatch_administration(args: list[str]) -> bool:
     if args and args[0] == "accounts":
         from msgflux.accounts.cli import main as accounts_main  # noqa: PLC0415
 
         accounts_main(args[1:])
-        return
-    if args and args[0] in {"runs", "threads"}:
+        return True
+    if args and args[0] == "config":
+        from msgflux.runtime.service.local.config_cli import (  # noqa: PLC0415
+            main as config_main,
+        )
+
+        config_main(args[1:])
+        return True
+    if args and args[0] in {"runs", "threads", "agents"}:
         from msgflux.runtime.service.local.cli import (  # noqa: PLC0415
             main as service_main,
         )
 
         service_main(args[1:], resource=args[0])
-        return
+        return True
     if args and args[0] in {"init", "service"}:
         from msgflux.runtime.service.local.cli import (  # noqa: PLC0415
             main as service_main,
         )
 
         service_main(args if args[0] == "init" else args[1:])
+        return True
+    return False
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and _dispatch_administration(args):
         return
     options = _prompt_parser().parse_args(args)
     if not options.prompt.strip():

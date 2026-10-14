@@ -12,15 +12,25 @@ from typing import Sequence
 from msgflux.utils.msgspec import msgspec_dumps
 
 
+def _help_for(resource: str, text: str, *resources: str) -> str:
+    return text if resource in resources else argparse.SUPPRESS
+
+
 def _parser(resource: str = "service") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=f"msgflux {resource}",
-        description="Run, inspect, or restart a local authenticated AgentService.",
+        description={
+            "service": "Run, inspect, or restart a local authenticated AgentService.",
+            "agents": "List registered agents and their live execution activity.",
+            "threads": "List threads or interrupt a thread's active execution.",
+            "runs": "List active runs, inspect recovery, or resume a paused run.",
+        }[resource],
     )
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
         "runs": ("inspect", "resume", "ls"),
-        "threads": ("interrupt", "stop"),
+        "threads": ("ls", "interrupt", "stop"),
+        "agents": ("ls",),
     }
     parser.add_argument(
         "action", nargs="?", choices=actions[resource], default=actions[resource][0]
@@ -32,23 +42,47 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         help="JSON output for operation commands",
     )
     parser.add_argument(
-        "thread_id", nargs="?", help="thread ID (runs and threads only)"
+        "thread_id", nargs="?", help=_help_for(resource, "thread ID", "runs", "threads")
     )
-    parser.add_argument("run_id", nargs="?", help="run ID (runs only)")
+    parser.add_argument("run_id", nargs="?", help=_help_for(resource, "run ID", "runs"))
     parser.add_argument(
-        "--stop-timeout", type=float, help="graceful shutdown deadline in seconds"
+        "--stop-timeout",
+        type=float,
+        help=_help_for(resource, "graceful shutdown deadline in seconds", "service"),
     )
-    parser.add_argument("--active", action="store_true", help="list live service runs")
+    parser.add_argument(
+        "--active",
+        action="store_true",
+        help=_help_for(
+            resource, "list only active resources", "runs", "agents", "threads"
+        ),
+    )
+    parser.add_argument(
+        "--agent",
+        help=_help_for(resource, "filter active runs by registered agent ID", "runs"),
+    )
     source = parser.add_mutually_exclusive_group()
     source.add_argument(
         "--factory",
-        help="trusted factory as module:attribute; it receives runtime_dir",
+        help=_help_for(
+            resource,
+            "trusted factory as module:attribute; it receives runtime_dir",
+            "service",
+        ),
     )
-    source.add_argument("--config", type=Path, help="TOML service manifest")
+    source.add_argument(
+        "--config",
+        type=Path,
+        help=_help_for(resource, "TOML service manifest", "service"),
+    )
     parser.add_argument(
         "--restart-timeout",
         type=float,
-        help="maximum seconds to wait for graceful restart and replacement startup",
+        help=_help_for(
+            resource,
+            "maximum seconds to wait for graceful restart and replacement startup",
+            "service",
+        ),
     )
     parser.add_argument(
         "--runtime-dir",
@@ -58,11 +92,19 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
     parser.add_argument(
         "--cwd",
         type=Path,
-        help="working directory used to import the factory and resolve its files",
+        help=_help_for(
+            resource,
+            "working directory used to import the factory and resolve its files",
+            "service",
+        ),
     )
     parser.add_argument(
         "--model",
-        help="provider/model-id to set in a newly initialized config (init only)",
+        help=_help_for(
+            resource,
+            "provider/model-id to set in a newly initialized config (init only)",
+            "service",
+        ),
     )
     return parser
 
@@ -121,6 +163,15 @@ def _validate_options(args: argparse.Namespace) -> None:
         raise SystemExit("--model is only accepted with the init action")
 
     _validate_target(args)
+    if args.agent is not None and not (args.resource == "runs" and args.action == "ls"):
+        raise SystemExit("--agent is only accepted with runs ls")
+    if args.active and not (
+        args.resource in {"runs", "agents", "threads"} and args.action == "ls"
+    ):
+        raise SystemExit(
+            "--active is only accepted with runs ls, agents ls or threads ls"
+        )
+
     if args.stop_timeout is not None and not (
         args.resource == "service" and args.action in {"stop", "down"}
     ):
@@ -136,12 +187,19 @@ def _validate_options(args: argparse.Namespace) -> None:
         )
 
 
-def _validate_target(args: argparse.Namespace) -> None:
-    if args.resource == "runs" and args.action == "ls":
+def _validate_listing_target(args: argparse.Namespace) -> None:
+    if args.resource == "runs":
         if not args.active:
             raise SystemExit("runs ls requires --active")
         if args.run_id is not None:
             raise SystemExit("runs ls accepts at most one THREAD_ID")
+    elif args.thread_id is not None or args.run_id is not None:
+        raise SystemExit(f"{args.resource} ls does not accept thread or run IDs")
+
+
+def _validate_target(args: argparse.Namespace) -> None:
+    if args.action == "ls":
+        _validate_listing_target(args)
     elif args.resource == "runs":
         if args.thread_id is None or args.run_id is None:
             raise SystemExit(f"{args.action} requires THREAD_ID and RUN_ID")
@@ -150,8 +208,6 @@ def _validate_target(args: argparse.Namespace) -> None:
             raise SystemExit(f"{args.action} requires exactly one THREAD_ID")
     elif args.thread_id is not None or args.run_id is not None:
         raise SystemExit("THREAD_ID and RUN_ID require msgflux runs or threads")
-    if args.active and not (args.resource == "runs" and args.action == "ls"):
-        raise SystemExit("--active is only accepted with runs ls")
 
 
 async def _stop(args) -> None:
@@ -217,11 +273,15 @@ async def _run_operation(args) -> None:
         health = await client.health()
         if health.instance_id != record.instance_id:
             raise RuntimeError("Local daemon identity changed during inspection")
+        if args.action == "ls":
+            from msgflux.runtime.service.local.listing import (  # noqa: PLC0415
+                list_resources,
+            )
+
+            await list_resources(client, args)
+            return
         if args.resource == "threads":
             await _interrupt_thread(client, args)
-            return
-        if args.action == "ls":
-            await _list_active_runs(client, args)
             return
         if args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
@@ -258,26 +318,6 @@ def _show_run_result(args, result) -> None:
         )
     for reason in result.reasons:
         sys.stdout.write(f"- {reason}\n")
-
-
-async def _list_active_runs(client, args) -> None:
-    runs = await client.active_runs()
-    if args.thread_id is not None:
-        if not any(
-            thread.thread_id == args.thread_id for thread in await client.threads()
-        ):
-            raise KeyError(f"Unknown thread: {args.thread_id}")
-        runs = tuple(run for run in runs if run.thread_id == args.thread_id)
-    if args.json:
-        sys.stdout.write(msgspec_dumps({"runs": runs}) + "\n")
-    elif runs:
-        sys.stdout.write("THREAD_ID  RUN_ID  REQUEST_ID  STATUS\n")
-        for run in runs:
-            sys.stdout.write(
-                f"{run.thread_id}  {run.run_id}  {run.request_id}  {run.status}\n"
-            )
-    else:
-        sys.stdout.write("No active runs.\n")
 
 
 async def _interrupt_thread(client, args) -> None:
