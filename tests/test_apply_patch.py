@@ -152,6 +152,68 @@ def test_native_selection_and_portable_schema(model):
     }
 
 
+def _local_scope(workspace):
+    return ExecutionScope(
+        namespace="patcher",
+        thread_id="t",
+        run_id="r",
+        principal="user",
+        workspace=workspace,
+        permissions=workspace.permissions,
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [("relative.txt", "/relative.txt"), ("/virtual.txt", "/virtual.txt")],
+)
+@pytest.mark.asyncio
+async def test_local_apply_patch_preserves_relative_and_virtual_absolute_paths(
+    tmp_path, path, expected
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace = AgentWorkspace.local(root)
+    tool = ApplyPatchTool()
+    scope = _local_scope(workspace)
+
+    with execution_context(scope=scope):
+        assert await tool.acall("create", path, "+content", workspace=workspace) == {
+            "status": "completed"
+        }
+        assert workspace.resolve(path) == expected
+        assert workspace.read_text(expected) == "content"
+
+
+def test_local_workspace_host_path_alias_requires_root_boundary(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace = AgentWorkspace.local(root)
+    host_path = str(root / "hello.txt")
+    sibling_path = str(root.with_name("project-sibling") / "hello.txt")
+
+    assert workspace.resolve(host_path) == host_path
+    assert workspace.resolve(host_path, host_paths=True) == "/hello.txt"
+    assert workspace.resolve(sibling_path, host_paths=True) == sibling_path
+
+
+@pytest.mark.asyncio
+async def test_local_apply_patch_host_alias_does_not_rewrite_virtual_rootname_again(
+    tmp_path,
+):
+    root = tmp_path / "project"
+    nested = root / root.relative_to(root.anchor)
+    nested.mkdir(parents=True)
+    workspace = AgentWorkspace.local(root)
+    scope = _local_scope(workspace)
+    tool = ApplyPatchTool()
+    host_path = str(nested / "hello.txt")
+
+    with execution_context(scope=scope):
+        await tool.acall("create", host_path, "+content", workspace=workspace)
+        assert workspace.read_text(str(root / "hello.txt")) == "content"
+
+
 @pytest.mark.parametrize("operation", ["create_file", "update_file", "delete_file"])
 @pytest.mark.parametrize("approved", [False, True])
 @pytest.mark.asyncio

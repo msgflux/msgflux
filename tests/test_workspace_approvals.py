@@ -19,7 +19,7 @@ from msgflux.runtime.context import ExecutionScope, execution_context
 from msgflux.runtime.permissions import PermissionSet, require_permissions
 from msgflux.runtime.workspace.api import AgentWorkspace
 from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
-from msgflux.tools.builtin import WriteTool
+from msgflux.tools.builtin import ApplyPatchTool, WriteTool
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -107,6 +107,61 @@ async def test_managed_on_request_pauses_reviews_and_replays_write(tmp_path):
             state.current = _policy("thread-1", workspace, mode="never", revision=1)
             assert await agent.acall("Continue", scope=scope) == "done"
             assert (root / "note.txt").read_text() == "reviewed"
+    finally:
+        await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_apply_patch_approval_resolves_host_absolute_path(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    host_path = str(root / "hello.txt")
+    workspace = AgentWorkspace.local(root, approval_policy="on-request")
+    state = WorkspacePolicyState(workspace, _policy("thread-1", workspace))
+    scope = ExecutionScope(
+        thread_id="thread-1",
+        namespace="editor",
+        run_id="run-1",
+        principal="user",
+        workspace=workspace,
+        permissions=workspace.permissions,
+    )
+    tool = ApplyPatchTool()
+    agent = _agent(
+        "editor",
+        tmp_path / "agent-state",
+        workspace,
+        [
+            _tool_call(
+                "apply_patch",
+                {
+                    "operation": "create",
+                    "path": host_path,
+                    "diff": "+Olá Vulcano",
+                },
+            ),
+            _response(),
+        ],
+        tool,
+    )
+    try:
+        with execution_context(scope=scope, workspace_policy=state):
+            with pytest.raises(TaskPauseRequestedError):
+                await agent.acall("Create hello.txt", scope=scope)
+
+        assert not (root / "hello.txt").exists()
+        resources = agent._owned_threads[scope.thread_id].resources
+        (record,) = resources.approval_store.pending(
+            scope.namespace, scope.thread_id, scope.run_id
+        )
+        with execution_context(scope=scope, workspace_policy=state):
+            preview = agent.inspect_approval_preview(
+                scope.thread_id, scope.run_id, record.request_id
+            )
+            assert preview.path == "/hello.txt"
+            agent.decide_approval(record.request_id, approved=True, decided_by="user")
+            assert await agent.acall("Continue", scope=scope) == "done"
+        assert (root / "hello.txt").read_text() == "Olá Vulcano"
     finally:
         await agent.aclose()
 
