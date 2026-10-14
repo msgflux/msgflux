@@ -89,7 +89,7 @@ plot = [
     "code2mermaid>=0.3.0",
     "mermaid-py>=0.8.0",
 ]
-workspace-tools = [
+coding = [
     "pathspec>=1.1.1",
     "regex>=2024.11.6",
 ]

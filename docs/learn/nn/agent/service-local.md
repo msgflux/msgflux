@@ -5,8 +5,17 @@ and starts one when no process owns the runtime. Several frontends can reuse the
 same AgentService. Closing a client or exiting its launcher leaves the daemon
 running, including while an Agent works or waits for approval.
 
-Install `msgflux[service]` for server support. The process manager in this increment
-uses POSIX locks; the native HTTP client remains usable on other platforms.
+Install `msgflux[service]` for server support. For the Coding harness, use
+`msgflux[coding,service]` so workspace query tools (`grep`, `glob`, and
+`ls`), including those selected by read-only agents, have their optional
+dependencies available:
+
+```bash
+uv add 'msgflux[coding,service]'
+```
+
+The process manager uses POSIX locks; the native HTTP client remains usable on
+other platforms.
 
 ## Automatic Endpoint Discovery
 

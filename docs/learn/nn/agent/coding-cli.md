@@ -1,6 +1,7 @@
 # Coding Command Line
 
-Install `msgflux[service]` to use the local coding backend. The `msgflux` command
+Install `msgflux[coding,service]` to use the local coding backend,
+including workspace navigation tools used by read-only agents. The `msgflux` command
 manages the service and submits noninteractive tasks. The TUI is a separate frontend.
 
 ## Initialize And Run
