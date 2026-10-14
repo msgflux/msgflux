@@ -11,6 +11,33 @@ AdmissionStatus = Literal[
 ]
 
 
+class AgentConfiguration(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Host-published registration defaults, never live sessions or credentials."""
+
+    harness: str | None = None
+    factory: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    permissions: tuple[str, ...] | None = None
+    tools_active: tuple[str, ...] | None = None
+    tools_deferred: tuple[str, ...] | None = None
+    subagents: tuple[str, ...] | None = None
+    preset: str | None = None
+    prompt_source: Literal["default", "preset", "file"] | None = None
+    prompt_file: str | None = None
+    config_path: str | None = None
+    config_digest: str | None = None
+
+
+class AgentInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Loaded service registration, without thread/run-specific overrides."""
+
+    agent_id: str
+    is_default: bool
+    account_name: str
+    configuration: AgentConfiguration | None = None
+
+
 class RunSummary(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Public metadata for a saved execution, without checkpoint state."""
 

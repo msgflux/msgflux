@@ -4,6 +4,8 @@ from msgflux.runtime.service.api import AgentService, AgentSession
 from msgflux.runtime.service.cache_policy import SessionCachePolicy
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
+    AgentConfiguration,
+    AgentInspection,
     ApprovalReview,
     EventRecord,
     RunInspection,
@@ -20,6 +22,8 @@ from msgflux.runtime.service.store import SQLiteServiceStore
 
 __all__ = [
     "AgentService",
+    "AgentConfiguration",
+    "AgentInspection",
     "AgentSession",
     "SessionLease",
     "SessionCachePolicy",

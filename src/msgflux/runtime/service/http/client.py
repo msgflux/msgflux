@@ -14,6 +14,7 @@ from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
+    AgentInspection,
     ApprovalReview,
     RunInspection,
     RunResult,
@@ -184,6 +185,23 @@ class AgentServiceClient:
     async def agents(self) -> tuple[str, ...]:
         result = await self._json("GET", "/v1/agents", AgentsResponse)
         return result.agents
+
+    async def inspect_agent(self, agent_id: str) -> AgentInspection:
+        """Inspect registered defaults without creating a session or loading models."""
+        try:
+            return await self._json(
+                "GET",
+                "/v1/agents/" + _segment(agent_id) + "/inspection",
+                AgentInspection,
+            )
+        except AgentServiceHTTPError as error:
+            if error.status_code == 404 and agent_id in await self.agents():
+                raise AgentServiceHTTPError(
+                    "The running service does not support agent inspection. "
+                    "Restart or upgrade the server.",
+                    status_code=404,
+                ) from error
+            raise
 
     async def active_runs(self) -> tuple[AdmissionReceipt, ...]:
         """List live root workers without loading sessions."""

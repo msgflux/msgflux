@@ -16,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 from msgflux.runtime.service import AgentService, SQLiteServiceStore
+from msgflux.runtime.service.local.agent_inspection import manifest_agent_configuration
 from msgflux.runtime.service.local.files import (
     prepare_runtime_dir,
     process_lock,
@@ -83,7 +84,11 @@ def _make_manifest_service(
             default_account=manifest.defaults.account,
         )
         for agent_id, factory in factories.items():
-            service.register(agent_id, factory)
+            service.register(
+                agent_id,
+                factory,
+                configuration=manifest_agent_configuration(manifest, agent_id),
+            )
     except BaseException:
         store.close()
         raise
