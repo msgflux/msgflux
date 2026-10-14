@@ -58,6 +58,13 @@ class _ToolBackgroundScheduler:
         if library is None:
             raise RuntimeError("The ToolLibrary is no longer available")
         plan = request.plan
+        # Workers bypass the foreground execute() guard. Consume the approval
+        # before any durable task can be admitted.
+        denied = library._permission_outcome(
+            plan.intent, plan.definition
+        ) or guard_approved_plan(plan, consume=True)
+        if denied is not None:
+            return denied
         call = library.get_background_dispatcher().dispatch(
             tool=plan.definition.executor,
             definition=plan.definition,
