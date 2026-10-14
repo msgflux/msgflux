@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,11 @@ from msgflux.coding.config import (
 )
 from msgflux.coding.prompts import system_prompt
 from msgflux.nn.modules.agent import Agent
+from msgflux.runtime.isolation import SandboxRequirements
 from msgflux.runtime.service import AgentSession, ServiceThread
 from msgflux.runtime.workspace.api import AgentWorkspace
+from msgflux.runtime.workspace.local import LocalWorkspaceBackend
+from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 from msgflux.tools.builtin import (
     AgentTool,
     ApplyPatchTool,
@@ -195,10 +199,20 @@ class _CodingSessionBuilder:
         if not isinstance(thread, ServiceThread):
             raise TypeError("thread must be ServiceThread")
         working_directory = Path(thread.cwd or Path.cwd()).expanduser().resolve()
-        workspace = AgentWorkspace.local(
-            working_directory,
-            permissions=coding_permission_set(self.options.permissions),
-        )
+        registry = SQLiteWorkspaceRegistry(self.runtime_dir / "workspaces.sqlite3")
+        try:
+            workspace = await AgentWorkspace.open(
+                LocalWorkspaceBackend(
+                    working_directory, registry=registry, allow_processes=True
+                ),
+                f"coding-{sha256(thread.thread_id.encode()).hexdigest()}",
+                permissions=coding_permission_set(self.options.permissions),
+                requirements=SandboxRequirements(),
+                write_guarantee="cooperative_compare",
+            )
+        except BaseException:
+            registry.close()
+            raise
         models: list[Any] = []
         tool_resources: list[Any] = []
         try:
@@ -214,12 +228,12 @@ class _CodingSessionBuilder:
             return AgentSession(
                 agent,
                 on_close=lambda: _close_resources(
-                    (*models, *tool_resources), workspace
+                    (*models, *tool_resources, registry), workspace
                 ),
             )
         except BaseException as error:
             try:
-                await _close_resources((*models, *tool_resources), workspace)
+                await _close_resources((*models, *tool_resources, registry), workspace)
             except Exception as cleanup_error:
                 error.add_note(f"Resource cleanup failed: {cleanup_error}")
             raise

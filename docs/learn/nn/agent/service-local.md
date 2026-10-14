@@ -353,6 +353,15 @@ and conversation stores are retained. A config change between discovery and
 startup fails the identity check. Restart does not provide uninterrupted handover
 or roll back application code.
 
+Built-in coding agents retain their local workspace identity in
+`runtime_dir/workspaces.sqlite3`, keyed by the immutable thread ID. Recreating
+a session or restarting the daemon preserves this identity so pending file
+approvals can still be reviewed. The registry verifies the canonical root,
+device and inode; replacing the workspace directory is rejected instead of
+silently adopting a new resource. Keep this registry with the other durable
+service files. Executions owned by a previous process still require trusted
+host confirmation of quiescence before resuming.
+
 ## Define The Trusted Factory
 
 For custom service construction, pass trusted application code as
