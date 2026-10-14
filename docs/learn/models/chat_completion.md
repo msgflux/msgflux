@@ -369,6 +369,14 @@ keep the provider updated if that format changes. Only credentials stored in
 these files are supported; keyring and in-memory Codex logins are not visible
 to msgFlux.
 
+Codex HTTP failures other than authentication errors preserve the shared
+`ModelProviderHTTPError`: status, provider description, error code/type/parameter
+and request ID when supplied. This makes unavailable-model and account-limit
+errors visible through AgentService receipts and CLI results. Error text uses
+the shared bounded structured-message extraction; it does not include raw
+non-JSON response bodies. The existing `401` credential refresh/retry behavior
+and login guidance remain unchanged.
+
 ### 1.3 **Storage and ZDR preference**
 
 `store` is optional and defaults to `None`, so msgFlux does not impose a data

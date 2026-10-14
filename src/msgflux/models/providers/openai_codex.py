@@ -233,9 +233,7 @@ class CodexChatTransport(HTTPChatTransport):
                 return
             except ModelProviderHTTPError as exc:
                 if exc.status_code != 401:
-                    raise RuntimeError(
-                        f"Codex request failed with HTTP {exc.status_code}"
-                    ) from None
+                    raise
                 if emitted:
                     raise RuntimeError(
                         "Codex request failed after streaming began"
@@ -276,9 +274,7 @@ class CodexChatTransport(HTTPChatTransport):
                 return
             except ModelProviderHTTPError as exc:
                 if exc.status_code != 401:
-                    raise RuntimeError(
-                        f"Codex request failed with HTTP {exc.status_code}"
-                    ) from None
+                    raise
                 if emitted:
                     raise RuntimeError(
                         "Codex request failed after streaming began"

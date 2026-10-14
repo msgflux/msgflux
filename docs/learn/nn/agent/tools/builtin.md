@@ -76,7 +76,7 @@ against unrelated host processes.
 
 ### List, glob and grep
 
-Install query dependencies with `uv add 'msgflux[workspace-tools]'` in your
+Install query dependencies with `uv add 'msgflux[coding]'` in your
 application. These tools use the same workspace API on local and in-memory
 backends, without invoking shell commands:
 
