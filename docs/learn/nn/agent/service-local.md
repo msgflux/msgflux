@@ -505,6 +505,73 @@ returning a connection. Initialization and shutdown of an existing owner are wai
 for within `startup_timeout`; an owner with published metadata but an invalid
 identity/health response is reported as requiring recovery and is not replaced.
 
+## Validate Configuration Offline
+
+```bash
+msgflux config validate
+msgflux config validate --config ./config.toml
+msgflux config validate --json
+```
+
+With no `--config`, validation reads `~/.msgflux/config.toml`. It uses the same
+manifest loader and coding catalog resolution as service startup. It checks TOML,
+field types and unknown fields, defaults and agent references, model path syntax,
+permissions, tool selectors, subagent references/cycles, and readable UTF-8 prompt
+files. Reasoning configuration follows the same structural validation as the
+manifest; this does not query model-specific provider capabilities.
+
+Validation does not create a missing config, start a daemon, instantiate Agent
+sessions or models, read credentials, refresh OAuth, or call providers. Custom
+factory entries are validated for `module:attribute` syntax without importing or
+executing the user's module. A successful result does not guarantee factory
+importability, provider/model availability, or account access. Those remain
+runtime checks.
+
+Human output reports the config path, default agent, and declared agents.
+Invalid configuration reports the loader's diagnostic on stderr. `--json` writes
+one structured result to stdout, with `valid`, `config_path`, `default_agent`,
+`agents`, and `errors`; invalid JSON results also stay on stdout and leave stderr
+empty. Exit code `0` means valid and `1` means invalid. Validation stops at the
+first error reported by the shared loader.
+
+## List Agents And Threads
+
+```bash
+msgflux agents ls
+msgflux agents ls --active --json
+msgflux threads ls
+msgflux threads ls --active --json
+```
+
+`agents ls` lists the connected service's registered agent IDs, with an
+`ACTIVE_RUNS` count and `STATE` (`running` or `idle`). `--active` keeps only agents
+with locally owned live root workers. A registered agent, an idle cached session,
+or a persisted `running` receipt does not establish live execution. Subagent tasks
+inside a root execution are not separate root service runs in this count.
+
+`threads ls` lists persisted thread bindings: thread ID, agent ID, active run
+count/state, and working directory. JSON also includes each binding's
+`interactive` flag. `--active` keeps only threads with locally owned root workers.
+An `idle` state means no live root worker in this service; approvals, unfinished
+checkpoints or recovery requirements can still exist. Use `runs inspect` for
+that evidence.
+
+The commands use existing metadata and live worker APIs without constructing Agent
+sessions, opening conversation checkpoints, or starting an absent daemon. Counts
+are observations that can change immediately after collection; activity and
+bindings are collected through separate HTTP requests, not an atomic combined
+snapshot. Both support `--runtime-dir PATH` to select another local daemon.
+If the daemon predates live-run inspection, these listings report that
+`GET /v1/runs/active` is unsupported and ask you to restart or upgrade the server.
+An authenticated health check confirms instance identity, not that every new
+endpoint is present. After updating a checkout, explicitly restart its daemon
+from that checkout with `msgflux service restart`; listing never upgrades or
+restarts a running server automatically.
+
+Human output uses aligned tables. JSON contains `{"agents": [...]}` or
+`{"threads": [...]}`. An empty list exits successfully; an unavailable service
+or invalid arguments produce an error on stderr and a nonzero exit code.
+
 ## Inspect The Daemon
 
 Inspect the local service without starting it:
@@ -573,11 +640,15 @@ Use `--runtime-dir PATH` to select another local service.
 msgflux runs ls --active
 msgflux runs ls --active --json
 msgflux runs ls THREAD_ID --active
+msgflux runs ls --active --agent coding
+msgflux runs ls THREAD_ID --active --agent coding --json
 ```
 
-The table shows `THREAD_ID`, `RUN_ID`, `REQUEST_ID`, and `STATUS`. JSON returns
+The table shows `THREAD_ID`, `AGENT`, `RUN_ID`, `REQUEST_ID`, and `STATUS`. JSON returns
 `{"runs": [...]}` containing admission receipts. A thread ID filters the list;
-an unknown thread is an error. Empty results are successful.
+an unknown thread is an error. `--agent NAME` filters by a registered agent ID;
+an unknown agent is an error. Thread and agent filters can be combined. JSON
+retains the existing receipt records. Empty results are successful.
 
 The list is a snapshot of root workers owned by the connected service, including
 scheduled workers and workers settling an interruption request. It does not
