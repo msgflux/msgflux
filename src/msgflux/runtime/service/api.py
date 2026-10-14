@@ -966,6 +966,20 @@ class AgentService:
         async with self.watch(thread_id) as watcher:
             return watcher.snapshot
 
+    async def active_runs(self) -> tuple[AdmissionReceipt, ...]:
+        """Snapshot root runs executing in this service, without loading sessions.
+
+        Includes scheduled workers and workers draining an interruption request.
+        Saved checkpoints and background tasks do not establish live ownership.
+        """
+        async with self._lock:
+            self._require_open()
+            return tuple(
+                worker.receipt
+                for worker in self._workers.values()
+                if worker.task is not None and not worker.task.done()
+            )
+
     async def interrupt(self, thread_id: str, run_id: str) -> bool:
         """Explicitly signal only the selected locally owned run."""
         async with self._lock:
