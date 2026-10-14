@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.0.0rc1] - 2026-10-14
+
+First release candidate for the 1.0 API, focused on Coding and AgentService.
+The TUI is not included in this release.
+
+### Coding And AgentService
+- Added `CodingSession`, a coding harness with provider-aware workspace tools,
+  configurable agents and subagents, reasoning settings, and a default system prompt.
+- Added `AgentService` with durable prompt admission, per-thread workspace and
+  account bindings, recorded results, approvals, and explicit recovery.
+- Added the optional HTTP/SSE service adapter and session client, supporting
+  observation, reconnection, interruption, and frontend-independent execution.
+- Added the `msgflux` CLI for initialization, account login, service status and
+  restart, and noninteractive coding prompts with JSON or streamed NDJSON output.
+- Added named account bundles for API keys and Codex OAuth, including managed
+  token refresh and account isolation across concurrent executions.
+- Consolidated workspace injection, local and Docker execution, bounded reads,
+  approval previews, background tasks, and durable subagent histories.
+
+### Recovery And Validation
+- Preserve workspace identity and approval bindings across service restarts.
+- Recover lost prompt-admission responses by request ID without resubmission.
+- Await streamed response classification on every tool round so subsequent tool
+  calls execute and receive matching outputs before final completion.
+- Preserve concrete recovery diagnostics and avoid automatic replay of uncertain
+  external effects; previous-worker quiescence remains a trusted-host decision.
+- Validate coding, service, accounts, approvals, cleanup, and recovery with
+  offline integration and independent-process failure tests.
+
+### Compatibility And Installation
+- Requires Python 3.11 or newer; CI covers Python 3.11 through 3.14.
+- The 1.0 coding/service configuration uses agent entries and named accounts.
+  Earlier experimental configuration formats are not retained.
+- Install the local/HTTP service dependencies with
+  `pip install "msgflux[service]==1.0.0rc1"` or
+  `uv add "msgflux[service]==1.0.0rc1"`.
+- This is a prerelease for adoption testing. Interruption is cooperative and
+  does not undo completed effects; independent background tasks require their
+  own inspection and interruption.
+
 ## [0.5.1] - 2026-05-29
 
 ### CI / Maintenance
