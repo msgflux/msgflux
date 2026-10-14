@@ -688,3 +688,76 @@ def test_live_codex_agent_tool_loop_smoke():
 
     assert calls == ["SCANNER-42"]
     assert "scanner_restarted" in str(result)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("status", [400, 403, 429, 500])
+@pytest.mark.asyncio
+async def test_non_auth_errors_preserve_provider_details(
+    tmp_path, asynchronous, streaming, status
+):
+    from msgflux.exceptions import ModelProviderHTTPError
+
+    def handler(request):
+        return httpx2.Response(
+            status,
+            json={
+                "error": {
+                    "message": "The selected model is not available for this account",
+                    "code": "model_unavailable",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                },
+                "private_debug": "PRIVATE_SERVER_TRACE",
+            },
+            headers={"x-request-id": "request-fixture"},
+        )
+
+    auth = _write_auth(tmp_path / "auth.json")
+    client = (
+        httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+        if asynchronous
+        else httpx2.Client(transport=httpx2.MockTransport(handler))
+    )
+    model = _model(auth, **{"async_client" if asynchronous else "client": client})
+    try:
+        with pytest.raises(ModelProviderHTTPError) as raised:
+            result = (
+                await model.acall("Hello", stream=streaming)
+                if asynchronous
+                else model("Hello", stream=streaming)
+            )
+            if streaming:
+                _ = [chunk async for chunk in result.consume()]
+        error = raised.value
+        assert error.status_code == status
+        assert error.code == "model_unavailable" and error.param == "model"
+        assert error.error_type == "invalid_request_error"
+        assert error.request_id == "request-fixture"
+        assert "not available for this account" in str(error)
+        assert "access-one" not in str(error)
+        assert "PRIVATE_SERVER_TRACE" not in str(error)
+    finally:
+        if asynchronous:
+            await model.aclose()
+        else:
+            model.close()
+
+
+def test_non_json_http_error_does_not_expose_raw_response(tmp_path):
+    from msgflux.exceptions import ModelProviderHTTPError
+
+    def handler(request):
+        return httpx2.Response(502, text="PRIVATE_PROXY_RESPONSE")
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    model = _model(_write_auth(tmp_path / "auth.json"), client=client)
+    try:
+        with pytest.raises(ModelProviderHTTPError) as raised:
+            model("Hello")
+        assert raised.value.status_code == 502
+        assert "Bad Gateway" in str(raised.value)
+        assert "PRIVATE_PROXY_RESPONSE" not in str(raised.value)
+    finally:
+        model.close()
