@@ -9,14 +9,22 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from msgflux.utils.msgspec import msgspec_dumps
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="msgflux service",
-        description="Run or restart a local authenticated AgentService.",
+        description="Run, inspect, or restart a local authenticated AgentService.",
     )
     parser.add_argument(
-        "action", nargs="?", choices=("serve", "restart", "init"), default="serve"
+        "action",
+        nargs="?",
+        choices=("serve", "restart", "status", "init"),
+        default="serve",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="JSON status output (status only)"
     )
     source = parser.add_mutually_exclusive_group()
     source.add_argument(
@@ -62,11 +70,40 @@ def _initialize_config(args: argparse.Namespace) -> None:
     sys.stdout.write(f"Initialized service config at {path}\n")
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    """Run foreground serving or gracefully restart the local daemon."""
-    args = _parser().parse_args(argv)
+def _show_status(args: argparse.Namespace) -> None:
+    if any(
+        value is not None
+        for value in (args.factory, args.config, args.cwd, args.restart_timeout)
+    ):
+        raise SystemExit("status accepts only --runtime-dir and --json")
+    from msgflux.runtime.service.local import inspect_local_service  # noqa: PLC0415
+
+    result = asyncio.run(inspect_local_service(runtime_dir=args.runtime_dir))
+    if args.json:
+        sys.stdout.write(msgspec_dumps(result) + "\n")
+    elif result.status == "running":
+        sys.stdout.write(f"AgentService running at {result.url} (PID {result.pid})\n")
+    else:
+        sys.stdout.write(
+            f"AgentService {result.status}; runtime: {result.runtime_dir}\n"
+        )
+    if result.status != "running":
+        raise SystemExit(1)
+
+
+def _validate_options(args: argparse.Namespace) -> None:
+    if args.json and args.action != "status":
+        raise SystemExit("--json is only accepted with the status action")
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
+
+
+def _main(argv: Sequence[str] | None = None) -> None:
+    args = _parser().parse_args(argv)
+    _validate_options(args)
+    if args.action == "status":
+        _show_status(args)
+        return
     if args.action == "init":
         _initialize_config(args)
         return
@@ -121,6 +158,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             cwd=Path.cwd(),
         )
     )
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run administration commands with concise operational errors."""
+    try:
+        _main(argv)
+    except KeyboardInterrupt:
+        sys.stderr.write("Interrupted.\n")
+        raise SystemExit(130) from None
+    except Exception as error:
+        sys.stderr.write(f"Error: {error}\n")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
