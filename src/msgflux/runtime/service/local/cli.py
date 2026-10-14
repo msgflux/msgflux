@@ -21,7 +21,7 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         prog=f"msgflux {resource}",
         description={
             "service": "Run, inspect, or restart a local authenticated AgentService.",
-            "agents": "List registered agents and their live execution activity.",
+            "agents": "List agents or inspect their loaded registration defaults.",
             "threads": "List threads or interrupt a thread's active execution.",
             "runs": "List active runs, inspect recovery, or resume a paused run.",
         }[resource],
@@ -30,19 +30,23 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
         "runs": ("inspect", "resume", "ls"),
         "threads": ("ls", "interrupt", "stop"),
-        "agents": ("ls",),
+        "agents": ("ls", "inspect"),
     }
     parser.add_argument(
         "action", nargs="?", choices=actions[resource], default=actions[resource][0]
     )
-    parser.set_defaults(resource=resource)
+    parser.set_defaults(resource=resource, agent_id=None, thread_id=None, run_id=None)
     parser.add_argument(
         "--json",
         action="store_true",
         help="JSON output for operation commands",
     )
     parser.add_argument(
-        "thread_id", nargs="?", help=_help_for(resource, "thread ID", "runs", "threads")
+        "agent_id" if resource == "agents" else "thread_id",
+        nargs="?",
+        help="agent ID"
+        if resource == "agents"
+        else _help_for(resource, "thread ID", "runs", "threads"),
     )
     parser.add_argument("run_id", nargs="?", help=_help_for(resource, "run ID", "runs"))
     parser.add_argument(
@@ -193,13 +197,18 @@ def _validate_listing_target(args: argparse.Namespace) -> None:
             raise SystemExit("runs ls requires --active")
         if args.run_id is not None:
             raise SystemExit("runs ls accepts at most one THREAD_ID")
-    elif args.thread_id is not None or args.run_id is not None:
+    elif any(
+        value is not None for value in (args.agent_id, args.thread_id, args.run_id)
+    ):
         raise SystemExit(f"{args.resource} ls does not accept thread or run IDs")
 
 
 def _validate_target(args: argparse.Namespace) -> None:
     if args.action == "ls":
         _validate_listing_target(args)
+    elif args.resource == "agents":
+        if args.agent_id is None or args.run_id is not None:
+            raise SystemExit("agents inspect requires exactly one AGENT_ID")
     elif args.resource == "runs":
         if args.thread_id is None or args.run_id is None:
             raise SystemExit(f"{args.action} requires THREAD_ID and RUN_ID")
@@ -280,6 +289,13 @@ async def _run_operation(args) -> None:
 
             await list_resources(client, args)
             return
+        if args.resource == "agents":
+            from msgflux.runtime.service.local.agent_inspection import (  # noqa: PLC0415
+                inspect_registered_agent,
+            )
+
+            await inspect_registered_agent(client, args)
+            return
         if args.resource == "threads":
             await _interrupt_thread(client, args)
             return
@@ -356,7 +372,9 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
     actions = {
         "stop": _run_operation if resource == "threads" else _stop,
         "down": _stop,
-        "inspect": _run_operation if resource == "runs" else _inspect_service,
+        "inspect": _run_operation
+        if resource in {"runs", "agents"}
+        else _inspect_service,
         "resume": _run_operation,
         "interrupt": _run_operation,
         "ls": _run_operation,

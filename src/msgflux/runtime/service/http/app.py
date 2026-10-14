@@ -149,6 +149,16 @@ def create_service_app(  # noqa: C901
     async def list_agents() -> Response:
         return _response(AgentsResponse(agents=service.agents()))
 
+    @get("/v1/agents/{agent_id:str}/inspection")
+    async def inspect_agent(agent_id: PathValue) -> Response:
+        try:
+            result = service.inspect_agent(agent_id)
+        except KeyError:
+            return _error(
+                "agent_not_found", f"Agent {agent_id!r} is not registered", 404
+            )
+        return _response(result)
+
     @get("/v1/runs/active")
     async def active_runs() -> Response:
         return _response(ActiveRunsResponse(runs=await service.active_runs()))
@@ -349,6 +359,7 @@ def create_service_app(  # noqa: C901
     route_handlers = [
         health,
         list_agents,
+        inspect_agent,
         active_runs,
         list_threads,
         open_thread,

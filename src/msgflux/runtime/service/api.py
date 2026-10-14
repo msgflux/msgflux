@@ -41,6 +41,8 @@ from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
+    AgentConfiguration,
+    AgentInspection,
     ApprovalReview,
     RunInspection,
     RunResult,
@@ -223,6 +225,7 @@ class AgentService:
         self.default_agent = default_agent
         self._owner_id = uuid4().hex
         self._factories: dict[str, Callable] = {}
+        self._configurations: dict[str, AgentConfiguration] = {}
         self._cache = _SessionCache(
             self._load_session,
             self._release_reason,
@@ -249,15 +252,41 @@ class AgentService:
             )
         return account_name
 
-    def register(self, agent_id: str, factory: Callable) -> None:
-        """Register a sync/async ServiceThread -> AgentSession host factory."""
+    def register(
+        self,
+        agent_id: str,
+        factory: Callable,
+        *,
+        configuration: AgentConfiguration | None = None,
+    ) -> None:
+        """Register a lazy host factory and optional safe inspection metadata."""
         self._require_open()
         validate_identifier(agent_id, "agent_id")
         if not callable(factory):
             raise TypeError("factory must be callable")
         if agent_id in self._factories:
             raise ServiceConflictError(f"Agent {agent_id!r} is already registered")
+        if configuration is not None:
+            if not isinstance(configuration, AgentConfiguration):
+                raise TypeError("configuration must be AgentConfiguration")
+            configuration = msgspec.convert(
+                msgspec.to_builtins(configuration), type=AgentConfiguration, strict=True
+            )
         self._factories[agent_id] = factory
+        if configuration is not None:
+            self._configurations[agent_id] = configuration
+
+    def inspect_agent(self, agent_id: str) -> AgentInspection:
+        """Inspect loaded defaults without invoking the registered factory."""
+        self._require_open()
+        if agent_id not in self._factories:
+            raise KeyError(agent_id)
+        return AgentInspection(
+            agent_id=agent_id,
+            is_default=agent_id == self.default_agent,
+            account_name=self.default_account,
+            configuration=self._configurations.get(agent_id),
+        )
 
     def agents(self) -> tuple[str, ...]:
         return tuple(self._factories)

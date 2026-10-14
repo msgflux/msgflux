@@ -572,6 +572,117 @@ Human output uses aligned tables. JSON contains `{"agents": [...]}` or
 `{"threads": [...]}`. An empty list exits successfully; an unavailable service
 or invalid arguments produce an error on stderr and a nonzero exit code.
 
+## Inspect An Agent's Loaded Defaults
+
+```bash
+msgflux agents inspect coding
+msgflux agents inspect coding --json
+```
+
+Inspection queries the active server's registered configuration. It shows whether
+this is the default agent, the service's default account name, and the available
+configuration: model, reasoning effort, permissions, active/deferred tool defaults,
+subagents, preset, prompt origin, and source config path/digest. Workspace tool
+selectors have already been expanded for the configured model/provider and
+permissions by the same coding catalog used to build sessions.
+
+The result describes **registration defaults**, not a particular thread's live
+Agent. Per-run account selection, restored checkpoint model state, workspace
+policy overrides, deferred tools loaded during a conversation, and conditional
+runtime tools remain session-specific. The coding harness can insert task
+management, subagent dispatch, and interactive communication tools at runtime;
+`tools_active` and `tools_deferred` describe the resolved configuration rather
+than the exact tool schema sent to a model. Use run/thread inspection for their
+runtime evidence.
+
+For manifest-backed coding agents, `prompt_source` is `default`, `preset`, or
+`file`. This identifies the source of custom instructions; the harness's base
+system prompt is still present. Preset identity and prompt file path are included
+when configured, but prompt contents are never returned. Custom factories only
+publish their factory reference and source config metadata unless the host
+explicitly supplies additional metadata. Unknown fields stay null rather than
+being inferred by executing the factory.
+
+The command does not start an absent server, construct sessions, create a
+workspace/checkpoint, load a model, or read credentials or prompt contents. It
+also does not reread the local TOML: editing it after startup leaves the loaded
+registration unchanged until the service is restarted. The config digest lets
+operators identify the loaded file version. An unknown agent returns a clear
+error. An old daemon missing the inspection endpoint reports that a restart or
+upgrade is required; it is never restarted automatically.
+
+Human output is a labeled summary. JSON returns `AgentInspection`:
+
+```json
+{
+  "agent_id": "coding",
+  "is_default": true,
+  "account_name": "work",
+  "configuration": {
+    "harness": "coding",
+    "model": "provider/model-id",
+    "reasoning_effort": "medium"
+  }
+}
+```
+
+This shortened example omits additional configuration fields. `configuration`
+is null when a programmatic registration did not provide metadata. Inspection
+exits with code `0` on success; unknown agents, unavailable services or request
+failures exit with code `1` and diagnostics on stderr. `--runtime-dir PATH`
+selects a different local daemon.
+
+### SDK And Host Registration
+
+The SDK exposes the same authenticated operation:
+
+```python
+inspection = await client.inspect_agent("coding")
+print(inspection.account_name)
+if inspection.configuration is not None:
+    print(inspection.configuration.model)
+```
+
+This calls `GET /v1/agents/coding/inspection` and decodes `AgentInspection`. It
+observes the server registration without opening a thread or invoking a model.
+Embedded hosts can call the synchronous `service.inspect_agent("coding")`.
+
+Programmatic factories can publish safe metadata explicitly:
+
+```python
+from my_application import make_session
+from msgflux.runtime.service import (
+    AgentConfiguration,
+    AgentService,
+    SQLiteServiceStore,
+)
+
+service = AgentService(
+    store=SQLiteServiceStore("./service.sqlite3"),
+    default_agent="reviewer",
+    default_account="work",
+)
+service.register(
+    "reviewer",
+    make_session,
+    configuration=AgentConfiguration(
+        model="provider/model-id",
+        permissions=("read",),
+        tools_active=("read", "grep"),
+        tools_deferred=(),
+    ),
+)
+print(service.inspect_agent("reviewer"))
+```
+
+Here `make_session` is the application's existing `ServiceThread -> AgentSession`
+factory. Registration validates and freezes the supplied metadata without
+calling it. The host is responsible for keeping metadata consistent with its
+factory; inspection does not validate the factory's implementation. Include
+only public configuration, never secrets. The account name and default-agent
+flag come from the service itself. Omitting `configuration` preserves lazy
+registration and reports null metadata.
+
 ## Inspect The Daemon
 
 Inspect the local service without starting it:
