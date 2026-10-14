@@ -190,7 +190,7 @@ def test_partial_tool_construction_closes_prior_owned_resources(tmp_path, monkey
 
     workspace = FakeWorkspace()
     monkeypatch.setattr(
-        factory_module.AgentWorkspace, "local", lambda _root, **_kwargs: workspace
+        factory_module.AgentWorkspace, "open", AsyncMock(return_value=workspace)
     )
 
     class OwnedTool:
