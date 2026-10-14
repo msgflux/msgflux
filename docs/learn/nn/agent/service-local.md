@@ -357,10 +357,33 @@ Built-in coding agents retain their local workspace identity in
 `runtime_dir/workspaces.sqlite3`, keyed by the immutable thread ID. Recreating
 a session or restarting the daemon preserves this identity so pending file
 approvals can still be reviewed. The registry verifies the canonical root,
-device and inode; replacing the workspace directory is rejected instead of
-silently adopting a new resource. Keep this registry with the other durable
+device and inode, backend and resource IDs, and the workspace configuration
+revision. A changed root, replaced directory, or changed registered identity
+raises `WorkspaceIdentityError` (also a `PermissionError`); the service factory
+reports this as `ServiceRecoveryRequiredError` with the thread context and the
+identity error as its cause. The service does not adopt the new directory or
+retry with broader permissions. Keep this registry with the other durable
 service files. Executions owned by a previous process still require trusted
 host confirmation of quiescence before resuming.
+
+For an embedded service, inspect the typed cause when an operation loads the
+coding session. This assumes `service` and `thread_id` refer to an initialized
+service and thread:
+
+```python
+from msgflux.runtime import ServiceRecoveryRequiredError, WorkspaceIdentityError
+
+try:
+    await service.workspace_policy(thread_id)
+except ServiceRecoveryRequiredError as exc:
+    if isinstance(exc.__cause__, WorkspaceIdentityError):
+        print("Workspace identity needs recovery:", exc.__cause__)
+    raise
+```
+
+`WorkspaceIdentityError` reports a known mismatch with a fixed public message;
+in an embedded service, any underlying error remains available through its
+cause. HTTP responses sanitize generic `PermissionError` messages.
 
 ## Define The Trusted Factory
 

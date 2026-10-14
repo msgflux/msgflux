@@ -11,7 +11,13 @@ from msgflux.models.response import ModelResponse
 from msgflux.core.dotdict import dotdict
 from msgflux.nn import Agent
 from msgflux.data.stores import InMemoryCheckpointStore
-from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
+from msgflux.runtime.service import (
+    AgentService,
+    AgentSession,
+    ServiceRecoveryRequiredError,
+    SQLiteServiceStore,
+)
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.service.http.app import create_service_app
 from msgflux.runtime.service.http import AgentServiceClient, ShutdownResponse
 
@@ -517,6 +523,137 @@ async def test_shutdown_route_is_optional_authenticated_and_instance_bound():
             accepted = await client.shutdown(expected_instance_id="one")
             assert accepted == ShutdownResponse(instance_id="one", accepted=True)
             assert called == [True]
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code", "message"),
+    [
+        (
+            WorkspaceIdentityError("directory_replaced"),
+            409,
+            "recovery_required",
+            "Workspace directory was replaced",
+        ),
+        (
+            PermissionError("fake-private-permission-detail-123"),
+            403,
+            "forbidden",
+            "The operation is not authorized",
+        ),
+    ],
+    ids=["workspace-identity", "generic-permission"],
+)
+async def test_permission_errors_have_safe_http_responses(
+    error, status_code, error_code, message
+):
+    def fail_factory(_thread_id):
+        raise error
+
+    service, _ = _service(fail_factory)
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers=headers,
+        ) as client:
+            opened = await client.post("/v1/threads", json={"agent_id": "agent"})
+            assert opened.status_code == 201
+            response = await client.get(
+                f"/v1/threads/{opened.json()['thread_id']}/workspace-policy"
+            )
+            assert response.status_code == status_code
+            assert response.json()["code"] == error_code
+            if isinstance(error, WorkspaceIdentityError):
+                assert message in response.json()["message"]
+            else:
+                assert response.json()["message"] == message
+            assert "fake-private-permission-detail-123" not in response.text
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_identity_during_scope_setup_closes_and_retries_cleanly():
+    model = Mock(model_type="chat_completion")
+    agent = Agent(name="scope-identity-error", model=model)
+    calls = []
+    close_calls = []
+
+    def fail_scope(_scope):
+        raise WorkspaceIdentityError("configuration_changed")
+
+    def make_session(_thread_id):
+        calls.append(True)
+        if len(calls) == 1:
+            return AgentSession(
+                agent,
+                scope_factory=fail_scope,
+                on_close=lambda: close_calls.append(True),
+            )
+        return AgentSession(agent)
+
+    service, _ = _service(make_session)
+    try:
+        thread = await service.open_thread("agent")
+        with pytest.raises(ServiceRecoveryRequiredError) as caught:
+            await service.workspace_policy(thread.thread_id)
+
+        assert isinstance(caught.value.__cause__, WorkspaceIdentityError)
+        assert str(caught.value.__cause__) == "Workspace backend configuration changed"
+        assert close_calls == [True]
+
+        await service.workspace_policy(thread.thread_id)
+        assert len(calls) == 2
+        assert close_calls == [True]
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_identity_http_message_hides_chained_permission_detail():
+    secret = "fake-private-permission-detail-456"
+
+    def fail_factory(_thread_id):
+        try:
+            raise PermissionError(secret)
+        except PermissionError as cause:
+            raise WorkspaceIdentityError("directory_replaced") from cause
+
+    service, _ = _service(fail_factory)
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        thread = await service.open_thread("agent")
+        with pytest.raises(ServiceRecoveryRequiredError) as caught:
+            await service.workspace_policy(thread.thread_id)
+
+        identity_error = caught.value.__cause__
+        assert isinstance(identity_error, WorkspaceIdentityError)
+        assert str(identity_error) == "Workspace directory was replaced"
+        assert isinstance(identity_error.__cause__, PermissionError)
+        assert str(identity_error.__cause__) == secret
+        assert secret not in str(caught.value)
+
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers=headers,
+        ) as client:
+            response = await client.get(
+                f"/v1/threads/{thread.thread_id}/workspace-policy"
+            )
+        assert response.status_code == 409
+        assert response.json()["code"] == "recovery_required"
+        assert response.json()["message"].endswith("Workspace directory was replaced")
+        assert secret not in response.text
     finally:
         await service.aclose()
         service.store.close()

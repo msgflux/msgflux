@@ -24,6 +24,7 @@ from msgflux.runtime.workspace.contracts import (
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
 )
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.workspace.filesystem import (
     WorkspaceConflictError,
     WorkspaceFilesystem,
@@ -139,7 +140,7 @@ class LocalWorkspace(WorkspaceFilesystem):
                 self._root_stat.st_dev,
                 self._root_stat.st_ino,
             ):
-                raise PermissionError("Workspace root was replaced")
+                raise WorkspaceIdentityError("root_replaced")
             return fd
         except BaseException:
             os.close(fd)
@@ -575,7 +576,7 @@ class LocalWorkspaceBackend(WorkspaceBackend):
                 if created:
                     filesystem._identity = identity
                 elif filesystem.identity != identity:
-                    raise PermissionError("Workspace registry identity changed")
+                    raise WorkspaceIdentityError("registry_identity_changed")
             # Catch replacement between initial pin/registration and binding.
             os.close(filesystem._open_root())
             if created:

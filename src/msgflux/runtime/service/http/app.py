@@ -47,6 +47,7 @@ from msgflux.runtime.service.records import (
     ServiceConflictError,
     ServiceRecoveryRequiredError,
 )
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 
 PathValue = FromPath[str]
 
@@ -372,6 +373,7 @@ def create_service_app(  # noqa: C901
             ServiceConflictError: _domain_error,
             ServiceRecoveryRequiredError: _domain_error,
             ApprovalConflictError: _domain_error,
+            WorkspaceIdentityError: _domain_error,
             PermissionError: _domain_error,
             KeyError: _domain_error,
             ValueError: _domain_error,
@@ -390,8 +392,10 @@ def _domain_error(request: Request, exc: Exception) -> Response:
 def _exception_response(exc: Exception) -> Response:
     if isinstance(exc, ApprovalConflictError):
         return _error("approval_conflict", str(exc), 409)
+    if isinstance(exc, WorkspaceIdentityError):
+        return _error("recovery_required", str(exc), 409)
     if isinstance(exc, PermissionError):
-        return _error("forbidden", "The configured reviewer is not authorized", 403)
+        return _error("forbidden", "The operation is not authorized", 403)
     if isinstance(exc, ServiceBusyError):
         return _error("service_busy", str(exc), 409)
     if isinstance(exc, ServiceConflictError):
