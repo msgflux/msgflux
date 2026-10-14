@@ -167,6 +167,28 @@ are returned in `result.returncode`; permission and validation failures raise.
 | `run` | Execute a command with a deadline and bounded output. |
 | `with_cwd`, `resolve` | Select a virtual working directory or resolve a path. |
 
+`resolve(path)` keeps its default virtual-path behavior, resolving relative paths
+under the workspace cwd. Pass `host_paths=True` only when translating a
+host-absolute path from a model argument. Builtin workspace tools and queries do
+this at their input boundary. For a local backend, an absolute path beneath its
+host root becomes the corresponding virtual path; a path outside that root stays
+a virtual path and never reads from elsewhere on the host. Memory and Docker
+backends keep their existing virtual-path behavior. Filesystem and editor
+operations already use virtual paths, so do not translate them a second time.
+
+```python
+from pathlib import Path
+from msgflux import AgentWorkspace
+
+root = Path("/project")
+workspace = AgentWorkspace.local(root)
+path = workspace.resolve(str(root / "notes.txt"), host_paths=True)
+# path is "/notes.txt"
+```
+
+This maps the host-absolute alias under the local workspace root to its virtual
+path; it does not create the file or grant access to it.
+
 Each I/O method also has an async form prefixed with `a`, such as `aread_text`,
 `awrite_text` and `arun`. File writes use cooperative comparison against the
 reviewed contents; this does not provide a transaction against other host
@@ -2628,9 +2650,11 @@ the same execution context. For an Agent, pass `tools=[ReadFileTool(), BashTool(
 and supply the live scope to its call. `workspace` is an injected runtime input,
 excluded from model schemas; model arguments cannot replace it.
 
-`ReadFileTool` is exposed as `read(path, offset=None, limit=None)`. It accepts an absolute
-virtual path and returns strict UTF-8 text by default. There is no separate
-`read_file` Python function or shared default instance.
+`ReadFileTool` is exposed as `read(path, offset=None, limit=None)`. It accepts an
+absolute virtual path and returns strict UTF-8 text by default. With a local
+workspace, a host-absolute path beneath its root is also accepted as an alias
+for the corresponding virtual path. There is no separate `read_file` Python
+function or shared default instance.
 
 For host-configured instructions, use a separate `ReadFileTool` instance for each
 agent. Guidance is optional and is not shared between instances:

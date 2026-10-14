@@ -376,12 +376,20 @@ class AgentWorkspace:
         # every view through the shared environment.
         return view
 
-    def resolve(self, path: str) -> str:
+    def resolve(self, path: str, *, host_paths: bool = False) -> str:
+        """Resolve a virtual path; optionally translate a local host-root alias."""
         if not isinstance(path, str) or not path:
             raise ValueError("Workspace path must be non-empty text")
-        return workspace_path(
+        canonical = workspace_path(
             path if path.startswith("/") else f"{self.cwd.rstrip('/')}/{path}"
         )
+        if host_paths and path.startswith("/"):
+            root = getattr(self._environment.filesystem, "host_root", None)
+            if root is not None:
+                root = root.rstrip("/")
+                if canonical == root or canonical.startswith(root + "/"):
+                    return canonical[len(root) :] or "/"
+        return canonical
 
     @contextmanager
     def _bound(self):

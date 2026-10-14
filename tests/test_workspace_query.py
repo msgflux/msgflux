@@ -89,6 +89,25 @@ def test_schemas_expose_only_visible_query_arguments():
     }
 
 
+@pytest.mark.parametrize(
+    "tool_cls,arguments",
+    [(LsTool, {}), (GlobTool, {"pattern": "*.py"}), (GrepTool, {"pattern": "needle"})],
+)
+def test_local_queries_accept_host_paths_without_changing_resource(
+    tool_cls, arguments, tmp_path
+):
+    root = tmp_path / "project"
+    source = root / "src"
+    source.mkdir(parents=True)
+    (source / "main.py").write_text("needle\n")
+    workspace = AgentWorkspace.local(root)
+    tool = tool_cls()
+    with execution_context(scope=ExecutionScope(workspace=workspace)):
+        expected = tool(path="/src", workspace=workspace, **arguments)
+        actual = tool(path=str(source), workspace=workspace, **arguments)
+    assert actual == expected
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("tool_cls", [LsTool])
 @pytest.mark.asyncio

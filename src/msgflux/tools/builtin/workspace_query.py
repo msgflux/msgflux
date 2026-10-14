@@ -195,7 +195,7 @@ class LsTool(_WorkspaceQuery):
         workspace: Hidden[AgentWorkspace] = None,
     ):
         selected = resolve_workspace(workspace)
-        target = selected.resolve(path)
+        target = selected.resolve(path, host_paths=True)
         entries = selected.scandir(target, max_entries=self.max_entries)
         return {
             "path": target,
@@ -256,7 +256,7 @@ class GlobTool(_WorkspaceQuery):
         ):
             raise ValueError("pattern exceeds bounded complexity")
         selected = resolve_workspace(workspace)
-        root = selected.resolve(path)
+        root = selected.resolve(path, host_paths=True)
         matches = []
         deadline = time.monotonic() + self.max_seconds
         for candidate, entry in _walk(
@@ -335,7 +335,7 @@ class GrepTool(_WorkspaceQuery):
         except Exception as exc:
             raise ValueError("Invalid grep pattern") from exc
         selected = resolve_workspace(workspace)
-        root = selected.resolve(path)
+        root = selected.resolve(path, host_paths=True)
         matches, skipped = [], []
         output_bytes = 0
 

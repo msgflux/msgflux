@@ -24,7 +24,7 @@ from msgflux.utils.inspect import get_mime_type
 def _tool_path(path: str, workspace: AgentWorkspace) -> str:
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
-    return workspace.resolve(path)
+    return workspace.resolve(path, host_paths=True)
 
 
 def _read_offloaded_tool_result(
