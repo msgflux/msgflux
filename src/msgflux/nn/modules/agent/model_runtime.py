@@ -10,6 +10,7 @@ from typing import (
     Union,
 )
 
+from msgflux._private.executor import Executor
 from msgflux._private.response_metadata import attach_response_metadata
 from msgflux.chat_messages import ChatMessages
 from msgflux.core.dotdict import dotdict
@@ -628,6 +629,16 @@ class AgentModelRuntimeMixin:
 
         raise RuntimeError("Model stream ended before producing a response type.")
 
+    def _wait_stream_response_type(self, model_response) -> None:
+        if isinstance(model_response, ModelStreamResponse):
+            wait_for_event(model_response._response_type_event)
+            self._ensure_stream_response_ready(model_response)
+
+    async def _await_stream_response_type(self, model_response) -> None:
+        if isinstance(model_response, ModelStreamResponse):
+            await await_for_event(model_response._response_type_event)
+            self._ensure_stream_response_ready(model_response)
+
     def _process_model_response(
         self,
         message: Union[str, Mapping[str, Any], Message],
@@ -638,9 +649,7 @@ class AgentModelRuntimeMixin:
         tool_filter: Optional[ToolFilter] = None,
         scope: Optional[ExecutionScope] = None,
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
-        if isinstance(model_response, ModelStreamResponse):
-            wait_for_event(model_response._response_type_event)
-            self._ensure_stream_response_ready(model_response)
+        self._wait_stream_response_type(model_response)
 
         if "tool_call" in model_response.response_type:
             model_response, messages = self._process_tool_call_response(
@@ -741,9 +750,7 @@ class AgentModelRuntimeMixin:
         tool_filter: Optional[ToolFilter] = None,
         scope: Optional[ExecutionScope] = None,
     ) -> Union[str, Mapping[str, Any], Message, ModelStreamResponse]:
-        if isinstance(model_response, ModelStreamResponse):
-            await await_for_event(model_response._response_type_event)
-            self._ensure_stream_response_ready(model_response)
+        await self._await_stream_response_type(model_response)
 
         if "tool_call" in model_response.response_type:
             model_response, messages = await self._aprocess_tool_call_response(
@@ -1023,7 +1030,14 @@ class AgentModelRuntimeMixin:
         'content': '2024-10-15'}].
         """
         while True:
+            self._wait_stream_response_type(model_response)
             if model_response.response_type == "tool_call":
+                if isinstance(model_response, ModelStreamResponse):
+                    Executor.get_instance().submit(
+                        self._aconsume_event_response,
+                        model_response,
+                        emit_content=False,
+                    ).result()
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
@@ -1111,6 +1125,7 @@ class AgentModelRuntimeMixin:
         'content': '2024-10-15'}].
         """
         while True:
+            await self._await_stream_response_type(model_response)
             if model_response.response_type == "tool_call":
                 if isinstance(model_response, ModelStreamResponse):
                     await self._aconsume_event_response(
