@@ -21,6 +21,7 @@ from msgflux.runtime.event_buffer import validate_event_buffer_limit
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service.api import AgentService
 from msgflux.runtime.service.http.records import (
+    ActiveRunsResponse,
     AgentsResponse,
     ApprovalDecisionRequest,
     ApprovalReviewsResponse,
@@ -147,6 +148,10 @@ def create_service_app(  # noqa: C901
     @get("/v1/agents")
     async def list_agents() -> Response:
         return _response(AgentsResponse(agents=service.agents()))
+
+    @get("/v1/runs/active")
+    async def active_runs() -> Response:
+        return _response(ActiveRunsResponse(runs=await service.active_runs()))
 
     @get("/v1/threads")
     async def list_threads() -> Response:
@@ -344,6 +349,7 @@ def create_service_app(  # noqa: C901
     route_handlers = [
         health,
         list_agents,
+        active_runs,
         list_threads,
         open_thread,
         get_workspace_policy,

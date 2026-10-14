@@ -21,7 +21,9 @@ def _prompt_parser() -> argparse.ArgumentParser:
         epilog=(
             "Commands: msgflux init --model PROVIDER/MODEL; "
             "msgflux accounts login PROVIDER --account-name NAME; "
-            "msgflux service; msgflux service status; msgflux service restart."
+            "msgflux service; msgflux service status; msgflux service stop; "
+            "msgflux service inspect; msgflux runs inspect/resume THREAD_ID RUN_ID; "
+            "msgflux runs ls --active; msgflux threads interrupt/stop THREAD_ID."
         ),
     )
     parser.add_argument("-p", "--prompt", required=True, help="noninteractive task")
@@ -97,6 +99,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         from msgflux.accounts.cli import main as accounts_main  # noqa: PLC0415
 
         accounts_main(args[1:])
+        return
+    if args and args[0] in {"runs", "threads"}:
+        from msgflux.runtime.service.local.cli import (  # noqa: PLC0415
+            main as service_main,
+        )
+
+        service_main(args[1:], resource=args[0])
         return
     if args and args[0] in {"init", "service"}:
         from msgflux.runtime.service.local.cli import (  # noqa: PLC0415

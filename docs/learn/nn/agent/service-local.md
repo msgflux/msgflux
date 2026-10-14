@@ -535,6 +535,150 @@ if status.status == "running":
 This example discovers the active address without launching the daemon. Use
 `connect_local_service()` when you want to start a service if none exists.
 
+## Inspect Service And Runs
+
+Use `service inspect` for the verified daemon identity and its recorded launch
+configuration:
+
+```bash
+msgflux service inspect
+msgflux service inspect --json
+```
+
+The human output includes runtime directory, address, PID, instance ID, launch
+source and working directory. JSON contains `service` (the same status record as
+`service status`), `factory`, `config_path`, and `cwd`. Authentication tokens are
+never included. An absent or unverified daemon has null launch details.
+Unlike `status`, inspection exits successfully when it reports `stopped` or
+`unreachable`; invalid metadata or request errors still exit with code `1`.
+
+Inspect a particular execution using its thread and run IDs:
+
+```bash
+msgflux runs inspect THREAD_ID RUN_ID
+msgflux runs inspect THREAD_ID RUN_ID --json
+```
+
+This command uses the existing run inspection endpoint. The human output shows
+receipt/checkpoint status, approval and background task counts, and recovery
+reasons, including required worker quiescence. JSON returns the full
+`RunInspection` record. It contains recovery evidence rather than the final
+answer. These inspection commands never start a server. Run inspection requires
+an active, authenticated daemon and reports errors on stderr with exit code `1`.
+Use `--runtime-dir PATH` to select another local service.
+
+## List Active Runs
+
+```bash
+msgflux runs ls --active
+msgflux runs ls --active --json
+msgflux runs ls THREAD_ID --active
+```
+
+The table shows `THREAD_ID`, `RUN_ID`, `REQUEST_ID`, and `STATUS`. JSON returns
+`{"runs": [...]}` containing admission receipts. A thread ID filters the list;
+an unknown thread is an error. Empty results are successful.
+
+The list is a snapshot of root workers owned by the connected service, including
+scheduled workers and workers settling an interruption request. It does not
+load Agent sessions or infer activity from checkpoint status. A persisted
+`running` receipt after a server crash is recovery evidence, not a live worker,
+and is excluded. Paused or completed executions and separate background tasks
+are also excluded. Activity can change immediately after the response.
+
+The authenticated `GET /v1/runs/active` endpoint exposes the same information.
+Both the embedded service and HTTP client provide `await service.active_runs()`
+and `await client.active_runs()`, respectively:
+
+```python
+for receipt in await client.active_runs():
+    print(receipt.thread_id, receipt.run_id, receipt.status)
+```
+
+This example inspects live root execution without opening checkpoints or loading
+idle sessions. Subagent activity belongs to its parent execution and task
+observations; this list is not a subagent task inventory.
+
+## Interrupt A Thread's Execution
+
+```bash
+msgflux threads interrupt THREAD_ID
+msgflux threads stop THREAD_ID --json
+```
+
+`threads stop` is an alias for `threads interrupt`. Both select the thread's
+locally active root run and request cooperative interruption through the existing
+service endpoint. They preserve the server and other threads. Selection captures
+the run ID; if it finishes before the request arrives, the command does not
+interrupt a newer run. Already interrupted or idle threads are successful no-ops;
+unknown threads are errors. Neither command starts an absent service.
+
+JSON contains `thread_id`, `run_id`, and `status`: `interrupt_requested` means the
+signal was sent, `no_active_run` means there was no locally owned worker, and
+`not_active` means the selected worker finished before accepting interruption.
+An interruption request is not confirmation that all work has stopped.
+Cooperative code must observe the signal; use `runs inspect` or SDK `watch()` to
+observe settlement. `interrupted` remains terminal, as described below.
+
+Use `service stop` to shut down the whole server. Use `--runtime-dir PATH` with
+these commands to select another local service. `--stop-timeout` applies only to
+server shutdown, not to a thread interruption request.
+
+## Resume A Paused Run
+
+```bash
+msgflux runs resume THREAD_ID RUN_ID
+msgflux runs resume THREAD_ID RUN_ID --json
+```
+
+This requests recovery of the existing checkpoint and returns its admission
+receipt immediately. It does not submit a new prompt, wait for completion, or
+start an absent daemon. The plain output shows the run ID and receipt status;
+JSON returns `AdmissionReceipt`. Observe progress using the SDK's `watch()`.
+
+Pending approvals still require a decision before execution can proceed.
+`completed` and `interrupted` runs are terminal under the current service
+contract: the command returns their existing receipts without restarting them.
+An accepted receipt confirms admission, not successful completion. Recovery that
+requires old-worker quiescence must be handled by the trusted host; this command
+cannot assert quiescence or bypass recovery checks.
+
+## Gracefully Stop The Daemon
+
+```bash
+msgflux service stop
+msgflux service down
+msgflux service stop --stop-timeout 45 --json
+```
+
+`down` is an alias for `stop`. Both verify the current daemon's authenticated
+identity, request cooperative shutdown, and wait for its lifetime lock to be
+released before reporting `stopped`. Active runs receive interruption requests;
+workers and factory-owned resources are joined and closed by the existing
+service shutdown path. No replacement daemon starts. Stopping an absent service
+is successful and creates no runtime files; stopping an already stopped service
+is also successful.
+
+The default deadline is 30 seconds. `--stop-timeout` must be finite and positive.
+A timeout exits with code `1`; the server may still be closing its resources.
+An unverified live instance is refused. The command never force-kills a process
+using a recorded PID. JSON returns a `LocalServiceStatus` with `status="stopped"`
+after successful shutdown. Errors go to stderr. Use `--runtime-dir PATH` to
+select the service to stop.
+
+The SDK exposes the same operation:
+
+```python
+from msgflux.runtime.service.local import stop_local_service
+
+status = await stop_local_service(stop_timeout=45)
+print(status.status)  # stopped
+```
+
+This example waits for graceful shutdown without constructing a new client or
+starting a replacement service. Concurrent connectors wait on the shared startup
+lock; after it is released, an explicit connector can start the service again.
+
 ## Gracefully Restart The Daemon
 
 `restart_local_service()` asks the authenticated current instance to shut down,

@@ -223,33 +223,7 @@ async def restart_local_service(  # noqa: C901
                     "its identity health check"
                 )
             _require_match(record, selected_factory, manifest, allow_digest_change=True)
-            client = AgentServiceClient(record.url, token=record.token)
-            try:
-                try:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        raise TimeoutError(
-                            "Timed out before requesting local daemon shutdown"
-                        )
-                    accepted = await asyncio.wait_for(
-                        client.shutdown(expected_instance_id=record.instance_id),
-                        timeout=remaining,
-                    )
-                except AgentServiceHTTPError as exc:
-                    if exc.status_code == 404:
-                        raise ServiceRecoveryRequiredError(
-                            "The local daemon does not support authenticated "
-                            "graceful shutdown; restart it manually"
-                        ) from exc
-                    raise
-                if accepted.instance_id != record.instance_id or not accepted.accepted:
-                    raise ServiceRecoveryRequiredError(
-                        "The local daemon accepted shutdown for an unexpected instance"
-                    )
-            finally:
-                await client.aclose()
-            await _wait_for_daemon_stop(selected_runtime, deadline)
-            remove_record(selected_runtime, record.instance_id)
+            await _shutdown_running_daemon(record, selected_runtime, deadline)
         record = await _start_and_wait(
             selected_runtime,
             selected_factory,
@@ -258,6 +232,81 @@ async def restart_local_service(  # noqa: C901
             manifest=manifest,
         )
         return AgentServiceClient(record.url, token=record.token)
+
+
+async def stop_local_service(
+    *, runtime_dir: Path | None = None, stop_timeout: float = 30
+) -> LocalServiceStatus:
+    """Stop a verified daemon, wait for cleanup, and never start a replacement."""
+    if (
+        isinstance(stop_timeout, bool)
+        or not isinstance(stop_timeout, (int, float))
+        or not math.isfinite(stop_timeout)
+        or stop_timeout <= 0
+    ):
+        raise ValueError("stop_timeout must be a finite positive number")
+    directory = (
+        (
+            Path(runtime_dir)
+            if runtime_dir is not None
+            else Path.home() / ".msgflux" / "runtime"
+        )
+        .expanduser()
+        .absolute()
+    )
+    if directory.is_symlink():
+        raise ValueError("Runtime directory must be a real directory, not a symlink")
+    if not directory.exists():
+        return LocalServiceStatus("stopped", str(directory))
+    directory = prepare_runtime_dir(directory)
+    deadline = asyncio.get_running_loop().time() + stop_timeout
+    async with _StartupLock(directory, deadline):
+        record = read_record(directory)
+        if _daemon_is_stopped(directory):
+            if record is not None:
+                remove_record(directory, record.instance_id)
+            return LocalServiceStatus("stopped", str(directory))
+        async with asyncio.timeout_at(deadline):
+            if record is None:
+                # Shutdown removes metadata before releasing the lifetime lock.
+                # Wait for that owner to finish; there is no verified target to signal.
+                await _wait_for_daemon_stop(directory, deadline)
+                return LocalServiceStatus("stopped", str(directory))
+            if await _probe(record) is None:
+                raise ServiceRecoveryRequiredError(
+                    "Cannot verify the active local daemon identity; "
+                    "stop it through the trusted host"
+                )
+            await _shutdown_running_daemon(record, directory, deadline)
+    return LocalServiceStatus("stopped", str(directory))
+
+
+async def _shutdown_running_daemon(record, runtime_dir: Path, deadline: float) -> None:
+    client = AgentServiceClient(record.url, token=record.token)
+    try:
+        try:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError("Timed out before requesting local daemon shutdown")
+            accepted = await asyncio.wait_for(
+                client.shutdown(expected_instance_id=record.instance_id),
+                timeout=remaining,
+            )
+        except AgentServiceHTTPError as exc:
+            if exc.status_code == 404:
+                raise ServiceRecoveryRequiredError(
+                    "The local daemon does not support authenticated "
+                    "graceful shutdown; stop it through the trusted host"
+                ) from exc
+            raise
+        if accepted.instance_id != record.instance_id or not accepted.accepted:
+            raise ServiceRecoveryRequiredError(
+                "The local daemon accepted shutdown for an unexpected instance"
+            )
+    finally:
+        await client.aclose()
+    await _wait_for_daemon_stop(runtime_dir, deadline)
+    remove_record(runtime_dir, record.instance_id)
 
 
 async def _start_and_wait(

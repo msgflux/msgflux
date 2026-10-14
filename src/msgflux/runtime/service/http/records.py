@@ -6,6 +6,7 @@ import msgspec
 
 from msgflux.runtime.permissions import ResourcePermission
 from msgflux.runtime.service.records import (
+    AdmissionReceipt,
     ApprovalReview,
     EventRecord,
     RunResult,
@@ -15,6 +16,7 @@ from msgflux.runtime.service.records import (
 )
 
 __all__ = [
+    "ActiveRunsResponse",
     "AgentsResponse",
     "ApprovalDecisionRequest",
     "ApprovalReview",
@@ -99,6 +101,10 @@ class RunsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 
 class ApprovalReviewsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     approvals: tuple[ApprovalReview, ...]
+
+
+class ActiveRunsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    runs: tuple[AdmissionReceipt, ...]
 
 
 class InterruptResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
