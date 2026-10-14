@@ -16,6 +16,7 @@ from msgflux.runtime.service import (
 )
 from msgflux.runtime.service.http.client import (
     AgentServiceClient,
+    AgentServiceHTTPError,
     AgentServiceProtocolError,
 )
 from msgflux.runtime.service.http.records import HealthRecord
@@ -318,3 +319,27 @@ async def test_watch_rejects_missing_initial_snapshot():
         with pytest.raises(AgentServiceProtocolError, match="begin with a snapshot"):
             async with client.watch("t"):
                 pass
+
+
+@pytest.mark.parametrize("status", [404, 401, 500])
+@pytest.mark.asyncio
+async def test_active_run_listing_distinguishes_missing_endpoint_from_other_errors(
+    status,
+):
+    def handler(request):
+        assert request.url.path == "/v1/runs/active"
+        return _json_response(
+            request, {"code": "http_error", "message": "original error"}, status
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        with pytest.raises(AgentServiceHTTPError) as raised:
+            await client.active_runs()
+        assert raised.value.status_code == status
+        if status == 404:
+            assert "Restart or upgrade" in str(raised.value)
+            assert "/v1/runs/active" in str(raised.value)
+            assert isinstance(raised.value.__cause__, AgentServiceHTTPError)
+        else:
+            assert str(raised.value) == "original error"

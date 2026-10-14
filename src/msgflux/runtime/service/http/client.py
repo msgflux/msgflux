@@ -187,7 +187,16 @@ class AgentServiceClient:
 
     async def active_runs(self) -> tuple[AdmissionReceipt, ...]:
         """List live root workers without loading sessions."""
-        result = await self._json("GET", "/v1/runs/active", ActiveRunsResponse)
+        try:
+            result = await self._json("GET", "/v1/runs/active", ActiveRunsResponse)
+        except AgentServiceHTTPError as error:
+            if error.status_code == 404:
+                raise AgentServiceHTTPError(
+                    "The running service does not support active-run listing "
+                    "(GET /v1/runs/active). Restart or upgrade the server.",
+                    status_code=404,
+                ) from error
+            raise
         return result.runs
 
     async def threads(self) -> tuple[ServiceThread, ...]:
