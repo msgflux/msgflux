@@ -81,7 +81,9 @@ class PromptExecution:
                     self.result.run_id = receipt.run_id
                     await self._observe(client, watcher, observer)
             except _TRANSPORT_ERRORS:
-                if self.result.run_id is None:
+                # A lost admission response does not mean the daemon rejected
+                # the prompt. Recover its receipt by request_id without replay.
+                if admission is None:
                     raise
             return await self._wait_result(client, thread.thread_id, observer)
         except asyncio.CancelledError:
@@ -103,6 +105,7 @@ class PromptExecution:
                 receipt = await client.receipt(
                     thread_id, self.result.request_id, require_waitable=True
                 )
+                self.result.run_id = receipt.run_id
                 if receipt.status not in {"accepted", "running"}:
                     settled = await client.run_result(thread_id, receipt.run_id)
                     self.result.status = settled.status
@@ -130,7 +133,14 @@ class PromptExecution:
                 # The service may have admitted a prompt before its HTTP response
                 # reaches us. Recover that same receipt, never resubmit.
                 if admission is not None and self.result.run_id is None:
-                    receipt = await asyncio.shield(admission)
+                    try:
+                        receipt = await asyncio.shield(admission)
+                    except _TRANSPORT_ERRORS:
+                        receipt = await client.receipt(
+                            self.result.thread_id,
+                            self.result.request_id,
+                            require_waitable=True,
+                        )
                     self.result.run_id = receipt.run_id
                 if not interrupt:
                     return

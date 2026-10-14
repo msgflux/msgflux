@@ -238,6 +238,196 @@ async def test_print_watch_reconnect_does_not_admit_twice(
 
 
 @pytest.mark.asyncio
+async def test_lost_prompt_response_recovers_one_admission(
+    coding_cli_project, monkeypatch
+):
+    import httpx2
+    from msgflux.coding import prompt as prompt_module
+
+    project, config, runtime = coding_cli_project
+    client = await connect_local_service(
+        config=config, runtime_dir=runtime, cwd=project
+    )
+    original_prompt = client.prompt
+    admissions = []
+
+    async def admit_then_drop_response(*args, **kwargs):
+        admissions.append(kwargs["request_id"])
+        await original_prompt(*args, **kwargs)
+        raise httpx2.ReadError("admission response was lost")
+
+    async def connect(**kwargs):
+        return client
+
+    monkeypatch.setattr(client, "prompt", admit_then_drop_response)
+    monkeypatch.setattr(prompt_module, "connect_local_service", connect)
+    try:
+        result = await asyncio.wait_for(
+            PromptExecution().run(
+                "reconnect", config=config, runtime_dir=runtime, cwd=project
+            ),
+            10,
+        )
+        assert result.status == "completed"
+        assert result.output == "FINAL: reconnect"
+        assert result.thread_id and result.run_id and result.request_id
+        assert admissions == [result.request_id]
+    finally:
+        await client.aclose()
+        await _shutdown(runtime)
+
+
+@pytest.mark.asyncio
+async def test_lost_prompt_before_admission_does_not_invent_or_retry_run(
+    coding_cli_project, monkeypatch
+):
+    import httpx2
+    from msgflux.coding import prompt as prompt_module
+    from msgflux.runtime.service.http.client import AgentServiceHTTPError
+
+    project, config, runtime = coding_cli_project
+    client = await connect_local_service(
+        config=config, runtime_dir=runtime, cwd=project
+    )
+    admissions = []
+    execution = PromptExecution()
+
+    async def fail_before_admission(*args, **kwargs):
+        admissions.append(kwargs["request_id"])
+        raise httpx2.ReadError("connection failed before request arrived")
+
+    async def connect(**kwargs):
+        return client
+
+    monkeypatch.setattr(client, "prompt", fail_before_admission)
+    monkeypatch.setattr(prompt_module, "connect_local_service", connect)
+    try:
+        with pytest.raises(AgentServiceHTTPError) as caught:
+            await asyncio.wait_for(
+                execution.run(
+                    "reconnect", config=config, runtime_dir=runtime, cwd=project
+                ),
+                10,
+            )
+        assert caught.value.status_code == 404
+        assert len(admissions) == 1
+        assert execution.result.request_id == admissions[0]
+        assert execution.result.run_id is None
+    finally:
+        await client.aclose()
+        await _shutdown(runtime)
+
+
+@pytest.mark.asyncio
+async def test_watch_entry_failure_before_admission_does_not_lookup_receipt(
+    monkeypatch,
+):
+    import httpx2
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from msgflux.coding import prompt as prompt_module
+
+    @asynccontextmanager
+    async def failed_watch(_thread_id):
+        raise httpx2.ReadError("watch could not start")
+        yield
+
+    client = SimpleNamespace(
+        open_thread=AsyncMock(
+            return_value=SimpleNamespace(thread_id="thread", agent_id="worker")
+        ),
+        prompt=AsyncMock(),
+        watch=failed_watch,
+        receipt=AsyncMock(),
+        aclose=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        prompt_module, "connect_local_service", AsyncMock(return_value=client)
+    )
+    execution = PromptExecution()
+    with pytest.raises(httpx2.ReadError, match="watch could not start"):
+        await execution.run("hello")
+    client.prompt.assert_not_awaited()
+    client.receipt.assert_not_awaited()
+    client.aclose.assert_awaited_once()
+    assert execution.result.run_id is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_receipt_recovery_uses_failed_admission_request_id(
+    coding_cli_project, monkeypatch
+):
+    import httpx2
+    from msgflux.coding import prompt as prompt_module
+
+    project, config, runtime = coding_cli_project
+    client = await connect_local_service(
+        config=config, runtime_dir=runtime, cwd=project
+    )
+    original_prompt = client.prompt
+    original_receipt = client.receipt
+    original_interrupt = client.interrupt
+    admissions = []
+    interrupts = []
+    lookup_started = asyncio.Event()
+    first_lookup = True
+
+    async def admit_then_drop_response(*args, **kwargs):
+        admissions.append(kwargs["request_id"])
+        await original_prompt(*args, **kwargs)
+        raise httpx2.ReadError("admission response was lost")
+
+    async def block_first_receipt(thread_id, request_id, *, require_waitable=False):
+        nonlocal first_lookup
+        if first_lookup:
+            first_lookup = False
+            lookup_started.set()
+            await asyncio.Event().wait()
+        return await original_receipt(
+            thread_id, request_id, require_waitable=require_waitable
+        )
+
+    async def interrupt(thread_id, run_id):
+        interrupts.append((thread_id, run_id))
+        return await original_interrupt(thread_id, run_id)
+
+    async def connect(**kwargs):
+        return client
+
+    monkeypatch.setattr(client, "prompt", admit_then_drop_response)
+    monkeypatch.setattr(client, "receipt", block_first_receipt)
+    monkeypatch.setattr(client, "interrupt", interrupt)
+    monkeypatch.setattr(prompt_module, "connect_local_service", connect)
+    execution = PromptExecution()
+    task = asyncio.create_task(
+        execution.run(
+            "stream-gated",
+            config=config,
+            runtime_dir=runtime,
+            cwd=project,
+            interrupt_on_cancel=True,
+        )
+    )
+    try:
+        await asyncio.wait_for(lookup_started.wait(), 10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 10)
+        assert admissions == [execution.result.request_id]
+        assert execution.result.run_id is not None
+        assert interrupts == [(execution.result.thread_id, execution.result.run_id)]
+        assert execution.result.status == "interrupted"
+    finally:
+        (project / "release").touch(exist_ok=True)
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await client.aclose()
+        await _shutdown(runtime)
+
+
+@pytest.mark.asyncio
 async def test_cli_stream_ndjson_events_and_final_result(coding_cli_project):
     project, config, runtime = coding_cli_project
     try:

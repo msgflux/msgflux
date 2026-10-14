@@ -154,10 +154,17 @@ checkpoint for the specific run, so a later turn cannot replace that answer. If
 the daemon has lost ownership of an execution, the command reports the service's
 recovery error instead of attempting unsafe replay.
 
+If the admission response is lost, the frontend looks up its already generated
+`request_id` and recovers the `run_id` from the existing receipt; it does not
+send the prompt again. If that receipt is absent or cannot be confirmed, the
+command reports failure with the IDs it knows and does not invent a run or
+reexecute the prompt.
+
 Ctrl+C explicitly requests interruption of the selected execution through the
-service and exits with code 130. The CLI allows up to five seconds to recover an
-in-flight admission receipt, send the request and confirm settlement. It never
-submits the prompt again. The final record reports `interrupted` when confirmed,
+service and exits with code 130. Within a five-second timeout, the CLI recovers
+an in-flight admission receipt using the same `request_id`, sends the interruption
+request and confirms settlement without submitting the prompt again. The final
+record reports `interrupted` when confirmed,
 `interrupt_requested` when the server accepted the signal but settlement has not
 yet been confirmed, or `detached` when the interruption could not be confirmed.
 Known IDs and a concrete reason remain available for inspection. If the run
