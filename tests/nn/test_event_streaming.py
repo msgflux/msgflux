@@ -1333,7 +1333,7 @@ async def test_sync_agent_tool_loop_classifies_stream_response_after_return():
             producer.start()
             producer_threads.append(producer)
             return delayed_response
-        model_inputs.append(kwargs["messages"].to_items())
+        model_inputs.append(list(kwargs["messages"]))
         return final_response
 
     def first_tool() -> str:
