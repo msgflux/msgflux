@@ -2422,7 +2422,7 @@ diffs use `+`-prefixed content lines (an empty diff creates an empty file); dele
 uses no diff. Supply a V4A **body**, not a multi-file `*** Begin Patch` envelope or
 a standard numbered unified diff. Function transport preserves extra runtime
 selectors such as `run_in_background` instead of silently dropping them, although
-the current approval policy only supports foreground execution.
+approval policies require prepared file changes to execute in foreground.
 
 The parser is adapted from the OpenAI Agents SDK reference, with its MIT notice
 preserved and parser records implemented as `msgspec.Struct`. It supports context
@@ -2759,8 +2759,10 @@ tool's `timeout_ms` limits each process execution; the separate `TaskWaitTool.ti
 only limits how long a caller waits for a background task result, without changing
 the process deadline. Background execution does not bypass the shell's time cap.
 For example, configure `shell.tool_config["allow_background"] = True` before
-building the ToolLibrary. Existing approval restrictions for foreground tools
-still apply.
+building the ToolLibrary. Approval policies bind command arguments and dispatch
+mode, consuming an approved background call before its task is admitted. Denied
+or changed calls cannot dispatch. A crash after approval consumption may require
+host reconciliation before recovery; it does not authorize automatic replay.
 
 An asyncio subprocess backend should disconnect stdin, enforce output limits
 during capture, and terminate and reap the process tree on timeout/cancellation.

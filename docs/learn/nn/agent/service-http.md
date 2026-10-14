@@ -175,6 +175,19 @@ explaining why recovery did not proceed. A freshly constructed
 process restarts requires reconnecting to the same backend workspace identity.
 See [durable runtime resources](resources.md) for the managed Agent setup.
 
+Workspace approvals support Bash in foreground and background. The approval
+binds both the command arguments and the selected dispatch mode. The runtime
+consumes an approved background invocation before admitting its durable task;
+pending, denied, expired or changed invocations create no task and execute no
+command. A dispatch hook cannot reuse a background approval to run the same
+call in foreground.
+
+Approval consumption and task admission use separate journals. Process loss
+between them leaves a consumed approval requiring explicit host reconciliation;
+recovery never automatically repeats the command. Prepared file changes must
+execute in foreground so their reviewed transaction remains bound to the effect.
+Detached and call-as-response tools remain unsupported by approval policies.
+
 This adapter runs in a single process around one service. Local daemon discovery/startup is available through the [local process API](service-local.md).
 Coordination across independent server workers remains a separate integration. Do not run multiple Uvicorn workers against one in-memory service.
 
