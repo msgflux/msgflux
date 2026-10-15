@@ -815,6 +815,17 @@ Async version for concurrent operations:
 
 Stream tokens as they're generated:
 
+If an OpenAI-compatible Chat Completions or Responses stream disconnects, consuming
+it raises the original transport exception. Text already received remains in the
+stream events and canonical history, including text buffered while its role as
+commentary or an answer was being determined. The response remains failed;
+partial text is not a completed answer.
+
+An Agent preserves received messages and reasoning in its failure checkpoint.
+An incomplete tool call is not executed or converted into an executable history
+entry. Tools that completed before the disconnection retain their recorded
+results; a failed stream does not automatically restart the Agent execution.
+
 ???+ example
 
     === "Pull One Chunk"

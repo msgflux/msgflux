@@ -1011,6 +1011,13 @@ class AgentModelRuntimeMixin:
                 tool_filter=tool_filter,
             )
 
+    async def _aconsume_tool_response(self, model_response, messages) -> None:
+        try:
+            await self._aconsume_event_response(model_response, emit_content=False)
+        except Exception:
+            self._append_failed_tool_stream_history(messages, model_response)
+            raise
+
     def _process_tool_call_response(
         self,
         message: Union[str, Mapping[str, Any], Message],
@@ -1034,9 +1041,7 @@ class AgentModelRuntimeMixin:
             if model_response.response_type == "tool_call":
                 if isinstance(model_response, ModelStreamResponse):
                     Executor.get_instance().submit(
-                        self._aconsume_event_response,
-                        model_response,
-                        emit_content=False,
+                        self._aconsume_tool_response, model_response, messages
                     ).result()
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
@@ -1128,10 +1133,7 @@ class AgentModelRuntimeMixin:
             await self._await_stream_response_type(model_response)
             if model_response.response_type == "tool_call":
                 if isinstance(model_response, ModelStreamResponse):
-                    await self._aconsume_event_response(
-                        model_response,
-                        emit_content=False,
-                    )
+                    await self._aconsume_tool_response(model_response, messages)
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )

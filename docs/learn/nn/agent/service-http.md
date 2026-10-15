@@ -406,6 +406,29 @@ automatic reconnect loops in this increment.
 
 ## Run Controls And Recovery
 
+An upstream stream failure records a failed run and preserves received partial
+history when checkpoint persistence is available. `run_result()` exposes no
+completed output for that run. Reusing its `request_id` returns the same receipt,
+including after service restart; it does not automatically repeat completed
+tool effects.
+
+Checkpoint and admission writes are separate failure boundaries. A checkpoint
+write failure must not produce a completed result. If the checkpoint succeeds
+but the service cannot persist the terminal receipt, client `wait()` requires
+recovery instead of reporting success. Inspect both records before recovery:
+
+```python
+inspection = await client.inspect_run(thread_id, run_id)
+print(inspection.receipt.status, inspection.checkpoint_status)
+for reason in inspection.reasons:
+    print(reason)
+```
+
+The inspection explains disagreement between the admission and checkpoint. It
+does not authorize replay or prove whether an external effect occurred. After
+restoring storage access, the trusted host must reconcile the execution using
+the existing recovery controls.
+
 ```python
 await client.steer(thread_id, receipt.run_id, "Focus on integration tests")
 interrupted = await client.interrupt(thread_id, receipt.run_id)

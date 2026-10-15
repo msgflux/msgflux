@@ -1124,6 +1124,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         else:
             for chunk in pending_content:
                 cls._stream_add_chunk(stream_response, chunk, "text_generation")
+        pending_content.clear()
 
     def _execute_model(self, **kwargs):
         self._raise_if_aborted()
@@ -1922,6 +1923,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(e)
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
@@ -2052,6 +2056,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(e)
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
         finally:
             if not await self._aclose_model_stream(model_output, stream_response):
                 final_status = "failed"
@@ -2386,7 +2393,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             "terminal_status": "completed",
         }
 
-    def _finish_responses_stream(  # noqa: C901
+    def _flush_responses_content(
         self,
         stream_response: ModelStreamResponse,
         aggregator: ToolCallAggregator,
@@ -2404,11 +2411,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                         index, "commentary"
                     )
                     stream_response.add_commentary("".join(chunks))
-            if state["tool_reasoning"]:
-                aggregator.reasoning = state["tool_reasoning"]
-            stream_response.data = aggregator
-            if not stream_response.first_chunk_event.is_set():
-                stream_response.first_chunk_event.set()
         else:
             for index, delta in state["pending_unphased_text"]:
                 if (
@@ -2422,8 +2424,23 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     "text_generation",
                     accumulate_history=False,
                 )
-            if stream_response.response_type is None:
-                stream_response.set_response_type("text_generation")
+        state["pending_unphased_text"].clear()
+
+    def _finish_responses_stream(
+        self,
+        stream_response: ModelStreamResponse,
+        aggregator: ToolCallAggregator,
+        state: dict[str, Any],
+    ) -> None:
+        self._flush_responses_content(stream_response, aggregator, state)
+        if aggregator.tool_calls:
+            if state["tool_reasoning"]:
+                aggregator.reasoning = state["tool_reasoning"]
+            stream_response.data = aggregator
+            if not stream_response.first_chunk_event.is_set():
+                stream_response.first_chunk_event.set()
+        elif stream_response.response_type is None:
+            stream_response.set_response_type("text_generation")
         stream_response.reasoning = (
             state["reasoning"] or None if self.return_reasoning else None
         )
@@ -2468,6 +2485,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(error)
+            self._flush_responses_content(stream_response, aggregator, state)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
@@ -2516,6 +2534,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(error)
+            self._flush_responses_content(stream_response, aggregator, state)
         finally:
             if not await self._aclose_model_stream(model_output, stream_response):
                 final_status = "failed"

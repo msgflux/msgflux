@@ -1100,6 +1100,49 @@ def test_agent_stream_checkpoint_preserves_partial_output_on_failure():
     assert "assistant_output" not in restored.turns[-1]
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_failed_tool_stream_saves_received_text_without_executing_call(
+    asynchronous,
+):
+    store = InMemoryCheckpointStore()
+    effects = []
+
+    def record_effect() -> str:
+        """Record a synthetic effect that must not execute."""
+        effects.append("unexpected")
+        return "unexpected"
+
+    agent = _make_agent(
+        checkpoint_store=store, config={"stream": True}, tools=[record_effect]
+    )
+    response = ModelStreamResponse()
+    response.set_response_type("tool_call")
+    response.chat_accumulator.add_tool_commentary("received commentary")
+    response.add_commentary("received commentary")
+    response.chat_accumulator.add_tool_call_delta(
+        0, call_id="incomplete", name="record_effect", arguments="{"
+    )
+    error = RuntimeError("synthetic connection dropped")
+    response.finish(error=error, status="failed")
+    agent.generator.forward = Mock(return_value=response)
+    agent.generator.aforward = AsyncMock(return_value=response)
+    scope = ExecutionScope(thread_id="thread", run_id="failed-call")
+    with pytest.raises(RuntimeError) as raised:
+        if asynchronous:
+            await agent.acall("perform the operation", scope=scope)
+        else:
+            agent("perform the operation", scope=scope)
+    assert raised.value is error
+    assert effects == []
+    state = store.load_state("test_agent", "thread", "failed-call")
+    assert state["status"] == "failed"
+    history = ChatMessages()
+    history._hydrate_state(state["messages"])
+    assert "received commentary" in str(history.to_chatml())
+    assert not any(item.get("type") == "function_call" for item in history)
+
+
 def test_agent_stream_checkpoint_marks_pre_output_abort_interrupted():
     store = InMemoryCheckpointStore()
     agent = _make_agent(checkpoint_store=store, config={"stream": True})
