@@ -543,6 +543,28 @@ of missed deltas. An idle or completed thread can still be observed; its saved
 conversation is available in the JSON snapshot. A watcher does not emit a final
 CLI `result` envelope and does not send another user message.
 
+## Steer An Active Thread
+
+```bash
+msgflux threads steer THREAD_ID -m "Prioritize the integration tests"
+msgflux threads steer THREAD_ID --message "Keep the public API unchanged" --json
+```
+
+`threads steer` selects the thread's active root run and sends a user message
+through its existing AgentInbox. It does not submit another prompt or start a
+new run. Like observation and inspection, it requires an existing verified local
+daemon and accepts `--runtime-dir PATH`.
+
+The response confirms that the message was queued, including `thread_id`,
+`run_id`, and `notification_id`. The agent consumes it at its normal inbox drain
+points, such as after a tool call; confirmation does not mean the model has read
+it yet. Steering does not preempt an in-flight model request or interrupt tools.
+
+An empty message, an idle or unknown thread, or an ambiguous active-run selection
+is rejected. If the selected run ends before delivery, the service rejects that
+target; the CLI does not redirect the message to a newer run. Use
+`msgflux -p "Follow up" --thread THREAD_ID` for a new turn after completion.
+
 ## Validate Configuration Offline
 
 ```bash

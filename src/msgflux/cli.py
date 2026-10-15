@@ -27,6 +27,7 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux runs ls --active; msgflux threads interrupt/stop THREAD_ID; "
             "msgflux agents ls; msgflux agents inspect AGENT_ID; "
             "msgflux threads ls; msgflux threads watch THREAD_ID; "
+            "msgflux threads steer THREAD_ID -m MESSAGE; "
             "msgflux config validate."
         ),
     )
