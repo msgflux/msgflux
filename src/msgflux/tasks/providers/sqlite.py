@@ -8,12 +8,15 @@ from threading import RLock
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
+import msgspec
+
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
 from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import SQLiteTaskStoreType
+from msgflux.utils.msgspec import msgspec_dumps
 from msgflux.utils.time import utc_now_isoformat
 
 _CREATE_TABLES = """\
@@ -176,7 +179,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
 
     @staticmethod
     def _serialize(value: Any) -> str:
-        return json.dumps(value, ensure_ascii=False, default=str)
+        return msgspec_dumps(msgspec.to_builtins(value, enc_hook=str))
 
     @staticmethod
     def _deserialize(text: str | None) -> Any:
