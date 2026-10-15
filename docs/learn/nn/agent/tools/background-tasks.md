@@ -66,6 +66,12 @@ When the tool library runs inside this context, it reads the active
 interrupt requests. If no task store is provided, msgFlux creates an in-memory
 store when background tools are used.
 
+The SQLite store persists `msgspec.Struct` and dataclass results as structured
+JSON, including nested values. After reopening, a Bash result still exposes
+`results`, `returncode`, `stdout`, and `stderr` through `task_output` or `task_wait`.
+Opaque Python objects retain their string fallback. Previously stored strings
+remain strings; the store does not parse Python representations.
+
 For lightweight foreground-run inspection, task stores provide
 `list_summaries(thread_id, run_id)` through `TaskStoreProtocol`. It returns
 `TaskSummary` records with
