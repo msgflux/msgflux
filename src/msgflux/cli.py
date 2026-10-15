@@ -70,6 +70,17 @@ def _prompt_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
+    if as_json and streaming:
+        write_observation("result", result, as_json=True)
+    elif as_json:
+        sys.stdout.write(msgspec_dumps(result) + "\n")
+    elif result.status == "completed":
+        sys.stdout.write((result.output or "") + "\n")
+    else:
+        sys.stderr.write(f"{result.error or result.status}\n")
+
+
 def _write_identities(result) -> None:
     identities = " ".join(
         f"{name}={getattr(result, name)}"
@@ -79,21 +90,6 @@ def _write_identities(result) -> None:
     if identities:
         sys.stderr.write(identities + "\n")
         sys.stderr.flush()
-
-
-def _write_result(
-    result, *, as_json: bool, streaming: bool = False, detached: bool = False
-) -> None:
-    if as_json and streaming:
-        write_observation("result", result, as_json=True)
-    elif as_json:
-        sys.stdout.write(msgspec_dumps(result) + "\n")
-    elif detached and result.status in {"accepted", "running", "completed"}:
-        sys.stdout.write(f"status={result.status}\n")
-    elif result.status == "completed":
-        sys.stdout.write((result.output or "") + "\n")
-    else:
-        sys.stderr.write(f"{result.error or result.status}\n")
 
 
 class _PromptOutput:
@@ -109,12 +105,16 @@ class _PromptOutput:
     def finish(self, result) -> None:
         if not self.options.json and not self.identities_written:
             _write_identities(result)
-        _write_result(
-            result,
-            as_json=self.options.json,
-            streaming=self.options.stream,
-            detached=self.options.detach,
-        )
+        if (
+            self.options.detach
+            and not self.options.json
+            and result.status in {"accepted", "running", "completed"}
+        ):
+            sys.stdout.write(f"status={result.status}\n")
+        else:
+            _write_result(
+                result, as_json=self.options.json, streaming=self.options.stream
+            )
 
 
 def _dispatch_administration(args: list[str]) -> bool:
