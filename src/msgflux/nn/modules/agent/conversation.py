@@ -845,6 +845,19 @@ class AgentConversationMixin:
 
     # --- Response Extraction Helpers ---
 
+    def _append_failed_tool_stream_history(self, messages, model_response) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+        start = len(messages)
+        # Keep received diagnostics without turning incomplete calls into intents.
+        messages.extend(
+            item
+            for item in model_response.chat_accumulator.snapshot()
+            if item.get("type") == "reasoning"
+            or (item.get("type") == "message" and item.get("role") == "assistant")
+        )
+        attach_response_metadata(messages, model_response.metadata, after_index=start)
+
     def _append_tool_model_history(
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
