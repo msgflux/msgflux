@@ -22,14 +22,14 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         description={
             "service": "Run, inspect, or restart a local authenticated AgentService.",
             "agents": "List agents or inspect their loaded registration defaults.",
-            "threads": "List threads or interrupt a thread's active execution.",
+            "threads": "List, watch, or interrupt service threads.",
             "runs": "List active runs, inspect recovery, or resume a paused run.",
         }[resource],
     )
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
         "runs": ("inspect", "resume", "ls"),
-        "threads": ("ls", "interrupt", "stop"),
+        "threads": ("ls", "watch", "interrupt", "stop"),
         "agents": ("ls", "inspect"),
     }
     parser.add_argument(
@@ -158,10 +158,11 @@ def _validate_options(args: argparse.Namespace) -> None:
         "inspect",
         "resume",
         "interrupt",
+        "watch",
         "ls",
     }:
         raise SystemExit(
-            "--json is only accepted with status, stop, inspect, or resume"
+            "--json is only accepted with operation and observation commands"
         )
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
@@ -297,7 +298,14 @@ async def _run_operation(args) -> None:
             await inspect_registered_agent(client, args)
             return
         if args.resource == "threads":
-            await _interrupt_thread(client, args)
+            if args.action == "watch":
+                from msgflux.runtime.service.local.watch import (  # noqa: PLC0415
+                    watch_thread,
+                )
+
+                await watch_thread(client, args.thread_id, as_json=args.json)
+            else:
+                await _interrupt_thread(client, args)
             return
         if args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
@@ -377,6 +385,7 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         else _inspect_service,
         "resume": _run_operation,
         "interrupt": _run_operation,
+        "watch": _run_operation,
         "ls": _run_operation,
     }
     if args.action in actions:

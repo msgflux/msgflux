@@ -514,6 +514,35 @@ returning a connection. Initialization and shutdown of an existing owner are wai
 for within `startup_timeout`; an owner with published metadata but an invalid
 identity/health response is reported as requiring recovery and is not replaced.
 
+## Watch An Existing Thread
+
+```bash
+msgflux threads watch THREAD_ID
+msgflux threads watch THREAD_ID --json
+msgflux threads watch THREAD_ID --runtime-dir /path/to/runtime
+```
+
+`threads watch` connects to an existing thread without submitting a prompt. It
+uses the same verified local daemon discovery as inspection commands and never
+starts an absent service. The thread can have been created by an HTTP caller,
+the SDK, or `msgflux -p`.
+
+The connection first receives a snapshot and then live events. Plain output
+prints a snapshot header with the thread ID and labels events by type and source.
+`--json` writes the full snapshot and events as flushed NDJSON envelopes, using
+the same `snapshot` and `event` formats as `msgflux -p --stream --json`.
+
+Observation stays open after a run completes, so it can follow later runs on the
+same thread. Ctrl+C exits with code 130 and closes only this observer; it does
+not interrupt the agent. To request interruption, use
+`msgflux threads interrupt THREAD_ID` separately.
+
+Connection errors exit with a diagnostic. Run the command again to reconnect:
+each connection receives a fresh snapshot followed by new events, without replay
+of missed deltas. An idle or completed thread can still be observed; its saved
+conversation is available in the JSON snapshot. A watcher does not emit a final
+CLI `result` envelope and does not send another user message.
+
 ## Validate Configuration Offline
 
 ```bash
