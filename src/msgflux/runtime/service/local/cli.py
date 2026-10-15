@@ -22,14 +22,14 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         description={
             "service": "Run, inspect, or restart a local authenticated AgentService.",
             "agents": "List agents or inspect their loaded registration defaults.",
-            "threads": "List threads or interrupt a thread's active execution.",
+            "threads": "List, watch, steer, or interrupt service threads.",
             "runs": "List active runs, inspect recovery, or resume a paused run.",
         }[resource],
     )
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
         "runs": ("inspect", "resume", "ls"),
-        "threads": ("ls", "interrupt", "stop"),
+        "threads": ("ls", "watch", "steer", "interrupt", "stop"),
         "agents": ("ls", "inspect"),
     }
     parser.add_argument(
@@ -64,6 +64,11 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent",
         help=_help_for(resource, "filter active runs by registered agent ID", "runs"),
+    )
+    parser.add_argument(
+        "-m",
+        "--message",
+        help=_help_for(resource, "message for the active run (steer only)", "threads"),
     )
     source = parser.add_mutually_exclusive_group()
     source.add_argument(
@@ -158,15 +163,18 @@ def _validate_options(args: argparse.Namespace) -> None:
         "inspect",
         "resume",
         "interrupt",
+        "watch",
+        "steer",
         "ls",
     }:
         raise SystemExit(
-            "--json is only accepted with status, stop, inspect, or resume"
+            "--json is only accepted with operation and observation commands"
         )
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
 
     _validate_target(args)
+    _validate_message(args)
     if args.agent is not None and not (args.resource == "runs" and args.action == "ls"):
         raise SystemExit("--agent is only accepted with runs ls")
     if args.active and not (
@@ -189,6 +197,14 @@ def _validate_options(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"{args.action} does not accept factory, config, cwd or restart timeout"
         )
+
+
+def _validate_message(args: argparse.Namespace) -> None:
+    if args.resource == "threads" and args.action == "steer":
+        if args.message is None or not args.message.strip():
+            raise SystemExit("threads steer requires a non-empty --message")
+    elif args.message is not None:
+        raise SystemExit("--message is only accepted with threads steer")
 
 
 def _validate_listing_target(args: argparse.Namespace) -> None:
@@ -297,7 +313,16 @@ async def _run_operation(args) -> None:
             await inspect_registered_agent(client, args)
             return
         if args.resource == "threads":
-            await _interrupt_thread(client, args)
+            if args.action == "watch":
+                from msgflux.runtime.service.local.watch import (  # noqa: PLC0415
+                    watch_thread,
+                )
+
+                await watch_thread(client, args.thread_id, as_json=args.json)
+            elif args.action == "steer":
+                await _steer_thread(client, args)
+            else:
+                await _interrupt_thread(client, args)
             return
         if args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
@@ -336,17 +361,41 @@ def _show_run_result(args, result) -> None:
         sys.stdout.write(f"- {reason}\n")
 
 
-async def _interrupt_thread(client, args) -> None:
+async def _active_thread_run(client, thread_id: str) -> str | None:
     runs = tuple(
-        run for run in await client.active_runs() if run.thread_id == args.thread_id
+        run for run in await client.active_runs() if run.thread_id == thread_id
     )
     if len(runs) > 1:
         raise RuntimeError(
             "Multiple active runs for the thread; cannot select a target"
         )
-    run_id = runs[0].run_id if runs else None
-    requested = await client.interrupt(args.thread_id, run_id) if runs else False
-    if not runs and not any(
+    return runs[0].run_id if runs else None
+
+
+async def _steer_thread(client, args) -> None:
+    run_id = await _active_thread_run(client, args.thread_id)
+    if run_id is None:
+        raise RuntimeError(f"No active run for thread {args.thread_id}")
+    notice = await client.steer(args.thread_id, run_id, args.message)
+    result = {
+        "thread_id": args.thread_id,
+        "run_id": run_id,
+        "notification_id": notice["notification_id"],
+        "status": "queued",
+    }
+    if args.json:
+        sys.stdout.write(msgspec_dumps(result) + "\n")
+    else:
+        sys.stdout.write(
+            f"Message queued for thread {args.thread_id}, run {run_id} "
+            f"(notification_id={notice['notification_id']}).\n"
+        )
+
+
+async def _interrupt_thread(client, args) -> None:
+    run_id = await _active_thread_run(client, args.thread_id)
+    requested = await client.interrupt(args.thread_id, run_id) if run_id else False
+    if run_id is None and not any(
         thread.thread_id == args.thread_id for thread in await client.threads()
     ):
         raise KeyError(f"Unknown thread: {args.thread_id}")
@@ -354,7 +403,7 @@ async def _interrupt_thread(client, args) -> None:
         "interrupt_requested"
         if requested
         else "not_active"
-        if runs
+        if run_id is not None
         else "no_active_run"
     )
     result = {"thread_id": args.thread_id, "run_id": run_id, "status": status}
@@ -377,6 +426,8 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         else _inspect_service,
         "resume": _run_operation,
         "interrupt": _run_operation,
+        "watch": _run_operation,
+        "steer": _run_operation,
         "ls": _run_operation,
     }
     if args.action in actions:

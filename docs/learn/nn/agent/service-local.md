@@ -514,6 +514,57 @@ returning a connection. Initialization and shutdown of an existing owner are wai
 for within `startup_timeout`; an owner with published metadata but an invalid
 identity/health response is reported as requiring recovery and is not replaced.
 
+## Watch An Existing Thread
+
+```bash
+msgflux threads watch THREAD_ID
+msgflux threads watch THREAD_ID --json
+msgflux threads watch THREAD_ID --runtime-dir /path/to/runtime
+```
+
+`threads watch` connects to an existing thread without submitting a prompt. It
+uses the same verified local daemon discovery as inspection commands and never
+starts an absent service. The thread can have been created by an HTTP caller,
+the SDK, or `msgflux -p`.
+
+The connection first receives a snapshot and then live events. Plain output
+prints a snapshot header with the thread ID and labels events by type and source.
+`--json` writes the full snapshot and events as flushed NDJSON envelopes, using
+the same `snapshot` and `event` formats as `msgflux -p --stream --json`.
+
+Observation stays open after a run completes, so it can follow later runs on the
+same thread. Ctrl+C exits with code 130 and closes only this observer; it does
+not interrupt the agent. To request interruption, use
+`msgflux threads interrupt THREAD_ID` separately.
+
+Connection errors exit with a diagnostic. Run the command again to reconnect:
+each connection receives a fresh snapshot followed by new events, without replay
+of missed deltas. An idle or completed thread can still be observed; its saved
+conversation is available in the JSON snapshot. A watcher does not emit a final
+CLI `result` envelope and does not send another user message.
+
+## Steer An Active Thread
+
+```bash
+msgflux threads steer THREAD_ID -m "Prioritize the integration tests"
+msgflux threads steer THREAD_ID --message "Keep the public API unchanged" --json
+```
+
+`threads steer` selects the thread's active root run and sends a user message
+through its existing AgentInbox. It does not submit another prompt or start a
+new run. Like observation and inspection, it requires an existing verified local
+daemon and accepts `--runtime-dir PATH`.
+
+The response confirms that the message was queued, including `thread_id`,
+`run_id`, and `notification_id`. The agent consumes it at its normal inbox drain
+points, such as after a tool call; confirmation does not mean the model has read
+it yet. Steering does not preempt an in-flight model request or interrupt tools.
+
+An empty message, an idle or unknown thread, or an ambiguous active-run selection
+is rejected. If the selected run ends before delivery, the service rejects that
+target; the CLI does not redirect the message to a newer run. Use
+`msgflux -p "Follow up" --thread THREAD_ID` for a new turn after completion.
+
 ## Validate Configuration Offline
 
 ```bash

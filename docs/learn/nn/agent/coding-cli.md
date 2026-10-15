@@ -175,6 +175,28 @@ final result remains authoritative even if intermediate events were missed.
 
 ## Errors, Approvals And Disconnection
 
+To observe an existing thread without sending another prompt, use:
+
+```bash
+msgflux threads watch THREAD_ID
+msgflux threads watch THREAD_ID --json
+```
+
+This observer remains open between runs. Ctrl+C disconnects it without
+interrupting execution. JSON output includes the initial snapshot and new events,
+with no final `result` envelope. See [Watch An Existing Thread](service-local.md#watch-an-existing-thread)
+for discovery, reconnection, and output details.
+
+To send an additional instruction to the active run through its inbox:
+
+```bash
+msgflux threads steer THREAD_ID -m "Focus on the failing integration test"
+```
+
+This queues a message for the current run without creating another prompt or
+waiting for completion. See [Steer An Active Thread](service-local.md#steer-an-active-thread)
+for delivery timing and target selection.
+
 Successful tasks exit with code 0. A failed, paused or interrupted run exits with
 code 1. Plain-text errors go to stderr and include available execution IDs;
 JSON mode returns those IDs, status and error in its final stdout record. Parsing
