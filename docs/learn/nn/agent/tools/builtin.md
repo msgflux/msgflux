@@ -462,6 +462,11 @@ operations: `status`, `list`, `output`, `wait`, `interrupt`, and, when supported
 retrieve final results. Results can be fetched repeatedly. Each operation accepts
 its own fields, rather than requiring unrelated optional fields for every call.
 
+An execution abort observed by a background worker records `interrupted` and
+preserves the reason in task inspection and results. Provider and tool exceptions
+record `failed`. A shell command's nonzero exit code remains in its `ShellResult`;
+it does not by itself mark the background task as failed.
+
 Generic ToolLibrary users can opt in after installing their tools:
 
 ```python
