@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable, Literal
 from uuid import uuid4
@@ -19,7 +20,7 @@ ObservationCallback = Callable[[Literal["snapshot", "event"], Any], None]
 
 
 class PromptResult(msgspec.Struct):
-    """One final CLI JSON record, including identities needed for recovery."""
+    """Admission or final CLI record, including identities needed for recovery."""
 
     status: str = "failed"
     thread_id: str | None = None
@@ -49,7 +50,11 @@ class PromptExecution:
         thread_id: str | None = None,
         observer: ObservationCallback | None = None,
         interrupt_on_cancel: bool = False,
+        detach: bool = False,
+        on_admitted: Callable[[PromptResult], None] | None = None,
     ) -> PromptResult:
+        if detach and observer is not None:
+            raise ValueError("Detached prompts cannot observe events")
         client = await connect_local_service(
             config=config, runtime_dir=runtime_dir, cwd=cwd
         )
@@ -66,7 +71,9 @@ class PromptExecution:
             self.result.request_id = uuid4().hex
             try:
                 # Attach before admitting so short runs cannot outrun observation.
-                async with client.watch(thread.thread_id) as watcher:
+                async with (
+                    nullcontext() if detach else client.watch(thread.thread_id)
+                ) as watcher:
                     if observer is not None:
                         observer("snapshot", watcher.snapshot)
                     admission = asyncio.create_task(
@@ -77,13 +84,19 @@ class PromptExecution:
                             account_name=account_name,
                         )
                     )
-                    receipt = await asyncio.shield(admission)
+                    receipt = await self._admission_receipt(client, admission)
                     self.result.run_id = receipt.run_id
+                    self.result.status = receipt.status
+                    self.result.error = receipt.error
+                    if on_admitted is not None:
+                        on_admitted(self.result)
+                    if detach:
+                        return self.result
                     await self._observe(client, watcher, observer)
             except _TRANSPORT_ERRORS:
-                # A lost admission response does not mean the daemon rejected
-                # the prompt. Recover its receipt by request_id without replay.
-                if admission is None:
+                # Observation can disconnect after successful admission. The
+                # recorded request identifies the run without replaying input.
+                if self.result.run_id is None:
                     raise
             return await self._wait_result(client, thread.thread_id, observer)
         except asyncio.CancelledError:
@@ -95,6 +108,22 @@ class PromptExecution:
                     admission.cancel()
                 await asyncio.gather(admission, return_exceptions=True)
             await client.aclose()
+
+    async def _admission_receipt(self, client, admission):
+        try:
+            return await asyncio.shield(admission)
+        except _TRANSPORT_ERRORS:
+            # Admission can succeed before its response is lost. Only look up
+            # this request; never resend the prompt or wait for completion here.
+            for attempt in range(3):
+                try:
+                    return await client.receipt(
+                        self.result.thread_id, self.result.request_id
+                    )
+                except _TRANSPORT_ERRORS:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(0.2 * (attempt + 1))
 
     async def _wait_result(
         self, client, thread_id: str, observer: ObservationCallback | None

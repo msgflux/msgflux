@@ -144,6 +144,7 @@ async def test_cli_final_json_resume_historical_result_and_failures(coding_cli_p
             project, config, runtime, "-p", "beta", "--thread", thread.thread_id
         )
         assert code == 0 and out == "FINAL: beta\n", err
+        assert f"thread_id={thread.thread_id}" in err
         # The endpoint identifies a run, even after a newer conversation turn.
         historical = await client.run_result(thread.thread_id, first["run_id"])
         assert historical.output == "FINAL: alpha"
@@ -823,3 +824,257 @@ def test_ctrl_c_completion_race_preserves_final_json_result(monkeypatch, capsys)
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "completed" and result["output"] == "already done"
     assert result["error"] is None
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+@pytest.mark.asyncio
+async def test_detached_cli_returns_ids_while_service_keeps_running(
+    coding_cli_project, as_json
+):
+    project, config, runtime = coding_cli_project
+    client = None
+    try:
+        code, out, err = await _command(
+            project,
+            config,
+            runtime,
+            "-p",
+            "stream-gated",
+            "--detach",
+            *(["--json"] if as_json else []),
+        )
+        assert code == 0, out + err
+        if as_json:
+            result = json.loads(out)
+            assert not err and result["output"] is None and result["error"] is None
+        else:
+            result = dict(field.split("=", 1) for field in err.split())
+            assert out.startswith("status=")
+            assert err.count("thread_id=") == 1
+        for key in ("thread_id", "agent_id", "request_id", "run_id"):
+            assert result[key]
+        assert result["agent_id"] == "worker"
+        client = await connect_local_service(
+            config=config, runtime_dir=runtime, cwd=project
+        )
+        receipt = await client.receipt(result["thread_id"], result["request_id"])
+        assert receipt.status in {"accepted", "running"}
+        assert receipt.run_id == result["run_id"]
+        (project / "release").touch()
+        async with asyncio.timeout(10):
+            while (
+                await client.receipt(result["thread_id"], result["request_id"])
+            ).status in {"accepted", "running"}:
+                await asyncio.sleep(0.02)
+        final = await client.run_result(result["thread_id"], result["run_id"])
+        assert final.status == "completed" and final.output == "FINAL: stream-gated"
+        code, out, err = await _command(
+            project, config, runtime, "-p", "continued", "--thread", result["thread_id"]
+        )
+        assert code == 0 and out == "FINAL: continued\n"
+        assert f"thread_id={result['thread_id']}" in err
+        assert len(await client.runs(result["thread_id"])) == 2
+    finally:
+        if client is not None:
+            await client.aclose()
+        await _shutdown(runtime)
+
+
+@pytest.mark.asyncio
+async def test_plain_prompt_flushes_generated_ids_before_completion(coding_cli_project):
+    project, config, runtime = coding_cli_project
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "msgflux.cli",
+        "-p",
+        "stream-gated",
+        "--config",
+        str(config),
+        "--runtime-dir",
+        str(runtime),
+        "--cwd",
+        str(project),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    client = None
+    try:
+        async with asyncio.timeout(15):
+            line = (await process.stderr.readline()).decode()
+        result = dict(field.split("=", 1) for field in line.split())
+        assert all(
+            result[key] for key in ("thread_id", "agent_id", "request_id", "run_id")
+        )
+        assert process.returncode is None
+        client = await connect_local_service(
+            config=config, runtime_dir=runtime, cwd=project
+        )
+        assert (
+            await client.receipt(result["thread_id"], result["request_id"])
+        ).status in {"accepted", "running"}
+        (project / "release").touch()
+        out, err = await asyncio.wait_for(process.communicate(), 15)
+        assert process.returncode == 0 and out.decode() == "FINAL: stream-gated\n"
+        assert not err
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.communicate()
+        if client is not None:
+            await client.aclose()
+        await _shutdown(runtime)
+
+
+@pytest.mark.asyncio
+async def test_detached_admission_loss_recovers_without_watch_or_resubmission(
+    coding_cli_project, monkeypatch
+):
+    import httpx2
+    from msgflux.coding import prompt as prompt_module
+
+    project, config, runtime = coding_cli_project
+    client = await connect_local_service(
+        config=config, runtime_dir=runtime, cwd=project
+    )
+    original_prompt = client.prompt
+    original_receipt = client.receipt
+    submitted = []
+    lookups = []
+    admitted = []
+
+    async def submit(*args, **kwargs):
+        submitted.append(kwargs["request_id"])
+        await original_prompt(*args, **kwargs)
+        raise httpx2.ReadError("admission response lost")
+
+    async def lookup(*args, **kwargs):
+        lookups.append(args)
+        if len(lookups) == 1:
+            raise httpx2.ReadError("receipt lookup connection lost")
+        return await original_receipt(*args, **kwargs)
+
+    def watch(*args, **kwargs):
+        raise AssertionError("Detached admission must not open a watcher")
+
+    async def connect(**kwargs):
+        return client
+
+    monkeypatch.setattr(client, "prompt", submit)
+    monkeypatch.setattr(client, "receipt", lookup)
+    monkeypatch.setattr(client, "watch", watch)
+    monkeypatch.setattr(prompt_module, "connect_local_service", connect)
+    other = None
+    try:
+        result = await asyncio.wait_for(
+            PromptExecution().run(
+                "stream-gated", detach=True, on_admitted=admitted.append
+            ),
+            10,
+        )
+        assert result.status in {"accepted", "running"}
+        assert submitted == [result.request_id]
+        assert len(lookups) == 2 and lookups[0] == lookups[1]
+        assert admitted == [result]
+        other = await connect_local_service(
+            config=config, runtime_dir=runtime, cwd=project
+        )
+        (project / "release").touch()
+        async with asyncio.timeout(10):
+            while (await other.receipt(result.thread_id, result.request_id)).status in {
+                "accepted",
+                "running",
+            }:
+                await asyncio.sleep(0.02)
+        assert (await other.run_result(result.thread_id, result.run_id)).output == (
+            "FINAL: stream-gated"
+        )
+        assert len(await other.runs(result.thread_id)) == 1
+        snapshot = await other.snapshot(result.thread_id)
+        assert sum(message.get("role") == "user" for message in snapshot.messages) == 1
+    finally:
+        await client.aclose()
+        if other is not None:
+            await other.aclose()
+        await _shutdown(runtime)
+
+
+def test_detach_and_stream_are_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["-p", "hello", "--detach", "--stream"])
+    assert exited.value.code == 2
+    captured = capsys.readouterr()
+    assert "not allowed with argument" in captured.err
+    assert not captured.out
+
+
+@pytest.mark.asyncio
+async def test_detach_rejects_observer_before_connecting(monkeypatch):
+    from unittest.mock import AsyncMock
+    from msgflux.coding import prompt as prompt_module
+
+    connect = AsyncMock()
+    monkeypatch.setattr(prompt_module, "connect_local_service", connect)
+    with pytest.raises(ValueError, match="cannot observe"):
+        await PromptExecution().run("hello", detach=True, observer=lambda *_: None)
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status, exit_code",
+    [
+        ("accepted", 0),
+        ("running", 0),
+        ("completed", 0),
+        ("failed", 1),
+        ("paused", 1),
+        ("interrupted", 1),
+    ],
+)
+def test_detached_json_reports_receipt_status_and_ids(
+    monkeypatch, capsys, status, exit_code
+):
+    from msgflux.coding.prompt import PromptResult
+
+    async def admit(self, prompt, **kwargs):
+        self.result = PromptResult(
+            status=status,
+            thread_id="thread",
+            agent_id="worker",
+            request_id="request",
+            run_id="run",
+        )
+        kwargs["on_admitted"](self.result)
+        return self.result
+
+    monkeypatch.setattr(PromptExecution, "run", admit)
+    if exit_code:
+        with pytest.raises(SystemExit) as exited:
+            cli.main(["-p", "hello", "--detach", "--json"])
+        assert exited.value.code == exit_code
+    else:
+        cli.main(["-p", "hello", "--detach", "--json"])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert not captured.err and len(captured.out.splitlines()) == 1
+    assert result["status"] == status
+    assert result["thread_id"] == "thread" and result["request_id"] == "request"
+    assert result["run_id"] == "run" and result["output"] is None
+
+
+def test_plain_admission_failure_reports_known_ids(monkeypatch, capsys):
+    async def failed(self, prompt, **kwargs):
+        self.result.thread_id = "thread"
+        self.result.agent_id = "worker"
+        self.result.request_id = "request"
+        raise OSError("Cannot confirm admission")
+
+    monkeypatch.setattr(PromptExecution, "run", failed)
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["-p", "hello", "--detach"])
+    assert exited.value.code == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "thread_id=thread" in captured.err
+    assert "request_id=request" in captured.err
+    assert "Cannot confirm admission" in captured.err

@@ -37,10 +37,16 @@ def _prompt_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="JSON output; NDJSON when combined with --stream",
     )
-    parser.add_argument(
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument(
         "--stream",
         action="store_true",
         help="observe live events before the final result",
+    )
+    execution.add_argument(
+        "--detach",
+        action="store_true",
+        help="return execution IDs after admission and leave the service run active",
     )
     parser.add_argument(
         "--detach-on-interrupt",
@@ -74,12 +80,43 @@ def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
     elif result.status == "completed":
         sys.stdout.write((result.output or "") + "\n")
     else:
-        identities = " ".join(
-            f"{name}={getattr(result, name)}"
-            for name in ("thread_id", "run_id", "request_id")
-            if getattr(result, name) is not None
-        )
-        sys.stderr.write(f"{result.error or result.status}\n{identities}\n")
+        sys.stderr.write(f"{result.error or result.status}\n")
+
+
+def _write_identities(result) -> None:
+    identities = " ".join(
+        f"{name}={getattr(result, name)}"
+        for name in ("thread_id", "agent_id", "request_id", "run_id")
+        if getattr(result, name) is not None
+    )
+    if identities:
+        sys.stderr.write(identities + "\n")
+        sys.stderr.flush()
+
+
+class _PromptOutput:
+    def __init__(self, options) -> None:
+        self.options = options
+        self.identities_written = False
+
+    def admitted(self, result) -> None:
+        if not self.options.json:
+            _write_identities(result)
+            self.identities_written = True
+
+    def finish(self, result) -> None:
+        if not self.options.json and not self.identities_written:
+            _write_identities(result)
+        if (
+            self.options.detach
+            and not self.options.json
+            and result.status in {"accepted", "running", "completed"}
+        ):
+            sys.stdout.write(f"status={result.status}\n")
+        else:
+            _write_result(
+                result, as_json=self.options.json, streaming=self.options.stream
+            )
 
 
 def _dispatch_administration(args: list[str]) -> bool:
@@ -122,6 +159,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     from msgflux.coding.prompt import PromptExecution  # noqa: PLC0415
 
     execution = PromptExecution()
+    output = _PromptOutput(options)
 
     def observe(kind, record):
         write_observation(kind, record, as_json=options.json)
@@ -137,26 +175,32 @@ def main(argv: Sequence[str] | None = None) -> None:
                 account_name=options.account_name,
                 thread_id=options.thread,
                 observer=observe if options.stream else None,
-                interrupt_on_cancel=not options.detach_on_interrupt,
+                interrupt_on_cancel=not (options.detach_on_interrupt or options.detach),
+                detach=options.detach,
+                on_admitted=output.admitted,
             )
         )
     except KeyboardInterrupt:
         result = execution.result
         if result.error is None and result.status == "failed":
-            result.status = "detached" if options.detach_on_interrupt else "interrupted"
+            detached = options.detach_on_interrupt or options.detach
+            result.status = "detached" if detached else "interrupted"
             result.error = (
                 "Observation interrupted."
-                if options.detach_on_interrupt
+                if detached
                 else "Interrupted before a run was admitted."
             )
-        _write_result(result, as_json=options.json, streaming=options.stream)
+        output.finish(result)
         raise SystemExit(130) from None
     except Exception as error:
         result = execution.result
         result.status = "failed"
         result.error = str(error)
-    _write_result(result, as_json=options.json, streaming=options.stream)
-    if result.status != "completed":
+    output.finish(result)
+    successful = (
+        {"accepted", "running", "completed"} if options.detach else {"completed"}
+    )
+    if result.status not in successful:
         raise SystemExit(1)
 
 

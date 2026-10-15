@@ -21,8 +21,12 @@ Initialization creates `~/.msgflux/config.toml` once and preserves an existing
 file. Choose a model available through your configured credentials. A prompt
 connects to the configured daemon, starting it when absent, and creates a thread
 whose workspace is the current directory. Use `--cwd` to select another project.
-The command prints only the final answer; commentary, reasoning and tools remain
-in the service's observation stream and history.
+The command prints the final answer on stdout. As soon as the service confirms
+admission, plain mode prints `thread_id`, `agent_id`, `request_id`, and `run_id`
+on stderr and flushes them, including when the thread ID was generated. Save
+these IDs to continue or inspect the execution later. Commentary, reasoning and
+tools remain in the service's observation stream and history unless `--stream`
+is selected. JSON modes keep identity data in their stdout records.
 
 ```bash
 msgflux service
@@ -72,6 +76,38 @@ progress messages. Other service threads remain interactive by default. The mode
 is part of the thread binding and survives restart; use a new thread when switching
 between interactive and print modes. Application factories receive this flag on
 ServiceThread and are responsible for honoring it.
+
+## Send Without Waiting
+
+```bash
+msgflux -p "Review the current changes" --detach
+msgflux -p "Review the current changes" --detach --json
+```
+
+`--detach` waits for the service to admit the request, returns its execution IDs
+and current receipt status, and closes the client. The service continues running
+the agent independently. It does not open an event watcher or wait for a final
+answer. No additional login is needed when the selected account is already
+configured.
+
+In text mode the IDs are flushed to stderr and stdout contains `status=accepted`,
+`status=running`, or another receipt status. JSON mode prints one `PromptResult`
+object with the IDs and status; `output` remains null because this command only
+retrieves the admission receipt. Exit code 0 means the request was admitted with
+status `accepted`, `running`, or `completed`. A later model or tool failure can
+still change the recorded outcome. Setup errors and receipts already reporting a
+failed, paused, or interrupted state exit with code 1.
+
+Use `msgflux runs inspect THREAD_ID RUN_ID` to inspect the execution, or
+`msgflux threads interrupt THREAD_ID` to request interruption. A subsequent
+`msgflux -p "Follow up" --thread THREAD_ID` sends a new turn when the current
+execution has settled. The `threads watch THREAD_ID` command observes an existing thread without
+sending a turn.
+
+`--detach` and `--stream` are mutually exclusive. If the HTTP admission response
+is lost, the command looks up the same `request_id`; it never sends the prompt
+again. If admission cannot be confirmed, the error includes the known IDs so
+you can inspect them before deciding what to do next.
 
 ## Select An Account
 
