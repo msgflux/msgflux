@@ -2,7 +2,7 @@
 
 ## [1.0.0rc2] - 2026-10-15
 
-Second release candidate for Coding and AgentService. The TUI remains excluded.
+Second release candidate for Coding and AgentService.
 
 ### Service Operation
 - Added service inspection and stop commands, thread interruption, stop and
@@ -36,7 +36,6 @@ Second release candidate for Coding and AgentService. The TUI remains excluded.
 ## [1.0.0rc1] - 2026-10-14
 
 First release candidate for the 1.0 API, focused on Coding and AgentService.
-The TUI is not included in this release.
 
 ### Coding And AgentService
 - Added `CodingSession`, a coding harness with provider-aware workspace tools,
