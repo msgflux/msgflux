@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from msgflux._cli_output import write_observation
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -69,22 +70,6 @@ def _prompt_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_observation(kind: str, record, *, as_json: bool) -> None:
-    if as_json:
-        line = msgspec_dumps({"type": kind, kind: record, "version": 1})
-    elif kind == "event":
-        content = record.data.get("delta")
-        if not isinstance(content, str):
-            content = msgspec_dumps(record.data)
-        source = "/".join(record.source_path)
-        label = f"{record.type} {source}" if source else record.type
-        line = f"[{label}] {content}"
-    else:
-        line = f"[snapshot] thread_id={record.thread_id}"
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
-
-
 def _write_identities(result) -> None:
     identities = " ".join(
         f"{name}={getattr(result, name)}"
@@ -100,7 +85,7 @@ def _write_result(
     result, *, as_json: bool, streaming: bool = False, detached: bool = False
 ) -> None:
     if as_json and streaming:
-        _write_observation("result", result, as_json=True)
+        write_observation("result", result, as_json=True)
     elif as_json:
         sys.stdout.write(msgspec_dumps(result) + "\n")
     elif detached and result.status in {"accepted", "running", "completed"}:
@@ -175,7 +160,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     output = _PromptOutput(options)
 
     def observe(kind, record):
-        _write_observation(kind, record, as_json=options.json)
+        write_observation(kind, record, as_json=options.json)
 
     try:
         result = asyncio.run(
