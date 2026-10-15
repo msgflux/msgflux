@@ -1,6 +1,7 @@
 """Opt-in live stress of cache eviction with real Codex calls and SQLite tools.
 
 Enable with ``MSGFLUX_LIVE_SERVICE_CACHE_POLICY=1`` and valid Codex CLI auth.
+Set ``MSGFLUX_LIVE_SERVICE_ACCOUNT`` to use a saved msgFlux account instead.
 The artifact contains resource metrics and task/run statuses only; it never
 contains prompts, model responses, tool output, file contents, or credentials.
 """
@@ -686,12 +687,20 @@ async def test_live_codex_cache_eviction_keeps_background_sqlite_and_watchers_sa
     psutil = pytest.importorskip("psutil")
     mf.load_dotenv(os.getenv("MSGFLUX_TEST_DOTENV", ".env"))
 
+    account_name = os.getenv("MSGFLUX_LIVE_SERVICE_ACCOUNT")
+    credentials = {}
+    if account_name:
+        from msgflux.accounts import Accounts
+
+        credentials["credential_resolver"] = Accounts().resolver("openai-codex")
+
     model = mf.Model.chat_completion(
         "openai-codex/gpt-6-luna",
         api_mode="responses",
         reasoning_effort="medium",
         chat_transport=CodexChatTransport(timeout=90, max_retries=0),
         retry=False,
+        **credentials,
     )
     managed_root = tmp_path / "managed-agent"
     service_journal = SQLiteServiceStore(tmp_path / "service.sqlite3")
@@ -803,6 +812,7 @@ async def test_live_codex_cache_eviction_keeps_background_sqlite_and_watchers_sa
                         thread_id,
                         "Launch both I/O children now and return without waiting.",
                         request_id=f"live-{thread_id}",
+                        account_name=account_name,
                     )
                     for thread_id in _THREAD_IDS
                 )
