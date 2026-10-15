@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from msgflux._private.executor import Executor
 from msgflux.exceptions import (
+    AbortRequestedError,
     TaskIdCollisionError,
     TaskInterruptRequestedError,
     TaskLeaseLostError,
@@ -420,7 +421,7 @@ class BackgroundTaskDispatcher:
                     result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
-            except TaskInterruptRequestedError as exc:
+            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
                 task_handle.interrupt(reason=str(exc))
                 self.publish_task_notification(
                     task_id=task_handle.task_id,
@@ -737,7 +738,7 @@ class BackgroundTaskDispatcher:
             future.result()
         except FutureCancelledError:
             return
-        except TaskInterruptRequestedError:
+        except (AbortRequestedError, TaskInterruptRequestedError):
             return
         except TaskPauseRequestedError:
             return

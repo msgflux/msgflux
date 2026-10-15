@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import msgflux as mf
 import pytest
 from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.exceptions import AbortRequestedError
 from msgflux.models.response import ModelStreamResponse
 from msgflux.nn import Agent
 from msgflux.nn.hooks import Hook, OutputContext
@@ -36,7 +37,9 @@ def _tool_result(library, tool_name, call_id, parameters):
     return library([(call_id, tool_name, parameters)]).tool_calls[0].result
 
 
-@pytest.mark.parametrize("failure_stage", [None, "transform", "provider"])
+@pytest.mark.parametrize(
+    "failure_stage", [None, "transform", "provider", "abort", "abort_before_stream"]
+)
 @pytest.mark.asyncio
 async def test_background_agent_stream_task_waits_and_persists_final_output(  # noqa: C901
     background_task_store, failure_stage
@@ -60,6 +63,10 @@ async def test_background_agent_stream_task_waits_and_persists_final_output(  # 
         return replace(context, output=f"normalized:{context.output}")
 
     async def produce_stream(**_kwargs):
+        if failure_stage == "abort_before_stream":
+            stream_ready.set()
+            assert await asyncio.to_thread(release_stream.wait, 5)
+            raise AbortRequestedError("Service run interrupted")
         stream = ModelStreamResponse(mode="sync")
         stream.set_response_type("text_generation")
         produced_streams.append(stream)
@@ -69,11 +76,15 @@ async def test_background_agent_stream_task_waits_and_persists_final_output(  # 
                 producer_errors.append(TimeoutError("stream release timed out"))
                 return
             try:
-                if failure_stage == "provider":
+                if failure_stage in {"provider", "abort"}:
                     stream.add("partial provider output")
                     stream.finish(
-                        status="failed",
-                        error=RuntimeError("provider stream failed"),
+                        status="interrupted" if failure_stage == "abort" else "failed",
+                        error=(
+                            AbortRequestedError("Service run interrupted")
+                            if failure_stage == "abort"
+                            else RuntimeError("provider stream failed")
+                        ),
                     )
                 else:
                     stream.add("sha256=abc")
@@ -154,19 +165,27 @@ async def test_background_agent_stream_task_waits_and_persists_final_output(  # 
         record = task_store.get(task_id)
 
         if failure_stage is not None:
-            expected_error = (
-                "stream output transform failed"
-                if failure_stage == "transform"
-                else "provider stream failed"
-            )
-            assert settled["status"] == "failed"
-            assert output["status"] == "failed"
-            assert expected_error in settled["error"]
-            assert expected_error in output["error"]
-            assert record.status == "failed"
-            assert expected_error in record.error
-            assert "ModelStreamResponse" not in record.error
-            if failure_stage == "provider":
+            interrupted = failure_stage in {"abort", "abort_before_stream"}
+            expected_status = "interrupted" if interrupted else "failed"
+            expected_error = {
+                "abort": "Service run interrupted",
+                "abort_before_stream": "Service run interrupted",
+                "transform": "stream output transform failed",
+                "provider": "provider stream failed",
+            }[failure_stage]
+            assert settled["status"] == expected_status
+            assert output["status"] == expected_status
+            reason_field = "reason" if interrupted else "error"
+            assert expected_error in settled[reason_field]
+            assert expected_error in output[reason_field]
+            assert record.status == expected_status
+            if interrupted:
+                assert record.error is None
+                assert record.metadata["interrupt_reason"] == expected_error
+            else:
+                assert expected_error in record.error
+                assert "ModelStreamResponse" not in record.error
+            if failure_stage == "provider" or interrupted:
                 assert transform_inputs == []
                 metadata = record.metadata
                 checkpoint = checkpoint_store.load_state(
@@ -174,7 +193,7 @@ async def test_background_agent_stream_task_waits_and_persists_final_output(  # 
                     metadata["checkpoint_thread_id"],
                     metadata["checkpoint_run_id"],
                 )
-                assert checkpoint["status"] == "failed"
+                assert checkpoint["status"] == expected_status
             else:
                 assert transform_inputs == [raw_output]
         else:
@@ -184,7 +203,9 @@ async def test_background_agent_stream_task_waits_and_persists_final_output(  # 
             assert record.result == expected_output
             assert transform_inputs == [raw_output]
 
-        assert len(produced_streams) == 1
+        assert len(produced_streams) == (
+            0 if failure_stage == "abort_before_stream" else 1
+        )
         assert not producer_errors
         if store_kind == "sqlite":
             reopened = SQLiteTaskStore(str(database_path))
@@ -193,6 +214,9 @@ async def test_background_agent_stream_task_waits_and_persists_final_output(  # 
                 assert persisted.status == record.status
                 assert persisted.result == record.result
                 assert persisted.error == record.error
+                assert persisted.metadata.get(
+                    "interrupt_reason"
+                ) == record.metadata.get("interrupt_reason")
             finally:
                 reopened.close()
     finally:
