@@ -1,9 +1,41 @@
 # Changelog
 
+## [1.0.0rc2] - 2026-10-15
+
+Second release candidate for Coding and AgentService.
+
+### Service Operation
+- Added service inspection and stop commands, thread interruption, stop and
+  resume commands, and run inspection (#242).
+- Added agent activity listing, effective agent configuration inspection, and
+  service configuration validation (#243, #244).
+
+### Durability And Diagnostics
+- Preserve non-authentication Codex HTTP errors and their diagnostics (#245).
+- Preserve interrupted status and cancellation reasons for aborted background
+  tasks instead of reporting them as failed (#247).
+- Preserve structured task results, including workspace execution results,
+  when persisting and reopening SQLite task stores (#248).
+- Preserve partial assistant text and commentary when provider streams fail,
+  including failed-run history, without executing incomplete tool calls (#249).
+- Added controlled integration coverage for interrupted provider streams,
+  checkpoint write failures, receipt write failures, thread isolation, and
+  duplicate-request safety (#249).
+- Extended live service stress tests to use saved accounts (#246).
+
+### Installation
+- Renamed the workspace tool extra to `coding` and validated installed-package
+  Coding and AgentService workflows (#245).
+- Install with `pip install "msgflux[coding,service]==1.0.0rc2"` or
+  `uv tool install "msgflux[coding,service]==1.0.0rc2"`.
+- Requires Python 3.11 or newer; CI covers Python 3.11 through 3.14.
+- Recovery of uncertain external effects still requires an explicit trusted-host
+  decision. This release does not introduce automatic replay or exactly-once
+  guarantees for external operations.
+
 ## [1.0.0rc1] - 2026-10-14
 
 First release candidate for the 1.0 API, focused on Coding and AgentService.
-The TUI is not included in this release.
 
 ### Coding And AgentService
 - Added `CodingSession`, a coding harness with provider-aware workspace tools,
