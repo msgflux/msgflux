@@ -166,7 +166,7 @@ already approved proposal.
 
 Changing a managed service thread from `on-request` to `never` may resume a
 pending approval batch only when the current service instance owns the paused
-run and validates the complete batch against current tool code, invocation,
+run (or the local daemon safely adopts its unexecuted approval batch) and validates the complete batch against current tool code, invocation,
 workspace identity, and permissions. Expired, claimed, uncertain, changed, or
 otherwise unverifiable approvals remain paused. The
 `workspace.policy_updated` event reports a resumed run ID or a `resume_error`
@@ -477,8 +477,10 @@ request raised by a run remains a normal paused run: review and record a decisio
 then resume it explicitly.
 
 HTTP clients cannot assert `worker_stopped` or import uncertain executions after
-a process restart. A trusted host must establish old-worker quiescence and use
-the Python recovery API first. Persistent reconnection requires a file-backed
+a process restart. The local daemon can establish quiescence for
+[paused, unexecuted approval batches](service-local.md#recover-approvals-after-a-crash)
+using registered owner locks. Other recovery requires the trusted host to
+establish old-worker quiescence and use the Python recovery API first. Persistent reconnection requires a file-backed
 admission journal and checkpoint stores, plus persistent inbox/task stores when
 those features must survive restart. The HTTP adapter reuses these stores and
 creates no second conversation history.

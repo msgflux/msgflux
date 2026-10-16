@@ -98,9 +98,7 @@ def _approval_candidate(service, session, thread_id):
     if record is None or record.receipt.status != "paused":
         raise ServiceRecoveryRequiredError("Pending approvals have no paused admission")
     if record.owner_id != service._owner_id:
-        raise ServiceRecoveryRequiredError(
-            "Establish old-worker quiescence before resuming"
-        )
+        record = service._recover_approval_owner(session, record)
     if (thread_id, record.receipt.request_id) in service._workers:
         raise ServiceRecoveryRequiredError("The pending run still has a local worker")
     service._recovery_checkpoint(session, record.receipt)

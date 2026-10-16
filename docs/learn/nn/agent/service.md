@@ -369,6 +369,12 @@ resend the original prompt. A paused or failed run resumes under its existing
 run ID and Agent's workspace, approvals and command-receipt validation. Only the
 latest unfinished checkpoint can resume.
 
+The [local daemon](service-local.md#recover-approvals-after-a-crash) can establish
+old-owner quiescence for paused, unexecuted approval batches through registered
+lifetime locks. This is a host capability; embedded services and HTTP clients
+cannot infer it from elapsed time or a disconnected socket. Restart alone never
+resumes an approval batch.
+
 If command-receipt validation finds an uncertain command, recovery raises
 `ServiceRecoveryRequiredError` with the concrete reason and schedules no worker.
 The host must reconcile that command before retrying recovery; elapsed time alone

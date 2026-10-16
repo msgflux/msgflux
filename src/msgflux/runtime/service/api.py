@@ -224,6 +224,7 @@ class AgentService:
         self.store = store
         self.default_agent = default_agent
         self._owner_id = uuid4().hex
+        self._owner_lease = None
         self._factories: dict[str, Callable] = {}
         self._configurations: dict[str, AgentConfiguration] = {}
         self._cache = _SessionCache(
@@ -1052,6 +1053,18 @@ class AgentService:
                 run_id=run_id,
             ).user_message(content)
 
+    def _recover_approval_owner(self, session, record):
+        """Use local host evidence to adopt only an unexecuted approval batch."""
+        from msgflux.runtime.service.recovery import (  # noqa: PLC0415
+            validate_approval_recovery,
+        )
+
+        if self._owner_lease is None:
+            raise ServiceRecoveryRequiredError("Establish old-worker quiescence first")
+        with self._owner_lease.reclaim(record.owner_id):
+            validate_approval_recovery(self, session, record)
+            return self.store.adopt_paused(record, self._owner_id)
+
     async def resume(
         self,
         thread_id: str,
@@ -1061,8 +1074,10 @@ class AgentService:
     ) -> AdmissionReceipt:
         """Trusted-host recovery, never an implicit retry of a started input.
 
-        ``worker_stopped`` is a host assertion of quiescence, not evidence derived
-        from elapsed time. A started run without a checkpoint stays uncertain.
+        The local daemon may verify its old owner's lifetime lock for a paused,
+        unexecuted approval batch. Otherwise ``worker_stopped`` is an explicit
+        host assertion of quiescence, never inferred from elapsed time.
+        A started run without a checkpoint stays uncertain.
         Workspace and approvals remain subject to Agent's recovery validation.
         """
         if not isinstance(worker_stopped, bool):
@@ -1084,9 +1099,7 @@ class AgentService:
                 if record.receipt.status in {"completed", "interrupted"}:
                     return record.receipt
                 if record.owner_id != self._owner_id and not worker_stopped:
-                    raise ServiceRecoveryRequiredError(
-                        "Establish old-worker quiescence first"
-                    )
+                    record = self._recover_approval_owner(session, record)
                 state = self._recovery_checkpoint(session, record.receipt)
                 record = self.store.prepare_resume(record)
                 if state.get("status") in {"completed", "interrupted"}:
