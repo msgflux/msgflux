@@ -58,6 +58,7 @@ class SQLiteServiceStore:
 
     def __init__(self, path: str | Path = ":memory:") -> None:
         self._lock = RLock()
+        self._path = None if str(path) == ":memory:" else Path(path).resolve()
         self._connection = sqlite3.connect(str(path), check_same_thread=False)
         try:
             self._connection.execute("PRAGMA busy_timeout=30000")
@@ -68,6 +69,12 @@ class SQLiteServiceStore:
             # schema or the fully migrated one.
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS service_owner_leases (
+                    owner_id TEXT PRIMARY KEY, path TEXT NOT NULL,
+                    device INTEGER NOT NULL, inode INTEGER NOT NULL
+                    )"""
+                )
                 self._connection.execute(
                     """CREATE TABLE IF NOT EXISTS service_threads (
                     thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, cwd TEXT
@@ -624,4 +631,48 @@ class SQLiteServiceStore:
             )
             if changed.rowcount != 1:
                 raise ServiceConflictError("Admission changed while preparing recovery")
+            return self.get(record.receipt.thread_id, record.receipt.request_id)
+
+    def register_owner_lease(
+        self, owner_id: str, *, path: str, device: int, inode: int
+    ) -> None:
+        """Register immutable evidence after the host acquires its lifetime lock."""
+        validate_identifier(owner_id, "owner_id")
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO service_owner_leases VALUES (?, ?, ?, ?)",
+                (owner_id, str(path), device, inode),
+            )
+
+    def owner_lease(self, owner_id: str) -> tuple[str, int, int] | None:
+        """Return registered lock identity, never inferred from an admission."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT path, device, inode FROM service_owner_leases WHERE owner_id=?",
+                (owner_id,),
+            ).fetchone()
+            return (row["path"], row["device"], row["inode"]) if row else None
+
+    def adopt_paused(self, record: AdmissionRecord, owner_id: str) -> AdmissionRecord:
+        """Transfer a validated paused run while its old owner lock is held."""
+        if record.receipt.status != "paused" or not record.owner_id:
+            raise ServiceConflictError("Only an owned paused admission can be adopted")
+        validate_identifier(owner_id, "owner_id")
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            changed = self._connection.execute(
+                """UPDATE service_admissions SET owner_id=?, revision=revision+1
+                WHERE thread_id=? AND request_id=? AND run_id=? AND status='paused'
+                AND owner_id=? AND revision=?""",
+                (
+                    owner_id,
+                    record.receipt.thread_id,
+                    record.receipt.request_id,
+                    record.receipt.run_id,
+                    record.owner_id,
+                    record.receipt.revision,
+                ),
+            )
+            if changed.rowcount != 1:
+                raise ServiceConflictError("Admission changed while adopting recovery")
             return self.get(record.receipt.thread_id, record.receipt.request_id)

@@ -140,6 +140,16 @@ async def _stop_server(server, server_task: asyncio.Task | None) -> None:
         await asyncio.gather(server_task, return_exceptions=True)
 
 
+async def _finish_cleanup(task: asyncio.Task) -> None:
+    """Join cleanup despite repeated cancellation before releasing host locks."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    await task
+
+
 async def serve_local_service(  # noqa: C901
     factory: str | None = None,
     *,
@@ -187,6 +197,13 @@ async def serve_local_service(  # noqa: C901
                 service, config_path, config_digest = _make_manifest_service(
                     config, directory, working_directory
                 )
+
+            if service.store._path is not None:
+                from msgflux.runtime.service.local.leases import (  # noqa: PLC0415
+                    LocalOwnerLease,
+                )
+
+                service._owner_lease = LocalOwnerLease(service)
 
             import uvicorn  # noqa: PLC0415
 
@@ -272,13 +289,7 @@ async def serve_local_service(  # noqa: C901
         finally:
             try:
                 stop_task = asyncio.create_task(_stop_server(server, server_task))
-                while not stop_task.done():
-                    try:
-                        await asyncio.shield(stop_task)
-                    except asyncio.CancelledError:
-                        # Finish cleanup even under repeated cancellation.
-                        continue
-                await stop_task
+                await _finish_cleanup(stop_task)
             finally:
                 if listening_socket is not None:
                     listening_socket.close()
@@ -287,6 +298,10 @@ async def serve_local_service(  # noqa: C901
                 finally:
                     if service is not None:
                         try:
-                            await service.aclose()
+                            await _finish_cleanup(asyncio.create_task(service.aclose()))
                         finally:
-                            service.store.close()
+                            try:
+                                if service._owner_lease is not None:
+                                    service._owner_lease.close()
+                            finally:
+                                service.store.close()

@@ -372,8 +372,9 @@ raises `WorkspaceIdentityError` (also a `PermissionError`); the service factory
 reports this as `ServiceRecoveryRequiredError` with the thread context and the
 identity error as its cause. The service does not adopt the new directory or
 retry with broader permissions. Keep this registry with the other durable
-service files. Executions owned by a previous process still require trusted
-host confirmation of quiescence before resuming.
+service files. The local daemon can establish old-owner quiescence for an
+unexecuted approval batch using its registered lifetime lock. Other executions
+still require trusted host reconciliation before resuming.
 
 For an embedded service, inspect the typed cause when an operation loads the
 coding session. This assumes `service` and `thread_id` refer to an initialized
@@ -923,6 +924,44 @@ contract: the command returns their existing receipts without restarting them.
 An accepted receipt confirms admission, not successful completion. Recovery that
 requires old-worker quiescence must be handled by the trusted host; this command
 cannot assert quiescence or bypass recovery checks.
+
+### Recover Approvals After A Crash
+
+The local daemon retains pending requests and recorded decisions when its
+admission, checkpoint and approval stores are persistent. Reconnect to the same
+runtime. Start the configured daemon in one terminal without submitting a prompt:
+
+```bash
+msgflux service serve
+```
+
+In another terminal, inspect and resume the saved run:
+
+```bash
+msgflux runs inspect THREAD_ID RUN_ID
+msgflux runs resume THREAD_ID RUN_ID
+```
+
+These commands reconnect to the saved run. A pending decision remains pending:
+use the SDK approval review and decision operations before another resume.
+An approval recorded before the crash remains approved if its binding is valid.
+Starting the replacement daemon never dispatches the paused tools by itself.
+
+Recovery requires both the admission and checkpoint to be paused, a supported
+approval batch that has not entered execution, unchanged tool/permission/preview
+bindings, and no unfinished background work or uncertain command receipts.
+The daemon verifies and locks the old owner's registered lease file before
+conditionally adopting the paused admission. The lock files beside the service
+journal are retained as recovery evidence; keep them with the journal.
+
+A live owner, missing or replaced lease file, expired/consumed decision, changed
+workspace, or batch already marked `executing` blocks recovery with a concrete
+reason. A `running` admission after a crash remains uncertain even if an approval
+was previously granted. Embedded services without registered local owner leases
+continue to require explicit trusted-host recovery. The same applies to runs
+owned by older daemon versions that did not register a lease: upgrading cannot
+create evidence about a previous worker retroactively. Neither HTTP nor CLI
+callers can supply an old-worker quiescence override.
 
 ## Gracefully Stop The Daemon
 

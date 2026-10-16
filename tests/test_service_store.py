@@ -361,3 +361,27 @@ def test_concurrent_checkpoint_adoption_returns_one_journal_identity(
                 worker.terminate()
                 worker.join(timeout=2)
         result_queue.close()
+
+
+def test_paused_owner_transfer_fences_competing_recovery(tmp_path: Path) -> None:
+    path = tmp_path / "service.sqlite3"
+    store = _store(path)
+    competitor = SQLiteServiceStore(path)
+    try:
+        admitted = store.admit("thread-1", "request-1", "hello", "default")
+        assert store.claim(admitted, "old-owner")
+        claimed = store.get("thread-1", "request-1")
+        store.finish(claimed.receipt, "old-owner", "paused")
+        paused = store.get("thread-1", "request-1")
+        stale = competitor.get("thread-1", "request-1")
+        adopted = store.adopt_paused(paused, "new-owner")
+        assert adopted.owner_id == "new-owner"
+        assert adopted.receipt.status == "paused"
+        assert adopted.receipt.run_id == paused.receipt.run_id
+        assert adopted.receipt.revision == paused.receipt.revision + 1
+        with pytest.raises(ServiceConflictError, match="changed"):
+            competitor.adopt_paused(stale, "competing-owner")
+        assert competitor.get("thread-1", "request-1") == adopted
+    finally:
+        competitor.close()
+        store.close()
