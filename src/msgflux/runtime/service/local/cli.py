@@ -22,14 +22,14 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         description={
             "service": "Run, inspect, or restart a local authenticated AgentService.",
             "agents": "List agents or inspect their loaded registration defaults.",
-            "threads": "List, watch, steer, or interrupt service threads.",
-            "runs": "List active runs, inspect recovery, or resume a paused run.",
+            "threads": "List, watch, steer, interrupt, or read thread results.",
+            "runs": "List runs, inspect recovery, resume, or read final results.",
         }[resource],
     )
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
-        "runs": ("inspect", "resume", "ls"),
-        "threads": ("ls", "watch", "steer", "interrupt", "stop"),
+        "runs": ("inspect", "resume", "ls", "result"),
+        "threads": ("ls", "watch", "steer", "interrupt", "stop", "result"),
         "agents": ("ls", "inspect"),
     }
     parser.add_argument(
@@ -53,6 +53,16 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         "--stop-timeout",
         type=float,
         help=_help_for(resource, "graceful shutdown deadline in seconds", "service"),
+    )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help=_help_for(
+            resource,
+            "wait for the selected run to leave accepted/running state (result only)",
+            "runs",
+            "threads",
+        ),
     )
     parser.add_argument(
         "--active",
@@ -165,6 +175,7 @@ def _validate_options(args: argparse.Namespace) -> None:
         "interrupt",
         "watch",
         "steer",
+        "result",
         "ls",
     }:
         raise SystemExit(
@@ -172,6 +183,11 @@ def _validate_options(args: argparse.Namespace) -> None:
         )
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
+
+    if args.wait and not (
+        args.resource in {"runs", "threads"} and args.action == "result"
+    ):
+        raise SystemExit("--wait is only accepted with threads result or runs result")
 
     _validate_target(args)
     _validate_message(args)
@@ -312,17 +328,15 @@ async def _run_operation(args) -> None:
 
             await inspect_registered_agent(client, args)
             return
-        if args.resource == "threads":
-            if args.action == "watch":
-                from msgflux.runtime.service.local.watch import (  # noqa: PLC0415
-                    watch_thread,
-                )
+        if args.action == "result":
+            from msgflux.runtime.service.local.results import (  # noqa: PLC0415
+                show_result,
+            )
 
-                await watch_thread(client, args.thread_id, as_json=args.json)
-            elif args.action == "steer":
-                await _steer_thread(client, args)
-            else:
-                await _interrupt_thread(client, args)
+            await show_result(client, args)
+            return
+        if args.resource == "threads":
+            await _thread_operation(client, args)
             return
         if args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
@@ -331,6 +345,19 @@ async def _run_operation(args) -> None:
     finally:
         await client.aclose()
     _show_run_result(args, result)
+
+
+async def _thread_operation(client, args) -> None:
+    if args.action == "watch":
+        from msgflux.runtime.service.local.watch import (  # noqa: PLC0415
+            watch_thread,
+        )
+
+        await watch_thread(client, args.thread_id, as_json=args.json)
+    elif args.action == "steer":
+        await _steer_thread(client, args)
+    else:
+        await _interrupt_thread(client, args)
 
 
 def _show_run_result(args, result) -> None:
@@ -428,6 +455,7 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         "interrupt": _run_operation,
         "watch": _run_operation,
         "steer": _run_operation,
+        "result": _run_operation,
         "ls": _run_operation,
     }
     if args.action in actions:

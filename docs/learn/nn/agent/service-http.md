@@ -404,6 +404,35 @@ observer, and leaves the Agent running. The client raises `AgentServiceHTTPError
 open another watcher to obtain a fresh snapshot. There are no heartbeat frames or
 automatic reconnect loops in this increment.
 
+## Retrieve A Recorded Answer
+
+```python
+latest = await client.thread_result(thread_id)
+print(latest.run_id, latest.status)
+
+recorded = await client.run_result(thread_id, latest.run_id)
+if recorded.status == "completed":
+    print(recorded.output)
+```
+
+`thread_result()` selects the most recently admitted execution in that thread,
+using the service admission journal. It does not use checkpoint update order,
+and never substitutes an older completed answer when the selected run is still
+processing. `run_result()` selects an explicit run. The embedded `AgentService`
+provides the same methods.
+
+Both queries return immediately with a `RunResult`: `thread_id`, `run_id`,
+`status`, `output`, and `error`. Only completed runs expose final assistant text;
+other statuses have `output=None`. Events and conversation history are excluded.
+An unknown thread or run, or a thread with no admitted execution, returns HTTP
+404. Reading a result never admits, resumes or interrupts work.
+
+The CLI exposes these queries as `threads result THREAD_ID` and
+`runs result THREAD_ID RUN_ID`. Its optional `--wait` fixes the selected run and
+waits on the client side; the HTTP result endpoints themselves do not wait.
+See [Retrieve A Thread Or Run Result](service-local.md#retrieve-a-thread-or-run-result)
+for output and recovery behavior.
+
 ## Run Controls And Recovery
 
 An upstream stream failure records a failed run and preserves received partial
@@ -466,6 +495,8 @@ All routes require `Authorization: Bearer <token>`.
 | GET / POST | `/v1/threads` | List bindings / open a thread |
 | GET | `/v1/threads/{thread_id}/snapshot` | Portable thread snapshot |
 | GET | `/v1/threads/{thread_id}/runs` | Saved run metadata summaries |
+| GET | `/v1/threads/{thread_id}/result` | Status and final answer of the most recently admitted run |
+| GET | `/v1/threads/{thread_id}/runs/{run_id}/result` | Status and final answer of a specified run |
 | GET | `/v1/threads/{thread_id}/runs/{run_id}/inspection` | Recorded run state and recovery reasons |
 | POST | `/v1/threads/{thread_id}/prompt` | Admission receipt |
 | GET | `/v1/threads/{thread_id}/requests/{request_id}` | Current receipt |
@@ -629,6 +660,8 @@ async def main():
                         break
         settled = await session.wait(receipt.request_id)
         print("Status:", settled.status)
+        answer = await session.result(receipt.run_id)
+        print("Final answer:", answer.output)
         print("Saved run summaries:", await session.runs())
     finally:
         await client.aclose()
@@ -650,8 +683,11 @@ view with its new `observer.snapshot`; missed event deltas are not replayed.
 `wait()` polls the receipt and does not observe events or cancel execution if
 its caller is cancelled. Use `cancel(run_id)` for an explicit interruption.
 `runs()` and `latest_run()` expose only service-provided run summaries, not
-checkpoint contents or configuration. The remote facade has no automatic
-reconnect loop. `await session.inspect_run(run_id)` returns the same inspection
+checkpoint contents or configuration. `await session.result()` selects the most
+recently admitted execution; `await session.result(run_id)` selects that run.
+Both return `RunResult` immediately, with no implicit wait. The embedded
+`CodingSession` exposes the same `result()` contract. The remote facade has no
+automatic reconnect loop. `await session.inspect_run(run_id)` returns the same inspection
 record as the embedded CodingSession. `session.aclose()` is an optional no-op because the facade
 borrows its client and owns no background tasks; a UI can close its active watch
 context on shutdown, while the host closes the shared HTTP client.

@@ -27,6 +27,7 @@ from msgflux.runtime.service import (
     AgentService,
     AgentSession,
     RunInspection,
+    RunResult,
     ServiceRecoveryRequiredError,
     SQLiteServiceStore,
 )
@@ -165,7 +166,27 @@ async def test_empty_history_is_typed_and_does_not_create_managed_thread_dirs(
     async with _session(kind, agent, "lazy-thread") as session:
         assert await session.runs() == ()
         assert await session.latest_run() is None
+        with pytest.raises((KeyError, AgentServiceHTTPError)):
+            await session.result()
         assert not (agent_dir / "threads").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["local", "http"])
+async def test_result_facades_select_latest_or_explicit_historical_run(kind):
+    answers = iter(("first answer", "second answer"))
+    agent = _agent(answer=lambda **_kwargs: _text(next(answers)))
+    async with _session(kind, agent, "result-thread") as session:
+        first = await session.prompt("first", request_id="first")
+        assert (await session.wait("first")).status == "completed"
+        second = await session.prompt("second", request_id="second")
+        assert (await session.wait("second")).status == "completed"
+        assert await session.result() == RunResult(
+            session.thread_id, second.run_id, "completed", "second answer"
+        )
+        assert await session.result(first.run_id) == RunResult(
+            session.thread_id, first.run_id, "completed", "first answer"
+        )
 
 
 @pytest.mark.asyncio

@@ -249,6 +249,12 @@ class AgentServiceClient:
         )
         return result.runs
 
+    async def thread_result(self, thread_id: str) -> RunResult:
+        """Fetch the latest admitted run's status and final answer without waiting."""
+        return await self._json(
+            "GET", self._thread_path(thread_id) + "/result", RunResult
+        )
+
     async def run_result(self, thread_id: str, run_id: str) -> RunResult:
         """Fetch only the status and final answer for a recorded run."""
         path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/result"
