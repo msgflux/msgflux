@@ -28,6 +28,11 @@ from msgflux.runtime.approvals.agent import (
     AgentApprovals,
     ApprovalReconciliationRequiredError,
 )
+from msgflux.runtime.compaction import (
+    CompactionBusyError,
+    CompactionRecoveryRequiredError,
+    CompactionResult,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -133,6 +138,9 @@ from msgflux.runtime.workspace.receipts import CommandReceipt
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 __all__ = [
+    "CompactionResult",
+    "CompactionBusyError",
+    "CompactionRecoveryRequiredError",
     "AgentService",
     "AgentSession",
     "AdmissionReceipt",

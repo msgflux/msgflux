@@ -13,12 +13,25 @@ from msgflux.nn.extensions.compaction import CONTEXT_COMPACTION_CAPABILITY
 from msgflux.nn.hooks.events import BeforeCompaction
 from msgflux.nn.modules.agent.context import _require_lifecycle_payload
 from msgflux.runtime.abort import await_with_abort
+from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope
 from msgflux.runtime.events import EventType, emit_event
 
 
 class AgentCompactionMixin:
     """Coordinate Model-owned compaction with Agent policy and durability."""
+
+    def compact(self, *, scope: ExecutionScope) -> CompactionResult:
+        """Compact the latest paused/failed checkpoint selected by an explicit scope."""
+        from msgflux.nn.modules.agent.manual_compaction import compact  # noqa: PLC0415
+
+        return compact(self, scope)
+
+    async def acompact(self, *, scope: ExecutionScope) -> CompactionResult:
+        """Asynchronously compact a saved run without resuming it."""
+        from msgflux.nn.modules.agent.manual_compaction import acompact  # noqa: PLC0415
+
+        return await acompact(self, scope)
 
     def _maybe_compact_model_context(
         self,
