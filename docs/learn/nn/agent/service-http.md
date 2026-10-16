@@ -530,6 +530,67 @@ does not bypass the approval decision or execute the pending tool. See
 [manual compaction](compaction.md#compact-a-saved-execution-manually) for checkpoint,
 cancellation and skipped-result semantics.
 
+## Browser Clients And CORS
+
+CORS is disabled by default. An embedded host can allow explicit frontend origins:
+
+```python
+from msgflux.runtime.service.http import ServiceHTTPConfig, create_service_app
+
+app = create_service_app(
+    service,
+    token="your-private-service-token",
+    http_config=ServiceHTTPConfig(
+        cors_allow_origins=("http://localhost:3000", "https://app.example.com"),
+    ),
+)
+```
+
+Use exact HTTP(S) origins with no trailing slash or path. Wildcard domains such
+as `https://*.example.com` and explicit `null` entries are not supported. A local
+daemon reads the same policy from `[http]` in its service TOML:
+
+```toml
+[http]
+cors_allow_origins = ["http://localhost:3000", "https://app.example.com"]
+```
+
+To allow every browser origin, use `*` as the only entry:
+
+```toml
+[http]
+cors_allow_origins = ["*"]
+```
+
+The SDK equivalent is `ServiceHTTPConfig(cors_allow_origins=("*",))`.
+This includes opaque browser origins such as `null`. The wildcard cannot be mixed
+with other entries. Actual API requests still require the bearer token, and
+cookie credentials remain disabled.
+
+Restart the daemon after editing its policy. `msgflux config validate` validates
+origins offline, without importing agent factories or constructing models.
+
+Preflight `OPTIONS` requests are handled before bearer authentication. Actual
+API calls, including SSE, still require `Authorization: Bearer <token>`:
+
+```javascript
+const response = await fetch(`${endpoint}/v1/health`, {
+  headers: { Authorization: `Bearer ${token}` },
+});
+const health = await response.json();
+```
+
+The allowed methods are GET, POST, PUT and OPTIONS. Browser requests may send
+Authorization, Content-Type, Last-Event-ID and W3C tracing headers. Allowed-origin
+responses include CORS headers for API errors as well as successes, so a frontend
+can read a 401 or 422 instead of receiving an opaque browser error. Disallowed
+origins receive no access grant; CORS is browser policy, not server authentication.
+
+For watch streams, use a streaming `fetch()` client that supplies the bearer
+header. Native browser `EventSource` cannot set that header; tokens are not
+accepted in query parameters. The CORS middleware sends the SSE response headers
+immediately and does not buffer the event stream.
+
 ## Endpoints And Errors
 
 All routes require `Authorization: Bearer <token>`.

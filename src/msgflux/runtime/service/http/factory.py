@@ -3,12 +3,14 @@
 from collections.abc import Callable
 
 from msgflux.runtime.service import AgentService
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
 
 
 def create_service_app(
     service: AgentService,
     *,
     token: str,
+    http_config: ServiceHTTPConfig | None = None,
     close_service: bool = False,
     event_buffer_limit: int | None = 1024,
     instance_id: str | None = None,
@@ -28,6 +30,7 @@ def create_service_app(
     return create_app(
         service,
         token=token,
+        http_config=http_config,
         close_service=close_service,
         event_buffer_limit=event_buffer_limit,
         instance_id=instance_id,

@@ -6,6 +6,7 @@ from msgflux.runtime.service.http.client import (
     AgentServiceProtocolError,
     RemoteThreadWatcher,
 )
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.http.factory import create_service_app
 from msgflux.runtime.service.http.records import (
     EventRecord,
@@ -23,6 +24,7 @@ __all__ = [
     "AgentServiceProtocolError",
     "RemoteThreadWatcher",
     "create_service_app",
+    "ServiceHTTPConfig",
     "EventRecord",
     "SnapshotRecord",
     "HealthRecord",

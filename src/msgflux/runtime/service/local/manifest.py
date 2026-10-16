@@ -19,6 +19,7 @@ from msgflux.coding.config import (
     validate_model_path,
 )
 from msgflux.nn.extensions.discovery import AgentExtensionCatalog, ExtensionConfig
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.store import validate_identifier
 from msgflux.utils.imports import load_factory, validate_factory_path
 
@@ -84,6 +85,7 @@ class _ServiceConfig(msgspec.Struct, forbid_unknown_fields=True):
     defaults: _DefaultsConfig
     agents: dict[str, _AgentConfig]
     extensions: dict[str, ExtensionConfig] = msgspec.field(default_factory=dict)
+    http: ServiceHTTPConfig = msgspec.field(default_factory=ServiceHTTPConfig)
 
 
 class ServiceManifest(msgspec.Struct, frozen=True):
@@ -93,6 +95,7 @@ class ServiceManifest(msgspec.Struct, frozen=True):
     agents: dict[str, _AgentConfig]
     coding_catalog: CodingAgentCatalog
     extension_catalog: AgentExtensionCatalog
+    http: ServiceHTTPConfig = msgspec.field(default_factory=ServiceHTTPConfig)
 
 
 def default_service_config_path() -> Path:
@@ -236,6 +239,7 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
         agents=config.agents,
         coding_catalog=coding_catalog,
         extension_catalog=extension_catalog,
+        http=config.http,
     )
 
 
