@@ -118,6 +118,76 @@ does not hot-reload a live Agent.
 
 ## Activate And Configure
 
+### Edit Configuration From The CLI
+
+With the package installed, activate an extension for an existing agent:
+
+```bash
+msgflux extensions add request_counter --agent coding
+msgflux extensions add prompt_suffix --agent coding \
+  --as coding_prompt \
+  --option 'text=Keep answers concise and report verification.'
+msgflux extensions remove prompt_suffix --agent coding
+```
+
+These commands edit the existing `~/.msgflux/config.toml`. Use `--config PATH`
+for another file and install `msgflux[service]` for configuration editing. They
+do not download packages, create a missing config, start a daemon, or restart a
+running service. Comments and formatting in the TOML file are preserved.
+
+`--agent` is required. The first command adds `request_counter` to that agent's
+selection without storing constructor defaults. The second creates the
+`coding_prompt` alias with an explicit resolved factory, copies any configured
+options from `prompt_suffix`, applies the supplied override, and selects the
+alias for `coding`. It does not change other agents selecting `prompt_suffix`.
+An alias is an additional registration: adding it does not replace an existing
+`prompt_suffix` selection. The third command removes that original selection,
+if present, so only the alias runs on this agent. Keep both selections only when
+you intend both extension instances to run.
+
+Repeat `--option KEY=VALUE` to override several constructor keyword arguments.
+Only the supplied overrides are changed; omitted options retain their configured
+values or factory defaults. Keys are flat keyword names, not dotted paths, and
+duplicate keys in one command are rejected.
+
+Values use TOML syntax for booleans, numbers, arrays, inline tables, and quoted
+strings. An unquoted text value is accepted as a string. Shell quoting protects
+spaces but does not itself add TOML quotes: `--option 'text=123'` sets an integer,
+whereas `--option 'text="123"'` sets the string `"123"`. Each option must be
+accepted by the selected factory's signature.
+
+Options under `extensions.<name>` are shared by every agent selecting that
+name. An add command that would change options used by another agent is refused;
+use `--as` to create a separate alias instead. An existing alias cannot be
+redirected to a different factory by an add command.
+
+Inspect available constructor options before configuring them:
+
+```bash
+msgflux extensions inspect prompt_suffix --options
+msgflux extensions inspect prompt_suffix --options --json
+```
+
+`--options` imports only the selected factory and inspects its signature; it does
+not call the constructor. Plain `inspect` remains metadata-only. Missing required
+arguments or arguments that do not fit the signature prevent an add command
+from writing anything. Constructor-specific value checks still happen when the
+service builds the Agent. A rejected edit leaves the original file unchanged.
+
+Remove an extension from one agent without deleting its reusable configuration:
+
+```bash
+msgflux extensions remove coding_prompt --agent coding
+```
+
+Add and remove are idempotent. Removing a selection preserves the global factory
+and options, and does not alter other agents or subagents. Each command returns
+the configuration path, agent and extension identities, whether the file changed,
+and `restart_required`. Add `--json` for a structured receipt. A successful edit
+does not change a running daemon: restart it explicitly when ready.
+
+### Edit TOML Directly
+
 Add the selected names to an agent in `config.toml`:
 
 ```toml
@@ -168,12 +238,21 @@ catalog = AgentExtensionCatalog({
 for info in catalog.list():
     print(info.name, info.factory)
 
+for option in catalog.options("prompt_suffix"):
+    print(option.name, option.required, option.default_available, option.default)
+
 extension = catalog.create("prompt_suffix")
 agent = Agent(name="assistant", model=model, extensions=[extension])
 ```
 
-`list()` reads metadata without importing plugins; `create()` imports and calls
-the selected factory. Creating another Agent requires another `create()` call,
+`list()` reads metadata without importing plugins. `options()` imports the
+selected factory and returns `ExtensionOption` records without calling its
+constructor. Records describe annotations, required arguments, defaults, and
+variadic keyword support. A complex default that cannot be represented safely
+has `has_default=True` and `default_available=False`; its value is not exposed.
+
+`create()` imports and calls the selected factory. Creating another Agent
+requires another `create()` call,
 not reusing an extension already registered on the first Agent. An explicit
 `ExtensionConfig(factory="module:attribute", options={...})` overrides entry
 points just as the TOML configuration does.
@@ -219,7 +298,9 @@ msgflux config validate --config ./config.toml
 ```
 
 The discovery commands read installed distribution metadata and configuration.
-They do not start a service, import extension modules, or construct extensions.
+Plain `ls` and `inspect` do not start a service, import extension modules, or
+construct extensions. Adding `--options` to `inspect` imports the selected
+factory for signature inspection without constructing it.
 With no `--config`, they include the default `~/.msgflux/config.toml` when it
 exists. Use `--json` on either discovery command for structured output.
 

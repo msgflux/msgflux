@@ -95,6 +95,7 @@ coding = [
 ]
 service = [
     "litestar>=2.24,<3",
+    "tomlkit>=0.15.2",
     "uvicorn>=0.35,<1",
 ]
 

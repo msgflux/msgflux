@@ -313,6 +313,31 @@ msgflux extensions ls
 msgflux extensions inspect prompt_suffix --config ./config.toml --json
 ```
 
+To edit the existing configuration from the CLI:
+
+```bash
+msgflux extensions add request_counter --agent coding
+msgflux extensions add prompt_suffix --agent coding --as coding_prompt \
+  --option 'text=Keep answers concise and report verification.'
+msgflux extensions remove prompt_suffix --agent coding
+msgflux extensions inspect coding_prompt --options --json
+msgflux extensions remove coding_prompt --agent coding
+```
+
+Add `--config PATH` to target another file and `--json` for a mutation receipt
+containing the edit result and `restart_required`. Defaults are not copied into
+the file. Add validates required arguments and factory signatures before writing;
+it does not instantiate an extension. `inspect --options` imports the selected
+factory for signature inspection; plain `inspect` remains metadata-only.
+
+Configured options are shared by agents selecting the same name. `--as` adds
+an independent registration; remove the original selection, as above, to switch
+instead of running both instances. An option change that would affect another
+agent is refused. Remove is idempotent and keeps the global factory and options for later
+reuse. These commands preserve TOML comments and formatting, and neither install
+packages nor start/restart the service. See the package guide below for option
+types, quoting, and alias behavior.
+
 Packages must be installed in the server's environment. Each thread/agent
 construction receives fresh instances, and subagents need their own explicit
 selection. Restart the service after changing installed packages or configured

@@ -13,6 +13,7 @@ from msgflux.nn.extensions.discovery import (
     AgentExtensionCatalog,
     ExtensionConfig,
     ExtensionInfo,
+    ExtensionOption,
 )
 from msgflux.utils.imports import load_factory, validate_factory_path
 
@@ -297,3 +298,153 @@ def test_sync_factory_returning_coroutine_is_closed_before_rejection(plugins):
     with pytest.raises(ValueError, match="factories must be synchronous"):
         catalog.create("async")
     assert getcoroutinestate(pending) == CORO_CLOSED
+
+
+def test_options_imports_only_selected_factory_without_binding_or_construction(plugins):
+    entries, imports, factories = plugins
+    constructed = []
+
+    def build(label: str, *, limit: int = 10, enabled: bool = True, **kwargs):
+        constructed.append(label)
+        return _TestExtension(label=label)
+
+    entries.extend(
+        [
+            _entry("selected", "plugins.selected:build"),
+            _entry("broken", "missing:build"),
+        ]
+    )
+    factories["plugins.selected"] = build
+    catalog = AgentExtensionCatalog()
+    assert catalog.options("selected") == (
+        ExtensionOption("label", "str", True, False),
+        ExtensionOption("limit", "int", False, True, 10, True),
+        ExtensionOption("enabled", "bool", False, True, True, True),
+        ExtensionOption("kwargs", None, False, False, keyword_variadic=True),
+    )
+    assert imports == ["plugins.selected"]
+    assert constructed == []
+    with pytest.raises(ValueError, match="missing a required"):
+        catalog.validate(["selected"])
+    assert constructed == []
+
+
+def test_options_inspection_does_not_copy_configured_options(plugins):
+    _entries, _imports, factories = plugins
+    factories["plugins.selected"] = _TestExtension
+    catalog = AgentExtensionCatalog(
+        {"selected": ExtensionConfig(factory="plugins.selected:build")}
+    )
+    # Introspection must work even before a required option is configured.
+    label, settings = catalog.options("selected")
+    assert label.required and not label.has_default
+    assert settings.default is None
+    assert settings.has_default and settings.default_available
+
+
+def test_options_skips_variadic_positionals_and_reports_required_positional_only(
+    plugins,
+):
+    _entries, _imports, factories = plugins
+
+    def positional(required, /, *args, enabled=True, **extras):
+        raise AssertionError("introspection must not invoke the factory")
+
+    factories["plugins.selected"] = positional
+    catalog = AgentExtensionCatalog(
+        {"selected": ExtensionConfig(factory="plugins.selected:build")}
+    )
+    assert [option.name for option in catalog.options("selected")] == [
+        "enabled",
+        "extras",
+    ]
+    with pytest.raises(ValueError, match=r"positional-only.*required") as error:
+        catalog.validate(["selected"])
+    assert "selected" in str(error.value)
+    assert "plugins.selected:build" in str(error.value)
+
+
+def test_optional_positional_only_defaults_do_not_prevent_validation(plugins):
+    _entries, _imports, factories = plugins
+
+    def positional(default="safe", /, *, label="hello"):
+        return _TestExtension(label=label)
+
+    factories["plugins.selected"] = positional
+    catalog = AgentExtensionCatalog(
+        {"selected": ExtensionConfig(factory="plugins.selected:build")}
+    )
+    catalog.validate(["selected"])
+    assert [option.name for option in catalog.options("selected")] == ["label"]
+
+
+def test_options_preserves_safe_defaults_without_executing_repr_or_encoder_hooks(
+    plugins,
+):
+    _entries, _imports, factories = plugins
+
+    class Opaque:
+        def __repr__(self):
+            raise AssertionError("must not render arbitrary defaults")
+
+        def __deepcopy__(self, memo):
+            raise AssertionError("must not copy arbitrary defaults")
+
+    opaque = Opaque()
+    cycle = []
+    cycle.append(cycle)
+    defaults = {"nested": [1, True, None, {"label": "safe"}], "pair": (2, 3)}
+    wrong_keys = {1: "value"}
+
+    def build(
+        *,
+        structured=defaults,
+        unavailable=opaque,
+        cyclic=cycle,
+        not_finite=float("nan"),
+        wrong_keys=wrong_keys,
+    ):
+        raise AssertionError("must not construct the extension")
+
+    factories["plugins.selected"] = build
+    catalog = AgentExtensionCatalog(
+        {"selected": ExtensionConfig(factory="plugins.selected:build")}
+    )
+    options = catalog.options("selected")
+    assert options[0].default == {
+        "nested": [1, True, None, {"label": "safe"}],
+        "pair": [2, 3],
+    }
+    options[0].default["nested"].append("changed")
+    assert len(defaults["nested"]) == 4
+    for option in options[1:]:
+        assert option.has_default
+        assert not option.default_available
+        assert option.default is None
+    msgspec.json.encode(options)
+
+
+def test_options_annotations_accept_strings_generics_and_unknown_objects(plugins):
+    _entries, _imports, factories = plugins
+
+    class Opaque:
+        def __repr__(self):
+            raise AssertionError("must not render arbitrary annotations")
+
+    def build(*, forward: "str", generic: list[str], optional: str | None):
+        raise AssertionError("must not construct the extension")
+
+    build.__annotations__["forward"] = Opaque()
+    factories["plugins.selected"] = build
+    catalog = AgentExtensionCatalog(
+        {"selected": ExtensionConfig(factory="plugins.selected:build")}
+    )
+    annotations = [option.annotation for option in catalog.options("selected")]
+    assert annotations == [None, "list[str]", "str | NoneType"]
+
+
+def test_option_record_is_exported_from_sdk_namespaces():
+    from msgflux.nn import ExtensionOption as PublicExtensionOption
+    from msgflux.nn.extensions import ExtensionOption as ExtensionsExtensionOption
+
+    assert PublicExtensionOption is ExtensionsExtensionOption is ExtensionOption

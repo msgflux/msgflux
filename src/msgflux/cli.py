@@ -31,7 +31,8 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux threads ls; msgflux threads watch THREAD_ID; "
             "msgflux threads steer THREAD_ID -m MESSAGE; "
             "msgflux config validate; msgflux extensions ls; "
-            "msgflux extensions inspect NAME."
+            "msgflux extensions inspect NAME [--options]; "
+            "msgflux extensions add/remove NAME --agent ID."
         ),
     )
     parser.add_argument("-p", "--prompt", required=True, help="noninteractive task")
