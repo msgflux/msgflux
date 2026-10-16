@@ -46,6 +46,11 @@ from msgflux.runtime.service.http.serialization import (
     event_record,
     snapshot_record,
 )
+from msgflux.runtime.service.http.telemetry import (
+    annotate_http_response,
+    annotate_http_result,
+    service_telemetry_plugin,
+)
 from msgflux.runtime.service.records import (
     ServiceBusyError,
     ServiceConflictError,
@@ -57,6 +62,7 @@ PathValue = FromPath[str]
 
 
 def _response(value: object, status_code: int = 200) -> Response:
+    annotate_http_result(value)
     return Response(
         content=encode_json(value),
         status_code=status_code,
@@ -420,6 +426,8 @@ def create_service_app(  # noqa: C901
         ),
         middleware=[DefineMiddleware(_BearerAuthMiddleware, token=token)],
         lifespan=[lifespan],
+        plugins=[service_telemetry_plugin(instance_id)],
+        before_send=[annotate_http_response],
         exception_handlers={
             ServiceBusyError: _domain_error,
             ServiceConflictError: _domain_error,

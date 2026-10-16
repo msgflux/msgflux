@@ -591,6 +591,78 @@ header. Native browser `EventSource` cannot set that header; tokens are not
 accepted in query parameters. The CORS middleware sends the SSE response headers
 immediately and does not buffer the event stream.
 
+## HTTP Telemetry
+
+The service extra includes Litestar's OpenTelemetry plugin. HTTP instrumentation
+uses the host's global tracer and meter providers, including the tracer already
+configured by `msgtrace-sdk`. It does not create another exporter or shut down
+shared providers when an app closes.
+
+Enable the existing tracing pipeline before starting the service:
+
+```bash
+export MSGTRACE_TELEMETRY_ENABLED=true
+export MSGTRACE_EXPORTER=otlp
+export MSGTRACE_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+export MSGTRACE_SERVICE_NAME=msgflux-service
+msgflux service serve
+```
+
+For development, `MSGTRACE_EXPORTER=console` prints spans in the service process.
+A detached daemon writes its process output to its existing daemon log. Restart
+an existing daemon after changing its telemetry environment. Embedded hosts can
+also configure their own global OpenTelemetry providers before calling
+`create_service_app()`. Without a configured provider, instrumentation is a no-op.
+
+Each request creates one server span, including bearer failures, preflight,
+validation errors and server errors. Incoming W3C `traceparent` context is
+respected. Resolved span names use templates such as
+`GET /v1/threads/{thread_id}/snapshot`; unknown paths use only the method.
+Spans include `msgflux.service.instance_id` and, when available from a path or
+response receipt, `msgflux.agent_id`, `msgflux.thread_id`, `msgflux.run_id` and
+`msgflux.request_id`. IDs are span attributes, not metric labels.
+
+The adapter does not capture request or response bodies. Header capture is off
+by default; if enabled through standard OpenTelemetry environment settings,
+authorization, cookies and token/API-key headers are redacted. Existing Agent,
+Tool and Model telemetry has its own capture settings; see
+[Telemetry](../../telemetry.md).
+
+Watch spans last for the SSE connection and end on disconnect. Internal ASGI
+send/receive spans are disabled, avoiding one span per token or event. Closing a
+watch connection does not cancel the run. An admitted execution runs in its own
+context and does not inherit the HTTP request span, event sink or authorization
+ContextVars. HTTP tracing therefore describes frontend requests, while existing
+Agent/Tool/Model spans describe execution separately; this integration does not
+add cross-trace links for detached workers.
+
+The native instrumentation records HTTP duration, active requests and available
+body sizes when the host supplies a metric provider. `msgtrace-sdk` configures
+tracing; it does not automatically configure a metrics exporter. For example,
+an embedded host can set up metrics before creating the app:
+
+```python
+from opentelemetry import metrics
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+metric_provider = MeterProvider(
+    metric_readers=[
+        PeriodicExportingMetricReader(
+            OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
+        )
+    ]
+)
+metrics.set_meter_provider(metric_provider)
+app = create_service_app(service, token=token)
+```
+
+This sends HTTP metrics to the collector using one host-owned provider. The host
+must shut it down after all apps using it have stopped. No collector or new
+provider is started by the HTTP adapter. The plugin follows the current
+[Litestar OpenTelemetry integration](https://docs.litestar.dev/latest/usage/metrics/opentelemetry.html).
+
 ## Endpoints And Errors
 
 All routes require `Authorization: Bearer <token>`.
