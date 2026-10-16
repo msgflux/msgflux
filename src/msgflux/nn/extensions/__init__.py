@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         AgentExtensionCatalog,
         ExtensionConfig,
         ExtensionInfo,
+        ExtensionOption,
     )
     from msgflux.nn.extensions.feedback import DefaultToolFeedbackExtension
     from msgflux.nn.extensions.prompt import (
@@ -50,6 +51,7 @@ __all__ = [
     "AgentExtensionCatalog",
     "ExtensionConfig",
     "ExtensionInfo",
+    "ExtensionOption",
     "ToolOutputOffloadExtension",
     "ManagedToolOutputOffloadExtension",
     "WorkspacePromptExtension",
@@ -85,6 +87,7 @@ _LAZY_IMPORTS = {
     ),
     "ExtensionConfig": ("msgflux.nn.extensions.discovery", "ExtensionConfig"),
     "ExtensionInfo": ("msgflux.nn.extensions.discovery", "ExtensionInfo"),
+    "ExtensionOption": ("msgflux.nn.extensions.discovery", "ExtensionOption"),
     "ManagedToolOutputOffloadExtension": (
         "msgflux.nn.extensions.tool_output",
         "ManagedToolOutputOffloadExtension",
