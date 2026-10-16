@@ -35,6 +35,7 @@ class ChatContextAdapter:
     """Translate model context operations to and from one wire protocol."""
 
     api_mode: str | None = None
+    supports_token_count: bool = True
 
     def prepare_token_count(
         self,
@@ -62,7 +63,9 @@ class ChatContextAdapter:
     ) -> PreparedChatRequest:
         raise NotImplementedError
 
-    def decode_compaction(self, owner: Any, payload: Any) -> ModelCompaction:
+    def decode_compaction(
+        self, owner: Any, payload: Any, *, messages: Any = None
+    ) -> ModelCompaction:
         raise NotImplementedError
 
 
@@ -135,7 +138,10 @@ class OpenAIResponsesContextAdapter(ChatContextAdapter):
             },
         )
 
-    def decode_compaction(self, owner: Any, payload: Any) -> ModelCompaction:
+    def decode_compaction(
+        self, owner: Any, payload: Any, *, messages: Any = None
+    ) -> ModelCompaction:
+        _ = messages  # The standalone endpoint returns a complete replacement window.
         items = owner._serialize_openai_value(_payload_value(payload, "output"))
         usage = owner.usage_codec.normalize(_payload_value(payload, "usage"))
         return ModelCompaction(

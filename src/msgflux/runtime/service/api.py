@@ -21,6 +21,7 @@ from msgflux.exceptions import (
 )
 from msgflux.logger import logger
 from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
 from msgflux.runtime.service.approvals import project, review_record
@@ -237,6 +238,7 @@ class AgentService:
         )
         self._producer_tasks: dict[asyncio.Task, _Worker] = {}
         self._workers: dict[tuple[str, str], _Worker] = {}
+        self._maintenance_tasks: dict[str, asyncio.Task] = {}
         self._watchers = set()
         self._lock = asyncio.Lock()
         self._closed = False
@@ -459,6 +461,8 @@ class AgentService:
     def _release_reason(
         self, thread_id: str, session: AgentSession, *, mark_closing: bool = True
     ) -> str | None:
+        if thread_id in self._maintenance_tasks:
+            return "The thread is being compacted"
         if getattr(session, "_retained_by_facade", False):
             return "The embedded CodingSession retains this Agent"
         if any(
@@ -515,6 +519,7 @@ class AgentService:
         """
         async with self._use_session(thread_id) as session:
             async with self._lock:
+                self._require_no_maintenance(thread_id)
                 self._require_open()
                 if self._before_write is not None:
                     self._before_write()
@@ -548,6 +553,8 @@ class AgentService:
                 return saved
 
     def _resume_policy_batch(self, session, thread_id):
+        if thread_id in self._maintenance_tasks:
+            return None, None
         state = session.workspace_policy_state
         if self._closed or state is None or state.current.approval_policy != "never":
             return None, None
@@ -794,6 +801,7 @@ class AgentService:
             account_name = self._validate_account_name(account_name)
         async with self._use_session(thread_id) as session:
             async with self._lock:
+                self._require_no_maintenance(thread_id)
                 self._require_open()
                 if self._before_write is not None:
                     self._before_write()
@@ -822,7 +830,20 @@ class AgentService:
                     self._schedule(record, session)
                 return record.receipt
 
+    def _require_no_maintenance(self, thread_id):
+        if thread_id in self._maintenance_tasks:
+            raise ServiceBusyError("The thread is being compacted")
+
+    async def compact(
+        self, thread_id: str, *, run_id: str | None = None
+    ) -> CompactionResult:
+        """Compact a paused/failed thread without admitting or resuming a run."""
+        from msgflux.runtime.service.compaction import compact  # noqa: PLC0415
+
+        return await compact(self, thread_id, run_id)
+
     def _schedule(self, record: AdmissionRecord, session: AgentSession) -> None:
+        self._require_no_maintenance(record.receipt.thread_id)
         key = (record.receipt.thread_id, record.receipt.request_id)
         if key in self._workers:
             return
@@ -1084,6 +1105,7 @@ class AgentService:
             raise TypeError("worker_stopped must be a host-supplied bool")
         async with self._use_session(thread_id) as session:
             async with self._lock:
+                self._require_no_maintenance(thread_id)
                 record = self.store.get(thread_id, request_id)
                 if record is None:
                     raise KeyError(request_id)
@@ -1130,6 +1152,7 @@ class AgentService:
         validate_identifier(run_id, "run_id")
         async with self._use_session(thread_id) as session:
             async with self._lock:
+                self._require_no_maintenance(thread_id)
                 record = self.store.get_for_run(thread_id, run_id)
                 if record is None:
                     if not worker_stopped:
@@ -1196,6 +1219,11 @@ class AgentService:
         await asyncio.shield(task)
 
     async def _shutdown(self) -> None:
+        maintenance = tuple(self._maintenance_tasks.values())
+        for task in maintenance:
+            task.cancel()
+        if maintenance:
+            await asyncio.gather(*maintenance, return_exceptions=True)
         workers = tuple(self._producer_tasks.values())
         for worker in workers:
             worker.scope.abort_signal.abort("AgentService shutdown")

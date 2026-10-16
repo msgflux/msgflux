@@ -504,7 +504,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         tool_catalog: ToolCatalogView | None = None,
     ) -> ContextTokenEstimate:
         adapter = self.api_mode_capabilities.context_adapter
-        if adapter is None:
+        if adapter is None or not adapter.supports_token_count:
             return super().count_context_tokens(
                 messages,
                 system_prompt=system_prompt,
@@ -528,7 +528,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         tool_catalog: ToolCatalogView | None = None,
     ) -> ContextTokenEstimate:
         adapter = self.api_mode_capabilities.context_adapter
-        if adapter is None:
+        if adapter is None or not adapter.supports_token_count:
             return await super().acount_context_tokens(
                 messages,
                 system_prompt=system_prompt,
@@ -565,7 +565,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
         request = self._apply_chat_extensions(request, operation="compact")
         payload = self.chat_transport.create(self, request)
-        return adapter.decode_compaction(self, payload)
+        return adapter.decode_compaction(self, payload, messages=messages)
 
     async def acompact_context(
         self,
@@ -588,7 +588,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
         request = self._apply_chat_extensions(request, operation="compact")
         payload = await self.chat_transport.acreate(self, request)
-        return adapter.decode_compaction(self, payload)
+        return adapter.decode_compaction(self, payload, messages=messages)
 
     @property
     def supported_api_modes(self) -> tuple[str, ...]:

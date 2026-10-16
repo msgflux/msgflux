@@ -113,6 +113,8 @@ class AgentResourceMixin:
             self._resources.agent_dir if self._resources is not None else None
         )
         self._resource_lock = RLock()
+        self._thread_activity: dict[str, int] = {}
+        self._thread_maintenance: set[str] = set()
         self._owned_threads: dict[str, _OwnedThread] = {}
         self._resources_closed = False
         self._resource_close_tasks = {}
@@ -140,7 +142,50 @@ class AgentResourceMixin:
             return owned.resources
 
     @contextmanager
+    def _thread_operation(self, thread_id, *, exclusive=False):
+        from msgflux.runtime.compaction import CompactionBusyError  # noqa: PLC0415
+
+        if thread_id is None:
+            yield
+            return
+        with self._resource_lock:
+            if thread_id in self._thread_maintenance or (
+                exclusive and self._thread_activity.get(thread_id, 0)
+            ):
+                raise CompactionBusyError("The thread has an active Agent operation")
+            if self._resources_closed:
+                raise RuntimeError("Agent resources are closed")
+            if exclusive:
+                owned = self._owned_threads.get(thread_id)
+                if owned is not None and owned.active:
+                    raise CompactionBusyError("The thread still has active resources")
+                self._thread_maintenance.add(thread_id)
+            self._thread_activity[thread_id] = (
+                self._thread_activity.get(thread_id, 0) + 1
+            )
+        try:
+            yield
+        finally:
+            with self._resource_lock:
+                count = self._thread_activity[thread_id] - 1
+                if count:
+                    self._thread_activity[thread_id] = count
+                else:
+                    self._thread_activity.pop(thread_id)
+                if exclusive:
+                    self._thread_maintenance.discard(thread_id)
+
+    @contextmanager
     def _resource_context(self, kwargs):
+        scope = self._get_requested_scope(kwargs) or get_execution_context()["scope"]
+        thread_id = scope.thread_id or getattr(
+            kwargs.get("messages"), "thread_id", None
+        )
+        with self._thread_operation(thread_id), self._bound_resource_context(kwargs):
+            yield
+
+    @contextmanager
+    def _bound_resource_context(self, kwargs):
         inherited = _CURRENT_RESOURCES.get()
         if inherited is None and self._resources is None:
             from msgflux.nn.extensions.tool_output import (  # noqa: PLC0415

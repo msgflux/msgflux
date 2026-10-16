@@ -12,6 +12,7 @@ from msgflux.coding.checkpoints import CodingCheckpointExtension
 from msgflux.coding.watcher import _SessionWatcher
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.nn.modules.agent import Agent
+from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope, new_thread_id
 from msgflux.runtime.service import (
     AdmissionReceipt,
@@ -307,6 +308,10 @@ class CodingSession:
         return await self.service.resume_checkpoint(
             self.thread_id, run_id, worker_stopped=worker_stopped
         )
+
+    async def compact(self, *, run_id: str | None = None) -> CompactionResult:
+        """Compact the thread's paused/failed checkpoint without resuming it."""
+        return await self.service.compact(self.thread_id, run_id=run_id)
 
     async def steer(self, run_id: str, content: str):
         """Publish a user message through the target run's existing AgentInbox."""
