@@ -805,6 +805,45 @@ answer. These inspection commands never start a server. Run inspection requires
 an active, authenticated daemon and reports errors on stderr with exit code `1`.
 Use `--runtime-dir PATH` to select another local service.
 
+## Retrieve A Thread Or Run Result
+
+```bash
+msgflux threads result THREAD_ID
+msgflux threads result THREAD_ID --wait
+msgflux threads result THREAD_ID --json
+msgflux runs result THREAD_ID RUN_ID
+msgflux runs result THREAD_ID RUN_ID --wait --json
+```
+
+`threads result` selects the most recently admitted execution in the thread.
+It does not select by checkpoint update time or fall back to an earlier completed
+answer. `runs result` selects the specified execution. A steer message stays in
+the active run; a new prompt creates another run in the same thread.
+
+Both commands return immediately unless `--wait` is supplied. JSON prints one
+`RunResult` object, including the selected IDs:
+
+```json
+{"thread_id":"thd_example","run_id":"run_example","status":"running","output":null,"error":null}
+```
+
+Only a completed run exposes its final assistant text in `output`. JSON contains
+no events or full conversation history. Text mode prints only the completed
+answer to stdout; other statuses produce a diagnostic on stderr. Both modes exit
+with code `0` for a completed answer and `1` otherwise. Unknown threads or runs,
+and threads with no admitted execution, are errors.
+
+`--wait` fixes the selected run at the start of the command. A later prompt does
+not change the target. Waiting stops when that execution completes, pauses,
+fails or is interrupted; it does not resume work or approve pending operations.
+Ctrl+C stops waiting without interrupting the agent and exits with code `130`.
+An unfinished run without a worker owned by the connected service requires host
+recovery; waiting cannot adopt it after a restart.
+
+These commands require an active, authenticated service and never start one.
+Use `--runtime-dir PATH` to select another local service. For recovery diagnostics,
+use `runs inspect`; for continuous events, use `threads watch`.
+
 ## List Active Runs
 
 ```bash

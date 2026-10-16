@@ -595,6 +595,14 @@ class AgentService:
                     )
                 return tuple(summaries)
 
+    async def thread_result(self, thread_id: str) -> RunResult:
+        """Select the latest admission once and return its current run result."""
+        self._require_open()
+        admission = self.store.latest_admission(thread_id)
+        if admission is None:
+            raise KeyError(f"Thread {thread_id} has no admitted runs")
+        return await self.run_result(thread_id, admission.receipt.run_id)
+
     async def run_result(self, thread_id: str, run_id: str) -> RunResult:
         """Return the answer recorded for this run; unfinished runs have no output."""
         from msgflux.runtime.service.serialization import (  # noqa: PLC0415

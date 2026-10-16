@@ -19,6 +19,7 @@ from msgflux.runtime.service import (
     AgentSession,
     EventRecord,
     RunInspection,
+    RunResult,
     RunSummary,
     ServiceThread,
     SnapshotRecord,
@@ -258,6 +259,12 @@ class CodingSession:
     async def inspect_run(self, run_id: str) -> RunInspection:
         """Read a run's recorded state and recovery reasons without resuming it."""
         return await self.service.inspect_run(self.thread_id, run_id)
+
+    async def result(self, run_id: str | None = None) -> RunResult:
+        """Read the latest admission's result, or select an explicit historical run."""
+        if run_id is None:
+            return await self.service.thread_result(self.thread_id)
+        return await self.service.run_result(self.thread_id, run_id)
 
     async def wait(self, request_id: str) -> AdmissionReceipt:
         return await self.service.wait(self._thread_id, request_id)

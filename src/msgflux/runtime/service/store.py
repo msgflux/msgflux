@@ -382,6 +382,20 @@ class SQLiteServiceStore:
             ).fetchone()
         return self._record(row) if row is not None else None
 
+    def latest_admission(self, thread_id: str) -> AdmissionRecord | None:
+        """Return the most recently inserted admission, regardless of its status."""
+        validate_identifier(thread_id, "thread_id")
+        self.thread(thread_id)
+        with self._lock:
+            # Insertion order survives reopening and is unchanged by duplicate
+            # requests, checkpoint updates, or recovery of an older run.
+            row = self._connection.execute(
+                """SELECT * FROM service_admissions
+                WHERE thread_id=? ORDER BY rowid DESC LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+        return self._record(row) if row is not None else None
+
     def adopt_checkpoint(
         self,
         thread_id: str,

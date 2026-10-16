@@ -16,6 +16,7 @@ from msgflux.runtime.service import (
     AdmissionReceipt,
     ApprovalReview,
     RunInspection,
+    RunResult,
     RunSummary,
     ServiceThread,
 )
@@ -110,6 +111,12 @@ class AgentSessionClient:
     async def receipt(self, request_id: str) -> AdmissionReceipt:
         """Return the current admission receipt for a request identity."""
         return await self._client.receipt(self.thread_id, request_id)
+
+    async def result(self, run_id: str | None = None) -> RunResult:
+        """Read the latest admission's result, or select an explicit historical run."""
+        if run_id is None:
+            return await self._client.thread_result(self.thread_id)
+        return await self._client.run_result(self.thread_id, run_id)
 
     async def inspect_run(self, run_id: str) -> RunInspection:
         """Read recorded run state; this never asserts old-worker quiescence."""

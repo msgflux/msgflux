@@ -98,7 +98,8 @@ status `accepted`, `running`, or `completed`. A later model or tool failure can
 still change the recorded outcome. Setup errors and receipts already reporting a
 failed, paused, or interrupted state exit with code 1.
 
-Use `msgflux runs inspect THREAD_ID RUN_ID` to inspect the execution, or
+Use `msgflux threads result THREAD_ID --wait` to retrieve the final answer,
+`msgflux runs inspect THREAD_ID RUN_ID` to inspect the execution, or
 `msgflux threads interrupt THREAD_ID` to request interruption. A subsequent
 `msgflux -p "Follow up" --thread THREAD_ID` sends a new turn when the current
 execution has settled. The `threads watch THREAD_ID` command observes an existing thread without
@@ -246,13 +247,34 @@ running background tasks should be inspected and interrupted separately.
 
 ## Retrieve A Recorded Answer
 
-```python
-result = await client.run_result(thread_id, run_id)
-if result.status == "completed":
-    print(result.output)
+```bash
+msgflux threads result THREAD_ID
+msgflux threads result THREAD_ID --wait
+msgflux runs result THREAD_ID RUN_ID --json
 ```
 
-The HTTP equivalent is `GET /v1/threads/{thread_id}/runs/{run_id}/result`.
+The thread command selects the most recently admitted execution. The run command
+selects one execution explicitly. Both accept `--wait` and `--json`; see
+[Retrieve A Thread Or Run Result](service-local.md#retrieve-a-thread-or-run-result)
+for waiting, output and exit-code behavior.
+
+Without `--wait`, the query returns immediately. A running execution has
+`output: null`; it never substitutes an older answer. Text mode prints only the
+completed answer to stdout. JSON returns `RunResult`, containing `thread_id`,
+`run_id`, `status`, `output`, and `error`.
+
+The SDK offers the same queries:
+
+```python
+latest = await client.thread_result(thread_id)
+recorded = await client.run_result(thread_id, run_id)
+if recorded.status == "completed":
+    print(recorded.output)
+```
+
+These calls do not wait. Their HTTP equivalents are
+`GET /v1/threads/{thread_id}/result` and
+`GET /v1/threads/{thread_id}/runs/{run_id}/result`.
 Only a completed run exposes final assistant text. Other statuses have no output;
 failed and paused receipts preserve their concrete cause. Missing final
 checkpoints or non-text answers are reported as errors, rather than returning
