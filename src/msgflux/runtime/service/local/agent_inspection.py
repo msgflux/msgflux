@@ -16,7 +16,11 @@ def manifest_agent_configuration(
     manifest: ServiceManifest, agent_id: str
 ) -> AgentConfiguration:
     declared = manifest.agents[agent_id]
-    source = {"config_path": str(manifest.path), "config_digest": manifest.digest}
+    source = {
+        "config_path": str(manifest.path),
+        "config_digest": manifest.digest,
+        "extensions": tuple(declared.extensions),
+    }
     if declared.factory is not None:
         return AgentConfiguration(factory=declared.factory, **source)
     resolved = manifest.coding_catalog.agents[agent_id]
@@ -66,6 +70,7 @@ async def inspect_registered_agent(client, args) -> None:
         ("Tools (active defaults)", config.tools_active),
         ("Tools (deferred defaults)", config.tools_deferred),
         ("Subagents", config.subagents),
+        ("Extensions", config.extensions),
         ("Preset", config.preset),
         ("Prompt source", config.prompt_source),
         ("Prompt file", config.prompt_file),

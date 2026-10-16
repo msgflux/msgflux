@@ -97,6 +97,7 @@ class CodingAgentOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     permissions: tuple[CodingPermission, ...] = DEFAULT_CODING_PERMISSIONS
     description: str | None = None
     instructions: str | None = None
+    extensions: tuple[str, ...] = ()
 
 
 def coding_agent_options(
@@ -111,6 +112,7 @@ def coding_agent_options(
     deferred: tuple[str, ...] | None = None,
     prompt_file: Path | None = None,
     subagents: tuple[str, ...] = (),
+    extensions: tuple[str, ...] = (),
 ) -> CodingAgentOptions:
     """Resolve explicit settings over builtin defaults for Python or TOML callers."""
     defaults = get_coding_preset(preset) if preset is not None else None
@@ -141,6 +143,7 @@ def coding_agent_options(
         instructions=defaults.instructions if defaults else None,
         prompt_file=prompt_file,
         subagents=subagents,
+        extensions=extensions,
     )
     return resolve_coding_agent_options(options)
 
@@ -210,6 +213,7 @@ def resolve_coding_tools(
     if not isinstance(options, CodingAgentOptions):
         raise TypeError("options must be CodingAgentOptions")
     validate_model_path(options.model)
+    _validate_extensions(options)
     validate_coding_permissions(options.permissions)
     active = _expand_selection(
         options.tools_active,
@@ -255,6 +259,17 @@ def validate_coding_catalog(catalog: CodingAgentCatalog) -> None:
     _validate_subagent_graph(catalog)
 
 
+def _validate_extensions(options: CodingAgentOptions) -> None:
+    if not isinstance(options.extensions, (tuple, list)) or any(
+        not isinstance(name, str) or not name.strip() for name in options.extensions
+    ):
+        raise ValueError(
+            f"Agent {options.agent_id!r} extension names must be non-empty strings"
+        )
+    if len(options.extensions) != len(set(options.extensions)):
+        raise ValueError(f"Agent {options.agent_id!r} has duplicate extension names")
+
+
 def _validate_coding_agent(
     agent_id: str,
     options: CodingAgentOptions,
@@ -267,6 +282,7 @@ def _validate_coding_agent(
             f"Coding catalog key {agent_id!r} does not match "
             f"agent_id {options.agent_id!r}"
         )
+    _validate_extensions(options)
     validate_model_path(options.model)
     valid_ids = _TOOL_SELECTORS - {"workspace"}
     for category, names in (

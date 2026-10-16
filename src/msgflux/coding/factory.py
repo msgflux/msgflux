@@ -19,6 +19,8 @@ from msgflux.coding.config import (
     workspace_coding_permissions,
 )
 from msgflux.coding.prompts import system_prompt
+from msgflux.nn.extensions.discovery import AgentExtensionCatalog
+from msgflux.nn.extensions.installation import AgentExtensionInstallation
 from msgflux.nn.modules.agent import Agent
 from msgflux.runtime.isolation import SandboxRequirements
 from msgflux.runtime.service import AgentSession, ServiceThread
@@ -158,6 +160,7 @@ def create_coding_session_factory(
     config_path: Path,
     runtime_dir: Path,
     accounts=None,
+    extension_catalog: AgentExtensionCatalog | None = None,
 ) -> Callable[[ServiceThread], Awaitable[AgentSession]]:
     """Create a lazy, per-thread AgentSession factory for a coding entry."""
     if not isinstance(options, CodingAgentOptions):
@@ -175,6 +178,7 @@ def create_coding_session_factory(
         config_path=config_path,
         runtime_dir=runtime_dir,
         accounts=accounts,
+        extension_catalog=extension_catalog,
     )
     return builder.create_session
 
@@ -188,12 +192,17 @@ class _CodingSessionBuilder:
         config_path: Path,
         runtime_dir: Path,
         accounts=None,
+        extension_catalog: AgentExtensionCatalog | None = None,
     ) -> None:
         self.options = options
         self.catalog = catalog
         self.config_path = config_path
         self.runtime_dir = runtime_dir
         self.accounts = accounts
+        self.extension_catalog = extension_catalog or AgentExtensionCatalog()
+        for entry in catalog.agents.values():
+            for name in entry.extensions:
+                self.extension_catalog.resolve(name)
 
     async def create_session(self, thread: ServiceThread) -> AgentSession:
         if not isinstance(thread, ServiceThread):
@@ -318,6 +327,10 @@ class _CodingSessionBuilder:
             ),
         )
         agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
+        if selected.extensions:
+            installation = AgentExtensionInstallation(self.extension_catalog, agent)
+            tool_resources.append(installation)
+            installation.install(selected.extensions)
         agent.tool_library.extensions["background_tasks"].enable_grouping()
         agent.tool_library.apply_default_usage_guidance()
         return agent

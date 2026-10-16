@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import os
 import tempfile
 import tomllib
 from pathlib import Path
-from typing import Any
 
 import msgspec
 
@@ -20,7 +18,19 @@ from msgflux.coding.config import (
     validate_coding_catalog,
     validate_model_path,
 )
+from msgflux.nn.extensions.discovery import AgentExtensionCatalog, ExtensionConfig
 from msgflux.runtime.service.store import validate_identifier
+from msgflux.utils.imports import load_factory, validate_factory_path
+
+__all__ = [
+    "ServiceManifest",
+    "default_service_config_path",
+    "initialize_service_config",
+    "load_factory",
+    "load_extension_catalog",
+    "load_service_manifest",
+    "validate_factory_path",
+]
 
 _CONFIG_TEMPLATE = """[defaults]
 agent = "coding"
@@ -67,11 +77,13 @@ class _AgentConfig(msgspec.Struct, forbid_unknown_fields=True):
     permissions: list[CodingPermission] | None = None
     subagents: list[str] = msgspec.field(default_factory=list)
     tools: _ToolsConfig | None = None
+    extensions: list[str] = msgspec.field(default_factory=list)
 
 
 class _ServiceConfig(msgspec.Struct, forbid_unknown_fields=True):
     defaults: _DefaultsConfig
     agents: dict[str, _AgentConfig]
+    extensions: dict[str, ExtensionConfig] = msgspec.field(default_factory=dict)
 
 
 class ServiceManifest(msgspec.Struct, frozen=True):
@@ -80,6 +92,7 @@ class ServiceManifest(msgspec.Struct, frozen=True):
     defaults: _DefaultsConfig
     agents: dict[str, _AgentConfig]
     coding_catalog: CodingAgentCatalog
+    extension_catalog: AgentExtensionCatalog
 
 
 def default_service_config_path() -> Path:
@@ -142,26 +155,6 @@ def initialize_service_config(path: Path, *, model: str | None = None) -> Path:
     return target.resolve(strict=True)
 
 
-def validate_factory_path(path: str) -> None:
-    module_name, separator, attribute = path.partition(":")
-    if (
-        not separator
-        or not module_name
-        or not attribute
-        or any(character.isspace() for character in path)
-    ):
-        raise ValueError("factory must use the form 'module:attribute'")
-
-
-def load_factory(path: str) -> Any:
-    validate_factory_path(path)
-    module_name, _, attribute = path.partition(":")
-    factory = getattr(importlib.import_module(module_name), attribute)
-    if not callable(factory):
-        raise TypeError("configured factory attribute must be callable")
-    return factory
-
-
 def _resolve_account_defaults(defaults: _DefaultsConfig, config_dir: Path) -> None:
     from msgflux.accounts.store import Accounts  # noqa: PLC0415
 
@@ -175,8 +168,7 @@ def _resolve_account_defaults(defaults: _DefaultsConfig, config_dir: Path) -> No
         defaults.accounts_dir = str(selected_root.resolve())
 
 
-def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceManifest:
-    """Parse and resolve the config without importing user factories."""
+def _read_config_document(path: Path, *, cwd: Path | None = None):
     manifest_path = Path(path).expanduser()
     if not manifest_path.is_absolute():
         manifest_path = (Path(cwd) if cwd is not None else Path.cwd()) / manifest_path
@@ -184,12 +176,29 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
     raw = manifest_path.read_bytes()
     try:
         document = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"Invalid service config {manifest_path}: {exc}") from exc
+    return manifest_path, raw, document
+
+
+def load_extension_catalog(path: Path) -> AgentExtensionCatalog:
+    """Read only discovery declarations, even before agents have a model configured."""
+    manifest_path, _, document = _read_config_document(path)
+    try:
+        extensions = msgspec.convert(
+            document.get("extensions", {}), type=dict[str, ExtensionConfig], strict=True
+        )
+    except msgspec.ValidationError as exc:
+        raise ValueError(f"Invalid service config {manifest_path}: {exc}") from exc
+    return AgentExtensionCatalog(extensions)
+
+
+def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceManifest:
+    """Parse and resolve the config without importing user factories."""
+    manifest_path, raw, document = _read_config_document(path, cwd=cwd)
+    try:
         config = msgspec.convert(document, type=_ServiceConfig, strict=True)
-    except (
-        UnicodeDecodeError,
-        tomllib.TOMLDecodeError,
-        msgspec.ValidationError,
-    ) as exc:
+    except msgspec.ValidationError as exc:
         raise ValueError(f"Invalid service config {manifest_path}: {exc}") from exc
 
     if not config.agents:
@@ -206,9 +215,14 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
     if config.defaults.agent not in config.agents:
         raise ValueError("defaults.agent must reference a declared agent")
 
+    extension_catalog = AgentExtensionCatalog(config.extensions)
     for agent_id, agent in config.agents.items():
         validate_identifier(agent_id, "agent_id")
         _validate_agent(agent_id, agent, config.agents, manifest_path.parent)
+        if len(agent.extensions) != len(set(agent.extensions)):
+            raise ValueError(f"Agent {agent_id!r} has duplicate extension names")
+        for name in agent.extensions:
+            extension_catalog.resolve(name)
     coding_options = _resolve_coding_options(
         config, manifest_path.parent, manifest_path
     )
@@ -221,6 +235,7 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
         defaults=config.defaults,
         agents=config.agents,
         coding_catalog=coding_catalog,
+        extension_catalog=extension_catalog,
     )
 
 
@@ -261,6 +276,7 @@ def _resolve_coding_options(
             description=agent.description,
             prompt_file=prompt_file,
             subagents=tuple(agent.subagents),
+            extensions=tuple(agent.extensions),
             permissions=(
                 tuple(agent.permissions) if agent.permissions is not None else None
             ),
