@@ -16,6 +16,11 @@ if TYPE_CHECKING:
         CompactionExtension,
         CompactionPolicy,
     )
+    from msgflux.nn.extensions.discovery import (
+        AgentExtensionCatalog,
+        ExtensionConfig,
+        ExtensionInfo,
+    )
     from msgflux.nn.extensions.feedback import DefaultToolFeedbackExtension
     from msgflux.nn.extensions.prompt import (
         CurrentDateExtension,
@@ -42,6 +47,9 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "AgentExtensionCatalog",
+    "ExtensionConfig",
+    "ExtensionInfo",
     "ToolOutputOffloadExtension",
     "ManagedToolOutputOffloadExtension",
     "WorkspacePromptExtension",
@@ -71,6 +79,12 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "AgentExtensionCatalog": (
+        "msgflux.nn.extensions.discovery",
+        "AgentExtensionCatalog",
+    ),
+    "ExtensionConfig": ("msgflux.nn.extensions.discovery", "ExtensionConfig"),
+    "ExtensionInfo": ("msgflux.nn.extensions.discovery", "ExtensionInfo"),
     "ManagedToolOutputOffloadExtension": (
         "msgflux.nn.extensions.tool_output",
         "ManagedToolOutputOffloadExtension",

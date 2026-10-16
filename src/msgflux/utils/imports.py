@@ -7,6 +7,30 @@ from typing import Any, Union
 _loaded_autoloads = set()
 
 
+def validate_factory_path(path: str) -> None:
+    """Validate an importable factory reference without importing its module."""
+    module_name, separator, attribute = path.partition(":")
+    if (
+        not separator
+        or not module_name
+        or not attribute
+        or any(character.isspace() for character in path)
+    ):
+        raise ValueError("factory must use the form 'module:attribute'")
+
+
+def load_factory(path: str) -> Any:
+    """Import a configured callable, including nested entry-point attributes."""
+    validate_factory_path(path)
+    module_name, _, attribute = path.partition(":")
+    factory = importlib.import_module(module_name)
+    for component in attribute.split("."):
+        factory = getattr(factory, component)
+    if not callable(factory):
+        raise TypeError("configured factory attribute must be callable")
+    return factory
+
+
 def import_module_from_lib(_import: str, _from: str):
     """Import a module (function or class) from library."""
     try:

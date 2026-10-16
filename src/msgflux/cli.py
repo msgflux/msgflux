@@ -30,7 +30,8 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux agents ls; msgflux agents inspect AGENT_ID; "
             "msgflux threads ls; msgflux threads watch THREAD_ID; "
             "msgflux threads steer THREAD_ID -m MESSAGE; "
-            "msgflux config validate."
+            "msgflux config validate; msgflux extensions ls; "
+            "msgflux extensions inspect NAME."
         ),
     )
     parser.add_argument("-p", "--prompt", required=True, help="noninteractive task")
@@ -126,6 +127,13 @@ def _dispatch_administration(args: list[str]) -> bool:
         from msgflux.accounts.cli import main as accounts_main  # noqa: PLC0415
 
         accounts_main(args[1:])
+        return True
+    if args and args[0] == "extensions":
+        from msgflux.runtime.service.local.extensions_cli import (  # noqa: PLC0415
+            main as extensions_main,
+        )
+
+        extensions_main(args[1:])
         return True
     if args and args[0] == "config":
         from msgflux.runtime.service.local.config_cli import (  # noqa: PLC0415

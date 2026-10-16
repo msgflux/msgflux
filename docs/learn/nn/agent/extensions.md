@@ -4,6 +4,12 @@ An `AgentExtension` packages hooks and tools behind one removable capability.
 Use a plain `Hook` for one interception point; use an extension when a feature
 owns several pieces that should be installed and removed together.
 
+To distribute an extension as an installed Python package and select it by
+name in `config.toml`, see [Installed Agent Extension Packages](extension-packages.md).
+That guide includes two small implementations, packaging metadata, discovery
+commands, and constructor options. Ordinary Python usage through
+`Agent(extensions=[...])` does not require package entry points.
+
 ## Define An Extension
 
 ### Durable run state
@@ -23,7 +29,7 @@ class RequestCounter(AgentExtension):
         super().__init__("request_counter")
 
     def hooks(self):
-        return (Hook(event="before_model_request", handler=self.count),)
+        return (Hook(event="before_request", handler=self.count),)
 
     def count(self, context):
         state = self.durable_state()

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from msgflux.runtime.service import AgentService, SQLiteServiceStore
 from msgflux.runtime.service.local.agent_inspection import manifest_agent_configuration
+from msgflux.runtime.service.local.extension_factories import with_extensions
 from msgflux.runtime.service.local.files import (
     prepare_runtime_dir,
     process_lock,
@@ -67,13 +68,18 @@ def _make_manifest_service(
                     config_path=manifest.path,
                     runtime_dir=runtime_dir,
                     accounts=accounts,
+                    extension_catalog=manifest.extension_catalog,
                 )
             else:
                 if config.factory is None:
                     raise ValueError(
                         f"Agent {agent_id!r} has no coding harness or factory"
                     )
-                factories[agent_id] = load_factory(config.factory)
+                factories[agent_id] = with_extensions(
+                    load_factory(config.factory),
+                    config.extensions,
+                    manifest.extension_catalog,
+                )
         except (ValueError, TypeError, ImportError, AttributeError) as exc:
             raise ValueError(f"Invalid agent factory for {agent_id!r}: {exc}") from exc
     store = SQLiteServiceStore(runtime_dir / "service.sqlite3")

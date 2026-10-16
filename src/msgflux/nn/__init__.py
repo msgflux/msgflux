@@ -21,6 +21,9 @@ _MODULE_EXPORTS = [
 ]
 
 __all__ = [
+    "AgentExtensionCatalog",
+    "ExtensionConfig",
+    "ExtensionInfo",
     "AgentExtension",
     "AgentExtensionHandle",
     "Artifact",
@@ -73,6 +76,9 @@ def __getattr__(name: str):
     if name in {"functional", "modules", "parameter"}:
         value = import_module(f"msgflux.nn.{name}")
     elif name in {
+        "AgentExtensionCatalog",
+        "ExtensionConfig",
+        "ExtensionInfo",
         "AgentExtension",
         "AgentExtensionHandle",
         "Artifact",

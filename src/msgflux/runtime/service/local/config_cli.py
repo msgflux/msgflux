@@ -36,6 +36,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     selected = (args.config or default_service_config_path()).expanduser().absolute()
     try:
         manifest = load_service_manifest(selected)
+        manifest.extension_catalog.validate(
+            tuple(
+                dict.fromkeys(
+                    name
+                    for agent in manifest.agents.values()
+                    for name in agent.extensions
+                )
+            )
+        )
     except (OSError, ValueError, TypeError) as error:
         result = _ValidationResult(False, str(selected), errors=(str(error),))
     else:

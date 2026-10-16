@@ -285,6 +285,41 @@ explicit missing, unreadable or invalid prompt fails clearly. Workspace context
 and tool guidance are still assembled by the harness. The TOML example above
 replaces the earlier `[agents.coding]` entry; do not declare the table twice.
 
+### Installed Agent Extensions
+
+Use `extensions` to activate installed `AgentExtension` packages for a coding
+agent without replacing its harness factory:
+
+```toml
+[agents.coding]
+harness = "coding"
+extensions = ["prompt_suffix", "request_counter"]
+
+[extensions.prompt_suffix.options]
+text = "Keep answers concise and report verification results."
+```
+
+Replace the existing `agents.coding` table with this entry rather than declaring
+it twice. The named factories come from installed Python package entry points
+in `msgflux.agent_extensions`, or an explicit
+`extensions.<name>.factory = "module:attribute"` override. Options are factory
+keyword arguments; installing or configuring a package does not activate it
+until an agent selects its name.
+
+Inspect available names without starting the service or importing plugin code:
+
+```bash
+msgflux extensions ls
+msgflux extensions inspect prompt_suffix --config ./config.toml --json
+```
+
+Packages must be installed in the server's environment. Each thread/agent
+construction receives fresh instances, and subagents need their own explicit
+selection. Restart the service after changing installed packages or configured
+extensions. See [Installed Agent Extension Packages](extension-packages.md)
+for complete Python examples, installation commands, duplicate-name handling,
+and validation behavior.
+
 ### Custom Python Factories
 
 Use `factory` instead of `harness` for agents constructed by application code:
@@ -584,9 +619,12 @@ manifest; this does not query model-specific provider capabilities.
 Validation does not create a missing config, start a daemon, instantiate Agent
 sessions or models, read credentials, refresh OAuth, or call providers. Custom
 factory entries are validated for `module:attribute` syntax without importing or
-executing the user's module. A successful result does not guarantee factory
-importability, provider/model availability, or account access. Those remain
-runtime checks.
+executing the user's module. Selected extension factories are imported and their
+signatures checked against configured options, but their constructors are not
+called. Constructor-specific value validation happens when an agent is built.
+Extension modules must avoid side effects during import. A successful result
+does not guarantee application factory importability, provider/model
+availability, or account access. Those remain runtime checks.
 
 Human output reports the config path, default agent, and declared agents.
 Invalid configuration reports the loader's diagnostic on stderr. `--json` writes

@@ -22,6 +22,7 @@ class AgentConfiguration(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     tools_active: tuple[str, ...] | None = None
     tools_deferred: tuple[str, ...] | None = None
     subagents: tuple[str, ...] | None = None
+    extensions: tuple[str, ...] | None = None
     preset: str | None = None
     prompt_source: Literal["default", "preset", "file"] | None = None
     prompt_file: str | None = None
