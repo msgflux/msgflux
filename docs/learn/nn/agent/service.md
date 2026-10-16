@@ -407,3 +407,15 @@ Close callbacks release factory-owned resources and must account for delegated
 work using those resources. Non-cooperative code can delay shutdown. The service
 is bound to one event loop; its journal operations are local synchronous SQLite
 transactions. Network serving and daemon startup are separate integrations.
+
+## Manual Conversation Compaction
+
+`await service.compact(thread_id)` compacts the latest paused or failed checkpoint
+without changing its run status or admitting work. Pass `run_id=...` to verify
+that a known run is still the latest admission. The service excludes concurrent
+work on that thread while allowing other threads to proceed. Pending approvals
+remain unchanged; uncertain effects require reconciliation.
+
+See [manual compaction](compaction.md#compact-a-saved-execution-manually) for the
+SDK contract and [HTTP compaction](service-http.md#compact-a-paused-or-failed-run)
+for the endpoint and session client examples.

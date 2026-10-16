@@ -485,6 +485,51 @@ admission journal and checkpoint stores, plus persistent inbox/task stores when
 those features must survive restart. The HTTP adapter reuses these stores and
 creates no second conversation history.
 
+## Compact A Paused Or Failed Run
+
+Use manual compaction when the latest run is paused or failed and no worker is
+still executing it. The call waits for compaction and returns a
+`CompactionResult`; it does not admit a new run or resume the existing one.
+
+```python
+from msgflux.runtime.service.http import AgentSessionClient
+
+session = await AgentSessionClient.open(client, thread_id=thread_id)
+result = await session.compact()
+print(result.run_id, result.status, result.reason)
+
+# Select the same latest run explicitly when its identity is already known.
+result = await client.compact(thread_id, run_id=result.run_id)
+```
+
+The second call returns `already_compacted` when no new completed turn exists.
+`CodingSession.compact()` and embedded `AgentService.compact(thread_id)` have
+the same result contract. Normal checkpoint recovery remains a separate call.
+
+The authenticated HTTP equivalent is:
+
+```http
+POST /v1/threads/{thread_id}/compact
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{}
+```
+
+The body may contain `run_id`; it never accepts messages or history. The service
+reserves the thread during maintenance, so prompt, resume and workspace-policy
+updates cannot race with it. Other threads remain available. An active worker or
+competing maintenance returns 409. A non-latest explicit run also returns 409;
+a completed or interrupted run returns 422.
+
+Pending approvals and run status remain unchanged. An uncertain tool effect or
+missing old-worker quiescence returns a recovery-required conflict. After a local
+daemon restart, its registered owner lease must prove the old worker has stopped;
+embedded hosts without that evidence must reconcile ownership first. Compaction
+does not bypass the approval decision or execute the pending tool. See
+[manual compaction](compaction.md#compact-a-saved-execution-manually) for checkpoint,
+cancellation and skipped-result semantics.
+
 ## Endpoints And Errors
 
 All routes require `Authorization: Bearer <token>`.
@@ -501,6 +546,7 @@ All routes require `Authorization: Bearer <token>`.
 | GET | `/v1/threads/{thread_id}/runs/{run_id}/result` | Status and final answer of a specified run |
 | GET | `/v1/threads/{thread_id}/runs/{run_id}/inspection` | Recorded run state and recovery reasons |
 | POST | `/v1/threads/{thread_id}/prompt` | Admission receipt |
+| POST | `/v1/threads/{thread_id}/compact` | Completed or skipped manual compaction |
 | GET | `/v1/threads/{thread_id}/requests/{request_id}` | Current receipt |
 | GET | `/v1/threads/{thread_id}/watch` | Initial snapshot and continuous SSE events |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/interrupt` | Interruption result |

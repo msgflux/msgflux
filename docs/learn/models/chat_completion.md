@@ -360,6 +360,32 @@ print(response.metadata.usage.input_tokens_details.cached_tokens)
 This also sends the key in both Codex session headers. Reuse the key for
 related requests that share a prefix; the key alone does not guarantee a hit.
 
+Codex supports native conversation compaction through the same SSE endpoint as
+generation. The context adapter appends a `compaction_trigger` request control,
+validates the returned encrypted compaction item, and retains the original user
+and developer messages in the next context view. It does not call the public
+`/responses/compact` or `/responses/input_tokens` routes. Token counting uses the
+shared local heuristic; native compaction does not require an exact counter.
+
+For a paused or failed durable Agent, call:
+
+```python
+result = await agent.acompact(
+    scope=mf.ExecutionScope(thread_id="review-thread-42")
+)
+print(result.status, result.run_id)
+```
+
+This loads the saved conversation and commits a native view without resuming
+execution or changing approval decisions. The same selected OAuth account is
+used for compaction and subsequent model calls. Failures remain visible and do
+not trigger an API-key or portable-summary fallback. See
+[Conversation Compaction](../nn/agent/compaction.md) for lifecycle and recovery
+requirements. This subscription protocol follows the current
+[Codex compaction implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote_v2_attempt.rs);
+the public API documents its separate
+[compaction protocol](https://developers.openai.com/api/docs/guides/compaction).
+
 The provider reads the selected file before each request. It does not copy or
 modify the file, store credentials in serialized model state, fall back to
 `OPENAI_API_KEY`, or silently select another account. If the login expires or
@@ -2798,6 +2824,14 @@ implements OpenAI-compatible `POST /responses/input_tokens` and
 `OpenAIResponsesContextAdapter`. A provider that only implements response
 generation omits it and keeps the provider-neutral token estimate and portable
 summary fallback.
+
+Native compaction and remote token counting are independent. A context adapter
+can set `supports_token_count = False` to keep the shared local estimator while
+implementing its native compaction protocol, as Codex does. Its
+`decode_compaction(owner, payload, *, messages=None)` receives the original
+source messages: protocols that return only an encrypted checkpoint can use
+that source to reconstruct a complete model-visible window. The standalone
+OpenAI endpoint already returns a complete window and does not need the source.
 
 `Model.chat_completion("myprovider/model-name")` remains the frontend after the
 provider class is registered. A genuinely new protocol, such as Google

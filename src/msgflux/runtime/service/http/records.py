@@ -62,6 +62,10 @@ class SteerRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     content: str
 
 
+class CompactRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    run_id: Identifier | None = None
+
+
 class ResumeRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     pass
 

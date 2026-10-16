@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import msgspec
 
+from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
@@ -111,6 +112,10 @@ class AgentSessionClient:
     async def receipt(self, request_id: str) -> AdmissionReceipt:
         """Return the current admission receipt for a request identity."""
         return await self._client.receipt(self.thread_id, request_id)
+
+    async def compact(self, *, run_id: str | None = None) -> CompactionResult:
+        """Compact this thread without resuming its paused/failed run."""
+        return await self._client.compact(self.thread_id, run_id=run_id)
 
     async def result(self, run_id: str | None = None) -> RunResult:
         """Read the latest admission's result, or select an explicit historical run."""

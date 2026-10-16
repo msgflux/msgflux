@@ -11,6 +11,7 @@ import httpx2
 import msgspec
 
 from msgflux.runtime.approvals import ApprovalConflictError
+from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service import (
     AdmissionReceipt,
@@ -29,6 +30,7 @@ from msgflux.runtime.service.http.records import (
     AgentsResponse,
     ApprovalDecisionRequest,
     ApprovalReviewsResponse,
+    CompactRequest,
     ErrorResponse,
     EventRecord,
     HealthRecord,
@@ -248,6 +250,17 @@ class AgentServiceClient:
             "GET", self._thread_path(thread_id) + "/runs", RunsResponse
         )
         return result.runs
+
+    async def compact(
+        self, thread_id: str, *, run_id: str | None = None
+    ) -> CompactionResult:
+        """Compact a paused/failed thread and return the committed operation result."""
+        return await self._json(
+            "POST",
+            self._thread_path(thread_id) + "/compact",
+            CompactionResult,
+            CompactRequest(run_id=run_id),
+        )
 
     async def thread_result(self, thread_id: str) -> RunResult:
         """Fetch the latest admitted run's status and final answer without waiting."""

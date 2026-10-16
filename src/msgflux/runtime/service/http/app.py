@@ -25,6 +25,7 @@ from msgflux.runtime.service.http.records import (
     AgentsResponse,
     ApprovalDecisionRequest,
     ApprovalReviewsResponse,
+    CompactRequest,
     ErrorResponse,
     HealthRecord,
     InterruptResponse,
@@ -176,6 +177,10 @@ def create_service_app(  # noqa: C901
             interactive=data.interactive,
         )
         return _response(thread, 201)
+
+    @post("/v1/threads/{thread_id:str}/compact")
+    async def compact(thread_id: PathValue, data: CompactRequest) -> Response:
+        return _response(await service.compact(thread_id, run_id=data.run_id))
 
     @get("/v1/threads/{thread_id:str}/workspace-policy")
     async def get_workspace_policy(thread_id: PathValue) -> Response:
@@ -378,6 +383,7 @@ def create_service_app(  # noqa: C901
         get_receipt,
         interrupt,
         steer,
+        compact,
         resume,
         approval_reviews,
         decide_approval,
