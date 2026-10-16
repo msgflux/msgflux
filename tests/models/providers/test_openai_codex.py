@@ -626,6 +626,357 @@ def test_codex_explicit_cache_key_overrides_thread_in_body_and_headers(tmp_path)
     assert request.headers["x-client-request-id"] == "shared-prefix"
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_codex_token_count_uses_offline_heuristic(tmp_path, asynchronous):
+    auth_file = _write_auth(tmp_path / "auth.json")
+    captured = []
+
+    def sync_handler(request):
+        captured.append(request)
+        raise AssertionError(f"token counting made an HTTP request: {request.url}")
+
+    async def async_handler(request):
+        captured.append(request)
+        raise AssertionError(f"token counting made an HTTP request: {request.url}")
+
+    if asynchronous:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
+        model = _model(auth_file, async_client=client)
+        try:
+            estimate = await model.acount_context_tokens(
+                [{"role": "user", "content": "long history"}]
+            )
+        finally:
+            await model.aclose()
+    else:
+        client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
+        model = _model(auth_file, client=client)
+        try:
+            estimate = model.count_context_tokens(
+                [{"role": "user", "content": "long history"}]
+            )
+        finally:
+            model.close()
+
+    assert estimate.source == "heuristic"
+    assert estimate.input_tokens > 0
+    assert captured == []
+
+
+def _codex_compaction_sse(output_items, *, usage=None):
+    events = [
+        {
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": item,
+        }
+        for index, item in enumerate(output_items)
+    ]
+    events.append(
+        {
+            "type": "response.completed",
+            "response": {
+                "id": "resp_compaction_test",
+                "status": "completed",
+                "output": [],
+                "usage": usage or {"input_tokens": 31, "output_tokens": 8},
+            },
+        }
+    )
+    return _sse(*events)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_codex_native_compaction_uses_responses_sse_and_reconstructs_history(
+    tmp_path, asynchronous
+):
+    from msgflux.chat_messages import ChatMessages
+
+    auth_file = _write_auth(tmp_path / "auth.json")
+    captured = []
+    output_items = [
+        {"type": "message", "role": "assistant", "content": "compact summary"},
+        {"type": "compaction", "encrypted_content": "opaque compacted state"},
+    ]
+    body = _codex_compaction_sse(output_items)
+
+    def sync_handler(request):
+        captured.append(request)
+        return httpx2.Response(200, text=body)
+
+    async def async_handler(request):
+        captured.append(request)
+        return httpx2.Response(200, text=body)
+
+    messages = ChatMessages(
+        [
+            {"role": "developer", "content": "leading developer remains in input"},
+            {"role": "user", "content": "keep this user context"},
+            {"role": "assistant", "content": "discard this old answer"},
+            {"role": "system", "content": "keep this developer instruction"},
+            {"role": "developer", "content": "keep this developer context"},
+        ]
+    )
+    expected_prefix = [
+        {
+            "type": "message",
+            "role": "developer",
+            "content": "leading developer remains in input",
+        },
+        {"type": "message", "role": "user", "content": "keep this user context"},
+        {
+            "type": "message",
+            "role": "developer",
+            "content": "keep this developer instruction",
+        },
+        {
+            "type": "message",
+            "role": "developer",
+            "content": "keep this developer context",
+        },
+    ]
+
+    if asynchronous:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
+        model = _model(auth_file, async_client=client)
+        try:
+            compacted = await model.acompact_context(
+                messages, system_prompt="Top level policy stays in instructions."
+            )
+        finally:
+            await model.aclose()
+    else:
+        client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
+        model = _model(auth_file, client=client)
+        try:
+            compacted = model.compact_context(
+                messages, system_prompt="Top level policy stays in instructions."
+            )
+        finally:
+            model.close()
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url.path == "/backend-api/codex/responses"
+    assert request.headers["authorization"] == "Bearer access-one"
+    assert request.headers["chatgpt-account-id"] == "acct-test"
+    assert request.headers["accept"] == "text/event-stream"
+    payload = json.loads(request.content)
+    assert payload["store"] is False
+    assert payload["stream"] is True
+    assert payload["instructions"] == "Top level policy stays in instructions."
+    assert payload["input"][-1] == {"type": "compaction_trigger"}
+    assert payload["input"][:-1] == [
+        {
+            "type": "message",
+            "role": "developer",
+            "content": "leading developer remains in input",
+        },
+        {"type": "message", "role": "user", "content": "keep this user context"},
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": "discard this old answer",
+        },
+        {
+            "type": "message",
+            "role": "developer",
+            "content": "keep this developer instruction",
+        },
+        {
+            "type": "message",
+            "role": "developer",
+            "content": "keep this developer context",
+        },
+    ]
+    assert compacted.format == "provider"
+    assert compacted.items == expected_prefix + output_items
+    assert compacted.provider == "openai-codex"
+    assert compacted.api_mode == "responses"
+    assert compacted.usage["input_tokens"] == 31
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "output_items",
+    [
+        [{"type": "message", "role": "assistant", "content": "no compaction"}],
+        [
+            {"type": "compaction", "encrypted_content": "one"},
+            {"type": "compaction", "encrypted_content": "two"},
+        ],
+        [{"type": "compaction", "encrypted_content": ""}],
+    ],
+)
+@pytest.mark.asyncio
+async def test_codex_native_compaction_rejects_invalid_compaction_output(
+    tmp_path, asynchronous, output_items
+):
+    auth_file = _write_auth(tmp_path / "auth.json")
+    body = _codex_compaction_sse(output_items)
+
+    def sync_handler(_request):
+        return httpx2.Response(200, text=body)
+
+    async def async_handler(_request):
+        return httpx2.Response(200, text=body)
+
+    if asynchronous:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
+        model = _model(auth_file, async_client=client)
+        try:
+            with pytest.raises(ValueError, match="compaction"):
+                await model.acompact_context(
+                    [{"role": "user", "content": "long history"}]
+                )
+        finally:
+            await model.aclose()
+    else:
+        client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
+        model = _model(auth_file, client=client)
+        try:
+            with pytest.raises(ValueError, match="compaction"):
+                model.compact_context([{"role": "user", "content": "long history"}])
+        finally:
+            model.close()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("status_code", [400, 401, 403])
+@pytest.mark.asyncio
+async def test_codex_compaction_http_errors_do_not_fall_back(
+    tmp_path, asynchronous, status_code
+):
+    from msgflux.exceptions import ModelProviderHTTPError
+
+    auth_file = _write_auth(tmp_path / "auth.json")
+    captured = []
+
+    def sync_handler(request):
+        captured.append(request)
+        return httpx2.Response(status_code, text="private compaction error")
+
+    async def async_handler(request):
+        captured.append(request)
+        return httpx2.Response(status_code, text="private compaction error")
+
+    if asynchronous:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
+        model = _model(auth_file, async_client=client)
+        try:
+            if status_code == 401:
+                with pytest.raises(RuntimeError, match="login expired or revoked"):
+                    await model.acompact_context(
+                        [{"role": "user", "content": "long history"}]
+                    )
+            else:
+                with pytest.raises(ModelProviderHTTPError) as exc:
+                    await model.acompact_context(
+                        [{"role": "user", "content": "long history"}]
+                    )
+                assert exc.value.status_code == status_code
+        finally:
+            await model.aclose()
+    else:
+        client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
+        model = _model(auth_file, client=client)
+        try:
+            if status_code == 401:
+                with pytest.raises(RuntimeError, match="login expired or revoked"):
+                    model.compact_context([{"role": "user", "content": "long history"}])
+            else:
+                with pytest.raises(ModelProviderHTTPError) as exc:
+                    model.compact_context([{"role": "user", "content": "long history"}])
+                assert exc.value.status_code == status_code
+        finally:
+            model.close()
+
+    assert len(captured) == 1
+    assert captured[0].url.path == "/backend-api/codex/responses"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_codex_compaction_view_replays_during_sse_generation(
+    tmp_path, asynchronous
+):
+    from msgflux.chat_messages import ChatMessages
+
+    auth_file = _write_auth(tmp_path / "auth.json")
+    captured = []
+    compacted_output = [
+        {"type": "message", "role": "user", "content": "retained prompt"},
+        {"type": "compaction", "encrypted_content": "opaque compacted state"},
+    ]
+
+    def handler(request):
+        captured.append(request)
+        if json.loads(request.content)["input"][-1].get("type") == "compaction_trigger":
+            return httpx2.Response(200, text=_codex_compaction_sse(compacted_output))
+        return httpx2.Response(
+            200,
+            text=_sse(
+                {
+                    "type": "response.completed",
+                    "response": _completed_response(),
+                }
+            ),
+        )
+
+    async def async_handler(request):
+        return handler(request)
+
+    history = ChatMessages()
+    history.begin_turn()
+    history.add_user("original prompt")
+    history.add_assistant("old assistant answer")
+    history.end_turn()
+    boundary_id = history.latest_completed_turn_boundary()["item_id"]
+    history.begin_turn()
+    history.add_compaction(
+        compacted_through_item_id=boundary_id,
+        views=[
+            {
+                "format": "provider",
+                "provider": "openai-codex",
+                "api_mode": "responses",
+                "items": compacted_output,
+            }
+        ],
+    )
+    history.add_user("continue from compacted context")
+
+    if asynchronous:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
+        model = _model(auth_file, async_client=client)
+        try:
+            response = await model.acall(history)
+        finally:
+            await model.aclose()
+    else:
+        client = httpx2.Client(transport=httpx2.MockTransport(handler))
+        model = _model(auth_file, client=client)
+        try:
+            response = model(history)
+        finally:
+            model.close()
+
+    assert response.consume() == "Codex says hello."
+    assert len(captured) == 1
+    payload = json.loads(captured[0].content)
+    assert payload["input"] == [
+        {"type": "message", "role": "user", "content": "retained prompt"},
+        {"type": "compaction", "encrypted_content": "opaque compacted state"},
+        {
+            "type": "message",
+            "role": "user",
+            "content": "continue from compacted context",
+        },
+    ]
+
+
 def test_codex_rejects_unsupported_storage_preference(tmp_path):
     from msgflux.models.providers.openai_codex import OpenAICodexChatCompletion
 

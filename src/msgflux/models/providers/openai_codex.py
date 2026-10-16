@@ -9,6 +9,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from msgspec.structs import replace
+
 from msgflux.chat_messages import ChatMessages
 from msgflux.exceptions import ModelProviderHTTPError
 from msgflux.models.chat_api import PreparedChatRequest
@@ -22,6 +24,7 @@ from msgflux.models.codex_credentials import (
     read_codex_credentials,
     resolve_codex_auth_file,
 )
+from msgflux.models.compaction import ModelCompaction
 from msgflux.models.http_transport import merge_headers
 from msgflux.models.model_credentials import (
     ModelCredentialResolver,
@@ -140,6 +143,57 @@ class CodexResponsesAPI(OpenAIResponsesAPI):
                 f"Unsupported Codex request options: {', '.join(sorted(unsupported))}"
             )
         return PreparedChatRequest(api=self.name, endpoint=self.endpoint, params=body)
+
+
+class CodexResponsesContextAdapter(OpenAIResponsesContextAdapter):
+    """Native Codex compaction with local token estimation."""
+
+    supports_token_count = False
+
+    def prepare_compaction(
+        self, owner: Any, messages: Any, *, system_prompt: str | None = None
+    ) -> PreparedChatRequest:
+        source = self._input(owner, messages)
+        # A trigger is a request control, never a durable history item. Build
+        # generation defaults before attaching the source so a leading developer
+        # message is not mistaken for the top-level system instructions.
+        params = {
+            "model": owner.model_id,
+            "input": [],
+            "instructions": system_prompt,
+        }
+        if thread_id := get_thread_id():
+            params["prompt_cache_key"] = thread_id
+        params = owner.api_adapter.prepare_request(owner, params).params
+        params["input"] = [*source, {"type": "compaction_trigger"}]
+        return PreparedChatRequest(
+            api=self.api_mode, endpoint=owner.api_adapter.endpoint, params=params
+        )
+
+    def decode_compaction(
+        self, owner: Any, payload: Any, *, messages: Any = None
+    ) -> ModelCompaction:
+        compacted = super().decode_compaction(owner, payload, messages=messages)
+        checkpoints = [
+            item for item in compacted.items if item.get("type") == "compaction"
+        ]
+        encrypted = (
+            checkpoints[0].get("encrypted_content") if len(checkpoints) == 1 else None
+        )
+        if not isinstance(encrypted, str) or not encrypted.strip():
+            raise ValueError(
+                "Codex compaction must return exactly one encrypted compaction item"
+            )
+        if messages is None:
+            raise ValueError("Codex compaction requires its source messages")
+        # V2 returns a checkpoint, not a complete replacement window. As in
+        # Codex CLI, retain the user's requests and client-authored instructions.
+        retained = [
+            item
+            for item in self._input(owner, messages)
+            if item.get("role") in {"user", "developer"}
+        ]
+        return replace(compacted, items=[*retained, *compacted.items])
 
 
 class CodexChatTransport(HTTPChatTransport):
@@ -312,7 +366,7 @@ class OpenAICodexChatCompletion(OpenAICompatibleChatCompletion):
                 encrypted_reasoning=True,
                 assistant_commentary=True,
                 request_reasoning_effort=True,
-                context_adapter=OpenAIResponsesContextAdapter(),
+                context_adapter=CodexResponsesContextAdapter(),
             ),
         ),
         default_reasoning_codec=OpenAIResponsesReasoningCodec(),
