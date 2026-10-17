@@ -6,13 +6,14 @@ import asyncio
 import contextvars
 import inspect
 from collections.abc import Callable
-from contextlib import aclosing, asynccontextmanager
+from contextlib import ExitStack, aclosing, asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import msgspec
+from opentelemetry.trace import SpanContext
 
 from msgflux.exceptions import (
     AbortRequestedError,
@@ -61,6 +62,11 @@ from msgflux.runtime.service.session_cache import (
 from msgflux.runtime.service.store import SQLiteServiceStore, validate_identifier
 from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 from msgflux.runtime.workspace.policy import WorkspacePolicy, WorkspacePolicyState
+from msgflux.telemetry.service import (
+    execution_span,
+    execution_trigger,
+    finish_execution_span,
+)
 from msgflux.utils.validation import is_valid_account_name
 
 _DEFAULT_CACHE_POLICY = SessionCachePolicy()
@@ -195,6 +201,7 @@ class _Worker(msgspec.Struct):
     session: AgentSession
     scope: ExecutionScope
     task: asyncio.Task | None = None
+    trace_trigger: SpanContext | None = None
 
 
 class AgentService:
@@ -854,7 +861,9 @@ class AgentService:
             signal=signal,
             account_name=record.account_name,
         )
-        worker = _Worker(record.receipt, session, scope)
+        worker = _Worker(
+            record.receipt, session, scope, trace_trigger=execution_trigger()
+        )
         self._workers[key] = worker
         # Clients may be observing another thread or a nested Agent. Never adopt
         # their ContextVars, event sink, task handle, or execution lineage.
@@ -880,42 +889,59 @@ class AgentService:
                 )
 
     async def _produce(self, record: AdmissionRecord, worker: _Worker) -> None:
-        receipt = record.receipt
-        key = (receipt.thread_id, receipt.request_id)
-        status: AdmissionStatus = "completed"
-        error = None
-        claimed = False
-        try:
-            claimed = self.store.claim(record, self._owner_id)
-            if not claimed:
-                return
-            claimed_record = self.store.get(receipt.thread_id, receipt.request_id)
-            worker.receipt = claimed_record.receipt
-            receipt = worker.receipt
-            status = await self._execute(record, worker)
-        except TaskPauseRequestedError as exc:
-            status, error = "paused", str(exc)
-        except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-            status, error = "interrupted", str(exc)
-        except asyncio.CancelledError:
-            status, error = "interrupted", "Service worker cancelled"
-            raise
-        except Exception as exc:
-            status, error = "failed", str(exc)
-        except BaseException as exc:
-            status, error = "failed", str(exc)
-            raise
-        finally:
+        with ExitStack() as spans:
+            receipt = record.receipt
+            key = (receipt.thread_id, receipt.request_id)
+            status: AdmissionStatus = "completed"
+            error = None
+            claimed = False
+            span = None
+            error_type = None
             try:
-                if claimed:
-                    self.store.finish(receipt, self._owner_id, status, error)
+                claimed = self.store.claim(record, self._owner_id)
+                if not claimed:
+                    return
+                claimed_record = self.store.get(receipt.thread_id, receipt.request_id)
+                worker.receipt = claimed_record.receipt
+                receipt = worker.receipt
+                span = spans.enter_context(
+                    execution_span(
+                        receipt,
+                        self.store.thread(receipt.thread_id).agent_id,
+                        worker.trace_trigger,
+                    )
+                )
+                status = await self._execute(record, worker)
+            except TaskPauseRequestedError as exc:
+                error_type = type(exc).__name__
+                status, error = "paused", str(exc)
+            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+                error_type = type(exc).__name__
+                status, error = "interrupted", str(exc)
+            except asyncio.CancelledError:
+                error_type = "CancelledError"
+                status, error = "interrupted", "Service worker cancelled"
+                raise
+            except Exception as exc:
+                error_type = type(exc).__name__
+                status, error = "failed", str(exc)
+            except BaseException as exc:
+                error_type = type(exc).__name__
+                status, error = "failed", str(exc)
+                raise
             finally:
-                self._workers.pop(key, None)
-            # A policy can change while the model/approval preparation is still
-            # running. Reevaluate only after that worker has finished its Agent
-            # context and durably paused; never overlap the two executions.
-            if status == "paused":
-                await self._resume_quiescent_policy(worker, key)
+                try:
+                    if claimed:
+                        self.store.finish(receipt, self._owner_id, status, error)
+                    if span is not None:
+                        finish_execution_span(span, status, error_type)
+                finally:
+                    self._workers.pop(key, None)
+                # A policy can change while the model/approval preparation is still
+                # running. Reevaluate only after that worker has finished its Agent
+                # context and durably paused; never overlap the two executions.
+                if status == "paused":
+                    await self._resume_quiescent_policy(worker, key)
 
     async def _resume_quiescent_policy(self, worker, key):
         if self._closed:

@@ -138,7 +138,7 @@ async def test_internal_error_is_recorded_without_leaking_body(providers, monkey
 
 
 @pytest.mark.asyncio
-async def test_admission_ids_are_recorded_without_inheriting_request_span_in_worker(
+async def test_admission_links_to_independent_worker_trace(
     providers,
 ):
     from unittest.mock import AsyncMock
@@ -179,6 +179,14 @@ async def test_admission_ids_are_recorded_without_inheriting_request_span_in_wor
         assert seen and all(
             context.trace_id != prompt_span.context.trace_id for context in seen
         )
+        attempt = next(
+            s
+            for s in exporter.get_finished_spans()
+            if s.name == "msgflux.service.execute"
+        )
+        assert attempt.parent is None
+        assert attempt.links[0].context == prompt_span.context
+        assert all(context.trace_id == attempt.context.trace_id for context in seen)
         assert not trace.get_current_span().get_span_context().is_valid
     finally:
         await service.aclose()

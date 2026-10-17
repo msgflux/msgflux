@@ -631,10 +631,63 @@ Tool and Model telemetry has its own capture settings; see
 Watch spans last for the SSE connection and end on disconnect. Internal ASGI
 send/receive spans are disabled, avoiding one span per token or event. Closing a
 watch connection does not cancel the run. An admitted execution runs in its own
-context and does not inherit the HTTP request span, event sink or authorization
-ContextVars. HTTP tracing therefore describes frontend requests, while existing
-Agent/Tool/Model spans describe execution separately; this integration does not
-add cross-trace links for detached workers.
+context and does not inherit the HTTP request span, event sink, authorization
+ContextVars or baggage. Instead, each claimed attempt creates a root
+`msgflux.service.execute` span with a
+[Span Link](https://opentelemetry.io/docs/concepts/signals/traces/#span-links) to
+its initiating prompt or resume request. Agent, Tool and Model spans created
+during execution are children within this attempt's trace. This also works for
+embedded `AgentService` calls with an active caller span, without installing the
+HTTP extra.
+
+An attempt span lasts through execution and journal settlement. Its attributes
+include `msgflux.agent_id`, `msgflux.thread_id`, `msgflux.run_id`,
+`msgflux.request_id`, `msgflux.admission.revision` and `msgflux.run.status`.
+Completion sets OpenTelemetry status `OK`; failure sets `ERROR`. Approval pauses
+and explicit interruptions are expected control flow and leave the status unset.
+When available, `msgflux.run.stop_reason` identifies the pause/interruption
+exception class; failures use `error.type`. These service spans never record
+exception messages, stack traces, prompts or tool results. Existing child span
+capture settings remain independent.
+
+For example, a run that pauses for approval and then resumes has two independent
+attempt spans linked to their respective requests:
+
+```text
+POST /v1/threads/{thread_id}/prompt
+  └─ link → msgflux.service.execute [status=paused]
+              └─ Model request
+POST /v1/threads/{thread_id}/runs/{run_id}/resume
+  └─ link → msgflux.service.execute [status=completed]
+              ├─ Approved tool execution
+              └─ Model request
+```
+
+Both attempts retain the same durable run/request IDs but have distinct span
+and trace IDs. Retrying an already admitted prompt does not create an extra
+execution span. A new attempt is instrumented only after the service claims it;
+reconciling an already completed checkpoint does not invent an execution span.
+Links are captured from the live scheduling caller and are not persisted in
+checkpoints. A resume after server restart links to the new resume request;
+use the durable IDs to correlate it with attempts exported before the restart.
+An automatic policy resume links to its live scheduling span when one exists.
+Disconnecting a watcher or closing its HTTP span never ends an attempt span.
+Closing the service also leaves shared OpenTelemetry providers owned by the host.
+
+The opt-in integration check uses the existing Codex account, a real TCP service
+and a Docker OpenTelemetry Collector. It checks concurrent threads, approval
+pause/resume, model/tool span ancestry, HTTP links and watcher disconnection:
+
+```bash
+MSGFLUX_LIVE_SERVICE_TELEMETRY=1 \
+MSGFLUX_LIVE_SERVICE_ACCOUNT=work \
+uv run --extra service pytest -q \
+  tests/integration/test_service_execution_telemetry_e2e.py
+```
+
+This invokes the configured subscription model and requires Docker plus the
+`otel/opentelemetry-collector-contrib:0.163.1` image. The test removes its collector
+container and closes the owned service, stores and telemetry provider.
 
 The native instrumentation records HTTP duration, active requests and available
 body sizes when the host supplies a metric provider. `msgtrace-sdk` configures
