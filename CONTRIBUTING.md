@@ -278,7 +278,11 @@ We use an automated release script that creates a release PR with full security 
    **⚠️ Important**: Release PRs **must be merged manually** to trigger the publish workflow. The merge bot uses `GITHUB_TOKEN` which doesn't trigger downstream workflows due to GitHub Actions security limitations.
 
 6. **After PR is merged**, automated workflow triggers:
-   - `publish.yml` workflow detects version change on main
+   - `Validate Release` validates the version change and release-only file list on main.
+   - A successful validation starts `publish.yml` regardless of the commit message.
+     Builds and release metadata use the validated commit SHA, including when
+     validation is rerun; they do not use whichever commit is currently at main.
+   - `publish.yml` workflow detects version change on the validated commit
    - Validates version was bumped correctly
    - Builds distribution packages
    - Creates git tag (e.g., `v0.12.4`)
