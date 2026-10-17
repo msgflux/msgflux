@@ -15,7 +15,11 @@ from typing import (
 
 import msgspec
 
-from msgflux._private.model_metadata import last_model_metadata
+from msgflux._private.model_metadata import (
+    last_model_configuration,
+    last_model_metadata,
+    model_configuration_from_history,
+)
 from msgflux._private.response_metadata import attach_response_metadata
 from msgflux.chat_messages import ChatMessages
 from msgflux.exceptions import (
@@ -23,6 +27,7 @@ from msgflux.exceptions import (
     TaskInterruptRequestedError,
     TaskPauseRequestedError,
 )
+from msgflux.models.configuration import ModelConfiguration
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.tool_transport import native_item_types
@@ -171,6 +176,18 @@ def _missing_origin_checkpoint(
 
 class AgentConversationMixin:
     """Conversation state, inbox, checkpoint, and durable-resume behavior."""
+
+    def get_model_configuration(
+        self, *, scope: ExecutionScope | None = None
+    ) -> ModelConfiguration | None:
+        """Recover the last audited request and conversation reasoning settings.
+
+        This reads checkpoint state without constructing or modifying a model.
+        It does not represent an unexecuted selection or a pending inbox update.
+        """
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("`scope` must be ExecutionScope or None")
+        return last_model_configuration(self._reasoning_checkpoint_state(scope))
 
     def get_last_model_metadata(
         self, *, scope: ExecutionScope | None = None
@@ -1388,8 +1405,14 @@ class AgentConversationMixin:
                     "schema_version": 1,
                     "extensions": {"workspace_reference": workspace_reference},
                 }
+        model_configuration = model_configuration_from_history(messages._items)
         state = {
             "schema_version": 1,
+            "model_configuration": (
+                msgspec.to_builtins(model_configuration)
+                if model_configuration is not None
+                else None
+            ),
             "status": status,
             "messages": messages._to_state(),
             "runtime": runtime_state,

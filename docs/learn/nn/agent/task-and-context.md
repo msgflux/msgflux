@@ -894,3 +894,93 @@ class VisionAgent(nn.Agent):
     answerer(msg_b)  # uses user.question directly
     print(msg_b.answer)
     ```
+
+## Recovering Model Configuration
+
+Checkpoint-backed agents persist a `ModelConfiguration` snapshot of the last
+audited response. It keeps the reasoning setting sent in the request distinct
+from native updates carried by the conversation.
+
+```python
+import asyncio
+
+import msgflux as mf
+from msgflux.data.stores import SQLiteCheckpointStore
+from msgflux.nn import Agent
+from msgflux.runtime import ExecutionScope
+
+
+async def main():
+    store = SQLiteCheckpointStore("checkpoints.sqlite3")
+    model = mf.Model.chat_completion("openai/gpt-6-astra", reasoning_effort="low")
+    agent = Agent(name="assistant", model=model, checkpoint_store=store)
+    try:
+        await agent.acall(
+            "Reply briefly.",
+            scope=ExecutionScope(thread_id="example", run_id="first"),
+        )
+        agent.agent_inbox.set_reasoning_effort("high")
+        await agent.acall(
+            "Continue briefly.",
+            scope=ExecutionScope(thread_id="example", run_id="second"),
+        )
+        saved = agent.get_model_configuration(scope=ExecutionScope(thread_id="example"))
+        print(saved.request_reasoning_effort)       # low
+        print(saved.conversation_reasoning_effort)  # high
+        print(saved.reasoning_effort)               # high
+    finally:
+        await agent.aclose()
+        await model.aclose()
+        store.close()
+
+
+asyncio.run(main())
+```
+
+The example requires `OPENAI_API_KEY`. A model/API supporting native conversation
+updates retains `low` in the request while the conversation updates it to `high`.
+For a model without native updates, the second request instead records
+`request_reasoning_effort="high"` and `conversation_reasoning_effort=None`.
+
+Recover the record after reopening SQLite without constructing a model or making
+a request:
+
+```python
+from msgflux.data.stores import SQLiteCheckpointStore
+
+store = SQLiteCheckpointStore("checkpoints.sqlite3")
+try:
+    latest = store.get_model_configuration("assistant", "example")
+    first = store.get_model_configuration("assistant", "example", run_id="first")
+finally:
+    store.close()
+```
+
+Stores implementing `AsyncCheckpointStore` expose
+`await store.aget_model_configuration(...)` using their native async reads.
+The optional `run_id` selects one saved run; omission selects the latest run.
+The Agent getter uses existing checkpoint scope selection and does not provision
+a missing thread. The record is exported as `msgflux.models.ModelConfiguration`.
+
+| Field | Meaning |
+| --- | --- |
+| `provider`, `model_id`, `api_mode` | Identity recorded by the adapter that produced the response |
+| `request_reasoning_effort` | Reasoning effort in the prepared request's top-level configuration |
+| `conversation_reasoning_effort` | Latest native reasoning update actually included in that request |
+| `reasoning_effort` | Effective effort recorded for the response |
+
+For the two request/conversation fields, `None` means capture confirmed that the
+setting was absent. `msgspec.UNSET` means an older checkpoint or adapter did not
+capture it. An effective effort of `high` alone cannot establish whether the
+request baseline was `low` or `high`.
+
+Request-level capture currently covers the shared OpenAI-compatible Responses
+and Chat Completions paths, including Codex and OpenRouter. Other adapters, such
+as native Ollama, leave settings they do not capture as `UNSET`.
+
+The snapshot describes the last audited response, not an unexecuted selection or
+a pending inbox update. A failure with no new response items does not invent a
+new identity. A newer response without identity returns `None` rather than
+suggesting an older model. Manual compaction preserves the snapshot. Reading it
+does not mutate a newly constructed model or replay updates; applying a recovered
+selection is a separate host action.

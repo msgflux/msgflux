@@ -822,6 +822,8 @@ class TestOpenAIChatCompletion:
             "model_id": "gpt-5",
             "api_mode": "responses",
             "reasoning_effort": "medium",
+            "request_reasoning_effort": "medium",
+            "conversation_reasoning_effort": None,
         }
         assert response.history_items == [
             {
@@ -2250,6 +2252,8 @@ class TestOpenAIChatCompletion:
             "api_mode": "chat_completions",
             "requested_speed": "fast",
             "effective_speed": "priority",
+            "request_reasoning_effort": None,
+            "conversation_reasoning_effort": None,
         }
 
     def test_prepare_generate_kwargs_lowers_dict_schema(self, mock_openai_client):
