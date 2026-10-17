@@ -1126,20 +1126,69 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 cls._stream_add_chunk(stream_response, chunk, "text_generation")
         pending_content.clear()
 
+    @staticmethod
+    def _capture_reasoning_metadata(request, metadata):
+        """Record reasoning from the final wire request, including overrides."""
+        body = request.json
+        if request.api == "responses":
+            reasoning = body.get("reasoning")
+            effort = reasoning.get("effort") if isinstance(reasoning, Mapping) else None
+            updates = (
+                item.get("reasoning", {}).get("effort")
+                for item in body.get("input") or ()
+                if isinstance(item, Mapping)
+                and item.get("type") == "configuration_update"
+                and isinstance(item.get("reasoning"), Mapping)
+            )
+            conversation_effort = next(
+                (value for value in reversed(list(updates)) if isinstance(value, str)),
+                None,
+            )
+        else:
+            effort = body.get("reasoning_effort")
+            reasoning = body.get("reasoning")
+            if effort is None and isinstance(reasoning, Mapping):
+                effort = reasoning.get("effort")
+            conversation_effort = None
+        request_effort = effort if isinstance(effort, str) else None
+        metadata["request_reasoning_effort"] = request_effort
+        metadata["conversation_reasoning_effort"] = conversation_effort
+        effective_effort = conversation_effort or request_effort
+        if effective_effort is not None:
+            metadata["reasoning_effort"] = effective_effort
+        else:
+            metadata.pop("reasoning_effort", None)
+
+    def _execute_with_metadata(self, metadata, **kwargs):
+        if self.api_mode in {"chat_completions", "responses"}:
+            kwargs["_request_model_metadata"] = metadata
+        return self._execute_model(**kwargs)
+
+    async def _aexecute_with_metadata(self, metadata, **kwargs):
+        if self.api_mode in {"chat_completions", "responses"}:
+            kwargs["_request_model_metadata"] = metadata
+        return await self._aexecute_model(**kwargs)
+
     def _execute_model(self, **kwargs):
+        request_metadata = kwargs.pop("_request_model_metadata", None)
         self._raise_if_aborted()
         params = {**self.sampling_run_params, **kwargs}
         request = self.api_adapter.prepare_request(self, params)
         request = self._apply_chat_extensions(request, operation="generate")
+        if request_metadata is not None:
+            self._capture_reasoning_metadata(request, request_metadata)
         model_output = self.chat_transport.create(self, request)
         self._raise_if_aborted()
         return model_output
 
     async def _aexecute_model(self, **kwargs):
+        request_metadata = kwargs.pop("_request_model_metadata", None)
         self._raise_if_aborted()
         params = {**self.sampling_run_params, **kwargs}
         request = self.api_adapter.prepare_request(self, params)
         request = self._apply_chat_extensions(request, operation="generate")
+        if request_metadata is not None:
+            self._capture_reasoning_metadata(request, request_metadata)
         model_output = await self.chat_transport.acreate(
             self,
             request,
@@ -1752,7 +1801,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
 
         request_timer = ModelRequestTimer()
-        model_output = self._execute_model(**kwargs)
+        request_metadata = {}
+        model_output = self._execute_with_metadata(request_metadata, **kwargs)
         response = self._process_model_output(
             model_output,
             generation_schema,
@@ -1761,6 +1811,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
         if effective_effort is not None:
             response.metadata.model.reasoning_effort = effective_effort
+        if request_metadata:
+            response.metadata.model.pop("reasoning_effort", None)
+            response.metadata.model.update(request_metadata)
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
@@ -1788,7 +1841,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
 
         request_timer = ModelRequestTimer()
-        model_output = await self._aexecute_model(**kwargs)
+        request_metadata = {}
+        model_output = await self._aexecute_with_metadata(request_metadata, **kwargs)
         response = self._process_model_output(
             model_output,
             generation_schema,
@@ -1797,6 +1851,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
         if effective_effort is not None:
             response.metadata.model.reasoning_effort = effective_effort
+        if request_metadata:
+            response.metadata.model.pop("reasoning_effort", None)
+            response.metadata.model.update(request_metadata)
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
@@ -1826,7 +1883,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
         try:
             aggregator = ToolCallAggregator()
-            model_output = self._execute_model(**kwargs)
+            model_output = self._execute_with_metadata(metadata.model, **kwargs)
             finish_reason = None
 
             self._raise_if_aborted()
@@ -1959,7 +2016,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
         try:
             aggregator = ToolCallAggregator()
-            model_output = await self._aexecute_model(**kwargs)
+            model_output = await self._aexecute_with_metadata(metadata.model, **kwargs)
             finish_reason = None
 
             self._raise_if_aborted()
@@ -2466,7 +2523,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         try:
-            model_output = self._execute_model(**kwargs)
+            model_output = self._execute_with_metadata(
+                state["metadata"].model, **kwargs
+            )
             self._raise_if_aborted()
             for event in model_output:
                 self._handle_responses_stream_event(
@@ -2515,7 +2574,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         final_status = "completed"
         model_output = None
         try:
-            model_output = await self._aexecute_model(**kwargs)
+            model_output = await self._aexecute_with_metadata(
+                state["metadata"].model, **kwargs
+            )
             self._raise_if_aborted()
             async for event in model_output:
                 self._handle_responses_stream_event(
