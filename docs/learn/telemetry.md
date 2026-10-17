@@ -51,8 +51,15 @@ HTTP spans cover API requests, authentication failures and SSE connections;
 streaming emits no per-token send/receive spans. Route templates keep span names
 stable, and receipt/path identities are recorded as attributes. The HTTP adapter
 does not capture bodies or change the Agent/Model capture settings below.
-Detached executions retain their independent contexts rather than becoming
-children of an observer's request.
+Each claimed execution attempt creates a root `msgflux.service.execute` span
+linked to the prompt/resume request that scheduled it. Agent, Tool and Model
+spans produced during that attempt share its trace. Detached workers retain
+their independent execution contexts and do not copy HTTP baggage or other
+frontend state. Approval pauses and interruptions are recorded as outcomes,
+while execution or journal failures set an error status. Attempt spans contain
+identities and outcome metadata only; child spans retain their own capture
+settings. Repeated/resumed attempts correlate through durable thread/run/request
+IDs, including after a service restart.
 
 HTTP metrics require a host-configured meter provider; the trace exporter alone
 does not export metrics. See
