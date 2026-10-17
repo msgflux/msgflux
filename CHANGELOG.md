@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.0.0rc3] - 2026-10-17
+
+Third release candidate for Coding and AgentService.
+
+### Coding CLI And Service Operation
+- Observe and steer an existing thread from independent CLI processes (#251).
+- Detach prompt admission and always expose thread/request/run identities (#252).
+- Retrieve current thread or explicit run status and final answer from the CLI and HTTP
+  API, with optional waiting (#253).
+- Inspect the running server's loaded HTTP policy, distinct from configuration edits
+  pending restart (#260).
+
+### Agent Extensions
+- Discover installed extension packages and select/configure them per agent (#255).
+- Add or remove extension selections from the CLI with constructor options and
+  independent aliases, preserving service TOML formatting and atomic publication (#256).
+
+### Durability And Context
+- Safely recover pending approvals after a local daemon restart without bypassing review
+  or replaying uncertain effects automatically (#254).
+- Compact eligible paused/failed checkpoint-backed threads from the SDK or HTTP API;
+  preserve pending approvals and support the native Codex subscription compaction flow
+  (#257).
+
+### Browser Access And Observability
+- Configure explicit browser origins or a standalone '*' wildcard; bearer authorization
+  remains required (#258).
+- Manage CORS origins through `msgflux config cors ls/add/remove`; edited policies take
+  effect after restart (#260).
+- Instrument authenticated HTTP/SSE requests using the existing OpenTelemetry providers
+  (#258).
+- Link detached execution attempts to their scheduling requests, with model/tool
+  ancestry and durable identity/outcome attributes (#259).
+
+### Validation And Installation
+- Real Codex subscription checks with concurrent threads, approval pause/resume,
+  observer disconnection, a TCP service and an OpenTelemetry Collector.
+- Fresh wheel installation with [coding,service], detached admission/result retrieval,
+  graceful restart, same-thread history continuity and final shutdown cleanup.
+- Install with `uv tool install 'msgflux[coding,service]==1.0.0rc3'` after publication.
+- Python 3.11+; no change to explicit host reconciliation for uncertain external
+  effects.
+
 ## [1.0.0rc2] - 2026-10-15
 
 Second release candidate for Coding and AgentService.
