@@ -1,6 +1,8 @@
 """Tests for msgflux.telemetry.config module."""
 
 import os
+
+import msgspec
 import pytest
 
 from msgflux.telemetry.config import (
@@ -8,6 +10,24 @@ from msgflux.telemetry.config import (
     configure_msgtrace,
     msgtrace_settings,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_msgtrace_configuration():
+    """Keep programmatic configuration from leaking into other tests or children."""
+    settings = msgspec.structs.asdict(msgtrace_settings)
+    environment = {
+        f"MSGTRACE_{name.upper()}": os.environ.get(f"MSGTRACE_{name.upper()}")
+        for name in settings
+    }
+    yield
+    for name, value in environment.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    for name, value in settings.items():
+        setattr(msgtrace_settings, name, value)
 
 
 class TestMsgTraceSettings:
