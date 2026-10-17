@@ -35,6 +35,7 @@ from msgflux.runtime.service.http.records import (
     PromptRequest,
     ResumeRequest,
     RunsResponse,
+    ServiceInspection,
     ShutdownRequest,
     ShutdownResponse,
     SteerRequest,
@@ -145,6 +146,10 @@ def create_service_app(  # noqa: C901
         # Check service availability without invoking a configured Agent factory.
         service.threads()
         return _response(HealthRecord(instance_id, default_agent=service.default_agent))
+
+    @get("/v1/service/inspection")
+    async def inspect_service() -> Response:
+        return _response(ServiceInspection(instance_id, http_config))
 
     async def shutdown(data: ShutdownRequest) -> Response:
         if data.expected_instance_id != instance_id:
@@ -379,6 +384,7 @@ def create_service_app(  # noqa: C901
 
     route_handlers = [
         health,
+        inspect_service,
         list_agents,
         inspect_agent,
         active_runs,

@@ -30,7 +30,8 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux agents ls; msgflux agents inspect AGENT_ID; "
             "msgflux threads ls; msgflux threads watch THREAD_ID; "
             "msgflux threads steer THREAD_ID -m MESSAGE; "
-            "msgflux config validate; msgflux extensions ls; "
+            "msgflux config validate; msgflux config cors ls/add/remove; "
+            "msgflux extensions ls; "
             "msgflux extensions inspect NAME [--options]; "
             "msgflux extensions add/remove NAME --agent ID."
         ),

@@ -567,8 +567,25 @@ This includes opaque browser origins such as `null`. The wildcard cannot be mixe
 with other entries. Actual API requests still require the bearer token, and
 cookie credentials remain disabled.
 
+The CLI can update an existing service file without starting a daemon:
+
+```bash
+msgflux config cors ls --config ./service.toml
+msgflux config cors add http://localhost:3000 --config ./service.toml
+msgflux config cors remove http://localhost:3000 --config ./service.toml
+msgflux config cors add '*' --config ./service.toml --json
+```
+
+The final command requires an empty origin list; it never silently replaces
+existing explicit origins. Add/remove are idempotent and report whether restart
+is required. Omit `--config` to use the default service file. These commands
+preserve unrelated sections, comments and file permissions; they never import
+extensions or construct agents.
+
 Restart the daemon after editing its policy. `msgflux config validate` validates
 origins offline, without importing agent factories or constructing models.
+`msgflux service inspect --json` exposes the running policy under `http`; it
+does not substitute the current file contents for the loaded snapshot.
 
 Preflight `OPTIONS` requests are handled before bearer authentication. Actual
 API calls, including SSE, still require `Authorization: Bearer <token>`:
@@ -590,6 +607,24 @@ For watch streams, use a streaming `fetch()` client that supplies the bearer
 header. Native browser `EventSource` cannot set that header; tokens are not
 accepted in query parameters. The CORS middleware sends the SSE response headers
 immediately and does not buffer the event stream.
+
+## Inspect The Loaded HTTP Policy
+
+`GET /v1/service/inspection` returns an authenticated snapshot of the running
+instance's HTTP configuration. The SDK exposes the same typed result:
+
+```python
+inspection = await client.inspect_service()
+print(inspection.instance_id)
+print(inspection.http.cors_allow_origins)
+```
+
+Here `client` is an existing `AgentServiceClient`. The call reads the app's
+loaded configuration without opening threads, constructing models or rereading
+a service file. After an edit, this result changes only when the server restarts.
+The local `service inspect` CLI verifies the instance against its discovery
+record before displaying this policy. The health endpoint remains a lightweight
+identity probe.
 
 ## HTTP Telemetry
 
@@ -723,6 +758,7 @@ All routes require `Authorization: Bearer <token>`.
 | Method | Route | Result |
 | --- | --- | --- |
 | GET | `/v1/health` | Authenticated runtime identity, protocol version and optional default agent |
+| GET | `/v1/service/inspection` | Runtime identity and loaded HTTP policy |
 | POST | `/v1/shutdown` | Graceful shutdown request when the host enables its shutdown hook |
 | GET | `/v1/agents` | Registered agent IDs |
 | GET / POST | `/v1/threads` | List bindings / open a thread |

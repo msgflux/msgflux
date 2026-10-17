@@ -39,6 +39,7 @@ from msgflux.runtime.service.http.records import (
     PromptRequest,
     ResumeRequest,
     RunsResponse,
+    ServiceInspection,
     ShutdownRequest,
     ShutdownResponse,
     SnapshotRecord,
@@ -136,6 +137,19 @@ class AgentServiceClient:
     async def health(self) -> HealthRecord:
         """Return the authenticated runtime instance and protocol identity."""
         return await self._json("GET", "/v1/health", HealthRecord)
+
+    async def inspect_service(self) -> ServiceInspection:
+        """Return the HTTP configuration loaded by the running server."""
+        try:
+            return await self._json("GET", "/v1/service/inspection", ServiceInspection)
+        except AgentServiceHTTPError as error:
+            if error.status_code == 404:
+                raise AgentServiceHTTPError(
+                    "The running service does not support service inspection "
+                    "(GET /v1/service/inspection). Restart or upgrade the server.",
+                    status_code=404,
+                ) from error
+            raise
 
     async def shutdown(self, *, expected_instance_id: str) -> ShutdownResponse:
         """Request graceful shutdown of the expected runtime instance."""

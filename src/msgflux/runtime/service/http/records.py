@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 import msgspec
 
 from msgflux.runtime.permissions import ResourcePermission
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
     ApprovalReview,
@@ -34,6 +35,7 @@ __all__ = [
     "RunResult",
     "RunsResponse",
     "ServiceThread",
+    "ServiceInspection",
     "ShutdownRequest",
     "ShutdownResponse",
     "SnapshotRecord",
@@ -124,3 +126,10 @@ class HealthRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     instance_id: str
     version: Literal[1] = 1
     default_agent: Identifier | None = None
+
+
+class ServiceInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Runtime identity and the HTTP policy loaded by this instance."""
+
+    instance_id: str
+    http: ServiceHTTPConfig

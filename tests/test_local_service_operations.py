@@ -59,6 +59,8 @@ async def test_absent_service_commands_do_not_create_files(tmp_path):
         assert (value["service"] if action == "inspect" else value)[
             "status"
         ] == "stopped"
+        if action == "inspect":
+            assert value["http"] is None
         assert not runtime.exists()
     for action in ("inspect", "resume"):
         code, out, err = await _command(runtime, "runs", action, "thread", "run")
@@ -127,10 +129,12 @@ async def test_real_daemon_inspection_and_idempotent_stop(daemon_workspace):
         details = json.loads(out)
         assert details["service"]["instance_id"] == record.instance_id
         assert details["service"]["url"] == client.base_url
+        assert details["http"] == {"cors_allow_origins": []}
         assert details["factory"] == FACTORY and details["cwd"] == str(project)
         assert record.token not in out
         code, out, err = await _command(runtime, "service", "inspect", as_json=False)
         assert code == 0 and not err and f"Address: {client.base_url}" in out
+        assert "CORS: disabled" in out
         assert record.token not in out
         code, out, err = await _command(
             runtime, "runs", "inspect", thread.thread_id, "unknown-run"

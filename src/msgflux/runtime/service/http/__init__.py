@@ -11,6 +11,7 @@ from msgflux.runtime.service.http.factory import create_service_app
 from msgflux.runtime.service.http.records import (
     EventRecord,
     HealthRecord,
+    ServiceInspection,
     ShutdownRequest,
     ShutdownResponse,
     SnapshotRecord,
@@ -28,6 +29,7 @@ __all__ = [
     "EventRecord",
     "SnapshotRecord",
     "HealthRecord",
+    "ServiceInspection",
     "ShutdownRequest",
     "ShutdownResponse",
 ]
