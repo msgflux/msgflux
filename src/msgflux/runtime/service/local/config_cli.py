@@ -24,15 +24,50 @@ class _ValidationResult(msgspec.Struct, frozen=True):
     errors: tuple[str, ...] = ()
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def _parser():
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--config",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="service TOML configuration",
+    )
+    common.add_argument(
+        "--json", action="store_true", default=argparse.SUPPRESS, help="JSON result"
+    )
     parser = argparse.ArgumentParser(
         prog="msgflux config",
-        description="Validate configuration without starting a service or models.",
+        parents=[common],
+        description="Validate service configuration or manage browser origins offline.",
     )
-    parser.add_argument("action", choices=("validate",))
-    parser.add_argument("--config", type=Path, help="service TOML configuration")
-    parser.add_argument("--json", action="store_true", help="JSON validation result")
-    args = parser.parse_args(argv)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser(
+        "validate", parents=[common], help="validate service configuration"
+    )
+    cors = commands.add_parser(
+        "cors", parents=[common], help="list or edit configured browser origins"
+    )
+    actions = cors.add_subparsers(dest="action", required=True)
+    for action in ("ls", "add", "remove"):
+        command = actions.add_parser(action, parents=[common])
+        if action != "ls":
+            command.add_argument(
+                "origin", help="exact HTTP(S) origin or standalone '*'"
+            )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = _parser().parse_args(argv)
+    args.config = getattr(args, "config", None)
+    args.json = getattr(args, "json", False)
+    if args.command == "cors":
+        _cors(args)
+    else:
+        _validate(args)
+
+
+def _validate(args):
     selected = (args.config or default_service_config_path()).expanduser().absolute()
     try:
         manifest = load_service_manifest(selected)
@@ -65,3 +100,41 @@ def main(argv: Sequence[str] | None = None) -> None:
             sys.stderr.write(f"- {error}\n")
     if not result.valid:
         raise SystemExit(1)
+
+
+def _cors(args):
+    from msgflux.runtime.service.local.cors_config import (  # noqa: PLC0415
+        mutate_cors_config,
+        read_cors_config,
+    )
+
+    selected = args.config or default_service_config_path()
+    try:
+        result = (
+            read_cors_config(selected)
+            if args.action == "ls"
+            else mutate_cors_config(selected, args.origin, operation=args.action)
+        )
+    except (OSError, ValueError, TypeError, RuntimeError, ImportError) as error:
+        if args.json:
+            sys.stdout.write(msgspec_dumps({"error": str(error)}) + "\n")
+        else:
+            sys.stderr.write(f"Error: {error}\n")
+        raise SystemExit(1) from error
+    if args.json:
+        sys.stdout.write(msgspec_dumps(result) + "\n")
+        return
+    sys.stdout.write(f"Configuration: {result.config_path}\n")
+    if result.cors_allow_origins:
+        sys.stdout.write("CORS origins:\n")
+        for origin in result.cors_allow_origins:
+            sys.stdout.write(f"- {origin}\n")
+    else:
+        sys.stdout.write("CORS disabled\n")
+    if args.action != "ls":
+        if result.restart_required:
+            sys.stdout.write(
+                "Restart the service to apply the updated configuration.\n"
+            )
+        else:
+            sys.stdout.write("No change\n")

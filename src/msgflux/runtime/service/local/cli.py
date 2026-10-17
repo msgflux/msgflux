@@ -269,18 +269,38 @@ async def _stop(args) -> None:
 
 
 async def _inspect_service(args) -> None:
+    from msgflux.runtime.service.http.client import AgentServiceClient  # noqa: PLC0415
     from msgflux.runtime.service.local import inspect_local_service  # noqa: PLC0415
     from msgflux.runtime.service.local.files import read_record  # noqa: PLC0415
 
     status = await inspect_local_service(runtime_dir=args.runtime_dir)
-    result = {"service": status, "factory": None, "config_path": None, "cwd": None}
+    result = {
+        "service": status,
+        "factory": None,
+        "config_path": None,
+        "cwd": None,
+        "http": None,
+    }
     if status.status == "running":
         record = read_record(Path(status.runtime_dir))
         if record is None or record.instance_id != status.instance_id:
             raise RuntimeError("Local daemon identity changed during inspection")
-        result.update(
-            factory=record.factory, config_path=record.config_path, cwd=record.cwd
-        )
+        client = AgentServiceClient(record.url, token=record.token)
+        try:
+            inspection = await client.inspect_service()
+            if inspection.instance_id != record.instance_id:
+                raise RuntimeError("Local daemon identity changed during inspection")
+            current = read_record(Path(status.runtime_dir))
+            if current is None or current.instance_id != record.instance_id:
+                raise RuntimeError("Local daemon identity changed during inspection")
+            result.update(
+                factory=record.factory,
+                config_path=record.config_path,
+                cwd=record.cwd,
+                http=inspection.http,
+            )
+        finally:
+            await client.aclose()
     if args.json:
         sys.stdout.write(msgspec_dumps(result) + "\n")
         return
@@ -294,6 +314,8 @@ async def _inspect_service(args) -> None:
             f"Source: {result['config_path'] or result['factory']}\n"
             f"Cwd: {result['cwd']}\n"
         )
+        origins = result["http"].cors_allow_origins
+        sys.stdout.write(f"CORS: {', '.join(origins) if origins else 'disabled'}\n")
 
 
 async def _run_operation(args) -> None:

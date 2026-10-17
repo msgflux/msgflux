@@ -180,10 +180,30 @@ cors_allow_origins = ["http://localhost:3000"]
 
 CORS is disabled when the list is empty or omitted. Use exact HTTP(S) origins,
 or `["*"]` alone to allow every browser origin. The API still requires the
-daemon's bearer token; cookie credentials remain disabled. Validate with
-`msgflux config validate`, then restart the service to apply changes. See
-[Browser Clients And CORS](service-http.md#browser-clients-and-cors) for embedded
-configuration and streaming browser clients.
+daemon's bearer token; cookie credentials remain disabled.
+
+Manage the existing configuration offline:
+
+```bash
+msgflux config cors ls
+msgflux config cors add http://localhost:3000
+msgflux config cors remove http://localhost:3000
+msgflux config cors add '*' --config ./service.toml --json
+```
+
+These commands list, add or remove exact origins without starting the daemon,
+loading credentials, importing extensions or constructing agents. `--config`
+selects an existing service TOML; missing files are not created. Add/remove are
+idempotent and preserve comments, other sections and file permissions. JSON
+mutation output includes `changed` and `restart_required`. The wildcard must be
+the only entry: remove existing origins before adding `'*'`, or remove `'*'`
+before adding explicit origins. Quote the wildcard to prevent shell expansion.
+
+Run `msgflux config validate`, then `msgflux service restart` to apply changes.
+`config cors ls` reads the file; `service inspect` reports the policy loaded by
+the running daemon. Editing the file does not change that running snapshot.
+See [Browser Clients And CORS](service-http.md#browser-clients-and-cors) for
+embedded configuration and streaming browser clients.
 
 ### Builtin And Custom Subagents
 
@@ -855,8 +875,8 @@ This example discovers the active address without launching the daemon. Use
 
 ## Inspect Service And Runs
 
-Use `service inspect` for the verified daemon identity and its recorded launch
-configuration:
+Use `service inspect` for the verified daemon identity, its recorded launch
+configuration and its loaded HTTP policy:
 
 ```bash
 msgflux service inspect
@@ -864,9 +884,19 @@ msgflux service inspect --json
 ```
 
 The human output includes runtime directory, address, PID, instance ID, launch
-source and working directory. JSON contains `service` (the same status record as
-`service status`), `factory`, `config_path`, and `cwd`. Authentication tokens are
-never included. An absent or unverified daemon has null launch details.
+source, working directory and CORS origins (`disabled` for an empty policy).
+JSON contains `service` (the same status record as `service status`), `factory`,
+`config_path`, `cwd`, and `http`, for example:
+
+```json
+{"cors_allow_origins": ["http://localhost:3000"]}
+```
+
+The example is the value of `http`, retrieved from the running server rather
+than reread from disk. It remains unchanged after config edits until restart.
+Authentication tokens are never included. An absent or unverified daemon has
+null launch details and `http: null`. Inspection does not start an absent daemon.
+A daemon that predates the inspection endpoint must be restarted or upgraded.
 Unlike `status`, inspection exits successfully when it reports `stopped` or
 `unreachable`; invalid metadata or request errors still exit with code `1`.
 
