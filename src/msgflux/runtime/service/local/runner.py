@@ -24,7 +24,11 @@ from msgflux.runtime.service.local.files import (
     remove_record,
     write_record,
 )
-from msgflux.runtime.service.local.manifest import load_factory, load_service_manifest
+from msgflux.runtime.service.local.manifest import (
+    ServiceManifest,
+    load_factory,
+    load_service_manifest,
+)
 from msgflux.runtime.service.local.records import LocalServiceRecord
 
 
@@ -43,9 +47,13 @@ async def _make_service(factory_path: str, runtime_dir: Path) -> AgentService:
 
 
 def _make_manifest_service(
-    config_path: Path, runtime_dir: Path, cwd: Path
+    config_path: Path,
+    runtime_dir: Path,
+    cwd: Path,
+    *,
+    manifest: ServiceManifest | None = None,
 ) -> tuple[AgentService, str, str]:
-    manifest = load_service_manifest(config_path, cwd=cwd)
+    manifest = manifest or load_service_manifest(config_path, cwd=cwd)
     coding_builder = None
     accounts = None
     if manifest.coding_catalog.agents:
@@ -194,14 +202,17 @@ async def serve_local_service(  # noqa: C901
         instance_id = uuid4().hex
         config_path: str | None = None
         config_digest: str | None = None
+        http_config = None
         try:
             if config is None:
                 if factory is None:
                     raise ValueError("provide exactly one of factory or config")
                 service = await _make_service(factory, directory)
             else:
+                manifest = load_service_manifest(config, cwd=working_directory)
+                http_config = manifest.http
                 service, config_path, config_digest = _make_manifest_service(
-                    config, directory, working_directory
+                    config, directory, working_directory, manifest=manifest
                 )
 
             if service.store._path is not None:
@@ -249,6 +260,7 @@ async def serve_local_service(  # noqa: C901
             app = create_service_app(
                 service,
                 token=auth_token,
+                http_config=http_config,
                 close_service=True,
                 instance_id=instance_id,
                 on_shutdown=request_shutdown,

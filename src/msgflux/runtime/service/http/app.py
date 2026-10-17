@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from litestar import Litestar, Request, Response, get, post, put
 from litestar.background_tasks import BackgroundTask
+from litestar.config.cors import CORSConfig
 from litestar.exceptions import HTTPException, ValidationException
 from litestar.middleware import DefineMiddleware
 from litestar.params import FromPath, FromQuery
@@ -20,6 +21,7 @@ from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.event_buffer import validate_event_buffer_limit
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service.api import AgentService
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.http.records import (
     ActiveRunsResponse,
     AgentsResponse,
@@ -44,6 +46,11 @@ from msgflux.runtime.service.http.serialization import (
     event_record,
     snapshot_record,
 )
+from msgflux.runtime.service.http.telemetry import (
+    annotate_http_response,
+    annotate_http_result,
+    service_telemetry_plugin,
+)
 from msgflux.runtime.service.records import (
     ServiceBusyError,
     ServiceConflictError,
@@ -55,6 +62,7 @@ PathValue = FromPath[str]
 
 
 def _response(value: object, status_code: int = 200) -> Response:
+    annotate_http_result(value)
     return Response(
         content=encode_json(value),
         status_code=status_code,
@@ -101,6 +109,7 @@ def create_service_app(  # noqa: C901
     service: AgentService,
     *,
     token: str,
+    http_config: ServiceHTTPConfig | None = None,
     close_service: bool = False,
     event_buffer_limit: int | None = 1024,
     instance_id: str | None = None,
@@ -112,6 +121,9 @@ def create_service_app(  # noqa: C901
     application owns its lifecycle.
     """
     validate_event_buffer_limit(event_buffer_limit)
+    http_config = http_config if http_config is not None else ServiceHTTPConfig()
+    if not isinstance(http_config, ServiceHTTPConfig):
+        raise TypeError("http_config must be a ServiceHTTPConfig")
     if not isinstance(token, str) or not token:
         raise ValueError("token must be a non-empty string")
 
@@ -394,8 +406,28 @@ def create_service_app(  # noqa: C901
 
     return Litestar(
         route_handlers=route_handlers,
+        cors_config=(
+            CORSConfig(
+                allow_origins=list(http_config.cors_allow_origins),
+                allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+                allow_headers=[
+                    "Authorization",
+                    "Content-Type",
+                    "Last-Event-ID",
+                    "traceparent",
+                    "tracestate",
+                    "baggage",
+                ],
+                expose_headers=["WWW-Authenticate"],
+                allow_credentials=False,
+            )
+            if http_config.cors_allow_origins
+            else None
+        ),
         middleware=[DefineMiddleware(_BearerAuthMiddleware, token=token)],
         lifespan=[lifespan],
+        plugins=[service_telemetry_plugin(instance_id)],
+        before_send=[annotate_http_response],
         exception_handlers={
             ServiceBusyError: _domain_error,
             ServiceConflictError: _domain_error,

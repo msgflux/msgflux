@@ -40,6 +40,27 @@ configure_msgtrace(enabled=True, exporter="console")
 
 ---
 
+### AgentService HTTP And SSE
+
+Installing `msgflux[service]` also enables the native Litestar HTTP
+instrumentation. It reuses the global OpenTelemetry providers, so the
+`MSGTRACE_*` variables above configure its trace exporter as well. Set them before
+starting the service process and restart an existing daemon to apply changes.
+
+HTTP spans cover API requests, authentication failures and SSE connections;
+streaming emits no per-token send/receive spans. Route templates keep span names
+stable, and receipt/path identities are recorded as attributes. The HTTP adapter
+does not capture bodies or change the Agent/Model capture settings below.
+Detached executions retain their independent contexts rather than becoming
+children of an observer's request.
+
+HTTP metrics require a host-configured meter provider; the trace exporter alone
+does not export metrics. See
+[HTTP Telemetry](nn/agent/service-http.md#http-telemetry) for configuration,
+metric-export examples, SSE semantics and provider ownership.
+
+---
+
 ## 2. **Environment Variables**
 
 ### msgtrace-sdk (transport & exporter)

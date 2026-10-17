@@ -169,6 +169,22 @@ run and its account. Resume uses the recorded account even if
 persisted keep an unknown account; managed authentication reports that identity
 cannot be recovered and requires a new execution with an explicit selection.
 
+### Browser Access
+
+For a browser frontend on a different origin, configure the HTTP adapter:
+
+```toml
+[http]
+cors_allow_origins = ["http://localhost:3000"]
+```
+
+CORS is disabled when the list is empty or omitted. Use exact HTTP(S) origins,
+or `["*"]` alone to allow every browser origin. The API still requires the
+daemon's bearer token; cookie credentials remain disabled. Validate with
+`msgflux config validate`, then restart the service to apply changes. See
+[Browser Clients And CORS](service-http.md#browser-clients-and-cors) for embedded
+configuration and streaming browser clients.
+
 ### Builtin And Custom Subagents
 
 Use a preset to supply builtin instructions, description and tool/permission
