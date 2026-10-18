@@ -51,6 +51,7 @@ from msgflux.tools.builtin.task_tool import (
 from msgflux.tools.handles import ToolBucketHandle
 from msgflux.tools.responses import ToolCall
 from msgflux.tools.types import ToolBackground, ToolBucket
+from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import lossless_json_roundtrip
 
 
@@ -421,8 +422,13 @@ class BackgroundTaskDispatcher:
                     result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                task_handle.interrupt(reason=str(exc))
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                FutureCancelledError,
+                asyncio.CancelledError,
+            ) as exc:
+                task_handle.interrupt(reason=exception_message(exc))
                 self.publish_task_notification(
                     task_id=task_handle.task_id,
                     tool_name=tool_name,
