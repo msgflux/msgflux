@@ -90,6 +90,92 @@ async def test_tool_library_extension_supports_async_hooks_and_cleanup():
     assert cleaned.is_set()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_name", ["after_tool", "transform_tool_output"])
+async def test_cancelled_post_tool_hook_emits_one_interrupted_terminal_event(
+    event_name,
+):
+    from msgflux.runtime.events import _EventSink, _capture_events
+
+    hook_started = asyncio.Event()
+
+    async def wait_for_cancellation(_event):
+        hook_started.set()
+        await asyncio.Event().wait()
+
+    def complete() -> str:
+        return "effect already completed"
+
+    library = ToolLibrary("cancel-hooks", [complete])
+    library.register_lifecycle_hook(
+        event_name, Hook(event=event_name, handler=wait_for_cancellation)
+    )
+    events = []
+
+    async def call_tool():
+        return await library.acall([("call_1", "complete", {})])
+
+    with _capture_events(_EventSink(events.append)):
+        task = asyncio.create_task(call_tool())
+        await asyncio.wait_for(hook_started.wait(), timeout=2)
+        task.cancel("caller left")
+        with pytest.raises(asyncio.CancelledError, match="caller left"):
+            await task
+
+    assert [event.type for event in events] == ["tool.start", "tool.end"]
+    terminal = events[-1]
+    assert terminal.data["result"] is None
+    assert terminal.data["error"] == "caller left"
+    assert terminal.data["error_info"] is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_post_tool_hook_cancellation_preserves_exception_and_terminalizes(
+    asynchronous,
+):
+    from msgflux.runtime.events import _EventSink, _capture_events
+    from msgflux.tools.runtime import ToolIntent
+
+    effects = []
+    cancellation = asyncio.CancelledError("hook interrupted")
+
+    def complete() -> str:
+        effects.append("completed")
+        return "completed"
+
+    def cancel_sync(_event):
+        raise cancellation
+
+    async def cancel_async(_event):
+        raise cancellation
+
+    library = ToolLibrary("cancel-hooks", [complete])
+    library.register_lifecycle_hook(
+        "after_tool",
+        Hook(
+            event="after_tool",
+            handler=cancel_async if asynchronous else cancel_sync,
+        ),
+    )
+    events = []
+    intent = ToolIntent(id="call_1", name="complete")
+    with _capture_events(_EventSink(events.append)):
+        if asynchronous:
+            with pytest.raises(asyncio.CancelledError) as raised:
+                await library.arun("complete", {})
+            assert raised.value is cancellation
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                library.execute_intents((intent,))
+
+    assert effects == ["completed"]
+    assert [event.type for event in events] == ["tool.start", "tool.end"]
+    assert events[-1].data["result"] is None
+    assert events[-1].data["error"] == "hook interrupted"
+    assert events[-1].data["error_info"] is None
+
+
 def test_deferred_tools_install_tool_search_as_an_extension():
     def lookup(query: str) -> str:
         """Look up a value."""
