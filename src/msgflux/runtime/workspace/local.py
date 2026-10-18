@@ -153,7 +153,7 @@ class LocalWorkspace(WorkspaceFilesystem):
     def _parent(self, fd: int, path: str) -> tuple[int, str]:
         parts = self._parts(path)
         if not parts:
-            raise IsADirectoryError(path)
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
         current = fd
         try:
             for part in parts[:-1]:
@@ -173,8 +173,12 @@ class LocalWorkspace(WorkspaceFilesystem):
             raise
 
     def _regular(self, st, path: str) -> None:
+        if stat.S_ISDIR(st.st_mode):
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
         if not stat.S_ISREG(st.st_mode):
-            raise IsADirectoryError(path)
+            raise PermissionError(
+                f"Non-regular workspace files are not supported: {path}"
+            )
         if st.st_nlink != 1:
             raise PermissionError("Hard-linked workspace files are not supported")
         if st.st_dev != self._root_stat.st_dev:
@@ -278,7 +282,9 @@ class LocalWorkspace(WorkspaceFilesystem):
                         parent, name = self._parent(root, path)
                         st = os.stat(name, dir_fd=parent, follow_symlinks=False)
                         if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-                            raise NotADirectoryError(path)
+                            raise NotADirectoryError(
+                                errno.ENOTDIR, "Not a directory", path
+                            )
                         fd = os.open(
                             name,
                             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -416,7 +422,7 @@ class LocalWorkspace(WorkspaceFilesystem):
                     parent, name = self._parent(root, path)
                     st = os.stat(name, dir_fd=parent, follow_symlinks=False)
                     if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-                        raise NotADirectoryError(path)
+                        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
                     if st.st_dev != self._root_stat.st_dev:
                         raise PermissionError("Workspace mount crossing")
                     directory = os.open(
@@ -467,7 +473,7 @@ class LocalWorkspace(WorkspaceFilesystem):
                 parent, name = self._parent(root, path)
                 st = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-                    raise NotADirectoryError(path)
+                    raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
                 if st.st_dev != self._root_stat.st_dev:
                     raise PermissionError("Workspace mount crossing")
                 return True

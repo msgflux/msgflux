@@ -55,6 +55,10 @@ def workspace_path(path: str) -> str:
     return str(PurePosixPath(path))
 
 
+def _missing_path_error(path: str) -> FileNotFoundError:
+    return FileNotFoundError(errno.ENOENT, "No such file or directory", path)
+
+
 class WorkspaceFilesystem(ABC):
     """Trusted backend; public operations share resolution and authorization."""
 
@@ -414,7 +418,7 @@ class InMemoryWorkspace(WorkspaceFilesystem):
                 return None
             self._authorize("list", path)
             if path not in self._directories:
-                raise FileNotFoundError(path)
+                raise _missing_path_error(path)
             if any(
                 item != path and item.startswith(path.rstrip("/") + "/")
                 for item in itertools.chain(self._files, self._directories)
@@ -434,7 +438,9 @@ class InMemoryWorkspace(WorkspaceFilesystem):
         with self._lock:
             if operation == "list":
                 if path not in self._directories:
-                    raise NotADirectoryError(path)
+                    if path in self._files:
+                        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+                    raise _missing_path_error(path)
                 return tuple(
                     sorted(
                         PurePosixPath(item).name
@@ -443,11 +449,11 @@ class InMemoryWorkspace(WorkspaceFilesystem):
                     )
                 )
             if path in self._directories:
-                raise IsADirectoryError(path)
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
             if operation in {"write", "mkdir"}:
                 return self._create(operation, path, data)
             if path not in self._files:
-                raise FileNotFoundError(path)
+                raise _missing_path_error(path)
             if operation == "read":
                 return self._files[path]
             if operation == "delete":
@@ -459,9 +465,9 @@ class InMemoryWorkspace(WorkspaceFilesystem):
         with self._lock:
             self._authorize("read", path)
             if path in self._directories:
-                raise IsADirectoryError(path)
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
             if path not in self._files:
-                raise FileNotFoundError(path)
+                raise _missing_path_error(path)
             return self._files[path][:max_bytes]
 
     def _scandir(self, path, max_entries):
@@ -472,7 +478,9 @@ class InMemoryWorkspace(WorkspaceFilesystem):
     def _scandir_trusted(self, path, max_entries):
         with self._lock:
             if path not in self._directories:
-                raise NotADirectoryError(path)
+                if path in self._files:
+                    raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+                raise _missing_path_error(path)
             entries = []
             for item in itertools.chain(self._files, self._directories):
                 if item == path or str(PurePosixPath(item).parent) != path:
@@ -490,7 +498,9 @@ class InMemoryWorkspace(WorkspaceFilesystem):
     def _trusted_is_directory(self, path):
         with self._lock:
             if path not in self._directories:
-                raise NotADirectoryError(path)
+                if path in self._files:
+                    raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+                raise _missing_path_error(path)
             return True
 
     def _compare_exchange(self, path, expected, replacement):
@@ -499,7 +509,7 @@ class InMemoryWorkspace(WorkspaceFilesystem):
             self._authorize("read", path)
             self._authorize("delete" if replacement is None else "write", path)
             if path in self._directories:
-                raise IsADirectoryError(path)
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
             if self._files.get(path) != expected:
                 raise WorkspaceConflictError("File changed since preparation")
             if replacement is None:
