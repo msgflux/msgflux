@@ -935,7 +935,10 @@ records remain available for a later factory-created Agent. A cold snapshot
 still resolves dependencies through the registered factory; durable readers
 that avoid constructing an Agent are a separate future change. Resource
 callbacks must drain any delegated work they own before releasing its
-model/workspace resources.
+model/workspace resources. If session initialization fails and its cleanup also
+fails, the binding is quarantined and the recovery error's chained cause keeps
+both failures in an exception group for host diagnostics. The service does not
+retry that factory while the incomplete binding remains quarantined.
 
 An existing embedded coding session can expose the same backend:
 

@@ -425,14 +425,18 @@ class AgentService:
                 if scope.workspace is not None
                 else None
             )
-        except BaseException:
+        except BaseException as initialization_error:
             if session.on_close is not None:
                 try:
                     closed = session.on_close()
                     if inspect.isawaitable(closed):
                         await closed
-                except BaseException as error:
-                    raise _SessionLoadCleanupError(session, error) from error
+                except BaseException as cleanup_error:
+                    failure = BaseExceptionGroup(
+                        "Session initialization and cleanup failed",
+                        [initialization_error, cleanup_error],
+                    )
+                    raise _SessionLoadCleanupError(session, failure) from failure
             raise
         return session
 
