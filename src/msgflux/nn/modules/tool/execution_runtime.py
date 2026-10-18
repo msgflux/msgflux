@@ -807,20 +807,13 @@ class ToolLibraryExecutionMixin:
                 arguments=event_data["arguments"],
                 result=result,
             )
-        outcome = self._run_after_tool_hook(outcome)
-        outcome = self._transform_tool_output(outcome)
-        error = self._tool_error(outcome.error)
-        emit_event(
-            EventType.TOOL_END,
-            {
-                **event_data,
-                "result": outcome.result,
-                "error": error.message
-                if error
-                else (str(outcome.error) if outcome.error is not None else None),
-                "error_info": msgspec.to_builtins(error) if error else None,
-            },
-        )
+        try:
+            outcome = self._run_after_tool_hook(outcome)
+            outcome = self._transform_tool_output(outcome)
+        except BaseException as exc:
+            self._emit_tool_end(event_data, replace(outcome, result=None, error=exc))
+            raise
+        self._emit_tool_end(event_data, outcome)
         if outcome.error is not None:
             if isinstance(outcome.error, BaseException):
                 raise outcome.error
@@ -867,8 +860,20 @@ class ToolLibraryExecutionMixin:
                 arguments=event_data["arguments"],
                 result=result,
             )
-        outcome = await self._arun_after_tool_hook(outcome)
-        outcome = await self._atransform_tool_output(outcome)
+        try:
+            outcome = await self._arun_after_tool_hook(outcome)
+            outcome = await self._atransform_tool_output(outcome)
+        except BaseException as exc:
+            self._emit_tool_end(event_data, replace(outcome, result=None, error=exc))
+            raise
+        self._emit_tool_end(event_data, outcome)
+        if outcome.error is not None:
+            if isinstance(outcome.error, BaseException):
+                raise outcome.error
+            raise RuntimeError(str(outcome.error))
+        return outcome.result
+
+    def _emit_tool_end(self, event_data: Mapping[str, Any], outcome: AfterTool) -> None:
         error = self._tool_error(outcome.error)
         emit_event(
             EventType.TOOL_END,
@@ -881,11 +886,6 @@ class ToolLibraryExecutionMixin:
                 "error_info": msgspec.to_builtins(error) if error else None,
             },
         )
-        if outcome.error is not None:
-            if isinstance(outcome.error, BaseException):
-                raise outcome.error
-            raise RuntimeError(str(outcome.error))
-        return outcome.result
 
     @staticmethod
     def _tool_output_failure(outcome: AfterTool, error: Exception) -> AfterTool:

@@ -21,7 +21,7 @@ from msgflux.runtime.approvals.records import (
     require_time,
 )
 from msgflux.runtime.context import get_execution_scope
-from msgflux.runtime.events import EventType, emit_event
+from msgflux.runtime.events import EventType, emit_event, event_source
 from msgflux.runtime.permissions import require_permissions
 from msgflux.runtime.workspace.changes import PreparedFileChange
 from msgflux.tools.helpers import RUNTIME_BACKGROUND_PARAM, coerce_tool_params
@@ -30,6 +30,7 @@ from msgflux.tools.workspace_changes import (
     workspace_change_execution,
     workspace_change_tool,
 )
+from msgflux.utils.errors import exception_message
 
 _CURRENT_APPROVAL_BATCH = ContextVar("msgflux_approval_batch", default=None)
 
@@ -229,11 +230,28 @@ class ApprovalBatch:
         finally:
             _CURRENT_APPROVAL_BATCH.reset(token)
 
+    @staticmethod
+    def _emit_blocked_outcome(intent, outcome):
+        error = outcome.error
+        with event_source(intent.name, "tool"):
+            emit_event(
+                EventType.TOOL_BLOCKED,
+                {
+                    "tool_call_id": intent.id,
+                    "tool_name": intent.name,
+                    "code": error.code if error is not None else "tool_blocked",
+                    "error": error,
+                    "reason": error.message if error is not None else "Tool blocked",
+                },
+            )
+
     def guard(self, plan, *, consume):
         if plan.intent.name not in self.policy.tools:
             return None
         if plan.intent.id in self.failures:
-            return self.failures[plan.intent.id]
+            outcome = self.failures[plan.intent.id]
+            self._emit_blocked_outcome(plan.intent, outcome)
+            return outcome
         try:
             record = self.records.get(plan.intent.id)
             if record is None:
@@ -259,26 +277,16 @@ class ApprovalBatch:
             if consume:
                 self.policy.store.consume(record.request_id, binding=binding)
                 self.consumed.add(plan.intent.id)
-        except (
-            ApprovalConflictError,
-            PermissionError,
-            ValueError,
-            FileNotFoundError,
-        ) as exc:
-            emit_event(
-                EventType.TOOL_BLOCKED,
-                {
-                    "tool_call_id": plan.intent.id,
-                    "tool_name": plan.intent.name,
-                    "code": "tool_approval_blocked",
-                },
-            )
-            return ToolOutcome.failed(
+        except (ApprovalConflictError, ValueError, OSError) as exc:
+            outcome = ToolOutcome.failed(
                 plan.intent,
                 status="blocked",
                 code="tool_approval_blocked",
-                message=str(exc),
+                message=exception_message(exc),
+                details={"exception_type": type(exc).__name__},
             )
+            self._emit_blocked_outcome(plan.intent, outcome)
+            return outcome
         return None
 
 
@@ -328,7 +336,8 @@ def _prepare_review_change(definition, intent, pending):
             intent,
             status="blocked",
             code="workspace_change_invalid",
-            message=f"Cannot prepare workspace change: {exc}",
+            message=(f"Cannot prepare workspace change: {exception_message(exc)}"),
+            details={"exception_type": type(exc).__name__},
         )
     if stored is not None:
         restored = msgspec.convert(stored["change"], type=PreparedFileChange)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import logging
 import os
 import secrets
 import stat
@@ -34,6 +35,42 @@ from msgflux.runtime.workspace.filesystem import (
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 _UNSET = object()
+_logger = logging.getLogger(__name__)
+
+
+def _log_mutation_cleanup_errors(errors, *, committed):
+    for error in errors:
+        _logger.error(
+            "Workspace mutation cleanup failed%s: %s",
+            " after a committed mutation" if committed else "",
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+
+def _finish_mutation_cleanup(
+    fds, *, primary_error=None, committed=False, cleanup_errors=()
+):
+    errors = list(cleanup_errors)
+    for fd in fds:
+        if fd is None:
+            continue
+        try:
+            os.close(fd)
+        except OSError as error:
+            errors.append(error)
+    if not errors:
+        return
+    if primary_error is not None:
+        for error in errors:
+            primary_error.add_note(f"Workspace cleanup failed: {error}")
+    elif not committed:
+        first, *secondary = errors
+        for error in secondary:
+            first.add_note(f"Additional workspace cleanup failure: {error}")
+    _log_mutation_cleanup_errors(errors, committed=committed)
+    if primary_error is None and not committed:
+        raise errors[0]
 
 
 def _check_posix() -> None:
@@ -153,7 +190,7 @@ class LocalWorkspace(WorkspaceFilesystem):
     def _parent(self, fd: int, path: str) -> tuple[int, str]:
         parts = self._parts(path)
         if not parts:
-            raise IsADirectoryError(path)
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
         current = fd
         try:
             for part in parts[:-1]:
@@ -173,8 +210,12 @@ class LocalWorkspace(WorkspaceFilesystem):
             raise
 
     def _regular(self, st, path: str) -> None:
+        if stat.S_ISDIR(st.st_mode):
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
         if not stat.S_ISREG(st.st_mode):
-            raise IsADirectoryError(path)
+            raise PermissionError(
+                f"Non-regular workspace files are not supported: {path}"
+            )
         if st.st_nlink != 1:
             raise PermissionError("Hard-linked workspace files are not supported")
         if st.st_dev != self._root_stat.st_dev:
@@ -194,6 +235,9 @@ class LocalWorkspace(WorkspaceFilesystem):
         parent = root
         temp_name = None
         temp_fd = None
+        operation_error = None
+        committed = False
+        cleanup_errors = []
         try:
             parent, name = self._parent(root, path)
             try:
@@ -212,6 +256,7 @@ class LocalWorkspace(WorkspaceFilesystem):
                 if current is None:
                     raise FileNotFoundError(path)
                 os.unlink(name, dir_fd=parent)
+                committed = True
                 return
             mode = 0o600 if current is None else st.st_mode & 0o777
             created = False
@@ -238,17 +283,22 @@ class LocalWorkspace(WorkspaceFilesystem):
                 os.fchmod(stream.fileno(), mode)
             os.replace(temp_name, name, src_dir_fd=parent, dst_dir_fd=parent)
             temp_name = None
+            committed = True
+        except BaseException as error:
+            operation_error = error
+            raise
         finally:
-            if temp_fd is not None:
-                os.close(temp_fd)
             if temp_name is not None:
                 try:
                     os.unlink(temp_name, dir_fd=parent)
-                except OSError:
-                    pass
-            if parent != root:
-                os.close(parent)
-            os.close(root)
+                except OSError as error:
+                    cleanup_errors.append(error)
+            _finish_mutation_cleanup(
+                (temp_fd, parent, root) if parent != root else (temp_fd, root),
+                primary_error=operation_error,
+                committed=committed,
+                cleanup_errors=cleanup_errors,
+            )
 
     def _read_fd_at(self, parent: int, name: str, size: int = -1) -> bytes:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
@@ -270,6 +320,8 @@ class LocalWorkspace(WorkspaceFilesystem):
                 return None
             root = self._open_root()
             parent = root
+            operation_error = None
+            committed = False
             try:
                 if operation == "list":
                     if path == "/":
@@ -278,7 +330,9 @@ class LocalWorkspace(WorkspaceFilesystem):
                         parent, name = self._parent(root, path)
                         st = os.stat(name, dir_fd=parent, follow_symlinks=False)
                         if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-                            raise NotADirectoryError(path)
+                            raise NotADirectoryError(
+                                errno.ENOTDIR, "Not a directory", path
+                            )
                         fd = os.open(
                             name,
                             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -294,18 +348,30 @@ class LocalWorkspace(WorkspaceFilesystem):
                 parent, name = self._parent(root, path)
                 if operation == "mkdir":
                     os.mkdir(name, dir_fd=parent)
+                    committed = True
                     return None
                 self._stat_at(parent, name, path)
                 if operation == "read":
                     return self._read_fd_at(parent, name)
                 if operation == "delete":
                     os.unlink(name, dir_fd=parent)
+                    committed = True
                     return None
                 raise ValueError("Unsupported workspace operation")
+            except BaseException as error:
+                operation_error = error
+                raise
             finally:
-                if parent != root:
-                    os.close(parent)
-                os.close(root)
+                if operation in {"mkdir", "delete"}:
+                    _finish_mutation_cleanup(
+                        (parent, root) if parent != root else (root,),
+                        primary_error=operation_error,
+                        committed=committed,
+                    )
+                else:
+                    if parent != root:
+                        os.close(parent)
+                    os.close(root)
 
     def _read_lines(self, path, offset, limit, max_bytes):
         with self._lock:
@@ -354,6 +420,8 @@ class LocalWorkspace(WorkspaceFilesystem):
             root = self._open_root()
             parent = root
             directory = None
+            operation_error = None
+            committed = False
             try:
                 parent, name = self._parent(root, path)
                 st = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -387,13 +455,17 @@ class LocalWorkspace(WorkspaceFilesystem):
                     # POSIX rmdir refuses newly added contents. As with file
                     # writes, unrelated external writers can race comparison.
                     os.rmdir(name, dir_fd=parent)
+                    committed = True
                 return token
+            except BaseException as error:
+                operation_error = error
+                raise
             finally:
-                if directory is not None:
-                    os.close(directory)
-                if parent != root:
-                    os.close(parent)
-                os.close(root)
+                _finish_mutation_cleanup(
+                    (directory, parent, root) if parent != root else (directory, root),
+                    primary_error=operation_error,
+                    committed=committed,
+                )
 
     def _deletion_directory_token(self, path):
         return self._directory_deletion(path)
@@ -416,7 +488,7 @@ class LocalWorkspace(WorkspaceFilesystem):
                     parent, name = self._parent(root, path)
                     st = os.stat(name, dir_fd=parent, follow_symlinks=False)
                     if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-                        raise NotADirectoryError(path)
+                        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
                     if st.st_dev != self._root_stat.st_dev:
                         raise PermissionError("Workspace mount crossing")
                     directory = os.open(
@@ -467,7 +539,7 @@ class LocalWorkspace(WorkspaceFilesystem):
                 parent, name = self._parent(root, path)
                 st = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-                    raise NotADirectoryError(path)
+                    raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
                 if st.st_dev != self._root_stat.st_dev:
                     raise PermissionError("Workspace mount crossing")
                 return True
