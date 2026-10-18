@@ -486,22 +486,36 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 self._conn.rollback()
                 raise
 
-    def _fence_worker_update(self, task: TaskRecord, owner_id: str | None) -> bool:
+    def _fence_worker_update(
+        self,
+        task: TaskRecord,
+        owner_id: str | None,
+        expected_status: str,
+    ) -> TaskRecord | None:
         row = self._conn.execute(
             "SELECT owner_id, expires_at FROM task_worker_leases WHERE task_id = ?",
             (task.task_id,),
         ).fetchone()
-        if owner_id is None:
-            return row is None
         current = self.get(task.task_id)
-        if (
+        if current is None:
+            return None
+        if owner_id is None:
+            concurrent_start = (
+                expected_status == "queued"
+                and current.status == "running"
+                and task.status == "running"
+            )
+            if row is not None or (
+                current.status != expected_status and not concurrent_start
+            ):
+                return None
+        elif (
             row is None
             or row[0] != owner_id
             or row[1] <= self._clock()
-            or current is None
             or current.status != "running"
         ):
-            return False
+            return None
         # Keep metadata written by another process after the worker's read.
         metadata = dict(current.metadata)
         if task.status in {"completed", "failed", "interrupted", "paused"}:
@@ -511,7 +525,41 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             if key in task.metadata:
                 metadata[key] = task.metadata[key]
         task.metadata = metadata
-        return True
+        return current
+
+    @staticmethod
+    def _merge_progress_update(
+        task: TaskRecord,
+        current: TaskRecord,
+        activity: TaskActivity | None,
+        progress_update: Mapping[str, Any] | None,
+    ) -> None:
+        task.progress = current.progress
+        if progress_update is not None:
+            for field in ("stage", "message", "current", "total"):
+                value = progress_update[field]
+                if value is not None:
+                    setattr(task.progress, field, value)
+            percent = progress_update["percent"]
+            if percent is None and task.progress.current is not None:
+                if task.progress.total:
+                    percent = task.progress.current / task.progress.total * 100
+            if percent is not None:
+                task.progress.percent = round(percent, 2)
+        elif (
+            task.status == "completed"
+            and task.progress.percent is None
+            and task.progress.total
+        ):
+            task.progress.percent = 100.0
+        if activity is not None and activity.kind == "progress":
+            activity.summary = (
+                task.progress.message or task.progress.stage or "Progress updated."
+            )
+            activity.metadata = task.progress.to_dict()
+        elif activity is not None and task.status == "running":
+            activity.metadata["stage"] = task.progress.stage
+            activity.metadata["message"] = task.progress.message
 
     def _update_task(
         self,
@@ -519,13 +567,17 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         *,
         activity: TaskActivity | None,
         owner_id: str | None = None,
+        progress_update: Mapping[str, Any] | None = None,
+        expected_status: str,
     ) -> TaskRecord | None:
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
-                if not self._fence_worker_update(task, owner_id):
+                current = self._fence_worker_update(task, owner_id, expected_status)
+                if current is None:
                     self._conn.rollback()
                     return None
+                self._merge_progress_update(task, current, activity, progress_update)
                 self._save_task(task)
                 if task.status in {"completed", "failed", "interrupted", "paused"}:
                     self._conn.execute(
@@ -557,12 +609,9 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task = self.get(task_id)
         if task is None:
             return None
+        expected_status = task.status
         task.status = "running"
         task.updated_at = utc_now_isoformat()
-        if stage is not None:
-            task.progress.stage = stage
-        if message is not None:
-            task.progress.message = message
         return self._update_task(
             task,
             activity=TaskActivity(
@@ -577,6 +626,14 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 },
             ),
             owner_id=owner_id,
+            progress_update={
+                "stage": stage,
+                "message": message,
+                "current": None,
+                "total": None,
+                "percent": None,
+            },
+            expected_status=expected_status,
         )
 
     def update_progress(
@@ -593,25 +650,10 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task = self.get(task_id)
         if task is None:
             return None
+        expected_status = task.status
         if task.status == "queued":
             task.status = "running"
         task.updated_at = utc_now_isoformat()
-        if stage is not None:
-            task.progress.stage = stage
-        if message is not None:
-            task.progress.message = message
-        if current is not None:
-            task.progress.current = current
-        if total is not None:
-            task.progress.total = total
-        if (
-            percent is None
-            and task.progress.current is not None
-            and task.progress.total
-        ):
-            percent = (task.progress.current / task.progress.total) * 100
-        if percent is not None:
-            task.progress.percent = round(percent, 2)
         return self._update_task(
             task,
             activity=TaskActivity(
@@ -624,6 +666,14 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 metadata=task.progress.to_dict(),
             ),
             owner_id=owner_id,
+            progress_update={
+                "stage": stage,
+                "message": message,
+                "current": current,
+                "total": total,
+                "percent": percent,
+            },
+            expected_status=expected_status,
         )
 
     def complete(
@@ -632,6 +682,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task = self.get(task_id)
         if task is None:
             return None
+        expected_status = task.status
         now = utc_now_isoformat()
         task.status = "completed"
         task.updated_at = now
@@ -639,8 +690,6 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task.result = result
         task.error = None
         task.metadata["interrupt_requested"] = False
-        if task.progress.percent is None and task.progress.total:
-            task.progress.percent = 100.0
         return self._update_task(
             task,
             activity=TaskActivity(
@@ -651,6 +700,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 metadata={"status": "completed"},
             ),
             owner_id=owner_id,
+            expected_status=expected_status,
         )
 
     def fail(
@@ -659,6 +709,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task = self.get(task_id)
         if task is None:
             return None
+        expected_status = task.status
         now = utc_now_isoformat()
         task.status = "failed"
         task.updated_at = now
@@ -677,6 +728,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 metadata={"status": "failed", "error": task.error},
             ),
             owner_id=owner_id,
+            expected_status=expected_status,
         )
 
     def interrupt(
@@ -689,6 +741,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task = self.get(task_id)
         if task is None:
             return None
+        expected_status = task.status
         now = utc_now_isoformat()
         task.status = "interrupted"
         task.updated_at = now
@@ -706,6 +759,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 metadata={"status": "interrupted", "reason": reason},
             ),
             owner_id=owner_id,
+            expected_status=expected_status,
         )
 
     def pause(
@@ -718,6 +772,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task = self.get(task_id)
         if task is None:
             return None
+        expected_status = task.status
         now = utc_now_isoformat()
         task.status = "paused"
         task.updated_at = now
@@ -734,6 +789,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 metadata={"status": "paused", "reason": reason},
             ),
             owner_id=owner_id,
+            expected_status=expected_status,
         )
 
     def _set_interrupt_request(
