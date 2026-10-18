@@ -471,14 +471,20 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         metadata: Mapping[str, Any],
     ) -> TaskRecord | None:
         with self._lock:
-            task = self.get(task_id)
-            if task is None:
-                return None
-            task.metadata.update(dict(metadata))
-            task.updated_at = utc_now_isoformat()
-            self._save_task(task)
-            self._conn.commit()
-            return self.get(task.task_id)
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self.get(task_id)
+                if task is None:
+                    self._conn.rollback()
+                    return None
+                task.metadata.update(dict(metadata))
+                task.updated_at = utc_now_isoformat()
+                self._save_task(task)
+                self._conn.commit()
+                return self.get(task.task_id)
+            except BaseException:
+                self._conn.rollback()
+                raise
 
     def _fence_worker_update(self, task: TaskRecord, owner_id: str | None) -> bool:
         row = self._conn.execute(
