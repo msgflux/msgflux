@@ -65,9 +65,18 @@ def test_task_store_contract_lifecycle_and_activity(task_store):
     assert not task_store.clear_interrupt_request("task-1").metadata[
         "interrupt_requested"
     ]
+    task_store.request_interrupt("task-1")
     completed = task_store.complete("task-1", "done")
     assert completed.status == "completed"
     assert completed.result == "done"
+    assert completed.metadata["interrupt_requested"] is False
+
+    task_store.create("failed-task", task_id="failed-task")
+    task_store.request_interrupt("failed-task")
+    failed = task_store.fail("failed-task", "failed after interrupt request")
+    assert failed.status == "failed"
+    assert failed.error == "failed after interrupt request"
+    assert failed.metadata["interrupt_requested"] is False
 
 
 def test_task_store_result_projection_isolated_and_full_by_default(task_store):

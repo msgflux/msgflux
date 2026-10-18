@@ -158,10 +158,9 @@ class TaskInterruptTool(ToolBackground):
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
         task_store = handle.get_task_store()
-        task = task_store.get(task_id)
+        task = task_store.request_interrupt(task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
-
         if task.status in {"completed", "failed", "interrupted"}:
             return {
                 "task_id": task_id,
@@ -169,7 +168,6 @@ class TaskInterruptTool(ToolBackground):
                 "message": "Task already reached a terminal state.",
             }
 
-        task_store.request_interrupt(task_id)
         future = handle.get_task_future(task_id)
         if future is not None and future.cancel():
             interrupted = task_store.interrupt(

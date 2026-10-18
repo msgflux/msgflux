@@ -286,6 +286,12 @@ If the task has not started yet, msgFlux may interrupt it immediately. If it is
 already running, the interrupt is observed at the next cooperative checkpoint. For
 background subagents, that means before the next provider call.
 
+The task may complete before it observes the request. Completion and failure
+clear the pending interrupt flag while preserving the result or error and the
+activity history. If the task settles before the interrupt request reaches the
+store, `task_interrupt` returns its actual terminal status instead of reporting
+a pending interruption. Completed effects are not undone.
+
 ## Reading Task Activity
 
 `task_activity(task_id)` returns a compact list of activity entries for tasks

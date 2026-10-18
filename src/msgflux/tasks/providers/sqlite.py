@@ -498,8 +498,9 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             return False
         # Keep metadata written by another process after the worker's read.
         metadata = dict(current.metadata)
-        if task.status in {"interrupted", "paused"}:
+        if task.status in {"completed", "failed", "interrupted", "paused"}:
             metadata["interrupt_requested"] = False
+        if task.status in {"interrupted", "paused"}:
             key = "interrupt_reason" if task.status == "interrupted" else "pause_reason"
             if key in task.metadata:
                 metadata[key] = task.metadata[key]
@@ -631,6 +632,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task.completed_at = now
         task.result = result
         task.error = None
+        task.metadata["interrupt_requested"] = False
         if task.progress.percent is None and task.progress.total:
             task.progress.percent = 100.0
         return self._update_task(
@@ -658,6 +660,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task.error = (
             exception_message(error) if isinstance(error, BaseException) else str(error)
         )
+        task.metadata["interrupt_requested"] = False
         return self._update_task(
             task,
             activity=TaskActivity(
@@ -737,6 +740,9 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 if task is None:
                     self._conn.rollback()
                     return None
+                if requested and task.status in {"completed", "failed", "interrupted"}:
+                    self._conn.rollback()
+                    return task
                 task.metadata["interrupt_requested"] = requested
                 task.updated_at = utc_now_isoformat()
                 self._save_task(task)
