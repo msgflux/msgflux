@@ -38,7 +38,11 @@ from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.envs import envs
-from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import (
@@ -66,6 +70,7 @@ from msgflux.runtime.events import (
 from msgflux.telemetry import Spans
 from msgflux.telemetry.context import aactive_span, active_span
 from msgflux.utils.convert import convert_camel_snake_to_title
+from msgflux.utils.errors import exception_message
 from msgflux.utils.mermaid import plot_mermaid
 from msgflux.utils.msgspec import StructFactory
 from msgflux.utils.templates import format_template
@@ -90,11 +95,14 @@ T = TypeVar("T", bound="Module")
 
 
 def _run_exception_event(error: BaseException) -> str:
-    return (
-        EventType.RUN_PAUSED
-        if isinstance(error, TaskPauseRequestedError)
-        else EventType.RUN_ERROR
-    )
+    if isinstance(error, TaskPauseRequestedError):
+        return EventType.RUN_PAUSED
+    if isinstance(
+        error,
+        (AbortRequestedError, TaskInterruptRequestedError, asyncio.CancelledError),
+    ):
+        return EventType.RUN_INTERRUPTED
+    return EventType.RUN_ERROR
 
 
 class _IncompatibleKeys(
@@ -1461,7 +1469,7 @@ class Module:
                 if run_boundary:
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
                 raise
@@ -1488,7 +1496,7 @@ class Module:
         except BaseException as exc:
             emit_event(
                 _run_exception_event(exc),
-                {"error": str(exc)},
+                {"error": exception_message(exc)},
                 scope=scope,
             )
             raise
@@ -1780,7 +1788,7 @@ class Module:
                 if run_boundary:
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
                 raise
@@ -1986,8 +1994,10 @@ class Module:
         emit_content: bool = True,
         output_transformer: Any = None,
     ) -> None:
+        event_stream = response.consume_events()
+        primary_error = None
         try:
-            async for event in response.consume_events():
+            async for event in event_stream:
                 if event.type == "output.delta":
                     if emit_content:
                         delta = event.data
@@ -2008,11 +2018,39 @@ class Module:
                     "reasoning_summary.delta",
                 }:
                     emit_event(event.type, {"delta": event.data})
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            if not response._is_finalized():
-                response.finish(status="interrupted")
-            await response._await_pending_finalizers()
+            await Module._afinalize_event_consumer(
+                response, event_stream, primary_error
+            )
+
+    @staticmethod
+    async def _afinalize_event_consumer(response, event_stream, primary_error) -> None:
+        try:
+            try:
+                await Module._aclose_event_stream(response, event_stream, primary_error)
+            finally:
+                if not response._is_finalized():
+                    response.finish(status="interrupted")
+                    await response._await_pending_finalizers(primary_error)
+        finally:
             response._run_consumer_finalizers()
+
+    @staticmethod
+    async def _aclose_event_stream(response, event_stream, primary_error) -> None:
+        try:
+            await event_stream.aclose()
+        except Exception as finalizer_error:
+            if primary_error is None:
+                raise
+            combined_error = response._combine_finalizer_error(
+                primary_error, finalizer_error
+            )
+            if combined_error is finalizer_error:
+                raise
+            raise combined_error from finalizer_error
 
     async def _afinalize_event_result(self, result: Any) -> Any:
         stream_response = self._stream_response_from_result(result)
@@ -2098,7 +2136,7 @@ class Module:
                 ):
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
             finally:

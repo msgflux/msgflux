@@ -453,6 +453,12 @@ for reason in inspection.reasons:
     print(reason)
 ```
 
+For embedded `AgentService.wait()`, if execution and terminal journal settlement
+both fail, the raised exception group retains both errors. A failed settlement
+leaves the admission running for explicit inspection and recovery; the service
+does not replay the input automatically. If the worker was cancelled,
+cancellation still propagates and the settlement failure is logged.
+
 The inspection explains disagreement between the admission and checkpoint. It
 does not authorize replay or prove whether an external effect occurred. After
 restoring storage access, the trusted host must reconcile the execution using
@@ -826,6 +832,69 @@ server errors return a generic 500 message and are logged on the host. Model
 failures settle their run receipts and appear as `run.error` events, rather than
 turning accepted prompts into transport validation errors.
 
+Failed run receipts and results retain the same failure message delivered by
+`run.error`. When an exception has no message, its class name is used instead
+(for example, `ReadTimeout`); existing provider messages remain unchanged. The
+admission journal persists this text, so reopening the service store preserves
+the diagnostic. Interruptions use `run.interrupted` and status `interrupted`,
+while pauses use `run.paused` and status `paused`. They do not become ordinary
+run failures or authorize automatic retries.
+
+### Inspect Error Codes
+
+The client preserves the public error code in `AgentServiceHTTPError.code` and
+the HTTP response status in `status_code`. Unknown codes remain available for
+inspection. Malformed error bodies use code `http_error` and a neutral message;
+their raw content is not included in the exception. Malformed successful JSON
+or SSE records raise `AgentServiceProtocolError` with code `protocol_error`.
+
+```python
+from msgflux.runtime.service.http import AgentServiceHTTPError
+
+try:
+    result = await client.thread_result(thread_id)
+except AgentServiceHTTPError as exc:
+    print(exc.code, exc.status_code, str(exc))
+```
+
+This example inspects a remote failure without parsing its message. Errors
+delivered inside an established SSE stream have `status_code=None`: the
+connection succeeded, but observation subsequently failed. For example,
+`observer_overflow` asks the consumer to reconnect for a fresh snapshot; it does
+not mean that the run failed or was interrupted.
+
+HTTP responses and SSE error records use the same domain mapping, including an
+SSE error received before the initial snapshot:
+
+| Code | SDK exception |
+| --- | --- |
+| `service_busy` | `ServiceBusyError` |
+| `service_conflict` | `ServiceConflictError` |
+| `recovery_required` | `ServiceRecoveryRequiredError` |
+| `approval_conflict` | `ApprovalConflictError` |
+| `forbidden` | `PermissionError` |
+| Other valid codes | `AgentServiceHTTPError` |
+
+Translated domain exceptions keep the remote `AgentServiceHTTPError` as their
+Python cause. Local domain exceptions need no HTTP metadata:
+
+```python
+from msgflux.runtime import ServiceRecoveryRequiredError
+from msgflux.runtime.service.http import AgentServiceHTTPError
+
+try:
+    await client.resume_checkpoint(thread_id, run_id)
+except ServiceRecoveryRequiredError as exc:
+    print(str(exc))
+    if isinstance(exc.__cause__, AgentServiceHTTPError):
+        print(exc.__cause__.code, exc.__cause__.status_code)
+```
+
+This example keeps the same domain exception handling used by embedded sessions
+while allowing remote callers to inspect transport diagnostics. The cause
+contains the public response fields, not the server's Python traceback. These
+errors do not authorize retries or replay of an uncertain tool effect.
+
 For an uncertain workspace command, recovery responses use
 `{"code": "recovery_required", "message": "<host reason>"}`. The HTTP client
 maps this response to `ServiceRecoveryRequiredError`; inspect the reason, have
@@ -872,7 +941,10 @@ records remain available for a later factory-created Agent. A cold snapshot
 still resolves dependencies through the registered factory; durable readers
 that avoid constructing an Agent are a separate future change. Resource
 callbacks must drain any delegated work they own before releasing its
-model/workspace resources.
+model/workspace resources. If session initialization fails and its cleanup also
+fails, the binding is quarantined and the recovery error's chained cause keeps
+both failures in an exception group for host diagnostics. The service does not
+retry that factory while the incomplete binding remains quarantined.
 
 An existing embedded coding session can expose the same backend:
 

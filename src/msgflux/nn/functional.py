@@ -424,6 +424,8 @@ def detached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
         """Callback to log exception of a Future."""
         try:
             future.result()
+        except (concurrent.futures.CancelledError, asyncio.CancelledError):
+            return
         except Exception as e:
             logger.error(f"Detached task error: {e!s}", exc_info=True)
 

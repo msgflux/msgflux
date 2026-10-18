@@ -1,5 +1,6 @@
 """Shared runtime for OpenAI-compatible language-model APIs."""
 
+import asyncio
 import base64
 import warnings
 from copy import copy, deepcopy
@@ -2013,9 +2014,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         has_tools = bool(kwargs.get("tools"))
         final_status = "completed"
         model_output = None
+        aggregator = ToolCallAggregator()
+        cancellation_error = None
+        cleanup_cancellation = None
 
         try:
-            aggregator = ToolCallAggregator()
             model_output = await self._aexecute_with_metadata(metadata.model, **kwargs)
             finish_reason = None
 
@@ -2105,6 +2108,14 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 stream_response.first_chunk_event.set()
             stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        except asyncio.CancelledError as error:
+            cancellation_error = error
+            final_status = "interrupted"
+            stream_response.set_error(error)
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
+            raise
         except Exception as e:
             final_status = (
                 "interrupted"
@@ -2117,8 +2128,18 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 stream_response, pending_content, aggregator
             )
         finally:
-            if not await self._aclose_model_stream(model_output, stream_response):
-                final_status = "failed"
+            try:
+                if (
+                    not await self._aclose_model_stream(model_output, stream_response)
+                    and final_status != "interrupted"
+                ):
+                    final_status = "failed"
+            except asyncio.CancelledError as error:
+                final_status = "interrupted"
+                if stream_response.error is None:
+                    stream_response.set_error(error)
+                if cancellation_error is None:
+                    cleanup_cancellation = error
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
@@ -2126,6 +2147,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             metadata.timing = request_timer.finish()
             stream_response.set_metadata(metadata)
             stream_response.finish(status=final_status)
+        if cleanup_cancellation is not None:
+            raise cleanup_cancellation
 
     @staticmethod
     async def _aclose_model_stream(model_output, stream_response):
@@ -2559,7 +2582,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             stream_response.finish(status=final_status)
         return stream_response
 
-    async def _astream_responses_generate(
+    async def _astream_responses_generate(  # noqa: C901
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
@@ -2573,6 +2596,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         model_output = None
+        cancellation_error = None
+        cleanup_cancellation = None
         try:
             model_output = await self._aexecute_with_metadata(
                 state["metadata"].model, **kwargs
@@ -2587,6 +2612,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 )
             self._finish_responses_stream(stream_response, aggregator, state)
             final_status = state["terminal_status"]
+        except asyncio.CancelledError as error:
+            cancellation_error = error
+            final_status = "interrupted"
+            stream_response.set_error(error)
+            self._flush_responses_content(stream_response, aggregator, state)
+            raise
         except Exception as error:
             final_status = (
                 "interrupted"
@@ -2597,8 +2628,18 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             stream_response.set_error(error)
             self._flush_responses_content(stream_response, aggregator, state)
         finally:
-            if not await self._aclose_model_stream(model_output, stream_response):
-                final_status = "failed"
+            try:
+                if (
+                    not await self._aclose_model_stream(model_output, stream_response)
+                    and final_status != "interrupted"
+                ):
+                    final_status = "failed"
+            except asyncio.CancelledError as error:
+                final_status = "interrupted"
+                if stream_response.error is None:
+                    stream_response.set_error(error)
+                if cancellation_error is None:
+                    cleanup_cancellation = error
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
@@ -2610,6 +2651,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             state["metadata"].timing = request_timer.finish()
             stream_response.set_metadata(state["metadata"])
             stream_response.finish(status=final_status)
+        if cleanup_cancellation is not None:
+            raise cleanup_cancellation
         return stream_response
 
     def _build_generation_params(

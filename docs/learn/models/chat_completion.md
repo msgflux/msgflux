@@ -847,6 +847,9 @@ stream events and canonical history, including text buffered while its role as
 commentary or an answer was being determined. The response remains failed;
 partial text is not a completed answer.
 
+If a stream failure and its finalizer both raise ordinary exceptions, consuming
+the stream raises an `ExceptionGroup` containing both errors so neither is lost.
+
 An Agent preserves received messages and reasoning in its failure checkpoint.
 An incomplete tool call is not executed or converted into an executable history
 entry. Tools that completed before the disconnection retain their recorded
@@ -2222,6 +2225,8 @@ cross-thread connection because synchronous model streams finish in a background
 worker. The safety net `_response_type_event.set()` in
 the `finally` block ensures the event is always fired, even if the stream errors
 out or the model returns no content chunks (e.g., a pure tool call response).
+Cancelling an async model stream finalizes it with `interrupted`, preserves
+received text, and leaves incomplete tool calls out of dispatchable response data.
 
 `reasoning_summary_event` supports summary-specific discovery. It is set on the
 first summary chunk, or when the summary channel closes without producing one.
@@ -2967,9 +2972,10 @@ in `repr()`.
 
 ### 18.7 **Inspecting provider HTTP errors**
 
-Direct transports raise `ModelProviderHTTPError` after retries are exhausted or
-for a non-retryable response. The exception always contains the HTTP status and
-a provider description. Structured provider fields remain available for quota,
+Model HTTP transports raise `ModelProviderHTTPError` after retries are exhausted
+or for a non-retryable response, including the legacy HTTPX transport used by
+JinaAI and vLLM models. The exception always contains the HTTP status and a
+provider description. Structured provider fields remain available for quota,
 context-window, authentication, routing, and data-policy handling:
 
 ```python

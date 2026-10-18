@@ -4,6 +4,7 @@
 
 import asyncio
 import weakref
+from concurrent.futures import CancelledError as FutureCancelledError
 from dataclasses import replace
 from functools import partial
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -45,6 +46,7 @@ from msgflux.tools.helpers import (
 from msgflux.tools.responses import ToolResponses
 from msgflux.tools.runtime import ToolError, ToolIntent, ToolOutcome
 from msgflux.tools.types import ToolBucket, ToolLibraryOperator
+from msgflux.utils.errors import exception_message
 
 
 class _ToolBackgroundScheduler:
@@ -807,13 +809,16 @@ class ToolLibraryExecutionMixin:
             )
         outcome = self._run_after_tool_hook(outcome)
         outcome = self._transform_tool_output(outcome)
+        error = self._tool_error(outcome.error)
         emit_event(
             EventType.TOOL_END,
             {
                 **event_data,
                 "result": outcome.result,
-                "error": str(outcome.error) if outcome.error is not None else None,
-                "error_info": self._tool_error_info(outcome.error),
+                "error": error.message
+                if error
+                else (str(outcome.error) if outcome.error is not None else None),
+                "error_info": msgspec.to_builtins(error) if error else None,
             },
         )
         if outcome.error is not None:
@@ -864,13 +869,16 @@ class ToolLibraryExecutionMixin:
             )
         outcome = await self._arun_after_tool_hook(outcome)
         outcome = await self._atransform_tool_output(outcome)
+        error = self._tool_error(outcome.error)
         emit_event(
             EventType.TOOL_END,
             {
                 **event_data,
                 "result": outcome.result,
-                "error": str(outcome.error) if outcome.error is not None else None,
-                "error_info": self._tool_error_info(outcome.error),
+                "error": error.message
+                if error
+                else (str(outcome.error) if outcome.error is not None else None),
+                "error_info": msgspec.to_builtins(error) if error else None,
             },
         )
         if outcome.error is not None:
@@ -891,7 +899,7 @@ class ToolLibraryExecutionMixin:
         return replace(outcome, result=None, error=message)
 
     @staticmethod
-    def _tool_error_info(error: BaseException | str | None) -> dict | None:
+    def _tool_error(error: BaseException | str | None) -> ToolError | None:
         if error is None:
             return None
         if isinstance(
@@ -904,24 +912,21 @@ class ToolLibraryExecutionMixin:
             ),
         ):
             return None
-        message = str(error)
+        message = (
+            exception_message(error) if isinstance(error, BaseException) else error
+        )
         details = (
             {"exception_type": type(error).__name__}
             if isinstance(error, BaseException)
             else {}
         )
         if not message.strip():
-            message = (
-                type(error).__name__
-                if isinstance(error, BaseException)
-                else "Tool execution failed"
-            )
-        structured = ToolError(
+            message = "Tool execution failed"
+        return ToolError(
             code="tool_execution_failed",
             message=message,
             details=details,
         )
-        return msgspec.to_builtins(structured)
 
     def _transform_tool_output(self, outcome: AfterTool) -> AfterTool:
         try:
@@ -1270,23 +1275,21 @@ class ToolLibraryExecutionMixin:
         plan: ToolExecutionPlan,
         result: TaskError,
     ) -> ToolOutcome:
-        if isinstance(
-            result.exception,
-            (
-                AbortRequestedError,
-                TaskInterruptRequestedError,
-                TaskPauseRequestedError,
-            ),
-        ):
+        if isinstance(result.exception, FutureCancelledError):
+            raise asyncio.CancelledError(
+                "Tool execution cancelled"
+            ) from result.exception
+        error = self._tool_error(result.exception)
+        if error is None:
             raise result.exception
         return self._failed_intent(
             intent,
             status="execution_failed",
-            code="tool_execution_failed",
-            message=str(result),
+            code=error.code,
+            message=error.message,
             feedback=self.get_tool_definition(intent.name).feedback,
             arguments=plan.visible_arguments,
-            details={"exception_type": type(result.exception).__name__},
+            details=error.details,
         )
 
     @classmethod
@@ -1803,6 +1806,8 @@ class ToolLibraryExecutionMixin:
         if prepared_calls:
             results = await F.ascatter_gather(prepared_calls)
             for (index, intent, plan), result in zip(prepared_metadata, results):
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
                 if isinstance(result, ToolOutcome):
                     outcomes[index] = result
                 elif isinstance(result, TaskError):

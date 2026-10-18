@@ -51,6 +51,7 @@ from msgflux.tools.builtin.task_tool import (
 from msgflux.tools.handles import ToolBucketHandle
 from msgflux.tools.responses import ToolCall
 from msgflux.tools.types import ToolBackground, ToolBucket
+from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import lossless_json_roundtrip
 
 
@@ -421,31 +422,12 @@ class BackgroundTaskDispatcher:
                     result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                task_handle.interrupt(reason=str(exc))
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
+            except (Exception, asyncio.CancelledError) as exc:
+                self._settle_task_failure(
+                    task_handle,
                     tool_name=tool_name,
-                    status="interrupted",
                     agent_inbox=agent_inbox,
-                )
-                raise
-            except TaskPauseRequestedError as exc:
-                task_handle.pause(reason=str(exc))
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
-                    tool_name=tool_name,
-                    status="paused",
-                    agent_inbox=agent_inbox,
-                )
-                raise
-            except Exception as exc:
-                task_handle.fail(exc)
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
-                    tool_name=tool_name,
-                    status="failed",
-                    agent_inbox=agent_inbox,
+                    error=exc,
                 )
                 raise
             else:
@@ -705,10 +687,13 @@ class BackgroundTaskDispatcher:
                     recover_expired=recover_expired,
                 )
             )
-        except BaseException:
-            if recover_expired:
-                TaskLeaseHeartbeats.unregister(task_handle)
-                task_handle.fail("Worker submission failed")
+        except BaseException as exc:
+            self._settle_task_failure(
+                task_handle,
+                tool_name=tool_name,
+                agent_inbox=root_inbox,
+                error=exc,
+            )
             raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
@@ -736,7 +721,7 @@ class BackgroundTaskDispatcher:
     def log_task_failure(self, future: Any) -> None:
         try:
             future.result()
-        except FutureCancelledError:
+        except (FutureCancelledError, asyncio.CancelledError):
             return
         except (AbortRequestedError, TaskInterruptRequestedError):
             return
@@ -744,6 +729,49 @@ class BackgroundTaskDispatcher:
             return
         except Exception as exc:
             logger.error(f"Background task error: {exc!s}", exc_info=True)
+
+    def _settle_task_failure(
+        self,
+        task_handle: TaskHandle,
+        *,
+        tool_name: str,
+        agent_inbox: AgentInbox | None,
+        error: BaseException,
+    ) -> None:
+        """Persist a task failure without replacing its original exception."""
+        TaskLeaseHeartbeats.unregister(task_handle)
+        interrupted = isinstance(
+            error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                FutureCancelledError,
+                asyncio.CancelledError,
+            ),
+        )
+        status = "interrupted" if interrupted else "failed"
+        try:
+            if isinstance(error, TaskPauseRequestedError):
+                status = "paused"
+                record = task_handle.pause(reason=exception_message(error))
+            elif interrupted:
+                record = task_handle.interrupt(reason=exception_message(error))
+            else:
+                record = task_handle.fail(error)
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Could not persist background task failure")
+            return
+        if record is None:
+            return
+        try:
+            self.publish_task_notification(
+                task_id=task_handle.task_id,
+                tool_name=tool_name,
+                status=status,
+                agent_inbox=agent_inbox,
+            )
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Could not publish background task failure notification")
 
     def dispatch(
         self,
@@ -919,19 +947,28 @@ class BackgroundTaskDispatcher:
                 task_store=task_store,
                 activity_recorder=activity_recorder,
             )
-        future = Executor.get_instance().submit(
-            partial(
-                self.run_tool,
-                tool=tool,
-                task_handle=task_handle,
-                tool_name=tool_name,
-                call_params=runner_params,
-                required_permissions=definition.required_permissions,
-                required_resources=definition.required_resources,
-                execution_scope=execution_scope,
-                agent_inbox=root_agent_inbox,
+        try:
+            future = Executor.get_instance().submit(
+                partial(
+                    self.run_tool,
+                    tool=tool,
+                    task_handle=task_handle,
+                    tool_name=tool_name,
+                    call_params=runner_params,
+                    required_permissions=definition.required_permissions,
+                    required_resources=definition.required_resources,
+                    execution_scope=execution_scope,
+                    agent_inbox=root_agent_inbox,
+                )
             )
-        )
+        except BaseException as exc:
+            self._settle_task_failure(
+                task_handle,
+                tool_name=tool_name,
+                agent_inbox=root_agent_inbox,
+                error=exc,
+            )
+            raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
         future.add_done_callback(self.log_task_failure)

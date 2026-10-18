@@ -65,9 +65,18 @@ def test_task_store_contract_lifecycle_and_activity(task_store):
     assert not task_store.clear_interrupt_request("task-1").metadata[
         "interrupt_requested"
     ]
+    task_store.request_interrupt("task-1")
     completed = task_store.complete("task-1", "done")
     assert completed.status == "completed"
     assert completed.result == "done"
+    assert completed.metadata["interrupt_requested"] is False
+
+    task_store.create("failed-task", task_id="failed-task")
+    task_store.request_interrupt("failed-task")
+    failed = task_store.fail("failed-task", "failed after interrupt request")
+    assert failed.status == "failed"
+    assert failed.error == "failed after interrupt request"
+    assert failed.metadata["interrupt_requested"] is False
 
 
 def test_task_store_result_projection_isolated_and_full_by_default(task_store):
@@ -455,3 +464,14 @@ def test_active_worker_renews_lease_with_shared_heartbeat():
         assert handle.complete("done").status == "completed"
     finally:
         TaskLeaseHeartbeats.unregister(handle)
+
+
+@pytest.mark.parametrize("message", ["", "   ", "provider failed"])
+def test_exception_failure_text_remains_useful_in_task_activity(task_store, message):
+    task_store.create("worker", task_id="failure")
+    failed = task_store.fail("failure", RuntimeError(message))
+    expected = message if message.strip() else "RuntimeError"
+    assert failed.status == "failed"
+    assert failed.error == expected
+    assert task_store.get("failure").error == expected
+    assert task_store.get_last_activity("failure").metadata["error"] == expected

@@ -67,6 +67,7 @@ from msgflux.telemetry.service import (
     execution_trigger,
     finish_execution_span,
 )
+from msgflux.utils.errors import exception_message
 from msgflux.utils.validation import is_valid_account_name
 
 _DEFAULT_CACHE_POLICY = SessionCachePolicy()
@@ -424,14 +425,18 @@ class AgentService:
                 if scope.workspace is not None
                 else None
             )
-        except BaseException:
+        except BaseException as initialization_error:
             if session.on_close is not None:
                 try:
                     closed = session.on_close()
                     if inspect.isawaitable(closed):
                         await closed
-                except BaseException as error:
-                    raise _SessionLoadCleanupError(session, error) from error
+                except BaseException as cleanup_error:
+                    failure = BaseExceptionGroup(
+                        "Session initialization and cleanup failed",
+                        [initialization_error, cleanup_error],
+                    )
+                    raise _SessionLoadCleanupError(session, failure) from failure
             raise
         return session
 
@@ -888,7 +893,9 @@ class AgentService:
                     "AgentService worker failed to settle its journal", exc_info=error
                 )
 
-    async def _produce(self, record: AdmissionRecord, worker: _Worker) -> None:
+    async def _produce(  # noqa: C901 - keep ownership and terminal cleanup together
+        self, record: AdmissionRecord, worker: _Worker
+    ) -> None:
         with ExitStack() as spans:
             receipt = record.receipt
             key = (receipt.thread_id, receipt.request_id)
@@ -897,6 +904,7 @@ class AgentService:
             claimed = False
             span = None
             error_type = None
+            execution_error: BaseException | None = None
             try:
                 claimed = self.store.claim(record, self._owner_id)
                 if not claimed:
@@ -913,26 +921,33 @@ class AgentService:
                 )
                 status = await self._execute(record, worker)
             except TaskPauseRequestedError as exc:
+                execution_error = exc
                 error_type = type(exc).__name__
-                status, error = "paused", str(exc)
+                status, error = "paused", exception_message(exc)
             except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+                execution_error = exc
                 error_type = type(exc).__name__
-                status, error = "interrupted", str(exc)
-            except asyncio.CancelledError:
+                status, error = "interrupted", exception_message(exc)
+            except asyncio.CancelledError as exc:
+                execution_error = exc
                 error_type = "CancelledError"
                 status, error = "interrupted", "Service worker cancelled"
                 raise
             except Exception as exc:
+                execution_error = exc
+                if not claimed:
+                    raise
                 error_type = type(exc).__name__
-                status, error = "failed", str(exc)
+                status, error = "failed", exception_message(exc)
             except BaseException as exc:
+                execution_error = exc
                 error_type = type(exc).__name__
-                status, error = "failed", str(exc)
+                status, error = "failed", exception_message(exc)
                 raise
             finally:
                 try:
                     if claimed:
-                        self.store.finish(receipt, self._owner_id, status, error)
+                        self._finish_worker_run(receipt, status, error, execution_error)
                     if span is not None:
                         finish_execution_span(span, status, error_type)
                 finally:
@@ -942,6 +957,30 @@ class AgentService:
                 # context and durably paused; never overlap the two executions.
                 if status == "paused":
                     await self._resume_quiescent_policy(worker, key)
+
+    def _finish_worker_run(
+        self,
+        receipt: AdmissionReceipt,
+        status: AdmissionStatus,
+        error: str | None,
+        execution_error: BaseException | None,
+    ) -> None:
+        try:
+            self.store.finish(receipt, self._owner_id, status, error)
+        except BaseException as settlement_error:
+            if isinstance(execution_error, asyncio.CancelledError):
+                logger.error(
+                    "AgentService worker cancellation could not be settled "
+                    "in the journal",
+                    exc_info=settlement_error,
+                )
+                raise execution_error from settlement_error
+            if execution_error is not None:
+                raise BaseExceptionGroup(
+                    "Run execution and journal settlement failed",
+                    [execution_error, settlement_error],
+                ) from None
+            raise
 
     async def _resume_quiescent_policy(self, worker, key):
         if self._closed:

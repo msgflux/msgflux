@@ -151,7 +151,7 @@ async def main() -> None:
 
         async for event in watcher:
             update_ui(event)
-            if event.type in {"run.end", "run.error"}:
+            if event.type in {"run.end", "run.error", "run.paused", "run.interrupted"}:
                 break
 
     await run
@@ -271,6 +271,22 @@ them. All following events remain correlatable through `run_id` and
 | `turn.end` | The turn reached a terminal boundary; it has no output payload |
 | `run.end` | The run completed and reports its outcome |
 | `run.error` | Execution failed; the iterator raises after this event |
+| `run.paused` | Execution paused; the iterator raises the pause signal after this event |
+| `run.interrupted` | Execution was aborted, interrupted or cancelled; the iterator raises the control signal after this event |
+
+Terminal event types distinguish ordinary failures from control signals. A
+cooperative abort, task interruption or asyncio cancellation emits
+`run.interrupted`; a pause emits `run.paused`. The original exception still
+propagates to direct callers and event-stream consumers. Service observers
+receive the event; the service owns execution and settles the corresponding
+receipt.
+
+The textual `data.error` preserves the exception message. Empty or
+whitespace-only messages fall back to the exception class, such as `ReadTimeout`,
+so a failed run does not produce a blank diagnostic. The same rule applies to
+failed service receipts/results and exception values passed to built-in task
+stores. Nonblank provider messages retain their existing details; this does not
+include raw response bodies or Python tracebacks.
 
 Permission-denied `tool.permission_denied` and `tool.blocked` events retain
 `data.code` and include `data.error` with `code`, `message`, and `details`. This
@@ -279,8 +295,18 @@ operation appear on `tool.end`: the existing textual `data.error` remains, and
 `data.error_info` provides `{code, message, details}` for programmatic handling.
 Execution failures use the generic `tool_execution_failed` code. When execution
 raises an exception, `details.exception_type` identifies its class. The event
-does not include a traceback. Model feedback and conversation history retain
-their existing textual error rendering; `error_info` is additional event metadata.
+does not include a traceback. The textual `data.error`, `error_info.message`,
+canonical `ToolOutcome.error.message`, model feedback and conversation history
+use the same failure message. An exception with an empty or whitespace-only
+message uses its class name, such as `RuntimeError`. Tool failures do not add
+the parallel gather index (`Task 0 failed:`); the call ID and tool name identify
+the operation. The generic `TaskError` representation used by gather/scatter
+outside tool dispatch is unchanged.
+
+Pause, interruption and cancellation remain control signals. They do not
+produce `error_info` or become ordinary failed tool outcomes. Output-processing
+failures continue to use a neutral message because tool execution may already
+have completed; their raw output and internal storage exception are not exposed.
 
 For example, a UI can show the error while retaining its structured fields for
 logs or diagnostics:

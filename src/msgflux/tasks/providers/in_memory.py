@@ -13,6 +13,7 @@ from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import InMemoryTaskStoreType
+from msgflux.utils.errors import exception_message
 from msgflux.utils.time import utc_now_isoformat
 
 
@@ -365,6 +366,7 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.completed_at = now
             task.result = result
             task.error = None
+            task.metadata["interrupt_requested"] = False
             self._worker_leases.pop(task_id, None)
             if task.progress.percent is None and task.progress.total:
                 task.progress.percent = 100.0
@@ -390,7 +392,12 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.status = "failed"
             task.updated_at = now
             task.completed_at = now
-            task.error = str(error)
+            task.error = (
+                exception_message(error)
+                if isinstance(error, BaseException)
+                else str(error)
+            )
+            task.metadata["interrupt_requested"] = False
             self._worker_leases.pop(task_id, None)
             self._activities.setdefault(task_id, []).append(
                 TaskActivity(
@@ -467,6 +474,8 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task = self._tasks.get(task_id)
             if task is None:
                 return None
+            if task.status in {"completed", "failed", "interrupted"}:
+                return deepcopy(task)
             task.updated_at = utc_now_isoformat()
             task.metadata["interrupt_requested"] = True
             self._activities.setdefault(task_id, []).append(

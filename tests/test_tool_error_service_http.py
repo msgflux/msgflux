@@ -374,6 +374,63 @@ async def test_apply_patch_create_existing_error_reaches_model_and_http_events(
     await workspace.aclose()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["", "   ", "A clear failure"])
+async def test_tool_error_message_agrees_in_events_feedback_and_checkpoint(
+    message, tmp_path
+):
+    def fail() -> None:
+        raise RuntimeError(message)
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(
+        name="main",
+        model=model,
+        tools=[fail],
+        agent_dir=tmp_path / "empty-error-state",
+    )
+    model_history = []
+    request_count = 0
+
+    async def respond(**kwargs):
+        nonlocal request_count
+        request_count += 1
+        assert request_count <= 2
+        if request_count == 1:
+            return _tool_call("fail", {})
+        model_history.extend(kwargs["messages"].to_chatml())
+        return _text_response("The tool failed.")
+
+    agent.generator.aforward = AsyncMock(side_effect=respond)
+    async with _remote_session(agent, thread_id="empty-error-thread") as (
+        _client,
+        session,
+    ):
+        async with session.watch() as watcher:
+            admission = await session.prompt("try the tool", request_id="fail")
+            events = await _collect_until_run_end(watcher, admission.run_id)
+        settled = await asyncio.wait_for(session.wait("fail"), timeout=5)
+        assert settled.status == "completed"
+        assert request_count == 2
+
+        tool_end = next(event for event in events if event.type == "tool.end")
+        expected = message if message.strip() else "RuntimeError"
+        assert tool_end.data["error"] == expected
+        assert tool_end.data["error_info"] == {
+            "code": "tool_execution_failed",
+            "message": expected,
+            "details": {"exception_type": "RuntimeError"},
+        }
+        feedback = [item for item in model_history if item["role"] == "tool"]
+        assert len(feedback) == 1
+        assert feedback[0]["content"] == expected
+        snapshot = await session.snapshot()
+        saved = [item for item in snapshot.messages if item.get("role") == "tool"]
+        assert len(saved) == 1
+        assert saved[0]["content"] == expected
+
+
 class _FailingResultStore(ToolResultStore):
     def put(self, chunks, *, media_type="application/octet-stream"):
         del chunks, media_type
@@ -459,3 +516,48 @@ async def test_offload_failure_is_sanitized_in_feedback_and_remote_events(tmp_pa
         assert "payload-marker-" not in str(error_info)
         assert await client.receipt(session.thread_id, "report") == settled
     handle.remove()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tool_interrupts_service_run_and_allows_next_prompt(tmp_path):
+    async def cancel() -> None:
+        raise asyncio.CancelledError("Tool cancelled")
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(
+        name="main",
+        model=model,
+        tools=[cancel],
+        agent_dir=tmp_path / "cancel-tool-state",
+    )
+    request_count = 0
+
+    async def respond(**_kwargs):
+        nonlocal request_count
+        request_count += 1
+        assert request_count <= 2
+        return _tool_call("cancel", {}) if request_count == 1 else _text_response("ok")
+
+    agent.generator.aforward = AsyncMock(side_effect=respond)
+    async with _remote_session(agent, thread_id="cancel-tool-thread") as (
+        _client,
+        session,
+    ):
+        async with session.watch() as watcher:
+            admission = await session.prompt("cancel the tool", request_id="cancel")
+            events = await _collect_until_run_end(watcher, admission.run_id)
+        assert events[-1].type == "run.interrupted"
+        cancelled = await asyncio.wait_for(session.wait("cancel"), timeout=5)
+        assert cancelled.status == "interrupted"
+        assert request_count == 1
+        result = await session.result(run_id=cancelled.run_id)
+        assert result.output is None
+        assert result.status == "interrupted"
+        assert (await session.runs())[0].status == "interrupted"
+
+        await session.prompt("reply ok", request_id="continue")
+        resumed = await asyncio.wait_for(session.wait("continue"), timeout=5)
+        assert resumed.status == "completed"
+        assert (await session.result(run_id=resumed.run_id)).output == "ok"
+        assert request_count == 2

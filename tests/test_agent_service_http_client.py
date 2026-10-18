@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
+from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.service import (
     AdmissionReceipt,
     ServiceBusyError,
@@ -200,6 +201,8 @@ async def test_health_decodes_legacy_and_default_agent_metadata():
         ("service_busy", ServiceBusyError),
         ("service_conflict", ServiceConflictError),
         ("recovery_required", ServiceRecoveryRequiredError),
+        ("approval_conflict", ApprovalConflictError),
+        ("forbidden", PermissionError),
     ],
 )
 async def test_service_error_codes_map_to_service_exceptions(code, exception):
@@ -210,8 +213,13 @@ async def test_service_error_codes_map_to_service_exceptions(code, exception):
         client = AgentServiceClient(
             "https://service.example", token="secret", client=http
         )
-        with pytest.raises(exception, match="denied"):
+        with pytest.raises(exception, match="denied") as raised:
             await client.agents()
+        remote = raised.value.__cause__
+        assert isinstance(remote, AgentServiceHTTPError)
+        assert remote.code == code
+        assert remote.status_code == 409
+        assert str(remote) == str(raised.value)
 
 
 @pytest.mark.asyncio
@@ -337,6 +345,7 @@ async def test_active_run_listing_distinguishes_missing_endpoint_from_other_erro
         with pytest.raises(AgentServiceHTTPError) as raised:
             await client.active_runs()
         assert raised.value.status_code == status
+        assert raised.value.code == "http_error"
         if status == 404:
             assert "Restart or upgrade" in str(raised.value)
             assert "/v1/runs/active" in str(raised.value)
