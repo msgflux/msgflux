@@ -1994,8 +1994,10 @@ class Module:
         emit_content: bool = True,
         output_transformer: Any = None,
     ) -> None:
+        event_stream = response.consume_events()
+        primary_error = None
         try:
-            async for event in response.consume_events():
+            async for event in event_stream:
                 if event.type == "output.delta":
                     if emit_content:
                         delta = event.data
@@ -2016,11 +2018,39 @@ class Module:
                     "reasoning_summary.delta",
                 }:
                     emit_event(event.type, {"delta": event.data})
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            if not response._is_finalized():
-                response.finish(status="interrupted")
-            await response._await_pending_finalizers()
+            await Module._afinalize_event_consumer(
+                response, event_stream, primary_error
+            )
+
+    @staticmethod
+    async def _afinalize_event_consumer(response, event_stream, primary_error) -> None:
+        try:
+            try:
+                await Module._aclose_event_stream(response, event_stream, primary_error)
+            finally:
+                if not response._is_finalized():
+                    response.finish(status="interrupted")
+                    await response._await_pending_finalizers(primary_error)
+        finally:
             response._run_consumer_finalizers()
+
+    @staticmethod
+    async def _aclose_event_stream(response, event_stream, primary_error) -> None:
+        try:
+            await event_stream.aclose()
+        except Exception as finalizer_error:
+            if primary_error is None:
+                raise
+            combined_error = response._combine_finalizer_error(
+                primary_error, finalizer_error
+            )
+            if combined_error is finalizer_error:
+                raise
+            raise combined_error from finalizer_error
 
     async def _afinalize_event_result(self, result: Any) -> Any:
         stream_response = self._stream_response_from_result(result)
