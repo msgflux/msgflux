@@ -711,10 +711,13 @@ class BackgroundTaskDispatcher:
                     recover_expired=recover_expired,
                 )
             )
-        except BaseException:
-            if recover_expired:
-                TaskLeaseHeartbeats.unregister(task_handle)
-                task_handle.fail("Worker submission failed")
+        except BaseException as exc:
+            self._settle_submission_failure(
+                task_handle,
+                tool_name=tool_name,
+                agent_inbox=root_inbox,
+                error=exc,
+            )
             raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
@@ -750,6 +753,41 @@ class BackgroundTaskDispatcher:
             return
         except Exception as exc:
             logger.error(f"Background task error: {exc!s}", exc_info=True)
+
+    def _settle_submission_failure(
+        self,
+        task_handle: TaskHandle,
+        *,
+        tool_name: str,
+        agent_inbox: AgentInbox | None,
+        error: BaseException,
+    ) -> None:
+        """Persist submission failure without replacing its original exception."""
+        TaskLeaseHeartbeats.unregister(task_handle)
+        interrupted = isinstance(error, (FutureCancelledError, asyncio.CancelledError))
+        status = "interrupted" if interrupted else "failed"
+        try:
+            record = (
+                task_handle.interrupt(reason=exception_message(error))
+                if interrupted
+                else task_handle.fail(error)
+            )
+        except Exception:
+            logger.exception("Could not persist background task submission failure")
+            return
+        if record is None:
+            return
+        try:
+            self.publish_task_notification(
+                task_id=task_handle.task_id,
+                tool_name=tool_name,
+                status=status,
+                agent_inbox=agent_inbox,
+            )
+        except Exception:
+            logger.exception(
+                "Could not publish background task submission notification"
+            )
 
     def dispatch(
         self,
@@ -925,19 +963,28 @@ class BackgroundTaskDispatcher:
                 task_store=task_store,
                 activity_recorder=activity_recorder,
             )
-        future = Executor.get_instance().submit(
-            partial(
-                self.run_tool,
-                tool=tool,
-                task_handle=task_handle,
-                tool_name=tool_name,
-                call_params=runner_params,
-                required_permissions=definition.required_permissions,
-                required_resources=definition.required_resources,
-                execution_scope=execution_scope,
-                agent_inbox=root_agent_inbox,
+        try:
+            future = Executor.get_instance().submit(
+                partial(
+                    self.run_tool,
+                    tool=tool,
+                    task_handle=task_handle,
+                    tool_name=tool_name,
+                    call_params=runner_params,
+                    required_permissions=definition.required_permissions,
+                    required_resources=definition.required_resources,
+                    execution_scope=execution_scope,
+                    agent_inbox=root_agent_inbox,
+                )
             )
-        )
+        except BaseException as exc:
+            self._settle_submission_failure(
+                task_handle,
+                tool_name=tool_name,
+                agent_inbox=root_agent_inbox,
+                error=exc,
+            )
+            raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
         future.add_done_callback(self.log_task_failure)
