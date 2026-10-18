@@ -455,3 +455,14 @@ def test_active_worker_renews_lease_with_shared_heartbeat():
         assert handle.complete("done").status == "completed"
     finally:
         TaskLeaseHeartbeats.unregister(handle)
+
+
+@pytest.mark.parametrize("message", ["", "   ", "provider failed"])
+def test_exception_failure_text_remains_useful_in_task_activity(task_store, message):
+    task_store.create("worker", task_id="failure")
+    failed = task_store.fail("failure", RuntimeError(message))
+    expected = message if message.strip() else "RuntimeError"
+    assert failed.status == "failed"
+    assert failed.error == expected
+    assert task_store.get("failure").error == expected
+    assert task_store.get_last_activity("failure").metadata["error"] == expected

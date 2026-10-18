@@ -826,6 +826,14 @@ server errors return a generic 500 message and are logged on the host. Model
 failures settle their run receipts and appear as `run.error` events, rather than
 turning accepted prompts into transport validation errors.
 
+Failed run receipts and results retain the same failure message delivered by
+`run.error`. When an exception has no message, its class name is used instead
+(for example, `ReadTimeout`); existing provider messages remain unchanged. The
+admission journal persists this text, so reopening the service store preserves
+the diagnostic. Interruptions use `run.interrupted` and status `interrupted`,
+while pauses use `run.paused` and status `paused`. They do not become ordinary
+run failures or authorize automatic retries.
+
 ### Inspect Error Codes
 
 The client preserves the public error code in `AgentServiceHTTPError.code` and

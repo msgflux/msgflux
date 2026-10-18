@@ -38,7 +38,11 @@ from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.envs import envs
-from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
 from msgflux.models.response import (
@@ -66,6 +70,7 @@ from msgflux.runtime.events import (
 from msgflux.telemetry import Spans
 from msgflux.telemetry.context import aactive_span, active_span
 from msgflux.utils.convert import convert_camel_snake_to_title
+from msgflux.utils.errors import exception_message
 from msgflux.utils.mermaid import plot_mermaid
 from msgflux.utils.msgspec import StructFactory
 from msgflux.utils.templates import format_template
@@ -90,11 +95,14 @@ T = TypeVar("T", bound="Module")
 
 
 def _run_exception_event(error: BaseException) -> str:
-    return (
-        EventType.RUN_PAUSED
-        if isinstance(error, TaskPauseRequestedError)
-        else EventType.RUN_ERROR
-    )
+    if isinstance(error, TaskPauseRequestedError):
+        return EventType.RUN_PAUSED
+    if isinstance(
+        error,
+        (AbortRequestedError, TaskInterruptRequestedError, asyncio.CancelledError),
+    ):
+        return EventType.RUN_INTERRUPTED
+    return EventType.RUN_ERROR
 
 
 class _IncompatibleKeys(
@@ -1461,7 +1469,7 @@ class Module:
                 if run_boundary:
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
                 raise
@@ -1488,7 +1496,7 @@ class Module:
         except BaseException as exc:
             emit_event(
                 _run_exception_event(exc),
-                {"error": str(exc)},
+                {"error": exception_message(exc)},
                 scope=scope,
             )
             raise
@@ -1780,7 +1788,7 @@ class Module:
                 if run_boundary:
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
                 raise
@@ -2098,7 +2106,7 @@ class Module:
                 ):
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
             finally:

@@ -544,7 +544,10 @@ async def test_cancelled_tool_interrupts_service_run_and_allows_next_prompt(tmp_
         _client,
         session,
     ):
-        await session.prompt("cancel the tool", request_id="cancel")
+        async with session.watch() as watcher:
+            admission = await session.prompt("cancel the tool", request_id="cancel")
+            events = await _collect_until_run_end(watcher, admission.run_id)
+        assert events[-1].type == "run.interrupted"
         cancelled = await asyncio.wait_for(session.wait("cancel"), timeout=5)
         assert cancelled.status == "interrupted"
         assert request_count == 1

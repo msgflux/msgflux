@@ -13,6 +13,7 @@ from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import InMemoryTaskStoreType
+from msgflux.utils.errors import exception_message
 from msgflux.utils.time import utc_now_isoformat
 
 
@@ -390,7 +391,11 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.status = "failed"
             task.updated_at = now
             task.completed_at = now
-            task.error = str(error)
+            task.error = (
+                exception_message(error)
+                if isinstance(error, BaseException)
+                else str(error)
+            )
             self._worker_leases.pop(task_id, None)
             self._activities.setdefault(task_id, []).append(
                 TaskActivity(

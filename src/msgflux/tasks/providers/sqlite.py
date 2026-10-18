@@ -16,6 +16,7 @@ from msgflux.tasks.lease import TaskLease
 from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import SQLiteTaskStoreType
+from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import msgspec_dumps
 from msgflux.utils.time import utc_now_isoformat
 
@@ -654,7 +655,9 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         task.status = "failed"
         task.updated_at = now
         task.completed_at = now
-        task.error = str(error)
+        task.error = (
+            exception_message(error) if isinstance(error, BaseException) else str(error)
+        )
         return self._update_task(
             task,
             activity=TaskActivity(

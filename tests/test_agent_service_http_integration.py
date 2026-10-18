@@ -585,3 +585,79 @@ async def test_observer_overflow_reports_reconnect_without_canceling_run():
             await asyncio.wait_for(_no_watchers(thread.thread_id), 3)
         finally:
             await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["blank", "whitespace", "timeout", "provider"])
+async def test_run_failure_message_matches_event_result_and_reopened_journal(
+    kind, tmp_path
+):
+    import httpx2
+
+    from msgflux.exceptions import ModelProviderHTTPError
+
+    error = {
+        "blank": RuntimeError(),
+        "whitespace": RuntimeError("   "),
+        "timeout": httpx2.ReadTimeout(""),
+        "provider": ModelProviderHTTPError(
+            status_code=429,
+            description="Rate limit reached",
+            provider="openai-codex",
+            model_id="test-model",
+            code="rate_limit_exceeded",
+            request_id="request-123",
+            response={"private": "raw-response-marker"},
+        ),
+    }[kind]
+    expected = {
+        "blank": "RuntimeError",
+        "whitespace": "RuntimeError",
+        "timeout": "ReadTimeout",
+        "provider": str(error),
+    }[kind]
+
+    async def failure(**_kwargs):
+        raise error
+
+    journal_path = tmp_path / "failure-journal.sqlite3"
+    agent = _agent(failure)
+    async with _server(
+        lambda _thread: AgentSession(agent), journal_path=journal_path
+    ) as (service, url):
+        client = AgentServiceClient(url, token=TOKEN)
+        try:
+            thread = await client.open_thread("main")
+            async with client.watch(thread.thread_id) as watcher:
+                receipt = await client.prompt(
+                    thread.thread_id, "fail", request_id="failed"
+                )
+                events = await asyncio.wait_for(
+                    _root_terminal(watcher, receipt.run_id), 5
+                )
+            settled = await asyncio.wait_for(
+                service.wait(thread.thread_id, "failed"), 5
+            )
+            assert events[-1].type == "run.error"
+            assert events[-1].data["error"] == expected
+            assert settled.status == "failed"
+            assert settled.error == expected
+            assert (await client.receipt(thread.thread_id, "failed")).error == expected
+            result = await client.run_result(thread.thread_id, receipt.run_id)
+            assert result.status == "failed"
+            assert result.error == expected
+            assert result.output is None
+            assert (await client.thread_result(thread.thread_id)) == result
+            assert (
+                await client.inspect_run(thread.thread_id, receipt.run_id)
+            ).checkpoint_status == "failed"
+            assert "raw-response-marker" not in str(events)
+            assert "raw-response-marker" not in str(result)
+        finally:
+            await client.aclose()
+
+    reopened = SQLiteServiceStore(journal_path)
+    try:
+        assert reopened.get(thread.thread_id, "failed").receipt.error == expected
+    finally:
+        reopened.close()

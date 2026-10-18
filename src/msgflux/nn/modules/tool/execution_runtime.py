@@ -46,6 +46,7 @@ from msgflux.tools.helpers import (
 from msgflux.tools.responses import ToolResponses
 from msgflux.tools.runtime import ToolError, ToolIntent, ToolOutcome
 from msgflux.tools.types import ToolBucket, ToolLibraryOperator
+from msgflux.utils.errors import exception_message
 
 
 class _ToolBackgroundScheduler:
@@ -911,18 +912,16 @@ class ToolLibraryExecutionMixin:
             ),
         ):
             return None
-        message = str(error)
+        message = (
+            exception_message(error) if isinstance(error, BaseException) else error
+        )
         details = (
             {"exception_type": type(error).__name__}
             if isinstance(error, BaseException)
             else {}
         )
         if not message.strip():
-            message = (
-                type(error).__name__
-                if isinstance(error, BaseException)
-                else "Tool execution failed"
-            )
+            message = "Tool execution failed"
         return ToolError(
             code="tool_execution_failed",
             message=message,

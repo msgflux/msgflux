@@ -1484,3 +1484,53 @@ def test_before_tool_hook_failure_blocks_execution():
 
     assert calls == []
     assert "failed closed" in response.tool_calls[0].error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "async", "stream"])
+@pytest.mark.parametrize("kind", ["blank", "abort", "interrupt", "pause", "cancel"])
+async def test_terminal_event_agrees_with_exception_kind(mode, kind):
+    from msgflux.exceptions import (
+        AbortRequestedError,
+        TaskInterruptRequestedError,
+        TaskPauseRequestedError,
+    )
+    from msgflux.runtime.events import _EventSink, _capture_events
+
+    error, expected_type = {
+        "blank": (RuntimeError(), EventType.RUN_ERROR),
+        "abort": (AbortRequestedError("stop"), EventType.RUN_INTERRUPTED),
+        "interrupt": (
+            TaskInterruptRequestedError("task", "stop"),
+            EventType.RUN_INTERRUPTED,
+        ),
+        "pause": (TaskPauseRequestedError("task", "stop"), EventType.RUN_PAUSED),
+        "cancel": (asyncio.CancelledError(), EventType.RUN_INTERRUPTED),
+    }[kind]
+
+    class FailingControlModule(Module):
+        _emit_nested_run_events = True
+
+        def forward(self):
+            raise error
+
+        async def aforward(self):
+            raise error
+
+    module = FailingControlModule()
+    events = []
+    with pytest.raises(type(error)) as raised:
+        if mode == "stream":
+            async for event in module.stream_events():
+                events.append(event)
+        else:
+            with _capture_events(_EventSink(events.append)):
+                if mode == "sync":
+                    module()
+                else:
+                    await module.acall()
+    assert raised.value is error
+    assert events[-1].type == expected_type
+    assert events[-1].data["error"] == (
+        "stop" if kind not in {"blank", "cancel"} else type(error).__name__
+    )

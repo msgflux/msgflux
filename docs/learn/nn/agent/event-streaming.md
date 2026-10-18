@@ -151,7 +151,7 @@ async def main() -> None:
 
         async for event in watcher:
             update_ui(event)
-            if event.type in {"run.end", "run.error"}:
+            if event.type in {"run.end", "run.error", "run.paused", "run.interrupted"}:
                 break
 
     await run
@@ -271,6 +271,22 @@ them. All following events remain correlatable through `run_id` and
 | `turn.end` | The turn reached a terminal boundary; it has no output payload |
 | `run.end` | The run completed and reports its outcome |
 | `run.error` | Execution failed; the iterator raises after this event |
+| `run.paused` | Execution paused; the iterator raises the pause signal after this event |
+| `run.interrupted` | Execution was aborted, interrupted or cancelled; the iterator raises the control signal after this event |
+
+Terminal event types distinguish ordinary failures from control signals. A
+cooperative abort, task interruption or asyncio cancellation emits
+`run.interrupted`; a pause emits `run.paused`. The original exception still
+propagates to direct callers and event-stream consumers. Service observers
+receive the event; the service owns execution and settles the corresponding
+receipt.
+
+The textual `data.error` preserves the exception message. Empty or
+whitespace-only messages fall back to the exception class, such as `ReadTimeout`,
+so a failed run does not produce a blank diagnostic. The same rule applies to
+failed service receipts/results and exception values passed to built-in task
+stores. Nonblank provider messages retain their existing details; this does not
+include raw response bodies or Python tracebacks.
 
 Permission-denied `tool.permission_denied` and `tool.blocked` events retain
 `data.code` and include `data.error` with `code`, `message`, and `details`. This

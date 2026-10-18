@@ -67,6 +67,7 @@ from msgflux.telemetry.service import (
     execution_trigger,
     finish_execution_span,
 )
+from msgflux.utils.errors import exception_message
 from msgflux.utils.validation import is_valid_account_name
 
 _DEFAULT_CACHE_POLICY = SessionCachePolicy()
@@ -914,20 +915,20 @@ class AgentService:
                 status = await self._execute(record, worker)
             except TaskPauseRequestedError as exc:
                 error_type = type(exc).__name__
-                status, error = "paused", str(exc)
+                status, error = "paused", exception_message(exc)
             except (AbortRequestedError, TaskInterruptRequestedError) as exc:
                 error_type = type(exc).__name__
-                status, error = "interrupted", str(exc)
+                status, error = "interrupted", exception_message(exc)
             except asyncio.CancelledError:
                 error_type = "CancelledError"
                 status, error = "interrupted", "Service worker cancelled"
                 raise
             except Exception as exc:
                 error_type = type(exc).__name__
-                status, error = "failed", str(exc)
+                status, error = "failed", exception_message(exc)
             except BaseException as exc:
                 error_type = type(exc).__name__
-                status, error = "failed", str(exc)
+                status, error = "failed", exception_message(exc)
                 raise
             finally:
                 try:
