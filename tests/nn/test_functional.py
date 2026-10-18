@@ -1,6 +1,8 @@
 """Tests for msgflux.nn.functional module."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from functools import partial
 
 import pytest
@@ -486,3 +488,22 @@ class TestAcallRouting:
         await asyncio.sleep(0.05)
 
         assert results == ["hello"]
+
+
+def test_detached_cancellation_preserves_executor_worker_capacity(monkeypatch):
+    release_worker = Event()
+
+    def cancelled_worker():
+        assert release_worker.wait(timeout=5)
+        raise asyncio.CancelledError("detached worker cancelled")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(Executor, "get_instance", lambda: executor)
+        F.detached(cancelled_worker)
+        following = executor.submit(lambda: "worker still available")
+        try:
+            release_worker.set()
+            assert following.result(timeout=5) == "worker still available"
+        finally:
+            release_worker.set()
+            following.cancel()
