@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Literal, Optional, Union
 
 from msgflux.chat_stream_accumulator import ChatStreamAccumulator
+from msgflux.exceptions import AbortRequestedError
 
 
 @dataclass(frozen=True)
@@ -347,6 +348,24 @@ class BaseStreamResponse(CoreResponse):
         with self._finalizer_lock:
             return self._finalized
 
+    @staticmethod
+    def _combine_finalizer_error(
+        primary_error: BaseException | None,
+        finalizer_error: Exception,
+    ) -> BaseException:
+        """Keep both ordinary failures while preserving cancellation identity."""
+        if primary_error is None or primary_error is finalizer_error:
+            return finalizer_error
+        if isinstance(primary_error, (asyncio.CancelledError, AbortRequestedError)):
+            return primary_error
+        if isinstance(primary_error, Exception):
+            return ExceptionGroup(
+                "Stream and finalizer both failed",
+                [primary_error, finalizer_error],
+            )
+
+        return primary_error
+
     def finish(
         self,
         *,
@@ -364,9 +383,19 @@ class BaseStreamResponse(CoreResponse):
         try:
             self._run_finalizers(status=status)
         except Exception as finalizer_error:
-            self.set_error(finalizer_error)
-            self._final_status = "failed"
-            raise
+            combined_error = self._combine_finalizer_error(self.error, finalizer_error)
+            self.set_error(combined_error)
+            self._final_status = (
+                "interrupted"
+                if status == "interrupted"
+                and isinstance(
+                    self.error, (asyncio.CancelledError, AbortRequestedError)
+                )
+                else "failed"
+            )
+            if combined_error is finalizer_error:
+                raise
+            raise combined_error from finalizer_error
         finally:
             self._close_stream_queues()
 
@@ -414,19 +443,33 @@ class BaseStreamResponse(CoreResponse):
                 with self._finalizer_lock:
                     self._pending_finalizer_awaitables.append(result)
 
-    async def _await_pending_finalizers(self) -> None:
+    async def _await_pending_finalizers(
+        self, primary_error: BaseException | None = None
+    ) -> None:
         """Finish async callbacks emitted by a synchronous stream producer."""
         with self._finalizer_lock:
             pending = list(self._pending_finalizer_awaitables)
         if pending:
-            await asyncio.shield(
-                asyncio.gather(
-                    *[
-                        asyncio.wrap_future(item) if isinstance(item, Future) else item
-                        for item in pending
-                    ]
+            try:
+                await asyncio.shield(
+                    asyncio.gather(
+                        *[
+                            asyncio.wrap_future(item)
+                            if isinstance(item, Future)
+                            else item
+                            for item in pending
+                        ]
+                    )
                 )
-            )
+            except Exception as finalizer_error:
+                if primary_error is None:
+                    raise
+                combined_error = self._combine_finalizer_error(
+                    primary_error, finalizer_error
+                )
+                if combined_error is finalizer_error:
+                    raise
+                raise combined_error from finalizer_error
 
     def add(self, data: Any, *, accumulate_history: bool = True):
         """Add data to the content stream queue in a thread-safe way."""
@@ -573,14 +616,20 @@ class BaseStreamResponse(CoreResponse):
 
     async def consume(self) -> AsyncGenerator[Union[bytes, str], None]:
         """Async generator that yields content chunks until None is received."""
+        primary_error = None
         try:
             while True:
                 chunk = await self.next_chunk()
                 if chunk is None:
                     break
                 yield chunk
+        except BaseException as error:
+            # GeneratorExit is normal async-generator cleanup. Let a pending
+            # finalizer failure escape instead of being suppressed by aclose().
+            primary_error = None if isinstance(error, GeneratorExit) else error
+            raise
         finally:
-            await self._await_pending_finalizers()
+            await self._await_pending_finalizers(primary_error)
 
     async def consume_reasoning(self) -> AsyncGenerator[str, None]:
         """Async generator that yields reasoning chunks until None is received."""
@@ -614,6 +663,7 @@ class BaseStreamResponse(CoreResponse):
             closed = self._events_closed
             if not closed:
                 self._event_subscribers.append(subscriber)
+        primary_error = None
         try:
             for event in events:
                 yield event
@@ -628,8 +678,11 @@ class BaseStreamResponse(CoreResponse):
                         raise self.error
                     return
                 yield event
+        except BaseException as error:
+            primary_error = None if isinstance(error, GeneratorExit) else error
+            raise
         finally:
             with self._event_queue_lock:
                 if subscriber in self._event_subscribers:
                     self._event_subscribers.remove(subscriber)
-            await self._await_pending_finalizers()
+            await self._await_pending_finalizers(primary_error)

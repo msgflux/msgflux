@@ -847,6 +847,9 @@ stream events and canonical history, including text buffered while its role as
 commentary or an answer was being determined. The response remains failed;
 partial text is not a completed answer.
 
+If a stream failure and its finalizer both raise ordinary exceptions, consuming
+the stream raises an `ExceptionGroup` containing both errors so neither is lost.
+
 An Agent preserves received messages and reasoning in its failure checkpoint.
 An incomplete tool call is not executed or converted into an executable history
 entry. Tools that completed before the disconnection retain their recorded
