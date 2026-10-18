@@ -203,6 +203,12 @@ code 1. Plain-text errors go to stderr and include available execution IDs;
 JSON mode returns those IDs, status and error in its final stdout record. Parsing
 errors use the normal CLI usage message and exit code 2.
 
+Exception messages are preserved. If a transport or setup exception has an empty
+or whitespace-only message, the CLI uses its class name (for example,
+`ReadTimeout`) so the diagnostic remains useful in text, JSON and NDJSON modes.
+This does not imply that the run stopped; retain the reported IDs to inspect its
+state after a connection failure.
+
 Approvals do not trigger a terminal question in print mode. An approval pause
 returns its reason and identifiers so a reviewer can decide and resume through
 service APIs. Completed background results remain repeatably accessible through

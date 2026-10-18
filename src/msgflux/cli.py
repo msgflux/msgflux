@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from msgflux._cli_output import write_observation
+from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -207,7 +208,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except Exception as error:
         result = execution.result
         result.status = "failed"
-        result.error = str(error)
+        result.error = exception_message(error)
     output.finish(result)
     successful = (
         {"accepted", "running", "completed"} if options.detach else {"completed"}

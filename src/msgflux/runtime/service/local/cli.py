@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -550,7 +551,7 @@ def main(argv: Sequence[str] | None = None, *, resource: str = "service") -> Non
         sys.stderr.write("Interrupted.\n")
         raise SystemExit(130) from None
     except Exception as error:
-        sys.stderr.write(f"Error: {error}\n")
+        sys.stderr.write(f"Error: {exception_message(error)}\n")
         raise SystemExit(1) from None
 
 
