@@ -1,6 +1,7 @@
 """Provider-neutral text changes, review previews and authorized application."""
 
 import asyncio
+import errno
 import hashlib
 from collections.abc import Callable
 from difflib import unified_diff
@@ -192,7 +193,7 @@ class WorkspaceEditor:
         path = workspace_path(path)
         before = self._read(path)
         if before is None:
-            raise FileNotFoundError(path)
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
         start = before.find(old)
         if start < 0 or before.find(old, start + 1) >= 0:
             raise ValueError("old must match exactly once")
@@ -216,7 +217,7 @@ class WorkspaceEditor:
         path = workspace_path(path)
         before = self._read(path)
         if before is None:
-            raise FileNotFoundError(path)
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
         after = transform(before)
         if not isinstance(after, str):
             raise TypeError("Text transforms must return text")
@@ -227,7 +228,7 @@ class WorkspaceEditor:
         path = workspace_path(path)
         before = self._read(path)
         if before is None:
-            raise FileNotFoundError(path)
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
         return self._prepare(path, before, None)
 
     def prepare_delete_target(self, path: str) -> PreparedFileChange:
