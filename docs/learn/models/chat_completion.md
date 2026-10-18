@@ -2222,6 +2222,8 @@ cross-thread connection because synchronous model streams finish in a background
 worker. The safety net `_response_type_event.set()` in
 the `finally` block ensures the event is always fired, even if the stream errors
 out or the model returns no content chunks (e.g., a pure tool call response).
+Cancelling an async model stream finalizes it with `interrupted`, preserves
+received text, and leaves incomplete tool calls out of dispatchable response data.
 
 `reasoning_summary_event` supports summary-specific discovery. It is set on the
 first summary chunk, or when the summary channel closes without producing one.

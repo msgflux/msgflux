@@ -18,7 +18,7 @@ class StreamFinalState:
     reasoning: str | None
     reasoning_summary: str | None
     metadata: Any
-    error: Exception | None
+    error: BaseException | None
     items: list[dict[str, Any]]
 
 
@@ -276,7 +276,7 @@ class BaseStreamResponse(CoreResponse):
         if not self._response_type_event.is_set():
             self._response_type_event.set()
 
-    def set_error(self, error: Exception):
+    def set_error(self, error: BaseException):
         self.error = error
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
@@ -350,7 +350,7 @@ class BaseStreamResponse(CoreResponse):
     def finish(
         self,
         *,
-        error: Exception | None = None,
+        error: BaseException | None = None,
         status: Literal["completed", "failed", "interrupted"] | None = None,
     ) -> None:
         if self._is_finalized():
