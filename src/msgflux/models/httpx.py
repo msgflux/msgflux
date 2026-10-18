@@ -4,6 +4,7 @@ import httpx2
 
 from msgflux.envs import envs
 from msgflux.models.base import BaseModel
+from msgflux.models.http_transport import _raise_for_status
 from msgflux.models.profiles import ensure_profiles_loaded
 from msgflux.telemetry.model import trace_model_call
 from msgflux.utils.tenacity import apply_retry, default_model_retry
@@ -46,7 +47,7 @@ class HTTPXModelClient(BaseModel):
         if hasattr(self, "sampling_run_params"):
             params.update(self.sampling_run_params)
         url = self.sampling_params["base_url"] + self.endpoint
-        headers = self.headers
+        headers = dict(self.headers)
         if hasattr(self, "_api_key"):
             api_key = (
                 self._api_key[self.current_key_index]
@@ -55,7 +56,7 @@ class HTTPXModelClient(BaseModel):
             )
             headers["Authorization"] = f"Bearer {api_key}"
         response = self.client.post(url, headers=headers, json=params)
-        response.raise_for_status()
+        _raise_for_status(response, self)
         model_output = response.json()
         return model_output
 
@@ -64,7 +65,7 @@ class HTTPXModelClient(BaseModel):
         if hasattr(self, "sampling_run_params"):
             params.update(self.sampling_run_params)
         url = self.sampling_params["base_url"] + self.endpoint
-        headers = self.headers
+        headers = dict(self.headers)
         if hasattr(self, "_api_key"):
             api_key = (
                 self._api_key[self.current_key_index]
@@ -73,6 +74,6 @@ class HTTPXModelClient(BaseModel):
             )
             headers["Authorization"] = f"Bearer {api_key}"
         response = await self.aclient.post(url, headers=headers, json=params)
-        response.raise_for_status()
+        _raise_for_status(response, self)
         model_output = response.json()
         return model_output

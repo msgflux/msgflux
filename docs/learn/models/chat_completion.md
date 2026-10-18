@@ -2967,9 +2967,10 @@ in `repr()`.
 
 ### 18.7 **Inspecting provider HTTP errors**
 
-Direct transports raise `ModelProviderHTTPError` after retries are exhausted or
-for a non-retryable response. The exception always contains the HTTP status and
-a provider description. Structured provider fields remain available for quota,
+Model HTTP transports raise `ModelProviderHTTPError` after retries are exhausted
+or for a non-retryable response, including the legacy HTTPX transport used by
+JinaAI and vLLM models. The exception always contains the HTTP status and a
+provider description. Structured provider fields remain available for quota,
 context-window, authentication, routing, and data-policy handling:
 
 ```python
