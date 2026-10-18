@@ -118,8 +118,8 @@ class InterruptResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True)
 
 
 class ErrorResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    code: str
-    message: str
+    code: Annotated[str, msgspec.Meta(min_length=1)]
+    message: Annotated[str, msgspec.Meta(min_length=1)]
 
 
 class HealthRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

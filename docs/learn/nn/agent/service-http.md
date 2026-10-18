@@ -826,6 +826,61 @@ server errors return a generic 500 message and are logged on the host. Model
 failures settle their run receipts and appear as `run.error` events, rather than
 turning accepted prompts into transport validation errors.
 
+### Inspect Error Codes
+
+The client preserves the public error code in `AgentServiceHTTPError.code` and
+the HTTP response status in `status_code`. Unknown codes remain available for
+inspection. Malformed error bodies use code `http_error` and a neutral message;
+their raw content is not included in the exception. Malformed successful JSON
+or SSE records raise `AgentServiceProtocolError` with code `protocol_error`.
+
+```python
+from msgflux.runtime.service.http import AgentServiceHTTPError
+
+try:
+    result = await client.thread_result(thread_id)
+except AgentServiceHTTPError as exc:
+    print(exc.code, exc.status_code, str(exc))
+```
+
+This example inspects a remote failure without parsing its message. Errors
+delivered inside an established SSE stream have `status_code=None`: the
+connection succeeded, but observation subsequently failed. For example,
+`observer_overflow` asks the consumer to reconnect for a fresh snapshot; it does
+not mean that the run failed or was interrupted.
+
+HTTP responses and SSE error records use the same domain mapping, including an
+SSE error received before the initial snapshot:
+
+| Code | SDK exception |
+| --- | --- |
+| `service_busy` | `ServiceBusyError` |
+| `service_conflict` | `ServiceConflictError` |
+| `recovery_required` | `ServiceRecoveryRequiredError` |
+| `approval_conflict` | `ApprovalConflictError` |
+| `forbidden` | `PermissionError` |
+| Other valid codes | `AgentServiceHTTPError` |
+
+Translated domain exceptions keep the remote `AgentServiceHTTPError` as their
+Python cause. Local domain exceptions need no HTTP metadata:
+
+```python
+from msgflux.runtime import ServiceRecoveryRequiredError
+from msgflux.runtime.service.http import AgentServiceHTTPError
+
+try:
+    await client.resume_checkpoint(thread_id, run_id)
+except ServiceRecoveryRequiredError as exc:
+    print(str(exc))
+    if isinstance(exc.__cause__, AgentServiceHTTPError):
+        print(exc.__cause__.code, exc.__cause__.status_code)
+```
+
+This example keeps the same domain exception handling used by embedded sessions
+while allowing remote callers to inspect transport diagnostics. The cause
+contains the public response fields, not the server's Python traceback. These
+errors do not authorize retries or replay of an uncertain tool effect.
+
 For an uncertain workspace command, recovery responses use
 `{"code": "recovery_required", "message": "<host reason>"}`. The HTTP client
 maps this response to `ServiceRecoveryRequiredError`; inspect the reason, have

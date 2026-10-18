@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from urllib.parse import quote
 
 import httpx2
@@ -53,13 +53,52 @@ from msgflux.runtime.workspace.policy import WorkspacePolicy
 class AgentServiceHTTPError(RuntimeError):
     """An HTTP or wire-protocol failure from a remote AgentService."""
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
+        self.code = code
         self.status_code = status_code
 
 
 class AgentServiceProtocolError(AgentServiceHTTPError):
     """The server returned a malformed or incompatible response."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message, code="protocol_error", status_code=status_code)
+
+
+_DOMAIN_ERRORS = {
+    "service_busy": ServiceBusyError,
+    "service_conflict": ServiceConflictError,
+    "recovery_required": ServiceRecoveryRequiredError,
+    "approval_conflict": ApprovalConflictError,
+    "forbidden": PermissionError,
+}
+
+
+def _raise_service_error(
+    error: ErrorResponse, *, status_code: int | None = None
+) -> NoReturn:
+    remote = AgentServiceHTTPError(
+        error.message, code=error.code, status_code=status_code
+    )
+    exception = _DOMAIN_ERRORS.get(error.code)
+    if exception is not None:
+        raise exception(error.message) from remote
+    raise remote
+
+
+def _raise_sse_error(data: str) -> NoReturn:
+    try:
+        error = msgspec.json.decode(data, type=ErrorResponse)
+    except msgspec.DecodeError as exc:
+        raise AgentServiceProtocolError("Invalid SSE error record") from exc
+    _raise_service_error(error)
 
 
 class RemoteThreadWatcher:
@@ -86,11 +125,7 @@ class RemoteThreadWatcher:
     async def _iter_events(self, events):
         async for name, data in events:
             if name == "error":
-                try:
-                    error = msgspec.json.decode(data, type=ErrorResponse)
-                except msgspec.DecodeError as exc:
-                    raise AgentServiceProtocolError("Invalid SSE error record") from exc
-                raise AgentServiceHTTPError(error.message)
+                _raise_sse_error(data)
             if name != "event":
                 continue
             try:
@@ -147,6 +182,7 @@ class AgentServiceClient:
                 raise AgentServiceHTTPError(
                     "The running service does not support service inspection "
                     "(GET /v1/service/inspection). Restart or upgrade the server.",
+                    code=error.code,
                     status_code=404,
                 ) from error
             raise
@@ -215,6 +251,7 @@ class AgentServiceClient:
                 raise AgentServiceHTTPError(
                     "The running service does not support agent inspection. "
                     "Restart or upgrade the server.",
+                    code=error.code,
                     status_code=404,
                 ) from error
             raise
@@ -228,6 +265,7 @@ class AgentServiceClient:
                 raise AgentServiceHTTPError(
                     "The running service does not support active-run listing "
                     "(GET /v1/runs/active). Restart or upgrade the server.",
+                    code=error.code,
                     status_code=404,
                 ) from error
             raise
@@ -404,6 +442,8 @@ class AgentServiceClient:
                 raise AgentServiceProtocolError(
                     "Watch stream ended before its snapshot"
                 ) from exc
+            if name == "error":
+                _raise_sse_error(data)
             if name != "snapshot":
                 raise AgentServiceProtocolError(
                     "Watch stream did not begin with a snapshot"
@@ -443,18 +483,7 @@ class AgentServiceClient:
         if response.is_success:
             return
         await response.aread()
-        message, code = _error_payload(response)
-        if code == "service_busy":
-            raise ServiceBusyError(message)
-        if code == "service_conflict":
-            raise ServiceConflictError(message)
-        if code == "recovery_required":
-            raise ServiceRecoveryRequiredError(message)
-        if code == "approval_conflict":
-            raise ApprovalConflictError(message)
-        if code == "forbidden":
-            raise PermissionError(message)
-        raise AgentServiceHTTPError(message, status_code=response.status_code)
+        _raise_service_error(_error_payload(response), status_code=response.status_code)
 
     @staticmethod
     def _thread_path(thread_id: str) -> str:
@@ -465,12 +494,11 @@ def _segment(value: str) -> str:
     return quote(value, safe="")
 
 
-def _error_payload(response: httpx2.Response) -> tuple[str, str | None]:
+def _error_payload(response: httpx2.Response) -> ErrorResponse:
     try:
-        error = msgspec.json.decode(response.content, type=ErrorResponse)
+        return msgspec.json.decode(response.content, type=ErrorResponse)
     except (msgspec.DecodeError, TypeError, ValueError):
-        return "AgentService request failed", None
-    return error.message, error.code
+        return ErrorResponse("http_error", "AgentService request failed")
 
 
 async def _sse_events(lines):

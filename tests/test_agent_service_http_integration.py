@@ -573,8 +573,10 @@ async def test_observer_overflow_reports_reconnect_without_canceling_run():
             thread = await client.open_thread("main")
             async with client.watch(thread.thread_id) as observer:
                 await client.prompt(thread.thread_id, "hello", request_id="overflow")
-                with pytest.raises(AgentServiceHTTPError, match="reconnect"):
+                with pytest.raises(AgentServiceHTTPError, match="reconnect") as raised:
                     await asyncio.wait_for(_root_terminal(observer, "any"), 3)
+                assert raised.value.code == "observer_overflow"
+                assert raised.value.status_code is None
             assert (
                 await service.wait(thread.thread_id, "overflow")
             ).status == "completed"
