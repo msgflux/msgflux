@@ -375,6 +375,70 @@ async def test_apply_patch_create_existing_error_reaches_model_and_http_events(
 
 
 @pytest.mark.asyncio
+async def test_apply_patch_preview_failure_reaches_model_and_blocked_event(tmp_path):
+    root = tmp_path / "preview-error-workspace"
+    root.mkdir()
+    workspace = AgentWorkspace.local(root, approval_policy="on-request")
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(
+        name="main",
+        model=model,
+        tools=[ApplyPatchTool()],
+        agent_dir=tmp_path / "preview-error-agent-state",
+        workspace=workspace,
+    )
+    model_history = []
+    request_count = 0
+
+    async def respond(**kwargs):
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return _tool_call(
+                "apply_patch",
+                {
+                    "operation": "update",
+                    "path": "missing.txt",
+                    "diff": "@@\n-old\n+new",
+                },
+            )
+        model_history.extend(kwargs["messages"].to_chatml())
+        return _text_response("The file does not exist.")
+
+    agent.generator.aforward = AsyncMock(side_effect=respond)
+    try:
+        async with _remote_session(agent, thread_id="preview-error-thread") as (
+            _client,
+            session,
+        ):
+            async with session.watch() as watcher:
+                admission = await session.prompt(
+                    "update missing file", request_id="update"
+                )
+                events = await _collect_until_run_end(watcher, admission.run_id)
+            settled = await asyncio.wait_for(session.wait("update"), timeout=5)
+            assert settled.status == "completed"
+            assert request_count == 2
+
+            feedback = "\n".join(str(item.get("content", "")) for item in model_history)
+            assert "cannot prepare workspace change" in feedback.lower()
+            blocked = [event for event in events if event.type == "tool.blocked"]
+            assert blocked, [event.type for event in events]
+            assert blocked[0].data["tool_name"] == "apply_patch"
+            assert blocked[0].data["code"] == "workspace_change_invalid"
+            assert "no such file or directory" in feedback.lower()
+            assert "/missing.txt" in feedback
+            assert blocked[0].data["reason"] in feedback
+            assert blocked[0].data["error"]["code"] == "workspace_change_invalid"
+            assert blocked[0].data["error"]["details"] == {
+                "exception_type": "FileNotFoundError"
+            }
+    finally:
+        await workspace.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("message", ["", "   ", "A clear failure"])
 async def test_tool_error_message_agrees_in_events_feedback_and_checkpoint(
     message, tmp_path
