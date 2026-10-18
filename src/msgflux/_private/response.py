@@ -9,6 +9,9 @@ from typing import Any, AsyncGenerator, Literal, Optional, Union
 
 from msgflux.chat_stream_accumulator import ChatStreamAccumulator
 from msgflux.exceptions import AbortRequestedError
+from msgflux.logger import init_logger
+
+logger = init_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -449,27 +452,51 @@ class BaseStreamResponse(CoreResponse):
         """Finish async callbacks emitted by a synchronous stream producer."""
         with self._finalizer_lock:
             pending = list(self._pending_finalizer_awaitables)
-        if pending:
-            try:
-                await asyncio.shield(
-                    asyncio.gather(
-                        *[
-                            asyncio.wrap_future(item)
-                            if isinstance(item, Future)
-                            else item
-                            for item in pending
-                        ]
-                    )
-                )
-            except Exception as finalizer_error:
-                if primary_error is None:
-                    raise
-                combined_error = self._combine_finalizer_error(
-                    primary_error, finalizer_error
-                )
-                if combined_error is finalizer_error:
-                    raise
-                raise combined_error from finalizer_error
+        if not pending:
+            return
+
+        waiter = asyncio.gather(
+            *[
+                asyncio.wrap_future(item) if isinstance(item, Future) else item
+                for item in pending
+            ]
+        )
+        task = asyncio.current_task()
+        cancellation_count = task.cancelling() if task is not None else 0
+        try:
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError as cancellation_error:
+            if task is not None and task.cancelling() > cancellation_count:
+                # The shield keeps the finalizers running after this consumer exits.
+                # Retrieve a later failure so the owned gather does not report an
+                # unhandled exception when there is no waiter left to observe it.
+                waiter.add_done_callback(self._observe_finalizer_group)
+                if primary_error is not None:
+                    raise cancellation_error from primary_error
+            elif primary_error is not None and primary_error is not cancellation_error:
+                raise primary_error from cancellation_error
+            raise
+        except Exception as finalizer_error:
+            if primary_error is None:
+                raise
+            combined_error = self._combine_finalizer_error(
+                primary_error, finalizer_error
+            )
+            if combined_error is finalizer_error:
+                raise
+            raise combined_error from finalizer_error
+
+    @staticmethod
+    def _observe_finalizer_group(waiter: asyncio.Future) -> None:
+        """Retrieve a finalizer failure after its consumer has been cancelled."""
+        if waiter.cancelled():
+            return
+        error = waiter.exception()
+        if error is not None:
+            logger.error(
+                "Stream finalizer failed after consumer cancellation",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def add(self, data: Any, *, accumulate_history: bool = True):
         """Add data to the content stream queue in a thread-safe way."""
