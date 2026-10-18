@@ -1,6 +1,8 @@
 """Regression coverage for background worker cancellation terminalization."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import Mock
 
 import msgflux as mf
@@ -159,3 +161,35 @@ async def test_scheduled_agent_cancellation_interrupts_and_cleans_up(tmp_path):
             reopened.close()
     finally:
         task_store.close()
+
+
+def test_async_cancellation_callback_preserves_executor_worker_capacity():
+    release_worker = Event()
+    callback_finished = Event()
+    cancellation = asyncio.CancelledError("worker cancelled")
+    dispatcher = BackgroundTaskDispatcher(_Library())
+
+    def cancelled_worker():
+        assert release_worker.wait(timeout=5)
+        raise cancellation
+
+    def log_completion(future):
+        try:
+            dispatcher.log_task_failure(future)
+        finally:
+            callback_finished.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        cancelled = executor.submit(cancelled_worker)
+        cancelled.add_done_callback(log_completion)
+        following = executor.submit(lambda: "worker still available")
+        try:
+            release_worker.set()
+            with pytest.raises(asyncio.CancelledError) as raised:
+                cancelled.result(timeout=5)
+            assert raised.value is cancellation
+            assert callback_finished.wait(timeout=5)
+            assert following.result(timeout=5) == "worker still available"
+        finally:
+            release_worker.set()
+            following.cancel()

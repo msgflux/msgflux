@@ -422,36 +422,12 @@ class BackgroundTaskDispatcher:
                     result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
-            except (
-                AbortRequestedError,
-                TaskInterruptRequestedError,
-                FutureCancelledError,
-                asyncio.CancelledError,
-            ) as exc:
-                task_handle.interrupt(reason=exception_message(exc))
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
+            except (Exception, asyncio.CancelledError) as exc:
+                self._settle_task_failure(
+                    task_handle,
                     tool_name=tool_name,
-                    status="interrupted",
                     agent_inbox=agent_inbox,
-                )
-                raise
-            except TaskPauseRequestedError as exc:
-                task_handle.pause(reason=str(exc))
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
-                    tool_name=tool_name,
-                    status="paused",
-                    agent_inbox=agent_inbox,
-                )
-                raise
-            except Exception as exc:
-                task_handle.fail(exc)
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
-                    tool_name=tool_name,
-                    status="failed",
-                    agent_inbox=agent_inbox,
+                    error=exc,
                 )
                 raise
             else:
@@ -712,7 +688,7 @@ class BackgroundTaskDispatcher:
                 )
             )
         except BaseException as exc:
-            self._settle_submission_failure(
+            self._settle_task_failure(
                 task_handle,
                 tool_name=tool_name,
                 agent_inbox=root_inbox,
@@ -745,7 +721,7 @@ class BackgroundTaskDispatcher:
     def log_task_failure(self, future: Any) -> None:
         try:
             future.result()
-        except FutureCancelledError:
+        except (FutureCancelledError, asyncio.CancelledError):
             return
         except (AbortRequestedError, TaskInterruptRequestedError):
             return
@@ -754,7 +730,7 @@ class BackgroundTaskDispatcher:
         except Exception as exc:
             logger.error(f"Background task error: {exc!s}", exc_info=True)
 
-    def _settle_submission_failure(
+    def _settle_task_failure(
         self,
         task_handle: TaskHandle,
         *,
@@ -762,18 +738,28 @@ class BackgroundTaskDispatcher:
         agent_inbox: AgentInbox | None,
         error: BaseException,
     ) -> None:
-        """Persist submission failure without replacing its original exception."""
+        """Persist a task failure without replacing its original exception."""
         TaskLeaseHeartbeats.unregister(task_handle)
-        interrupted = isinstance(error, (FutureCancelledError, asyncio.CancelledError))
+        interrupted = isinstance(
+            error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                FutureCancelledError,
+                asyncio.CancelledError,
+            ),
+        )
         status = "interrupted" if interrupted else "failed"
         try:
-            record = (
-                task_handle.interrupt(reason=exception_message(error))
-                if interrupted
-                else task_handle.fail(error)
-            )
-        except Exception:
-            logger.exception("Could not persist background task submission failure")
+            if isinstance(error, TaskPauseRequestedError):
+                status = "paused"
+                record = task_handle.pause(reason=exception_message(error))
+            elif interrupted:
+                record = task_handle.interrupt(reason=exception_message(error))
+            else:
+                record = task_handle.fail(error)
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Could not persist background task failure")
             return
         if record is None:
             return
@@ -784,10 +770,8 @@ class BackgroundTaskDispatcher:
                 status=status,
                 agent_inbox=agent_inbox,
             )
-        except Exception:
-            logger.exception(
-                "Could not publish background task submission notification"
-            )
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Could not publish background task failure notification")
 
     def dispatch(
         self,
@@ -978,7 +962,7 @@ class BackgroundTaskDispatcher:
                 )
             )
         except BaseException as exc:
-            self._settle_submission_failure(
+            self._settle_task_failure(
                 task_handle,
                 tool_name=tool_name,
                 agent_inbox=root_agent_inbox,

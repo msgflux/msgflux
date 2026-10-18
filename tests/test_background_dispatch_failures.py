@@ -265,7 +265,7 @@ def test_terminal_persistence_failure_preserves_submit_error_without_notice(
             for notice in library.get_agent_inbox().peek()
             if notice.ref == task.task_id
         ]
-        assert "Could not persist background task submission failure" in caplog.text
+        assert "Could not persist background task failure" in caplog.text
     finally:
         task_store.close()
 
