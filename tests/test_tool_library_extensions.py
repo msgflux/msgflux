@@ -526,8 +526,9 @@ async def test_dispatch_task_errors_keep_structured_details(
         ]
         read_error, empty_error = (outcome.error for outcome in outcomes)
         assert read_error.code == empty_error.code == "tool_execution_failed"
-        assert "Task " in read_error.message and "absent.txt" in read_error.message
-        assert "Task " in empty_error.message
+        assert "absent.txt" in read_error.message
+        assert "Task " not in read_error.message
+        assert empty_error.message == "RuntimeError"
         assert read_error.details["exception_type"] == "FileNotFoundError"
         assert empty_error.details["exception_type"] == "RuntimeError"
 
@@ -543,7 +544,51 @@ async def test_dispatch_task_errors_keep_structured_details(
         )
         assert ends["missing-file"]["error_info"]["code"] == read_error.code
         assert ends["missing-file"]["error_info"]["details"] == dict(read_error.details)
-        assert ends["empty-failure"]["error"] == empty_message
-        assert ends["empty-failure"]["error_info"]["message"] == "RuntimeError"
+        assert ends["missing-file"]["error"] == read_error.message
+        assert ends["empty-failure"]["error"] == empty_error.message
+        assert ends["empty-failure"]["error_info"]["message"] == empty_error.message
+        assert ends["empty-failure"]["error_info"]["details"] == dict(
+            empty_error.details
+        )
     finally:
         await workspace.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("control", ["abort", "interrupt", "pause", "cancel"])
+async def test_tool_error_normalization_preserves_control_exceptions(
+    asynchronous, control
+):
+    from msgflux.exceptions import (
+        AbortRequestedError,
+        TaskInterruptRequestedError,
+        TaskPauseRequestedError,
+    )
+    from msgflux.runtime.events import _EventSink, _capture_events
+    from msgflux.tools.runtime import ToolIntent
+
+    errors = {
+        "abort": AbortRequestedError("stop"),
+        "interrupt": TaskInterruptRequestedError("task", "stop"),
+        "pause": TaskPauseRequestedError("task", "stop"),
+        "cancel": asyncio.CancelledError("stop"),
+    }
+    error = errors[control]
+
+    def stop() -> None:
+        raise error
+
+    library = ToolLibrary("control-errors", [stop])
+    events = []
+    with _capture_events(_EventSink(events.append)):
+        with pytest.raises(type(error)) as raised:
+            if asynchronous:
+                await library.aexecute_intents((ToolIntent(id="stop", name="stop"),))
+            else:
+                library.execute_intents((ToolIntent(id="stop", name="stop"),))
+    if control != "cancel":
+        assert raised.value is error
+    end = next(event for event in events if event.type == "tool.end")
+    assert end.data["error_info"] is None
+    assert end.data["error"] == "stop"

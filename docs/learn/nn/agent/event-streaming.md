@@ -279,8 +279,18 @@ operation appear on `tool.end`: the existing textual `data.error` remains, and
 `data.error_info` provides `{code, message, details}` for programmatic handling.
 Execution failures use the generic `tool_execution_failed` code. When execution
 raises an exception, `details.exception_type` identifies its class. The event
-does not include a traceback. Model feedback and conversation history retain
-their existing textual error rendering; `error_info` is additional event metadata.
+does not include a traceback. The textual `data.error`, `error_info.message`,
+canonical `ToolOutcome.error.message`, model feedback and conversation history
+use the same failure message. An exception with an empty or whitespace-only
+message uses its class name, such as `RuntimeError`. Tool failures do not add
+the parallel gather index (`Task 0 failed:`); the call ID and tool name identify
+the operation. The generic `TaskError` representation used by gather/scatter
+outside tool dispatch is unchanged.
+
+Pause, interruption and cancellation remain control signals. They do not
+produce `error_info` or become ordinary failed tool outcomes. Output-processing
+failures continue to use a neutral message because tool execution may already
+have completed; their raw output and internal storage exception are not exposed.
 
 For example, a UI can show the error while retaining its structured fields for
 logs or diagnostics:
