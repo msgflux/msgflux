@@ -464,10 +464,14 @@ class BaseStreamResponse(CoreResponse):
         task = asyncio.current_task()
         cancellation_count = task.cancelling() if task is not None else 0
         try:
-            await asyncio.shield(waiter)
+            # Unlike shield(), wait() does not add a second exception logger
+            # after consumer cancellation (Python 3.14). The gather keeps running,
+            # and our observer below handles its eventual failure.
+            await asyncio.wait((waiter,))
+            waiter.result()
         except asyncio.CancelledError as cancellation_error:
             if task is not None and task.cancelling() > cancellation_count:
-                # The shield keeps the finalizers running after this consumer exits.
+                # The wait leaves finalizers running after this consumer exits.
                 # Retrieve a later failure so the owned gather does not report an
                 # unhandled exception when there is no waiter left to observe it.
                 waiter.add_done_callback(self._observe_finalizer_group)
