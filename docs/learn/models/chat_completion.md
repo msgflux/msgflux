@@ -1653,6 +1653,33 @@ not insert a configuration update into an existing conversation.
         print(response.consume_reasoning())  # The full chain of thought
         ```
 
+#### Persisted reasoning configuration
+
+The shared OpenAI-compatible Responses and Chat Completions paths record the
+prepared request's reasoning configuration in response metadata, including
+streaming responses:
+
+```python
+configuration = response.metadata.model
+print(configuration.request_reasoning_effort)
+print(configuration.conversation_reasoning_effort)
+print(configuration.reasoning_effort)
+```
+
+Here `response` is a completed model response. With an initial request effort
+`low` and a later native conversation update to `high`, these values are `low`,
+`high`, and `high`. When the adapter instead changes the top-level request field,
+they are `high`, `None`, and `high`. Capture occurs after request extensions are
+applied. Cached responses retain their recorded request configuration.
+
+Agent checkpoints expose the same settings through
+`agent.get_model_configuration(scope=...)` and
+`store.get_model_configuration(namespace, thread_id, run_id=None)`. Fields not
+captured by older adapters remain `msgspec.UNSET`, distinct from a known absent
+setting (`None`). See
+[Recovering Model Configuration](../nn/agent/task-and-context.md#recovering-model-configuration)
+for complete persistence and recovery examples.
+
 ### 12.5 **Inspecting the Reasoning Trace**
 
 When `return_reasoning=True` (the default) and the provider exposes the reasoning trace, it is available as a separate field on the response object:
