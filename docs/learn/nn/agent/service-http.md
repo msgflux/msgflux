@@ -453,6 +453,12 @@ for reason in inspection.reasons:
     print(reason)
 ```
 
+For embedded `AgentService.wait()`, if execution and terminal journal settlement
+both fail, the raised exception group retains both errors. A failed settlement
+leaves the admission running for explicit inspection and recovery; the service
+does not replay the input automatically. If the worker was cancelled,
+cancellation still propagates and the settlement failure is logged.
+
 The inspection explains disagreement between the admission and checkpoint. It
 does not authorize replay or prove whether an external effect occurred. After
 restoring storage access, the trusted host must reconcile the execution using
