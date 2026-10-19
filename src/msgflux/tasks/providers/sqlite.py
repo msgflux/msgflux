@@ -138,8 +138,8 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 )
                 self._conn.commit()
                 return TaskLease(task_id, owner_id, expires_at)
-            except BaseException:
-                self._conn.rollback()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
                 raise
 
     def get_worker_lease(self, task_id: str) -> TaskLease | None:
@@ -517,8 +517,8 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 self._save_task(task)
                 self._conn.commit()
                 return self.get(task.task_id)
-            except BaseException:
-                self._conn.rollback()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
                 raise
 
     def _fence_worker_update(
@@ -629,8 +629,8 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                     )
                 self._conn.commit()
                 return self.get(task.task_id)  # type: ignore[return-value]
-            except BaseException:
-                self._conn.rollback()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
                 raise
 
     def set_running(
@@ -853,8 +853,8 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                     )
                 self._conn.commit()
                 return self.get(task_id)
-            except BaseException:
-                self._conn.rollback()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
                 raise
 
     def request_interrupt(self, task_id: str) -> TaskRecord | None:
@@ -917,8 +917,8 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 )
                 self._conn.commit()
                 return self.get(task_id)
-            except BaseException:
-                self._conn.rollback()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
                 raise
 
     def close(self) -> None:
